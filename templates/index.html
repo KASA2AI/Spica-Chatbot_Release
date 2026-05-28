@@ -1,0 +1,1465 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spica Voice Chat</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    :root {
+      --stage-background: linear-gradient(135deg, #dfe8ef, #f8fbfd);
+      --dialog-background: rgba(234, 248, 255, 0.72);
+      --dialog-text: #183246;
+      --dialog-accent: #1997b5;
+      --dialog-filter: none;
+      --dialog-filter-tint: #a7e8ff;
+      --dialog-filter-opacity: 0.18;
+      --character-height: 95vh;
+      --character-right: 7%;
+      --character-bottom: 0%;
+    }
+
+    body {
+      margin: 0;
+      height: 100%;
+      min-height: 100vh;
+      overflow: hidden;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #101820;
+      color: #182230;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button,
+    select {
+      min-height: 40px;
+      border: 1px solid rgba(24, 34, 48, 0.18);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #182230;
+    }
+
+    button {
+      padding: 0 14px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: #176b87;
+      background: #176b87;
+      color: #ffffff;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.62;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      height: 100vh;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .stage {
+      position: relative;
+      height: 100vh;
+      min-height: 0;
+      overflow: hidden;
+      background-image: var(--stage-background);
+      background-position: center;
+      background-size: cover;
+    }
+
+    .shell.voiceMode {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .shell.voiceMode .chatPanel {
+      display: none;
+    }
+
+    .stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(10, 18, 28, 0.08), rgba(10, 18, 28, 0.22));
+    }
+
+    .stageTop {
+      position: absolute;
+      z-index: 5;
+      top: 16px;
+      left: 18px;
+      right: 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .stageControls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .voiceControls {
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .shell.voiceMode .voiceControls {
+      display: flex;
+    }
+
+    .voiceStatus {
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      max-width: min(420px, 46vw);
+      padding: 0 12px;
+      border: 1px solid rgba(24, 34, 48, 0.16);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.82);
+      color: #304156;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #costumeSelect {
+      width: min(260px, 48vw);
+      padding: 0 12px;
+      outline: none;
+    }
+
+    .character {
+      position: absolute;
+      z-index: 2;
+      right: var(--character-right);
+      bottom: var(--character-bottom);
+      height: var(--character-height);
+      max-height: 110vh;
+      max-width: 68vw;
+      object-fit: contain;
+      object-position: bottom center;
+      filter: drop-shadow(0 18px 28px rgba(12, 18, 24, 0.28));
+      transition: opacity 260ms ease, transform 260ms ease;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .dialogueBox {
+      position: absolute;
+      z-index: 6;
+      left: clamp(18px, 4vw, 64px);
+      right: clamp(18px, 4vw, 64px);
+      bottom: clamp(18px, 4vh, 44px);
+      min-height: 260px;
+      padding: 24px 28px 28px;
+      border: 1px solid rgba(23, 107, 135, 0.28);
+      border-radius: 8px;
+      background: var(--dialog-background);
+      color: var(--dialog-text);
+      box-shadow: 0 18px 44px rgba(12, 18, 24, 0.22);
+      overflow: hidden;
+    }
+
+    .dialogueBox::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: var(--dialog-filter-tint);
+      opacity: var(--dialog-filter-opacity);
+      -webkit-mask-image: var(--dialog-filter);
+      mask-image: var(--dialog-filter);
+      -webkit-mask-size: cover;
+      mask-size: cover;
+      -webkit-mask-position: center;
+      mask-position: center;
+      pointer-events: none;
+    }
+
+    .dialogueBox > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .dialogueHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      color: var(--dialog-accent);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .cueMeta {
+      display: none;
+      color: #516174;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: right;
+    }
+
+    .dialogueText {
+      min-height: 152px;
+      max-height: 34vh;
+      overflow-y: auto;
+      font-size: clamp(20px, 2.2vw, 30px);
+      line-height: 1.58;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .chatPanel {
+      display: flex;
+      height: 100vh;
+      min-height: 0;
+      flex-direction: column;
+      overflow: hidden;
+      border-left: 1px solid #d9e0e8;
+      background: #f7fafc;
+    }
+
+    .chatHeader {
+      padding: 18px 18px 12px;
+      border-bottom: 1px solid #e1e7ee;
+      background: #ffffff;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.2;
+    }
+
+    .messages {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+    }
+
+    .message {
+      width: fit-content;
+      max-width: 100%;
+      padding: 11px 13px;
+      border-radius: 8px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .user {
+      align-self: flex-end;
+      background: #176b87;
+      color: #ffffff;
+    }
+
+    .assistant {
+      align-self: flex-start;
+      background: #eef3f7;
+      color: #182230;
+      border: 1px solid #d7e0e8;
+    }
+
+    .meta {
+      align-self: flex-start;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      color: #516174;
+      font-size: 13px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 3px 8px;
+      border: 1px solid #cbd5df;
+      border-radius: 6px;
+      background: #ffffff;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 8px;
+      padding: 14px;
+      border-top: 1px solid #e1e7ee;
+      background: #ffffff;
+    }
+
+    input {
+      min-width: 0;
+      padding: 11px 12px;
+      border: 1px solid #c2ccd6;
+      border-radius: 6px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: #176b87;
+      box-shadow: 0 0 0 3px rgba(23, 107, 135, 0.14);
+    }
+
+    audio {
+      width: 100%;
+      height: 40px;
+      align-self: flex-start;
+    }
+
+    .error {
+      color: #b42318;
+      background: #fff1f0;
+      border-color: #f4b5ad;
+    }
+
+    dialog {
+      width: min(860px, calc(100vw - 28px));
+      border: 1px solid #cbd5df;
+      border-radius: 8px;
+      padding: 0;
+      color: #182230;
+    }
+
+    dialog::backdrop {
+      background: rgba(16, 24, 32, 0.46);
+    }
+
+    .settingsHeader,
+    .settingsActions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 14px 16px;
+      background: #ffffff;
+    }
+
+    .settingsHeader {
+      border-bottom: 1px solid #e1e7ee;
+      font-weight: 700;
+    }
+
+    .settingsActions {
+      border-top: 1px solid #e1e7ee;
+    }
+
+    .settingsBody {
+      padding: 14px 16px;
+      background: #f7fafc;
+    }
+
+    #configEditor {
+      width: 100%;
+      min-height: 430px;
+      resize: vertical;
+      padding: 12px;
+      border: 1px solid #c2ccd6;
+      border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.45;
+      outline: none;
+      tab-size: 2;
+    }
+
+    #settingsStatus {
+      min-height: 20px;
+      color: #516174;
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .stage {
+        height: 68vh;
+        min-height: 0;
+      }
+
+      .chatPanel {
+        height: 32vh;
+        min-height: 0;
+        border-left: 0;
+        border-top: 1px solid #d9e0e8;
+      }
+
+      .shell.voiceMode .stage {
+        height: 100vh;
+      }
+
+      .messages {
+        max-height: 34vh;
+      }
+
+      .character {
+        right: 0;
+        height: min(var(--character-height), 72vh);
+        max-width: 92vw;
+      }
+
+      .dialogueBox {
+        min-height: 200px;
+        padding: 18px 18px 20px;
+      }
+
+      .dialogueText {
+        min-height: 112px;
+        max-height: 28vh;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .stageTop,
+      .stageControls,
+      .composer {
+        grid-template-columns: 1fr;
+      }
+
+      .stageTop {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .stageControls {
+        display: grid;
+      }
+
+      #costumeSelect,
+      .voiceStatus,
+      button {
+        width: 100%;
+        max-width: none;
+      }
+
+      .dialogueHeader {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .cueMeta {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main id="shell" class="shell">
+    <section id="stage" class="stage">
+      <div class="stageTop">
+        <div class="stageControls">
+          <button id="modeToggle" type="button" onclick="toggleInputMode()">语音输入</button>
+          <select id="costumeSelect" aria-label="服装"></select>
+          <button type="button" onclick="openVisualSettings()">JSON 设置</button>
+          <div id="voiceControls" class="voiceControls">
+            <button id="listenButton" class="primary" type="button" onclick="toggleListening()">开始说话</button>
+            <span id="voiceStatus" class="voiceStatus">中文识别待机</span>
+          </div>
+        </div>
+      </div>
+
+      <img id="characterImage" class="character" alt="Spica">
+
+      <section id="dialogueBox" class="dialogueBox">
+        <div class="dialogueHeader">
+          <span id="speakerName">Spica</span>
+          <span id="cueMeta" class="cueMeta"></span>
+        </div>
+        <div id="dialogueText" class="dialogueText">こんにちは。何を話しましょうか。</div>
+      </section>
+    </section>
+
+    <section class="chatPanel">
+      <header class="chatHeader">
+        <h1>Spica Voice Chat</h1>
+      </header>
+
+      <div id="messages" class="messages">
+        <div class="message assistant">こんにちは。何を話しましょうか。</div>
+      </div>
+
+      <div class="composer">
+        <input id="message" placeholder="输入消息，Spica 会用日语语音回答">
+        <button id="sendButton" class="primary" onclick="sendMessage()">发送</button>
+        <button onclick="clearMemory()">清空</button>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="settingsDialog">
+    <div class="settingsHeader">
+      <span>config/visual_config.json</span>
+      <button type="button" onclick="closeVisualSettings()">关闭</button>
+    </div>
+    <div class="settingsBody">
+      <textarea id="configEditor" spellcheck="false"></textarea>
+      <div id="settingsStatus"></div>
+    </div>
+    <div class="settingsActions">
+      <button type="button" onclick="reloadVisualConfig()">重新载入</button>
+      <button type="button" class="primary" onclick="saveVisualConfig()">保存</button>
+    </div>
+  </dialog>
+
+  <script>
+    const RANDOM_COSTUME = "__random__";
+    const shell = document.getElementById("shell");
+    const messageInput = document.getElementById("message");
+    const messages = document.getElementById("messages");
+    const sendButton = document.getElementById("sendButton");
+    const modeToggle = document.getElementById("modeToggle");
+    const listenButton = document.getElementById("listenButton");
+    const voiceStatus = document.getElementById("voiceStatus");
+    const stage = document.getElementById("stage");
+    const costumeSelect = document.getElementById("costumeSelect");
+    const characterImage = document.getElementById("characterImage");
+    const dialogueBox = document.getElementById("dialogueBox");
+    const dialogueText = document.getElementById("dialogueText");
+    const speakerName = document.getElementById("speakerName");
+    const cueMeta = document.getElementById("cueMeta");
+    const settingsDialog = document.getElementById("settingsDialog");
+    const configEditor = document.getElementById("configEditor");
+    const settingsStatus = document.getElementById("settingsStatus");
+    const memoryKey = "spica_voice_chat_conversation_id";
+    const costumeKey = "spica_visual_costume";
+    const inputModeKey = "spica_input_mode";
+
+    let visualState = null;
+    let conversationId = localStorage.getItem(memoryKey);
+    let inputMode = localStorage.getItem(inputModeKey) || "text";
+    let recognition = null;
+    let isListening = false;
+    let isSending = false;
+    let cueTimeout = null;
+    let cueInterval = null;
+    let currentCueIndex = -1;
+    let currentImageUrl = "";
+    let pendingImageSwap = null;
+    let visualSequenceId = 0;
+    let activeAudio = null;
+    let streamPlayback = null;
+
+    if (!conversationId) {
+      conversationId = crypto.randomUUID();
+      localStorage.setItem(memoryKey, conversationId);
+    }
+
+    function cssUrl(url) {
+      return url ? `url("${url}")` : "none";
+    }
+
+    function appendMessage(text, type) {
+      const node = document.createElement("div");
+      node.className = `message ${type}`;
+      node.textContent = text;
+      messages.appendChild(node);
+      messages.scrollTop = messages.scrollHeight;
+      return node;
+    }
+
+    function appendMeta(data) {
+      const meta = document.createElement("div");
+      meta.className = "meta";
+
+      if (data.emotion) {
+        const emotion = document.createElement("span");
+        emotion.className = "badge";
+        if (typeof data.emotion === "string") {
+          emotion.textContent = `情绪：${data.emotion_label || data.emotion}`;
+        } else {
+          emotion.textContent = `情绪：${data.emotion.label} (${data.emotion.name})`;
+        }
+        meta.appendChild(emotion);
+      }
+
+      if (Number.isFinite(data.units_count)) {
+        const units = document.createElement("span");
+        units.className = "badge";
+        units.textContent = `units：${data.units_count}`;
+        meta.appendChild(units);
+      }
+
+      if (data.timing?.first_unit_ready_ms) {
+        const timing = document.createElement("span");
+        timing.className = "badge";
+        timing.textContent = `首句：${Math.round(data.timing.first_unit_ready_ms)}ms`;
+        meta.appendChild(timing);
+      }
+
+      if (data.visual) {
+        const visual = document.createElement("span");
+        visual.className = "badge";
+        const source = data.visual.selection_source || "unknown";
+        const error = data.visual.selection_error ? " / fallback" : "";
+        visual.textContent = `差分：${data.visual.costume || "未选择"} / ${(data.visual.cues || []).length} 段 / ${source}${error}`;
+        if (data.visual.selection_error) {
+          visual.title = data.visual.selection_error;
+        }
+        meta.appendChild(visual);
+      }
+
+      if (data.tts_params) {
+        const params = document.createElement("span");
+        params.className = "badge";
+        params.textContent = `top_p=${data.tts_params.top_p}, temperature=${data.tts_params.temperature}, top_k=${data.tts_params.top_k}, speed=${data.tts_params.speed}`;
+        meta.appendChild(params);
+      }
+
+      if (meta.children.length) {
+        messages.appendChild(meta);
+      }
+    }
+
+    function appendAudio(url) {
+      const audio = document.createElement("audio");
+      audio.controls = true;
+      audio.autoplay = true;
+      audio.src = `${url}?t=${Date.now()}`;
+      messages.appendChild(audio);
+      audio.play().catch(() => {});
+      return audio;
+    }
+
+    function applyInputMode() {
+      const voiceMode = inputMode === "voice";
+      shell.classList.toggle("voiceMode", voiceMode);
+      modeToggle.textContent = voiceMode ? "文字输入" : "语音输入";
+      listenButton.disabled = isSending || !speechRecognitionSupported();
+      voiceStatus.textContent = speechRecognitionSupported() ? "中文识别待机" : "当前浏览器不支持语音识别";
+
+      if (voiceMode) {
+        messageInput.blur();
+        initSpeechRecognition();
+      } else {
+        stopListening();
+        messageInput.focus();
+      }
+    }
+
+    function toggleInputMode() {
+      inputMode = inputMode === "voice" ? "text" : "voice";
+      localStorage.setItem(inputModeKey, inputMode);
+      applyInputMode();
+    }
+
+    function speechRecognitionSupported() {
+      return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    }
+
+    function initSpeechRecognition() {
+      if (recognition || !speechRecognitionSupported()) {
+        return recognition;
+      }
+
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new Recognition();
+      recognition.lang = "zh-CN";
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        isListening = true;
+        listenButton.textContent = "停止识别";
+        voiceStatus.textContent = "正在听";
+      };
+
+      recognition.onresult = (event) => {
+        let finalText = "";
+        let interimText = "";
+
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const transcript = event.results[index][0]?.transcript?.trim() || "";
+          if (event.results[index].isFinal) {
+            finalText += transcript;
+          } else {
+            interimText += transcript;
+          }
+        }
+
+        const preview = finalText || interimText;
+        if (preview) {
+          voiceStatus.textContent = preview;
+        }
+
+        if (finalText) {
+          stopListening();
+          submitMessage(finalText, { fromVoice: true });
+        }
+      };
+
+      recognition.onerror = (event) => {
+        isListening = false;
+        listenButton.textContent = "开始说话";
+        voiceStatus.textContent = event.error === "not-allowed" ? "麦克风权限被拒绝" : "识别失败";
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        listenButton.textContent = "开始说话";
+        if (!isSending && inputMode === "voice" && voiceStatus.textContent === "正在听") {
+          voiceStatus.textContent = "中文识别待机";
+        }
+      };
+
+      return recognition;
+    }
+
+    function toggleListening() {
+      if (isSending) {
+        return;
+      }
+      if (isListening) {
+        stopListening();
+        return;
+      }
+
+      const recognizer = initSpeechRecognition();
+      if (!recognizer) {
+        voiceStatus.textContent = "当前浏览器不支持语音识别";
+        return;
+      }
+
+      try {
+        voiceStatus.textContent = "正在启动麦克风";
+        recognizer.start();
+      } catch (error) {
+        voiceStatus.textContent = "麦克风已经在监听";
+      }
+    }
+
+    function stopListening() {
+      if (!recognition || !isListening) {
+        return;
+      }
+      recognition.stop();
+    }
+
+    function setBusy(busy) {
+      isSending = busy;
+      sendButton.disabled = busy;
+      listenButton.disabled = busy || (inputMode === "voice" && !speechRecognitionSupported());
+      if (busy && inputMode === "voice") {
+        voiceStatus.textContent = "生成中";
+      }
+    }
+
+    async function loadVisualConfig() {
+      const response = await fetch("/visual/config");
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      visualState = await response.json();
+      applyVisualConfig(visualState);
+      return visualState;
+    }
+
+    function applyVisualConfig(payload) {
+      const config = payload.config || {};
+      const dialog = config.dialog || {};
+      const character = config.character || {};
+
+      stage.style.setProperty("--stage-background", cssUrl(payload.background_url));
+      dialogueBox.style.setProperty("--dialog-filter", cssUrl(payload.dialog_filter_url));
+      dialogueBox.style.setProperty("--dialog-filter-tint", dialog.filter_tint || "#A7E8FF");
+      dialogueBox.style.setProperty("--dialog-filter-opacity", Number(dialog.filter_opacity ?? 0.18));
+      dialogueBox.style.setProperty("--dialog-background", hexToRgba(dialog.background || "#EAF8FF", Number(dialog.opacity ?? 0.72)));
+      dialogueBox.style.setProperty("--dialog-text", dialog.text_color || "#183246");
+      dialogueBox.style.setProperty("--dialog-accent", dialog.accent_color || "#1997b5");
+      stage.style.setProperty("--character-height", `${Number(character.height_vh ?? 95)}vh`);
+      stage.style.setProperty("--character-right", `${Number(character.right_percent ?? 7)}%`);
+      stage.style.setProperty("--character-bottom", `${Number(character.bottom_percent ?? 0)}%`);
+      speakerName.textContent = dialog.speaker || "Spica";
+
+      if (payload.default_character_url) {
+        characterImage.src = payload.default_character_url;
+        currentImageUrl = payload.default_character_url;
+      }
+
+      populateCostumes(payload.costumes || [], config);
+      configEditor.value = JSON.stringify(config, null, 2);
+    }
+
+    function populateCostumes(costumes, config) {
+      const stored = localStorage.getItem(costumeKey);
+      const defaultValue = config.costume_mode === "fixed" ? config.selected_costume : RANDOM_COSTUME;
+      const selected = stored && (stored === RANDOM_COSTUME || costumes.includes(stored)) ? stored : defaultValue;
+
+      costumeSelect.innerHTML = "";
+      const randomOption = document.createElement("option");
+      randomOption.value = RANDOM_COSTUME;
+      randomOption.textContent = "随机服装";
+      costumeSelect.appendChild(randomOption);
+
+      for (const costume of costumes) {
+        const option = document.createElement("option");
+        option.value = costume;
+        option.textContent = costume;
+        costumeSelect.appendChild(option);
+      }
+
+      costumeSelect.value = selected && costumes.includes(selected) ? selected : RANDOM_COSTUME;
+    }
+
+    function visualRequestPayload() {
+      if (costumeSelect.value === RANDOM_COSTUME) {
+        return { costume_mode: "random" };
+      }
+      return {
+        costume_mode: "fixed",
+        costume_set: costumeSelect.value
+      };
+    }
+
+    function applyRuntimeVisual(visual) {
+      if (!visual) {
+        return;
+      }
+
+      const dialog = visual.dialog || {};
+      const character = visual.character || {};
+      if (visual.background_url) {
+        stage.style.setProperty("--stage-background", cssUrl(visual.background_url));
+      }
+      dialogueBox.style.setProperty("--dialog-filter", cssUrl(dialog.filter_url));
+      dialogueBox.style.setProperty("--dialog-filter-tint", dialog.filter_tint || "#A7E8FF");
+      dialogueBox.style.setProperty("--dialog-filter-opacity", Number(dialog.filter_opacity ?? 0.18));
+      dialogueBox.style.setProperty("--dialog-background", hexToRgba(dialog.background || "#EAF8FF", Number(dialog.opacity ?? 0.72)));
+      dialogueBox.style.setProperty("--dialog-text", dialog.text_color || "#183246");
+      dialogueBox.style.setProperty("--dialog-accent", dialog.accent_color || "#1997b5");
+      stage.style.setProperty("--character-height", `${Number(character.height_vh ?? 95)}vh`);
+      stage.style.setProperty("--character-right", `${Number(character.right_percent ?? 7)}%`);
+      stage.style.setProperty("--character-bottom", `${Number(character.bottom_percent ?? 0)}%`);
+      speakerName.textContent = dialog.speaker || "Spica";
+    }
+
+    function startVisualSequence(visual, audio) {
+      clearCueTimers();
+      const sequenceId = visualSequenceId + 1;
+      visualSequenceId = sequenceId;
+      if (activeAudio && activeAudio !== audio) {
+        activeAudio.pause();
+      }
+      activeAudio = audio || null;
+      applyRuntimeVisual(visual);
+      const cues = visual?.cues || [];
+      if (!cues.length) {
+        return;
+      }
+
+      currentCueIndex = -1;
+      setCue(cues, 0, visual, sequenceId);
+
+      if (audio) {
+        const updateFromAudio = () => {
+          if (sequenceId !== visualSequenceId) {
+            return;
+          }
+          const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+          if (!duration) {
+            return;
+          }
+          const index = cueIndexForTime(cues, audio.currentTime, duration);
+          setCue(cues, index, visual, sequenceId);
+        };
+
+        cueInterval = window.setInterval(updateFromAudio, 120);
+        audio.addEventListener("ended", () => {
+          if (sequenceId !== visualSequenceId) {
+            return;
+          }
+          clearInterval(cueInterval);
+          cueInterval = null;
+          setCue(cues, cues.length - 1, visual, sequenceId);
+        }, { once: true });
+
+        cueTimeout = window.setTimeout(() => {
+          if (sequenceId !== visualSequenceId) {
+            return;
+          }
+          if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+            scheduleCuesByText(cues, visual, 1, sequenceId);
+          }
+        }, 1400);
+        return;
+      }
+
+      scheduleCuesByText(cues, visual, 1, sequenceId);
+    }
+
+    function cueIndexForTime(cues, currentTime, duration) {
+      const totalWeight = cues.reduce((sum, cue) => sum + Math.max(4, cue.text.length), 0);
+      let elapsedWeight = 0;
+      for (let index = 0; index < cues.length; index += 1) {
+        elapsedWeight += Math.max(4, cues[index].text.length);
+        if (currentTime <= duration * (elapsedWeight / totalWeight)) {
+          return index;
+        }
+      }
+      return cues.length - 1;
+    }
+
+    function scheduleCuesByText(cues, visual, startIndex, sequenceId) {
+      clearTimeout(cueTimeout);
+      if (sequenceId !== visualSequenceId) {
+        return;
+      }
+      if (startIndex >= cues.length) {
+        return;
+      }
+
+      const previous = cues[startIndex - 1] || cues[0];
+      const delay = Math.max(1200, Math.min(3600, previous.text.length * 120));
+      cueTimeout = window.setTimeout(() => {
+        if (sequenceId !== visualSequenceId) {
+          return;
+        }
+        setCue(cues, startIndex, visual, sequenceId);
+        scheduleCuesByText(cues, visual, startIndex + 1, sequenceId);
+      }, delay);
+    }
+
+    function setCue(cues, index, visual, sequenceId = visualSequenceId) {
+      if (sequenceId !== visualSequenceId) {
+        return;
+      }
+      if (index === currentCueIndex || !cues[index]) {
+        return;
+      }
+
+      currentCueIndex = index;
+      const cue = cues[index];
+      dialogueText.textContent = cue.text;
+      cueMeta.textContent = "";
+      if (cue.image_url && cue.image_url !== currentImageUrl) {
+        swapCharacterImage(cue.image_url);
+      }
+    }
+
+    function swapCharacterImage(url) {
+      if (pendingImageSwap) {
+        clearTimeout(pendingImageSwap);
+        pendingImageSwap = null;
+      }
+
+      const image = new Image();
+      image.onload = () => {
+        characterImage.style.opacity = "0.18";
+        characterImage.style.transform = "translateX(10px)";
+        pendingImageSwap = window.setTimeout(() => {
+          characterImage.src = url;
+          currentImageUrl = url;
+          characterImage.style.opacity = "1";
+          characterImage.style.transform = "translateX(0)";
+          pendingImageSwap = null;
+        }, 140);
+      };
+      image.src = url;
+    }
+
+    function clearCueTimers() {
+      if (cueTimeout) {
+        clearTimeout(cueTimeout);
+        cueTimeout = null;
+      }
+      if (cueInterval) {
+        clearInterval(cueInterval);
+        cueInterval = null;
+      }
+    }
+
+    async function sendMessage() {
+      const message = messageInput.value.trim();
+      if (!message) {
+        messageInput.focus();
+        return;
+      }
+
+      await submitMessage(message, { fromVoice: false });
+    }
+
+    async function submitMessage(message, options = {}) {
+      localStorage.setItem(costumeKey, costumeSelect.value || RANDOM_COSTUME);
+      stopStreamPlayback();
+      clearCueTimers();
+      appendMessage(message, "user");
+      messageInput.value = "";
+      setBusy(true);
+      dialogueText.textContent = "……";
+      const pending = appendMessage("……", "assistant");
+      const playback = createStreamPlayback(pending);
+
+      try {
+        const streamResponse = await fetch("/chat/stream", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message,
+            conversation_id: conversationId,
+            visual: visualRequestPayload()
+          })
+        });
+
+        if (!streamResponse.ok || !streamResponse.body) {
+          throw new Error(await streamResponse.text());
+        }
+
+        await consumeSseStream(streamResponse, (event, data) => handleStreamEvent(event, data, playback));
+        playback.done = true;
+        pumpStreamPlayback(playback);
+        await playback.completion;
+      } catch (error) {
+        playback.done = true;
+        playback.errored = true;
+        playback.resolveComplete();
+        pending.classList.add("error");
+        pending.textContent = `请求失败：${error}`;
+        dialogueText.textContent = `请求失败：${error}`;
+      } finally {
+        setBusy(false);
+        if (inputMode === "voice") {
+          voiceStatus.textContent = "中文识别待机";
+        } else {
+          messageInput.focus();
+        }
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+
+    function createStreamPlayback(pending) {
+      const playback = {
+        id: visualSequenceId + 1,
+        pending,
+        units: new Map(),
+        nextIndex: 0,
+        playing: false,
+        done: false,
+        errored: false,
+        answer: "",
+        renderedText: "",
+        currentControl: null,
+        resolveComplete: null,
+        completion: null
+      };
+      visualSequenceId = playback.id;
+      playback.completion = new Promise((resolve) => {
+        playback.resolveComplete = resolve;
+      });
+      streamPlayback = playback;
+      return playback;
+    }
+
+    function stopStreamPlayback() {
+      if (!streamPlayback) {
+        return;
+      }
+      const control = streamPlayback.currentControl;
+      if (control) {
+        control.cancelled = true;
+        control.skipTyping = true;
+        control.skipUnit = true;
+        if (control.resolveDelay) {
+          control.resolveDelay();
+        }
+        if (control.resolveAudio) {
+          control.resolveAudio();
+        }
+      }
+      if (activeAudio) {
+        activeAudio.pause();
+        activeAudio = null;
+      }
+      streamPlayback.resolveComplete?.();
+      streamPlayback = null;
+    }
+
+    async function consumeSseStream(response, onEvent) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const parsed = parseSseBlock(block);
+          if (parsed) {
+            onEvent(parsed.event, parsed.data);
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const parsed = parseSseBlock(buffer);
+        if (parsed) {
+          onEvent(parsed.event, parsed.data);
+        }
+      }
+    }
+
+    function parseSseBlock(block) {
+      let event = "message";
+      const dataLines = [];
+      for (const line of block.split(/\r?\n/)) {
+        if (line.startsWith("event:")) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+      if (!dataLines.length) {
+        return null;
+      }
+      return {
+        event,
+        data: JSON.parse(dataLines.join("\n"))
+      };
+    }
+
+    function handleStreamEvent(event, data, playback) {
+      if (!playback || playback.id !== visualSequenceId) {
+        return;
+      }
+      if (event === "status") {
+        if (!playback.renderedText) {
+          playback.pending.textContent = "……";
+          dialogueText.textContent = "……";
+        }
+        if (inputMode === "voice") {
+          voiceStatus.textContent = data.message || "生成中";
+        }
+        return;
+      }
+      if (event === "unit_ready") {
+        playback.units.set(Number(data.index), data);
+        pumpStreamPlayback(playback);
+        return;
+      }
+      if (event === "done") {
+        playback.done = true;
+        playback.answer = data.answer || playback.renderedText;
+        appendMeta(data);
+        pumpStreamPlayback(playback);
+        return;
+      }
+      if (event === "error") {
+        playback.done = true;
+        playback.errored = true;
+        playback.pending.classList.add("error");
+        playback.pending.textContent = data.message || "请求失败。";
+        dialogueText.textContent = data.message || "请求失败。";
+        playback.resolveComplete();
+      }
+    }
+
+    async function pumpStreamPlayback(playback) {
+      if (!playback || playback.playing || playback.id !== visualSequenceId) {
+        return;
+      }
+      playback.playing = true;
+      try {
+        while (playback.units.has(playback.nextIndex)) {
+          const unit = playback.units.get(playback.nextIndex);
+          playback.units.delete(playback.nextIndex);
+          await playStreamUnit(unit, playback);
+          playback.nextIndex += 1;
+        }
+      } finally {
+        playback.playing = false;
+        if (playback.done && playback.units.size === 0 && !playback.errored) {
+          playback.pending.textContent = playback.answer || playback.renderedText || "没有返回回答。";
+          playback.resolveComplete();
+        }
+      }
+    }
+
+    async function playStreamUnit(unit, playback) {
+      if (playback.id !== visualSequenceId) {
+        return;
+      }
+      const control = {
+        typing: false,
+        waitingAudio: false,
+        skipTyping: false,
+        skipUnit: false,
+        cancelled: false,
+        resolveDelay: null,
+        resolveAudio: null
+      };
+      playback.currentControl = control;
+      applyStreamUnitVisual(unit);
+
+      const audio = unit.audio_url ? new Audio(`${unit.audio_url}?t=${Date.now()}`) : null;
+      if (activeAudio) {
+        activeAudio.pause();
+      }
+      activeAudio = audio;
+      if (audio) {
+        audio.play().catch(() => {});
+      }
+
+      await typeDialogueText(unit.display_text || "", audio, control);
+      playback.renderedText += unit.display_text || "";
+      playback.pending.textContent = playback.renderedText;
+
+      if (audio && !control.skipUnit && !audio.ended) {
+        control.waitingAudio = true;
+        await waitAudioEnd(audio, control);
+        control.waitingAudio = false;
+      }
+      if (activeAudio === audio) {
+        activeAudio = null;
+      }
+      playback.currentControl = null;
+    }
+
+    function applyStreamUnitVisual(unit) {
+      const visual = unit.visual || {};
+      if (visual.background_url || visual.dialog || visual.character) {
+        applyRuntimeVisual(visual);
+      }
+      currentCueIndex = Number(unit.index);
+      if (visual.image_url && visual.image_url !== currentImageUrl) {
+        swapCharacterImage(visual.image_url);
+      }
+    }
+
+    async function typeDialogueText(text, audio, control) {
+      dialogueText.textContent = "";
+      control.typing = true;
+      for (let index = 0; index < text.length; index += 1) {
+        if (control.cancelled || control.skipUnit) {
+          return;
+        }
+        if (control.skipTyping) {
+          dialogueText.textContent = text;
+          break;
+        }
+        const char = text[index];
+        dialogueText.textContent += char;
+        await sleepWithControl(characterDelay(char, audio, text.length - index - 1), control);
+      }
+      control.typing = false;
+      dialogueText.textContent = text;
+    }
+
+    function characterDelay(char, audio, remainingChars) {
+      let base = 34;
+      if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+        const remainingMs = Math.max(0, (audio.duration - audio.currentTime) * 1000 - 120);
+        base = Math.max(18, Math.min(38, remainingMs / Math.max(1, remainingChars + 1)));
+      }
+      if ("、，".includes(char)) {
+        return Math.max(80, Math.min(120, base * 3));
+      }
+      if ("。？！!?".includes(char)) {
+        return Math.max(180, Math.min(300, base * 7));
+      }
+      return Math.max(25, Math.min(45, base));
+    }
+
+    function sleepWithControl(ms, control) {
+      return new Promise((resolve) => {
+        const timer = window.setTimeout(() => {
+          control.resolveDelay = null;
+          resolve();
+        }, ms);
+        control.resolveDelay = () => {
+          window.clearTimeout(timer);
+          control.resolveDelay = null;
+          resolve();
+        };
+      });
+    }
+
+    function waitAudioEnd(audio, control) {
+      if (!audio || audio.ended) {
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => {
+        const finish = () => {
+          audio.removeEventListener("ended", finish);
+          audio.removeEventListener("error", finish);
+          control.resolveAudio = null;
+          resolve();
+        };
+        control.resolveAudio = finish;
+        audio.addEventListener("ended", finish, { once: true });
+        audio.addEventListener("error", finish, { once: true });
+      });
+    }
+
+    async function clearMemory() {
+      stopStreamPlayback();
+      await fetch("/memory/clear", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          conversation_id: conversationId
+        })
+      });
+
+      clearCueTimers();
+      conversationId = crypto.randomUUID();
+      localStorage.setItem(memoryKey, conversationId);
+      messages.innerHTML = "";
+      appendMessage("こんにちは。何を話しましょうか。", "assistant");
+      dialogueText.textContent = "こんにちは。何を話しましょうか。";
+      cueMeta.textContent = "待機";
+      currentCueIndex = -1;
+      if (visualState?.default_character_url) {
+        characterImage.src = visualState.default_character_url;
+        currentImageUrl = visualState.default_character_url;
+      }
+      if (inputMode === "voice") {
+        voiceStatus.textContent = "中文识别待机";
+      } else {
+        messageInput.focus();
+      }
+    }
+
+    function openVisualSettings() {
+      if (visualState?.config) {
+        configEditor.value = JSON.stringify(visualState.config, null, 2);
+      }
+      settingsStatus.textContent = "";
+      settingsDialog.showModal();
+    }
+
+    function closeVisualSettings() {
+      settingsDialog.close();
+    }
+
+    async function reloadVisualConfig() {
+      try {
+        settingsStatus.textContent = "载入中...";
+        await loadVisualConfig();
+        settingsStatus.textContent = "已重新载入。";
+      } catch (error) {
+        settingsStatus.textContent = `载入失败：${error}`;
+      }
+    }
+
+    async function saveVisualConfig() {
+      let config;
+      try {
+        config = JSON.parse(configEditor.value);
+      } catch (error) {
+        settingsStatus.textContent = `JSON 解析失败：${error.message}`;
+        return;
+      }
+
+      try {
+        settingsStatus.textContent = "保存中...";
+        const response = await fetch("/visual/config", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ config })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "保存失败");
+        }
+        visualState = payload;
+        applyVisualConfig(payload);
+        settingsStatus.textContent = "已保存。";
+      } catch (error) {
+        settingsStatus.textContent = `保存失败：${error}`;
+      }
+    }
+
+    function hexToRgba(hex, alpha) {
+      const match = String(hex).trim().match(/^#?([0-9a-f]{6})$/i);
+      if (!match) {
+        return `rgba(255, 255, 255, ${alpha})`;
+      }
+      const value = match[1];
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    costumeSelect.addEventListener("change", () => {
+      localStorage.setItem(costumeKey, costumeSelect.value || RANDOM_COSTUME);
+    });
+
+    dialogueBox.addEventListener("click", () => {
+      const control = streamPlayback?.currentControl;
+      if (!control) {
+        return;
+      }
+      if (control.typing && !control.skipTyping) {
+        control.skipTyping = true;
+        control.resolveDelay?.();
+        return;
+      }
+      if (control.typing || control.waitingAudio) {
+        control.skipUnit = true;
+        if (activeAudio) {
+          activeAudio.pause();
+        }
+        control.resolveDelay?.();
+        control.resolveAudio?.();
+      }
+    });
+
+    messageInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        sendMessage();
+      }
+    });
+
+    applyInputMode();
+
+    loadVisualConfig().catch((error) => {
+      appendMessage(`视觉配置载入失败：${error}`, "assistant error");
+    });
+  </script>
+</body>
+</html>

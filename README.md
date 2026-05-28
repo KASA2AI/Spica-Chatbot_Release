@@ -79,18 +79,26 @@ Spica-Chatbot/
 
 3. 准备 Python 环境。
 
-   项目当前脚本示例使用 `/home/san/anaconda3/envs/gptsovits/bin/python3.11`。如果新建环境，建议 Python 3.10 或 3.11，并安装 GPT-SoVITS 所需依赖。
+   项目当前开发环境使用 `/home/san/anaconda3/envs/gptsovits/bin/python3.11`，对应 Python 3.11.15。建议直接复用已经能运行 GPT-SoVITS 的环境；如果新建环境，建议 Python 3.10 或 3.11，并优先按你放入的上游 GPT-SoVITS 版本完成它自己的环境安装。
+
+   根目录的 `requirements.txt` 是根据本机 GPT-SoVITS 环境整理的参考依赖，不是严格锁版本文件。里面的版本范围刻意放宽，只用于提示本项目和 GPT-SoVITS 推理常见需要的包；实际安装时仍可能需要按你的 CUDA、PyTorch、GPT-SoVITS 版本调整。
 
    ```bash
-   cd /home/san/ai_code/Spica-Chatbot
-   pip install openai httpx python-dotenv PySide6 soundfile numpy pytest
+   cd /home/san/ai_code/Spica-Chatbot_release
+
+   # 先确保 GPT-SoVITS-v2pro-20250604-nvidia50/ 已放入上游代码。
+   # 如果上游目录带 requirements.txt，可按该版本说明安装。
    pip install -r GPT-SoVITS-v2pro-20250604-nvidia50/requirements.txt
+
+   # 再用本项目的参考依赖补齐桌面 UI、LLM 客户端和测试工具。
+   pip install -r requirements.txt
    ```
 
-   可选语音输入：
+   可选麦克风输入依赖已经写在 `requirements.txt` 中，但 `PyAudio` 依赖系统 PortAudio 库；如果安装失败，先安装系统库，或临时跳过麦克风功能。
 
    ```bash
-   pip install SpeechRecognition PyAudio
+   # Ubuntu / Debian 示例
+   sudo apt install portaudio19-dev
    ```
 
 4. 创建 `xiaosan.env`。

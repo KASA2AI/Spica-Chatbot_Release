@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.env
+*.env
+xiaosan.env
+xiaosan.env
+
+.DS_Store
+
+static/generated_voice/*.wav
+spica_data/*.sqlite3
+spica_data/*.sqlite3-*

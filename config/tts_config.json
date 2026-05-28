@@ -1,0 +1,53 @@
+{
+  "gptsovits_root": "../GPT-SoVITS-v2pro-20250604-nvidia50",
+  "gpt_model_path": "../GPT-SoVITS-v2pro-20250604-nvidia50/GPT_weights_v2ProPlus/spcia-e25.ckpt",
+  "sovits_model_path": "../GPT-SoVITS-v2pro-20250604-nvidia50/SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth",
+  "ref_language": "日文",
+  "target_language": "日文",
+  "output_dir": "../static/generated_voice",
+  "static_url_prefix": "/static/generated_voice",
+  "reload_model_each_request": false,
+  "warmup_on_startup": true,
+  "warmup_emotion": "happy",
+  "warmup_synthesize": false,
+  "warmup_text": "はい。",
+  "tts_params": {
+    "top_p": 1,
+    "temperature": 1,
+    "inp_refs": "{emotion.inp_refs_path}",
+    "how_to_cut": "不切",
+    "pause_second": 0.3,
+    "speed": 1,
+    "top_k": 15,
+    "sentence_chunking": true,
+    "max_chunk_chars": 36,
+    "max_chunk_sentences": 2
+  },
+  "emotions": {
+    "happy": {
+      "label": "喜/乐",
+      "prompt_text_path": "../spica_data/voice/happy/prompt.txt",
+      "ref_audio_path": "../spica_data/voice/happy/あそこは風の一族が封じた厄災の力が残ってるわ.wav",
+      "inp_refs_path": "../spica_data/voice/happy/refs"
+    },
+    "angry": {
+      "label": "怒",
+      "prompt_text_path": "../spica_data/voice/angry/prompt.txt",
+      "ref_audio_path": "../spica_data/voice/angry/風の乱れを戻すにはその土地に根付いた旋律が必要なの.wav",
+      "inp_refs_path": "../spica_data/voice/angry/refs"
+    },
+    "sad": {
+      "label": "哀",
+      "prompt_text_path": "../spica_data/voice/sad/prompt.txt",
+      "ref_audio_path": "../spica_data/voice/sad/風の息遣いを感じていれば、こうなることはわかったはずよ。.wav",
+      "inp_refs_path": "../spica_data/voice/sad/refs"
+    },
+    "surprised": {
+      "label": "惊",
+      "prompt_text_path": "../spica_data/voice/surprised/prompt.txt",
+      "ref_audio_path": "../spica_data/voice/surprised/私にはこれくらいのことしかしてあげられないから.wav",
+      "inp_refs_path": "../spica_data/voice/surprised/refs"
+    }
+  },
+  "default_emotion": "happy"
+}

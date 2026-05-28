@@ -1,0 +1,1034 @@
+from __future__ import annotations
+
+import concurrent.futures
+import json
+import os
+import queue
+import re
+import threading
+from typing import Any, Iterator
+
+from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from memory.control import save_extracted_memories
+from agent.nodes import (
+    build_prompt_node,
+    load_recent_context_node,
+    retrieve_long_term_memory_node,
+    validate_input_node,
+)
+from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
+from agent.state import AgentServices, AgentState
+from common.timing import elapsed_ms, log_timing, now_ms
+from agent_tools.router import run_local_tool, should_use_tools
+
+
+_SENTINEL = object()
+_TERMINATORS = set("。！？!?")
+_CLOSERS = set("」』）)]”’\"'")
+_FIRST_UNIT_WARNING_MS = 3000.0
+
+
+class JsonAnswerExtractor:
+    """Incrementally extracts the JSON answer string from a partial model reply."""
+
+    def __init__(self) -> None:
+        self.answer = ""
+
+    def feed(self, raw_text: str) -> str:
+        current = self._extract_answer(raw_text)
+        if current.startswith(self.answer):
+            delta = current[len(self.answer):]
+        else:
+            delta = current
+        self.answer = current
+        return delta
+
+    def _extract_answer(self, raw_text: str) -> str:
+        match = re.search(r'"answer"\s*:\s*"', raw_text or "")
+        if not match:
+            return ""
+
+        chars: list[str] = []
+        index = match.end()
+        while index < len(raw_text):
+            char = raw_text[index]
+            if char == '"':
+                break
+            if char != "\\":
+                chars.append(char)
+                index += 1
+                continue
+
+            if index + 1 >= len(raw_text):
+                break
+            escape = raw_text[index + 1]
+            if escape == "u":
+                hex_value = raw_text[index + 2:index + 6]
+                if len(hex_value) < 4 or not re.fullmatch(r"[0-9a-fA-F]{4}", hex_value):
+                    break
+                chars.append(chr(int(hex_value, 16)))
+                index += 6
+                continue
+            chars.append(
+                {
+                    '"': '"',
+                    "\\": "\\",
+                    "/": "/",
+                    "b": "\b",
+                    "f": "\f",
+                    "n": "\n",
+                    "r": "\r",
+                    "t": "\t",
+                }.get(escape, escape)
+            )
+            index += 2
+        return "".join(chars)
+
+
+class PlayUnitSplitter:
+    def __init__(self, min_chars: int = 18, max_chars: int = 96) -> None:
+        self.min_chars = max(1, int(min_chars))
+        self.max_chars = max(self.min_chars, int(max_chars))
+        self.buffer = ""
+        self.current = ""
+        self.completed_sentence_count = 0
+
+    def feed(self, text: str) -> list[str]:
+        self.buffer += text or ""
+        units: list[str] = []
+        for sentence in self._take_complete_sentences():
+            self.completed_sentence_count += 1
+            for part in self._split_overlong(sentence):
+                units.extend(self._consume_part(part, force=False))
+        return units
+
+    def flush(self) -> list[str]:
+        units: list[str] = []
+        tail = self._clean_text(self.buffer)
+        self.buffer = ""
+        if tail:
+            for part in self._split_overlong(tail):
+                units.extend(self._consume_part(part, force=False))
+        if self.current:
+            units.append(self.current)
+            self.current = ""
+        return [unit for unit in units if unit]
+
+    def _take_complete_sentences(self) -> list[str]:
+        sentences: list[str] = []
+        index = 0
+        while index < len(self.buffer):
+            if self.buffer[index] not in _TERMINATORS:
+                index += 1
+                continue
+
+            end = index + 1
+            while end < len(self.buffer) and self.buffer[end] in _CLOSERS:
+                end += 1
+            sentence = self._clean_text(self.buffer[:end])
+            if sentence:
+                sentences.append(sentence)
+            self.buffer = self.buffer[end:]
+            index = 0
+        return sentences
+
+    def _consume_part(self, part: str, force: bool = False) -> list[str]:
+        part = self._clean_text(part)
+        if not part:
+            return []
+
+        candidate_len = len(self.current) + len(part)
+        if self.current and (
+            candidate_len <= self.max_chars
+            or (len(self.current) < self.min_chars and candidate_len <= self.max_chars + self.min_chars)
+        ):
+            self.current += part
+        elif self.current:
+            completed = self.current
+            self.current = ""
+            return [completed] + self._consume_part(part, force=force)
+        else:
+            self.current = part
+
+        if force or self._can_emit(self.current):
+            completed = self.current
+            self.current = ""
+            return [completed]
+        return []
+
+    def _can_emit(self, text: str) -> bool:
+        compact = re.sub(r"\s+", "", text or "")
+        if len(compact) < self.min_chars:
+            return False
+        return compact not in {"もちろん。", "はい。", "ええ。", "そうですね。"}
+
+    def _split_overlong(self, sentence: str) -> list[str]:
+        sentence = self._clean_text(sentence)
+        if len(sentence) <= self.max_chars:
+            return [sentence]
+
+        parts = [
+            match.group(0)
+            for match in re.finditer(r"[^、，,；;]+[、，,；;]*", sentence)
+            if match.group(0)
+        ]
+        if len(parts) <= 1:
+            return [sentence[index:index + self.max_chars] for index in range(0, len(sentence), self.max_chars)]
+
+        chunks: list[str] = []
+        current = ""
+        for part in parts:
+            if current and len(current) + len(part) > self.max_chars:
+                chunks.append(current)
+                current = part
+            else:
+                current += part
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _clean_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text or "").strip()
+
+
+def build_tts_text(display_text: str) -> str:
+    text = display_text or ""
+    text = re.sub(r"`+", "", text)
+    text = _replace_math_for_speech(text)
+    text = re.sub(r"\$[^$]*\$", "", text)
+    text = re.sub(r"\\\([^)]*\\\)", "", text)
+    text = re.sub(r"\\\[[^\]]*\\\]", "", text)
+    text = re.sub(r"\be\^\{[^}]*\}", "", text)
+    text = re.sub(r"[A-Za-z0-9_\\]+(?:\s*[=+\-*/^<>]\s*[A-Za-z0-9_\\{}().]+)+", "", text)
+    text = _strip_formula_brackets(text)
+    text = text.replace("『", "").replace("』", "").replace("「", "").replace("」", "")
+    text = re.sub(r"[#*_~>|]+", "", text)
+    text = re.sub(r"\s*=\s*", "は", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"(?<=[ぁ-んァ-ン一-龯])\s+(?=[ぁ-んァ-ン一-龯])", "", text)
+    text = re.sub(r"\s+([。！？!?、，,；;：:])", r"\1", text)
+    text = re.sub(r"([、，,；;：:])\s+", r"\1", text)
+    text = re.sub(r"[、，,；;：:]+([。！？!?])", r"\1", text)
+    text = re.sub(r"[、，,；;：:]+$", "。", text)
+    text = re.sub(r"。+", "。", text)
+    return text.strip() or (display_text or "").strip()
+
+
+def _replace_math_for_speech(text: str) -> str:
+    text = re.sub(
+        r"e\s*\^\s*\{\s*-\s*i\s*(?:ω|\\omega)\s*t\s*\}",
+        "イーのマイナスアイオメガティー乗",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"f\s*['′’]\s*\(?\s*x\s*\)?",
+        "エフダッシュエックス",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\bf\s*\(\s*x\s*\)",
+        "エフエックス",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\ba\s+f\s*\(?\s*x\s*\)?",
+        "エーかけるエフエックス",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\bfx\b", "エフエックス", text, flags=re.IGNORECASE)
+    text = re.sub(r"→\s*2\s*x\b", "は二エックス", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b2\s*x\b", "二エックス", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bx\s*\^\s*2\b", "エックスの二乗", text, flags=re.IGNORECASE)
+    text = text.replace("→", "から")
+    text = re.sub(r"(導関数|微分係数)\s*は\s*エフダッシュエックス", r"\1のエフダッシュエックス", text)
+    return text
+
+
+def stream_voice_events(state: AgentState, services: AgentServices) -> Iterator[dict[str, Any]]:
+    request_start_ms = now_ms()
+    yield {"event": "status", "data": {"state": "thinking", "message": "thinking"}}
+
+    output_queue: queue.Queue[Any] = queue.Queue()
+    producer = threading.Thread(
+        target=_produce_stream_events,
+        args=(state, services, request_start_ms, output_queue),
+        daemon=True,
+    )
+    producer.start()
+
+    while True:
+        item = output_queue.get()
+        if item is _SENTINEL:
+            break
+        yield item
+    producer.join(timeout=1)
+
+
+def _produce_stream_events(
+    state: AgentState,
+    services: AgentServices,
+    request_start_ms: float,
+    output_queue: queue.Queue[Any],
+) -> None:
+    timing_lock = threading.Lock()
+    ready_lock = threading.Lock()
+    ready_units: dict[int, dict[str, Any]] = {}
+    next_emit = {"index": 0}
+    unit_timings: list[dict[str, Any]] = []
+    created_units: list[str] = []
+    first_unit_event = threading.Event()
+
+    visual_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=max(1, int(os.getenv("VISUAL_STREAM_WORKERS") or 2))
+    )
+    tts_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    ready_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    ready_futures: list[concurrent.futures.Future[Any]] = []
+
+    def relative_ms() -> float:
+        return round(now_ms() - request_start_ms, 2)
+
+    def set_timing_once(key: str, value: float) -> None:
+        with timing_lock:
+            state.timing.setdefault(key, value)
+
+    def mark_first_unit_warning(reason: str) -> None:
+        if first_unit_event.is_set():
+            return
+        warning_ms = relative_ms()
+        with timing_lock:
+            if state.timing.get("first_unit_warning_ms") is not None:
+                return
+            state.timing["first_unit_warning_ms"] = warning_ms
+            state.timing["first_unit_warning"] = (
+                f"first playable unit was not created within {int(_FIRST_UNIT_WARNING_MS)}ms"
+            )
+            state.timing["first_unit_warning_reason"] = reason
+        log_timing(
+            "chat_stream_first_unit_warning",
+            warning_ms,
+            conversation_id=state.conversation_id,
+            reason=reason,
+        )
+
+    def put_status(state_name: str, message: str) -> None:
+        output_queue.put({"event": "status", "data": {"state": state_name, "message": message}})
+
+    def put_ready(index: int, event_data: dict[str, Any]) -> None:
+        with ready_lock:
+            ready_units[index] = event_data
+            while next_emit["index"] in ready_units:
+                ready_event = ready_units.pop(next_emit["index"])
+                output_queue.put({"event": "unit_ready", "data": ready_event})
+                next_emit["index"] += 1
+
+    def submit_unit(display_text: str) -> None:
+        display_text = (display_text or "").strip()
+        if not display_text:
+            return
+
+        index = len(created_units)
+        previous_units = list(created_units)
+        full_answer_so_far = "".join(previous_units + [display_text])
+        emotion = normalize_emotion(state.emotion_override or guess_emotion(full_answer_so_far))
+        unit_timing: dict[str, Any] = {
+            "unit_index": index,
+            "unit_text_chars": len(display_text),
+            "unit_created_ms": relative_ms(),
+        }
+        unit_timings.append(unit_timing)
+        if index == 0:
+            set_timing_once("first_unit_created_ms", unit_timing["unit_created_ms"])
+            set_timing_once("first_sentence_ms", unit_timing["unit_created_ms"])
+            if unit_timing["unit_created_ms"] > _FIRST_UNIT_WARNING_MS:
+                mark_first_unit_warning("first_unit_created_after_threshold")
+            first_unit_event.set()
+
+        tts_text = build_tts_text(display_text)
+        unit = {
+            "index": index,
+            "display_text": display_text,
+            "tts_text": tts_text,
+            "emotion": emotion,
+            "previous_units": previous_units,
+            "full_answer_so_far": full_answer_so_far,
+            "timing": unit_timing,
+        }
+        visual_future = visual_executor.submit(
+            _build_unit_visual,
+            services,
+            state,
+            unit,
+            request_start_ms,
+            set_timing_once,
+        )
+        tts_future = tts_executor.submit(
+            _synthesize_unit_audio,
+            services,
+            state,
+            unit,
+            request_start_ms,
+            set_timing_once,
+        )
+        ready_futures.append(
+            ready_executor.submit(
+                _finalize_unit,
+                unit,
+                visual_future,
+                tts_future,
+                request_start_ms,
+                set_timing_once,
+                put_ready,
+            )
+        )
+        created_units.append(display_text)
+
+    first_unit_timer = threading.Timer(
+        _FIRST_UNIT_WARNING_MS / 1000.0,
+        mark_first_unit_warning,
+        args=("timer_threshold",),
+    )
+    first_unit_timer.daemon = True
+    first_unit_timer.start()
+
+    try:
+        state = validate_input_node(state, services)
+        if state.error:
+            output_queue.put({"event": "error", "data": {"message": state.error.get("message") or "请求无效。"}})
+            return
+
+        state = load_recent_context_node(state, services)
+        state = retrieve_long_term_memory_node(state, services)
+        state = build_prompt_node(state, services)
+        if state.error:
+            output_queue.put({"event": "error", "data": {"message": state.error.get("message") or "请求失败。"}})
+            return
+
+        visual_context = None
+        if services.visual_tool is not None and hasattr(services.visual_tool, "prepare_stream_context"):
+            visual_context = services.visual_tool.prepare_stream_context(
+                requested_costume=state.visual_overrides.get("costume_set"),
+                requested_mode=state.visual_overrides.get("costume_mode"),
+            )
+        state.metadata["stream_visual_context"] = visual_context
+
+        model = str(services.config.get("model") or "gpt-4.1-mini")
+        state.timing["agent_model"] = model
+        state.timing["prompt_input_chars"] = len(str(state.prompt_input or ""))
+
+        prompt_for_stream, prefetched_raw = _prepare_prompt_for_streaming(state, services, put_status)
+        splitter = PlayUnitSplitter(
+            min_chars=int(os.getenv("PLAY_UNIT_MIN_CHARS") or services.config.get("play_unit_min_chars") or 18),
+            max_chars=int(os.getenv("PLAY_UNIT_MAX_CHARS") or services.config.get("play_unit_max_chars") or 96),
+        )
+        extractor = JsonAnswerExtractor()
+        raw_model_parts: list[str] = []
+
+        def handle_raw_delta(delta: str) -> None:
+            if not delta:
+                return
+            set_timing_once("first_llm_delta_ms", relative_ms())
+            with timing_lock:
+                state.timing["llm_delta_events"] = int(state.timing.get("llm_delta_events") or 0) + 1
+            raw_model_parts.append(delta)
+            state.raw_model_output = "".join(raw_model_parts)
+            answer_delta = extractor.feed(state.raw_model_output)
+            if not answer_delta:
+                return
+            previous_sentence_count = splitter.completed_sentence_count
+            units = splitter.feed(answer_delta)
+            if splitter.completed_sentence_count > previous_sentence_count:
+                set_timing_once("first_sentence_ms", relative_ms())
+            for unit_text in units:
+                submit_unit(unit_text)
+
+        if prefetched_raw is not None:
+            handle_raw_delta(prefetched_raw)
+        else:
+            request = {"model": model, "input": prompt_for_stream}
+            for delta in _iter_response_text(services.llm_client, request, state):
+                handle_raw_delta(delta)
+
+        for unit_text in splitter.flush():
+            submit_unit(unit_text)
+
+        state.raw_model_output = "".join(raw_model_parts)
+        state.parsed_reply = parse_model_reply(state.raw_model_output or "")
+        state.answer = state.parsed_reply["answer"]
+        state.emotion = normalize_emotion(state.emotion_override or state.parsed_reply["emotion"])
+        if not created_units and state.answer:
+            fallback_splitter = PlayUnitSplitter(
+                min_chars=splitter.min_chars,
+                max_chars=splitter.max_chars,
+            )
+            for unit_text in fallback_splitter.feed(state.answer) + fallback_splitter.flush():
+                submit_unit(unit_text)
+
+        _save_stream_memory(state, services)
+
+        for future in ready_futures:
+            future.result()
+
+        state.timing["done_ms"] = relative_ms()
+        state.timing["units_count"] = len(created_units)
+        state.timing["units"] = unit_timings
+        log_timing(
+            "chat_stream_done",
+            state.timing["done_ms"],
+            conversation_id=state.conversation_id,
+            units_count=len(created_units),
+            first_llm_delta_ms=state.timing.get("first_llm_delta_ms"),
+            first_sentence_ms=state.timing.get("first_sentence_ms"),
+            first_unit_created_ms=state.timing.get("first_unit_created_ms"),
+            first_tts_start_ms=state.timing.get("first_tts_start_ms"),
+            first_tts_done_ms=state.timing.get("first_tts_done_ms"),
+            first_unit_ready_ms=state.timing.get("first_unit_ready_ms"),
+            first_visual_ready_ms=state.timing.get("first_visual_ready_ms"),
+            first_audio_ready_ms=state.timing.get("first_audio_ready_ms"),
+            llm_stream_create_ms=state.timing.get("llm_stream_create_ms"),
+            llm_stream_fallback_used=state.timing.get("llm_stream_fallback_used"),
+        )
+        output_queue.put(
+            {
+                "event": "done",
+                "data": {
+                    "answer": state.answer or "",
+                    "emotion": state.emotion or "happy",
+                    "emotion_label": EMOTION_LABELS[normalize_emotion(state.emotion or "happy")],
+                    "emotion_reason": state.parsed_reply.get("emotion_reason") if state.parsed_reply else "",
+                    "units_count": len(created_units),
+                    "timing": state.timing,
+                },
+            }
+        )
+    except Exception as exc:
+        output_queue.put({"event": "error", "data": {"message": str(exc)}})
+        log_timing("chat_stream_error", relative_ms(), conversation_id=state.conversation_id, error=str(exc))
+    finally:
+        first_unit_timer.cancel()
+        visual_executor.shutdown(wait=False, cancel_futures=False)
+        tts_executor.shutdown(wait=False, cancel_futures=False)
+        ready_executor.shutdown(wait=False, cancel_futures=False)
+        output_queue.put(_SENTINEL)
+
+
+def _prepare_prompt_for_streaming(
+    state: AgentState,
+    services: AgentServices,
+    put_status: Any,
+) -> tuple[str, str | None]:
+    if services.llm_client is None:
+        raise RuntimeError("LLM client 未配置。")
+
+    model = str(services.config.get("model") or "gpt-4.1-mini")
+    use_tools = should_use_tools(state.user_input)
+    state.metadata["use_tools"] = use_tools
+    state.timing["agent_tool_local_ms"] = 0.0
+    state.timing["agent_function_calls"] = 0
+    state.timing["agent_rounds"] = 0
+
+    if not use_tools or not services.tool_schemas:
+        return str(state.prompt_input or ""), None
+
+    if _prefers_chat_completions(services.llm_client):
+        state.timing["agent_tool_probe_skipped"] = True
+        state.timing["agent_tool_probe_skip_reason"] = "chat_completions_compatible_client"
+        return str(state.prompt_input or ""), None
+
+    put_status("tools", "processing_tools")
+    request = {
+        "model": model,
+        "input": str(state.prompt_input or ""),
+        "tools": services.tool_schemas,
+    }
+    response_start_ms = now_ms()
+    response = services.llm_client.responses.create(**request)
+    response_ms = elapsed_ms(response_start_ms)
+    state.timing["agent_rounds"] = 1
+    state.timing["agent_response_initial_ms"] = response_ms
+    _record_usage(state, response)
+    log_timing(
+        "agent_response",
+        response_ms,
+        phase="tool_probe",
+        model=model,
+        use_tools=True,
+        round=1,
+    )
+
+    function_calls = [
+        item for item in list(_get_attr(response, "output", []) or [])
+        if _get_attr(item, "type") == "function_call"
+    ]
+    if not function_calls:
+        state.response_id = str(_get_attr(response, "id", "") or "") or None
+        return str(state.prompt_input or ""), str(_get_attr(response, "output_text", "") or "")
+
+    tool_history: list[dict[str, Any]] = []
+    for item in function_calls:
+        state.timing["agent_function_calls"] += 1
+        tool_start_ms = now_ms()
+        tool_name = str(_get_attr(item, "name", ""))
+        arguments = str(_get_attr(item, "arguments", "") or "{}")
+        put_status("tools", f"tool:{tool_name}")
+        tool_result = run_local_tool(services.tool_functions, tool_name, arguments)
+        tool_duration = elapsed_ms(tool_start_ms)
+        state.timing["agent_tool_local_ms"] = round(
+            float(state.timing.get("agent_tool_local_ms") or 0) + tool_duration,
+            2,
+        )
+        tool_history.append({"name": tool_name, "arguments": arguments, "output": tool_result})
+        log_timing(
+            "agent_tool_local",
+            tool_duration,
+            name=tool_name,
+            arguments_chars=len(arguments),
+            output_chars=len(tool_result),
+        )
+
+    put_status("thinking", "thinking")
+    return _build_tool_followup_prompt(state.prompt_input, tool_history), None
+
+
+def _iter_response_text(
+    client: Any,
+    request: dict[str, Any],
+    state: AgentState,
+) -> Iterator[str]:
+    llm_client = _client_with_retry_disabled(client, state)
+    if _prefers_chat_completions(llm_client):
+        state.timing["llm_stream_fallback_used"] = True
+        state.timing["llm_stream_fallback_reason"] = "chat_completions_compatible_client"
+        yield from _iter_chat_completion_text(llm_client, request, state)
+        return
+
+    stream_request = dict(request)
+    stream_request["stream"] = True
+    stream_create_start_ms = now_ms()
+    streamed_text = ""
+    try:
+        stream = llm_client.responses.create(**stream_request)
+        state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
+        log_timing(
+            "llm_stream_create",
+            state.timing["llm_stream_create_ms"],
+            model=request.get("model"),
+            max_retries=state.timing.get("llm_stream_max_retries"),
+            retry_disabled=state.timing.get("llm_stream_retry_disabled"),
+        )
+    except TypeError as exc:
+        state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
+        state.timing["llm_stream_fallback_used"] = True
+        state.timing["llm_stream_fallback_reason"] = "stream_request_type_error"
+        state.timing["llm_stream_error"] = str(exc)
+        yield _fallback_response_text(llm_client, request, state, streamed_text)
+        return
+    except Exception as exc:
+        state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
+        state.timing["llm_stream_fallback_used"] = True
+        state.timing["llm_stream_fallback_reason"] = "stream_create_error"
+        state.timing["llm_stream_error"] = str(exc)
+        log_timing(
+            "llm_stream_fallback",
+            state.timing["llm_stream_create_ms"],
+            phase="create",
+            model=request.get("model"),
+            error=str(exc),
+        )
+        if _is_responses_api_not_found(exc) and _has_chat_completions(llm_client):
+            state.timing["llm_stream_fallback_reason"] = "responses_api_not_found_chat_completions"
+            yield from _iter_chat_completion_text(llm_client, request, state, streamed_text)
+            return
+        yield _fallback_response_text(llm_client, request, state, streamed_text)
+        return
+
+    if hasattr(stream, "output_text"):
+        state.timing["llm_stream_fallback_used"] = True
+        state.timing["llm_stream_fallback_reason"] = "non_stream_response"
+        _record_usage(state, stream)
+        yield str(_get_attr(stream, "output_text", "") or "")
+        return
+
+    state.timing["llm_stream_fallback_used"] = False
+    try:
+        for event in stream:
+            event_type = str(_get_attr(event, "type", "") or "")
+            if event_type == "response.output_text.delta":
+                delta = str(_get_attr(event, "delta", "") or "")
+                streamed_text += delta
+                yield delta
+            elif event_type == "response.completed":
+                response = _get_attr(event, "response")
+                if response is not None:
+                    _record_usage(state, response)
+                    state.response_id = str(_get_attr(response, "id", "") or "") or state.response_id
+            elif event_type == "response.failed":
+                error = _get_attr(event, "error")
+                raise RuntimeError(str(error or "LLM streaming failed."))
+    except Exception as exc:
+        state.timing["llm_stream_fallback_used"] = True
+        state.timing["llm_stream_fallback_reason"] = "stream_iteration_error"
+        state.timing["llm_stream_error"] = str(exc)
+        log_timing(
+            "llm_stream_fallback",
+            elapsed_ms(stream_create_start_ms),
+            phase="iteration",
+            model=request.get("model"),
+            streamed_chars=len(streamed_text),
+            error=str(exc),
+        )
+        yield _fallback_response_text(llm_client, request, state, streamed_text)
+
+
+def _client_with_retry_disabled(client: Any, state: AgentState) -> Any:
+    state.timing["llm_stream_max_retries"] = 0
+    if not hasattr(client, "with_options"):
+        state.timing["llm_stream_retry_disabled"] = False
+        return client
+    try:
+        retry_disabled_client = client.with_options(max_retries=0)
+    except TypeError:
+        state.timing["llm_stream_retry_disabled"] = False
+        return client
+    state.timing["llm_stream_retry_disabled"] = True
+    return retry_disabled_client
+
+
+def _fallback_response_text(
+    client: Any,
+    request: dict[str, Any],
+    state: AgentState,
+    already_streamed: str = "",
+) -> str:
+    if _prefers_chat_completions(client):
+        return "".join(_iter_chat_completion_text(client, request, state, already_streamed))
+
+    fallback_request = {key: value for key, value in request.items() if key != "stream"}
+    fallback_start_ms = now_ms()
+    response = client.responses.create(**fallback_request)
+    fallback_ms = elapsed_ms(fallback_start_ms)
+    state.timing["llm_fallback_response_ms"] = fallback_ms
+    _record_usage(state, response)
+    fallback_text = str(_get_attr(response, "output_text", "") or "")
+    log_timing(
+        "llm_stream_fallback_response",
+        fallback_ms,
+        model=fallback_request.get("model"),
+        fallback_chars=len(fallback_text),
+        already_streamed_chars=len(already_streamed),
+    )
+    if already_streamed and fallback_text.startswith(already_streamed):
+        return fallback_text[len(already_streamed):]
+    return fallback_text
+
+
+def _prefers_chat_completions(client: Any) -> bool:
+    base_url = str(_get_attr(client, "base_url", "") or "").lower()
+    return "deepseek" in base_url and _has_chat_completions(client)
+
+
+def _has_chat_completions(client: Any) -> bool:
+    chat = _get_attr(client, "chat")
+    completions = _get_attr(chat, "completions") if chat is not None else None
+    return completions is not None and hasattr(completions, "create")
+
+
+def _is_responses_api_not_found(exc: Exception) -> bool:
+    status_code = _get_attr(exc, "status_code")
+    if status_code == 404:
+        return True
+    return "404" in str(exc)
+
+
+def _iter_chat_completion_text(
+    client: Any,
+    request: dict[str, Any],
+    state: AgentState,
+    already_streamed: str = "",
+) -> Iterator[str]:
+    chat_request = {
+        "model": request.get("model"),
+        "messages": [{"role": "user", "content": str(request.get("input") or "")}],
+        "stream": True,
+    }
+    chat_start_ms = now_ms()
+    full_text = ""
+    try:
+        stream = client.chat.completions.create(**chat_request)
+        state.timing["llm_chat_stream_create_ms"] = elapsed_ms(chat_start_ms)
+        state.timing["llm_chat_completions_fallback_used"] = True
+        log_timing(
+            "llm_chat_stream_create",
+            state.timing["llm_chat_stream_create_ms"],
+            model=chat_request.get("model"),
+        )
+        for chunk in stream:
+            choices = list(_get_attr(chunk, "choices", []) or [])
+            if not choices:
+                continue
+            delta = _get_attr(choices[0], "delta")
+            content = str(_get_attr(delta, "content", "") or "")
+            if not content:
+                continue
+            full_text += content
+            yield content
+        return
+    except Exception as exc:
+        state.timing["llm_chat_stream_error"] = str(exc)
+        log_timing(
+            "llm_chat_stream_error",
+            elapsed_ms(chat_start_ms),
+            model=chat_request.get("model"),
+            error=str(exc),
+        )
+
+    fallback_request = dict(chat_request)
+    fallback_request["stream"] = False
+    response = client.chat.completions.create(**fallback_request)
+    choices = list(_get_attr(response, "choices", []) or [])
+    if choices:
+        message = _get_attr(choices[0], "message")
+        full_text = str(_get_attr(message, "content", "") or "")
+    _record_usage(state, response)
+    if already_streamed and full_text.startswith(already_streamed):
+        yield full_text[len(already_streamed):]
+    else:
+        yield full_text
+
+
+def _build_unit_visual(
+    services: AgentServices,
+    state: AgentState,
+    unit: dict[str, Any],
+    request_start_ms: float,
+    set_timing_once: Any,
+) -> dict[str, Any]:
+    unit_timing = unit["timing"]
+    unit_index = int(unit["index"])
+    classifier_start_abs = now_ms()
+    unit_timing["visual_classifier_start_ms"] = round(classifier_start_abs - request_start_ms, 2)
+    try:
+        if services.visual_tool is None:
+            raise RuntimeError("visual tool is not configured")
+        payload = services.visual_tool.build_unit_visual_payload(
+            current_unit_text=unit["display_text"],
+            emotion=unit["emotion"],
+            unit_index=unit_index,
+            previous_units=unit["previous_units"],
+            full_answer_so_far=unit["full_answer_so_far"],
+            runtime_context=state.metadata.get("stream_visual_context"),
+            requested_costume=state.visual_overrides.get("costume_set"),
+            requested_mode=state.visual_overrides.get("costume_mode"),
+        )
+        classifier = payload.get("classifier") if isinstance(payload.get("classifier"), dict) else {}
+        duration_ms = classifier.get("duration_ms")
+        if not isinstance(duration_ms, (int, float)):
+            duration_ms = elapsed_ms(classifier_start_abs)
+        cue = payload.get("cue") if isinstance(payload.get("cue"), dict) else {}
+        visual = {
+            "expression_id": cue.get("expression_id"),
+            "hand_pose": cue.get("hand_pose"),
+            "image_url": cue.get("image_url"),
+            "image_path": cue.get("image_path"),
+            "reason": cue.get("reason"),
+            "selection_source": payload.get("selection_source") or "local_vote_classifier",
+            "classifier_version": payload.get("classifier_version"),
+            "duration_ms": duration_ms,
+            "confidence": classifier.get("confidence"),
+            "signals": classifier.get("signals", []),
+            "selection_error": payload.get("selection_error"),
+            "costume": payload.get("costume"),
+            "costume_mode": payload.get("costume_mode"),
+            "background_url": payload.get("background_url"),
+            "dialog": payload.get("dialog"),
+            "character": payload.get("character"),
+            "cue": cue,
+            "cues": payload.get("cues") if isinstance(payload.get("cues"), list) else [cue],
+        }
+        unit_timing["visual_classifier_duration_ms"] = duration_ms
+        unit_timing["visual_classifier_version"] = visual["classifier_version"]
+        unit_timing["visual_selection_source"] = visual["selection_source"]
+        unit_timing["visual_selection_error"] = visual["selection_error"]
+        log_timing(
+            "visual_classifier_unit",
+            duration_ms,
+            unit_index=unit_index,
+            chars=len(unit["display_text"]),
+            version=visual["classifier_version"],
+            source=visual["selection_source"],
+            error=visual["selection_error"],
+        )
+        return visual
+    except Exception as exc:
+        duration_ms = elapsed_ms(classifier_start_abs)
+        unit_timing["visual_classifier_duration_ms"] = duration_ms
+        unit_timing["visual_classifier_version"] = None
+        unit_timing["visual_selection_source"] = "visual_error"
+        unit_timing["visual_selection_error"] = str(exc)
+        return {
+            "expression_id": None,
+            "hand_pose": None,
+            "image_url": None,
+            "reason": "visual classifier failed",
+            "selection_source": "visual_error",
+            "classifier_version": None,
+            "duration_ms": duration_ms,
+            "selection_error": str(exc),
+        }
+    finally:
+        if unit_index == 0:
+            set_timing_once("first_visual_ready_ms", round(now_ms() - request_start_ms, 2))
+
+
+def _synthesize_unit_audio(
+    services: AgentServices,
+    state: AgentState,
+    unit: dict[str, Any],
+    request_start_ms: float,
+    set_timing_once: Any,
+) -> dict[str, Any]:
+    unit_timing = unit["timing"]
+    unit_index = int(unit["index"])
+    tts_start_ms = now_ms()
+    tts_start_relative_ms = round(tts_start_ms - request_start_ms, 2)
+    unit_timing["tts_start_ms"] = tts_start_relative_ms
+    if unit_index == 0:
+        set_timing_once("first_tts_start_ms", tts_start_relative_ms)
+    try:
+        if services.tts_tool is None:
+            raise RuntimeError("TTS tool is not configured")
+        result = services.tts_tool.synthesize(
+            text=unit["tts_text"],
+            emotion=unit["emotion"],
+            tts_param_overrides=state.tts_param_overrides,
+        )
+        duration_ms = result.get("timing", {}).get("tts_total_ms")
+        if not isinstance(duration_ms, (int, float)):
+            duration_ms = elapsed_ms(tts_start_ms)
+        unit_timing["tts_duration_ms"] = duration_ms
+        return {
+            "audio_url": result.get("audio_url"),
+            "audio_path": result.get("audio_path"),
+            "audio_error": None,
+            "tts_result": result,
+            "duration_ms": duration_ms,
+        }
+    except Exception as exc:
+        duration_ms = elapsed_ms(tts_start_ms)
+        unit_timing["tts_duration_ms"] = duration_ms
+        unit_timing["tts_error"] = str(exc)
+        return {
+            "audio_url": None,
+            "audio_path": None,
+            "audio_error": str(exc),
+            "tts_result": None,
+            "duration_ms": duration_ms,
+        }
+    finally:
+        tts_done_relative_ms = round(now_ms() - request_start_ms, 2)
+        unit_timing["tts_done_ms"] = tts_done_relative_ms
+        if unit_index == 0:
+            set_timing_once("first_tts_done_ms", tts_done_relative_ms)
+            set_timing_once("first_audio_ready_ms", tts_done_relative_ms)
+
+
+def _finalize_unit(
+    unit: dict[str, Any],
+    visual_future: concurrent.futures.Future[dict[str, Any]],
+    tts_future: concurrent.futures.Future[dict[str, Any]],
+    request_start_ms: float,
+    set_timing_once: Any,
+    put_ready: Any,
+) -> None:
+    visual = visual_future.result()
+    audio = tts_future.result()
+    unit_timing = unit["timing"]
+    unit_ready_ms = round(now_ms() - request_start_ms, 2)
+    unit_timing["unit_ready_ms"] = unit_ready_ms
+    if int(unit["index"]) == 0:
+        set_timing_once("first_unit_ready_ms", unit_ready_ms)
+    log_timing(
+        "chat_stream_unit_ready",
+        unit_ready_ms,
+        unit_index=unit["index"],
+        visual_ms=unit_timing.get("visual_classifier_duration_ms"),
+        tts_ms=unit_timing.get("tts_duration_ms"),
+        audio_error=audio.get("audio_error"),
+    )
+    data = {
+        "index": unit["index"],
+        "display_text": unit["display_text"],
+        "tts_text": unit["tts_text"],
+        "emotion": unit["emotion"],
+        "visual": visual,
+        "audio_url": audio.get("audio_url"),
+        "audio_path": audio.get("audio_path"),
+        "timing": {
+            "visual_ms": unit_timing.get("visual_classifier_duration_ms"),
+            "tts_ms": unit_timing.get("tts_duration_ms"),
+            "unit_ready_ms": unit_ready_ms,
+        },
+    }
+    if audio.get("audio_error"):
+        data["audio_error"] = audio["audio_error"]
+    put_ready(int(unit["index"]), data)
+
+
+def _save_stream_memory(state: AgentState, services: AgentServices) -> None:
+    try:
+        services.recent_memory.append_turn(state.conversation_id, state.user_input, state.answer or "")
+        result = save_extracted_memories(
+            memory_store=services.memory_store,
+            conversation_id=state.conversation_id,
+            user_input=state.user_input,
+            assistant_answer=state.answer or "",
+            max_active_memories=int(services.config.get("max_long_term_memories", 200)),
+            interlocutor_name=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
+        )
+        state.metadata.update(result)
+    except Exception as exc:
+        state.metadata["memory_error"] = str(exc)
+
+
+def _strip_formula_brackets(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        if re.search(r"[=+\-*/^{}\\]|[A-Za-z]{2,}\d*", inner):
+            return ""
+        return inner
+
+    text = re.sub(r"（([^（）]*)）", replace, text)
+    text = re.sub(r"\(([^()]*)\)", replace, text)
+    return text
+
+
+def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, Any]]) -> str:
+    return "\n\n".join(
+        [
+            str(prompt_input),
+            "[TOOL_RESULTS]",
+            json.dumps(tool_history, ensure_ascii=False),
+            "[NEXT_STEP]",
+            "请只根据以上工具结果输出最终 JSON，不要 Markdown，不要解释工具链。",
+        ]
+    )
+
+
+def _record_usage(state: AgentState, response: Any) -> None:
+    usage = _get_attr(response, "usage")
+    if not usage:
+        return
+    for key in ("input_tokens", "output_tokens", "total_tokens"):
+        value = _get_attr(usage, key)
+        if value is not None:
+            state.timing[key] = value
+
+
+def _get_attr(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)

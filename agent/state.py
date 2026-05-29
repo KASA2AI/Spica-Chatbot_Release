@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from agent_tools.tts.base import TTSAdapter
+from agent_tools.tts.schemas import TTSResult
+
 
 @dataclass
 class AgentState:
@@ -20,7 +23,7 @@ class AgentState:
     answer: str | None = None
     emotion: str | None = None
     visual: dict[str, Any] | None = None
-    tts_result: dict[str, Any] | None = None
+    tts_result: TTSResult | None = None
     tools: list[dict[str, Any]] = field(default_factory=list)
     timing: dict[str, Any] = field(default_factory=dict)
     error: dict[str, Any] | None = None
@@ -31,7 +34,7 @@ class AgentState:
 @dataclass
 class AgentServices:
     llm_client: Any
-    tts_tool: Any | None
+    tts_adapter: TTSAdapter | None
     visual_tool: Any | None
     memory_store: Any
     recent_memory: Any

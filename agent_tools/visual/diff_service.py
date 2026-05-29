@@ -10,7 +10,7 @@ from urllib.parse import quote
 from common.timing import elapsed_ms, now_ms
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BASE_DIR
 SPICA_DATA_DIR = PROJECT_ROOT / "spica_data"
 DEFAULT_DIFF_ROOT = SPICA_DATA_DIR / "diffs"

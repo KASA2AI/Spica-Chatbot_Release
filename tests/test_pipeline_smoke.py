@@ -8,7 +8,8 @@ from agent.nodes import build_prompt_node, call_llm_node, validate_input_node
 from memory.recent import RecentMemory
 from agent.runtime import run_voice_pipeline
 from agent.state import AgentServices, AgentState
-from agent_tools.router import TOOL_SCHEMAS, default_tool_functions
+from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
+from agent_tools.tts.schemas import TTSRequest, TTSResult
 
 
 class FakeResponse:
@@ -59,15 +60,34 @@ class FakeDeepSeekClient:
 
 
 class FakeTTS:
-    def synthesize(self, text, emotion, tts_param_overrides=None):
-        return {
-            "audio_url": "/static/generated_voice/fake.wav",
-            "audio_path": "/tmp/fake.wav",
-            "tts_params": {"speed": 1},
-            "tts_chunks": [text],
-            "reference": {"prompt_text": "ref"},
-            "timing": {"tts_total_ms": 1.0},
-        }
+    name = "fake_tts"
+
+    def __init__(self):
+        self.requests = []
+
+    def synthesize(self, request):
+        self.requests.append(request)
+        assert isinstance(request, TTSRequest)
+        return TTSResult(
+            ok=True,
+            provider=self.name,
+            audio_url="/static/generated_voice/fake.wav",
+            audio_path="/tmp/fake.wav",
+            chunks=[
+                {
+                    "index": 0,
+                    "text": request.text,
+                    "audio_url": "/static/generated_voice/fake.wav",
+                    "audio_path": "/tmp/fake.wav",
+                }
+            ],
+            timing={"tts_total_ms": 1.0},
+            metadata={
+                "sampling_rate": 32000,
+                "tts_param": {"speed": 1},
+                "reference": {"prompt_text": "ref"},
+            },
+        )
 
 
 class FakeVisual:
@@ -82,7 +102,7 @@ class FakeVisual:
 def make_services(tmpdir, llm=None, tts=None, visual=None):
     return AgentServices(
         llm_client=llm or FakeLLMClient(),
-        tts_tool=tts,
+        tts_adapter=tts,
         visual_tool=visual,
         memory_store=SQLiteMemoryStore(Path(tmpdir) / "memory.sqlite3"),
         recent_memory=RecentMemory(max_turns=3),
@@ -131,12 +151,17 @@ class PipelineSmokeTest(unittest.TestCase):
 
     def test_pipeline_returns_compatible_payload(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            services = make_services(tmpdir, tts=FakeTTS(), visual=FakeVisual())
+            tts = FakeTTS()
+            services = make_services(tmpdir, tts=tts, visual=FakeVisual())
             state = run_voice_pipeline(AgentState(conversation_id="c1", user_input="你好"), services)
             payload = state.response_payload
             for key in ("answer", "conversation_id", "emotion", "audio_url", "visual", "tools", "timing"):
                 self.assertIn(key, payload)
             self.assertEqual(payload["audio_url"], "/static/generated_voice/fake.wav")
+            self.assertEqual(payload["tts_chunks"], ["こんにちは。"])
+            self.assertNotIn("sampling_rate", payload)
+            self.assertNotIn("reference", payload)
+            self.assertEqual(len(tts.requests), 1)
 
     def test_non_stream_deepseek_client_uses_chat_completions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

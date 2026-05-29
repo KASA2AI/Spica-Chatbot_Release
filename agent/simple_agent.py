@@ -23,7 +23,9 @@ from agent.runtime import run_voice_pipeline
 from agent.state import AgentServices, AgentState
 from agent.streaming_pipeline import stream_voice_events
 from common.timing import log_timing
-from agent_tools.router import TOOL_SCHEMAS, default_tool_functions
+from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
+from agent_tools.tts.adapters.gptsovits_current import CurrentGPTSoVITSAdapter
+from agent_tools.tts.base import TTSAdapter
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -35,11 +37,16 @@ load_dotenv(BASE_DIR.parent / "xiaosan.env", override=False)
 class SimpleAgent:
     """Thin facade around the explicit voice pipeline."""
 
-    def __init__(self, tts_tool: Any | None = None, visual_tool: Any | None = None):
+    def __init__(
+        self,
+        tts_adapter: TTSAdapter | None = None,
+        visual_tool: Any | None = None,
+        tts_tool: Any | None = None,
+    ):
         self.model = os.getenv("MODEL") or "gpt-4.1-mini"
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.base_url = os.getenv("OPENAI_BASE_URL") or None
-        self.tts_tool = tts_tool
+        self.tts_adapter = tts_adapter or (CurrentGPTSoVITSAdapter(tts_tool) if tts_tool is not None else None)
         self.visual_tool = visual_tool
 
         if not self.api_key:
@@ -74,7 +81,7 @@ class SimpleAgent:
     def _build_services(self) -> AgentServices:
         return AgentServices(
             llm_client=self.client,
-            tts_tool=self.tts_tool,
+            tts_adapter=self.tts_adapter,
             visual_tool=self.visual_tool,
             memory_store=self.memory_store,
             recent_memory=self.recent_memory,

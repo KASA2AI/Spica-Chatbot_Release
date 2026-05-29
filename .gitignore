@@ -12,3 +12,6 @@ xiaosan.env
 static/generated_voice/*.wav
 spica_data/*.sqlite3
 spica_data/*.sqlite3-*
+
+agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/*
+!agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/.gitkeep

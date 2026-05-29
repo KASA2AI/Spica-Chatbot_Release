@@ -8,8 +8,9 @@ from memory.store import SQLiteMemoryStore
 from memory.recent import RecentMemory
 from agent.state import AgentServices, AgentState
 from agent.streaming_pipeline import PlayUnitSplitter, build_tts_text, stream_voice_events
-from tts.gptsovits_service import GPTSoVITSTool
-from agent_tools.router import TOOL_SCHEMAS, default_tool_functions
+from agent_tools.tts import GPTSoVITSTool
+from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
+from agent_tools.tts.schemas import TTSRequest, TTSResult
 
 
 class FakeResponse:
@@ -112,16 +113,22 @@ class FakeVisual:
 
 
 class FakeTTS:
+    name = "fake_tts"
+
     def __init__(self):
         self.calls = []
 
-    def synthesize(self, text, emotion, tts_param_overrides=None):
-        self.calls.append({"text": text, "emotion": emotion})
-        return {
-            "audio_url": f"/static/generated_voice/unit_{len(self.calls) - 1}.wav",
-            "audio_path": "/tmp/fake.wav",
-            "timing": {"tts_total_ms": 2.0},
-        }
+    def synthesize(self, request):
+        assert isinstance(request, TTSRequest)
+        self.calls.append({"text": request.text, "emotion": request.emotion})
+        return TTSResult(
+            ok=True,
+            provider=self.name,
+            audio_url=f"/static/generated_voice/unit_{len(self.calls) - 1}.wav",
+            audio_path="/tmp/fake.wav",
+            timing={"tts_total_ms": 2.0},
+            duration_ms=2.0,
+        )
 
 
 def make_services(tmpdir, answer_text):
@@ -131,7 +138,7 @@ def make_services(tmpdir, answer_text):
     )
     return AgentServices(
         llm_client=FakeLLMClient(raw),
-        tts_tool=FakeTTS(),
+        tts_adapter=FakeTTS(),
         visual_tool=FakeVisual(),
         memory_store=SQLiteMemoryStore(Path(tmpdir) / "memory.sqlite3"),
         recent_memory=RecentMemory(max_turns=3),

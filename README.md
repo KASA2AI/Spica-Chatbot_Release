@@ -37,12 +37,20 @@ Spica-Chatbot/
 │   ├── extractor.py               # 从用户输入抽取可保存记忆
 │   └── control.py                 # 记忆保存、去重、裁剪控制
 ├── agent_tools/
-│   ├── router.py                  # 工具 schema、启发式路由和本地工具执行
-│   └── local_tools.py             # 独立工具示例
-├── tts/
-│   └── gptsovits_service.py       # GPT-SoVITS 封装、切句、写 wav、模型预热
-├── visual/
-│   └── diff_service.py            # 立绘差分选择、服装选择、图片路径解析
+│   ├── function_tools/
+│   │   ├── router.py              # LLM function tool schema、启发式路由和执行
+│   │   └── local_tools.py         # 时间、计算器、todo 等独立工具示例
+│   ├── tts/
+│   │   ├── base.py                # TTSAdapter 协议
+│   │   ├── schemas.py             # TTSRequest / TTSResult
+│   │   ├── manager.py             # 根据配置构建 TTS adapter
+│   │   ├── adapters/              # 前端适配层：current GPT-SoVITS / dummy
+│   │   ├── gptsovits/
+│   │   │   └── service.py         # GPT-SoVITS 后端封装、切句、写 wav、模型预热
+│   │   └── vendors/
+│   │       └── GPT-SoVITS-v2pro-20250604-nvidia50/ # 上游语音引擎占位目录
+│   ├── visual/
+│   │   └── diff_service.py        # 立绘差分选择、服装选择、图片路径解析
 ├── common/
 │   └── timing.py                  # 通用计时日志
 ├── examples/
@@ -57,17 +65,16 @@ Spica-Chatbot/
 ├── static/generated_voice/        # GPT-SoVITS 输出 wav，运行时生成
 ├── tests/                         # 单元测试和流水线 smoke test
 ├── run_ibus.sh                    # Linux ibus 输入法启动脚本
-└── GPT-SoVITS-v2pro-20250604-nvidia50/ # 发布包为空目录，用户自行放入上游语音引擎
 ```
 
 ## 快速启动
 
 1. 准备 GPT-SoVITS。
 
-   发布包里的 `GPT-SoVITS-v2pro-20250604-nvidia50/` 是空占位目录，不包含上游 GPT-SoVITS 代码、虚拟环境、模型权重或运行产物。使用前需要把匹配的 GPT-SoVITS v2Pro / nvidia50 版本解压或克隆到这个目录，完成后应至少能看到：
+   发布包里的 `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/` 是空占位目录，不包含上游 GPT-SoVITS 代码、虚拟环境、模型权重或运行产物。使用前需要把匹配的 GPT-SoVITS v2Pro / nvidia50 版本解压或克隆到这个目录，完成后应至少能看到：
 
    ```text
-   GPT-SoVITS-v2pro-20250604-nvidia50/
+   agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/
    ├── requirements.txt
    ├── GPT_SoVITS/inference_webui.py
    ├── GPT_weights_v2ProPlus/
@@ -76,8 +83,8 @@ Spica-Chatbot/
 
    默认 `config/tts_config.json` 指向：
 
-   - `GPT-SoVITS-v2pro-20250604-nvidia50/GPT_weights_v2ProPlus/spcia-e25.ckpt`
-   - `GPT-SoVITS-v2pro-20250604-nvidia50/SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth`
+   - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_weights_v2ProPlus/spcia-e25.ckpt`
+   - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth`
 
    如果你的目录名、权重文件名或版本不同，修改 `config/tts_config.json` 里的 `gptsovits_root`、`gpt_model_path` 和 `sovits_model_path`。
 
@@ -97,7 +104,7 @@ Spica-Chatbot/
    ```bash
    cd /home/san/ai_code/Spica-Chatbot
    pip install openai httpx python-dotenv PySide6 soundfile numpy pytest
-   pip install -r GPT-SoVITS-v2pro-20250604-nvidia50/requirements.txt
+   pip install -r agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/requirements.txt
    ```
 
    可选语音输入：
@@ -158,7 +165,7 @@ Spica-Chatbot/
    python -m pytest tests
    ```
 
-   不建议直接在仓库根目录运行无参数 `pytest`，因为它可能递归扫描内置 `GPT-SoVITS-v2pro-20250604-nvidia50/runtime/` 里的第三方包。
+   不建议直接在仓库根目录运行无参数 `pytest`，因为它可能递归扫描内置 `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/runtime/` 里的第三方包。
 
 ## 配置说明
 
@@ -182,6 +189,7 @@ SQLite 记忆表会自动迁移新增字段：`memory_key`、`memory_type`、`so
 
 关键字段：
 
+- `provider`：TTS provider，默认 `gptsovits_current`；测试可切到 `dummy`。
 - `gptsovits_root`：内置 GPT-SoVITS 根目录。
 - `gpt_model_path` / `sovits_model_path`：默认 GPT 和 SoVITS 权重。
 - `output_dir`：wav 输出目录，默认 `static/generated_voice`。
@@ -310,20 +318,19 @@ flowchart TD
 
 ## TTS 局部架构图
 
-`GPTSoVITSTool` 是本项目对内置 GPT-SoVITS 的适配层。
+TTS 分成两层：`TTSAdapter` 是前端协议，pipeline 只依赖 `TTSRequest` / `TTSResult`；`GPTSoVITSTool` 是当前 GPT-SoVITS 后端实现，由 `CurrentGPTSoVITSAdapter` 包装后接入 pipeline。
 
 ```mermaid
 flowchart TD
-    A[synthesize(text, emotion)] --> B[reload_config<br/>读取 tts_config.json]
-    B --> C[normalize_emotion<br/>选择情绪参考样本]
-    C --> D[_normalize_tts_text<br/>补终止符/清理标点]
-    D --> E[_split_tts_text<br/>按句子和长度切 chunk]
-    E --> F[_lazy_import<br/>导入 GPT-SoVITS]
-    F --> G[_ensure_models<br/>切换 GPT/SoVITS 权重]
-    G --> H[get_tts_wav<br/>逐 chunk 合成]
-    H --> I[_combine_audio_results<br/>拼接音频]
-    I --> J[soundfile.write<br/>写 chunk wav 和完整 wav]
-    J --> K[返回 audio_url/audio_path/tts_chunks/timing]
+    A[pipeline] --> B[TTSRequest]
+    B --> C[build_tts_adapter<br/>读取 provider]
+    C --> D[CurrentGPTSoVITSAdapter]
+    D --> E[GPTSoVITSTool.synthesize]
+    E --> F[reload_config<br/>读取 tts_config.json]
+    F --> G[_lazy_import<br/>导入 GPT-SoVITS]
+    G --> H[_ensure_models<br/>切换 GPT/SoVITS 权重]
+    H --> I[get_tts_wav<br/>逐 chunk 合成]
+    I --> J[TTSResult<br/>audio_url/audio_path/chunks/timing]
 ```
 
 集成的上游入口：
@@ -346,9 +353,12 @@ flowchart TD
 | `memory/store.py` | SQLite 长期记忆表、关键词检索、use_count 更新 |
 | `memory/recent.py` | 每个 conversation_id 的最近 N 轮对话 |
 | `memory/extractor.py` | 用规则识别“记住、我喜欢、叫我”等可保存事实 |
-| `agent_tools/router.py` | 定义工具 schema，判断是否启用工具，执行本地工具 |
-| `visual/diff_service.py` | 本地投票式表情和手部动作选择，解析差分图片 |
-| `tts/gptsovits_service.py` | GPT-SoVITS 模型加载、情绪参考音频选择、TTS 切句和 wav 输出 |
+| `agent_tools/function_tools/router.py` | 定义 LLM function tool schema，判断是否启用工具，执行本地工具 |
+| `agent_tools/function_tools/local_tools.py` | 时间、计算器、todo 等本地工具示例 |
+| `agent_tools/visual/diff_service.py` | 本地投票式表情和手部动作选择，解析差分图片 |
+| `agent_tools/tts/base.py` / `schemas.py` | TTS 前端协议和标准请求/返回结构 |
+| `agent_tools/tts/manager.py` / `adapters/` | 根据配置选择 TTS provider，并适配同步/流式 pipeline |
+| `agent_tools/tts/gptsovits/service.py` | GPT-SoVITS 后端模型加载、情绪参考音频选择、切句和 wav 输出 |
 | `templates/index.html` | 旧 Web UI 模板，包含 SSE 播放逻辑，但当前不是默认入口 |
 
 ## 数据和运行产物
@@ -356,7 +366,7 @@ flowchart TD
 - `spica_data/memory.sqlite3`：长期记忆数据库，运行时更新。
 - `static/generated_voice/*.wav`：语音输出，运行时生成。
 - `spica_data/diffs/`：立绘差分素材和规则，不是运行缓存；发布包只保留空目录骨架。
-- `GPT-SoVITS-v2pro-20250604-nvidia50/`：发布包只保留空目录，占位给用户放入上游语音引擎、依赖和权重。
+- `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`：发布包只保留空目录，占位给用户放入上游语音引擎、依赖和权重。
 - `xiaosan.env`：本地密钥配置；发布包只保留空值模板，不应提交真实密钥。
 
 `.gitignore` 已忽略 Python 缓存、环境文件、生成语音和 SQLite 运行数据库。
@@ -370,6 +380,7 @@ flowchart TD
 - `tests/test_recent_memory.py`：短期记忆只保留最近轮次。
 - `tests/test_pipeline_smoke.py`：同步 pipeline、工具路由、DeepSeek Chat Completions 兼容。
 - `tests/test_streaming_pipeline.py`：流式事件顺序、句段拆分、TTS 文本清洗、DeepSeek 流式兼容。
+- `tests/test_tts_adapters.py`：TTS adapter 请求/返回映射和失败兜底。
 - `tests/test_visual_classifier.py`：本地立绘分类器对说明、不满、悲伤语气的选择。
 
 ## 开发注意事项
@@ -377,9 +388,9 @@ flowchart TD
 - LLM 最终输出必须是 JSON：`answer`、`emotion`、`emotion_reason`。
 - `answer` 应是适合直接朗读的自然日语，避免长公式和难读符号。
 - 流式链路只播放完整单元，不播放裸 token。
-- `visual/diff_service.py` 的 `image_url` 主要服务旧 Web UI；桌面 Overlay 使用 `image_path` 直接加载本地图片。
-- `GPT-SoVITS-v2pro-20250604-nvidia50/` 是上游语音引擎和权重目录，业务层只应通过 `tts/gptsovits_service.py` 访问。
-- `agent_tools.router.get_weather()` 当前是模拟数据，不是真实天气接口。
+- `agent_tools/visual/diff_service.py` 的 `image_url` 主要服务旧 Web UI；桌面 Overlay 使用 `image_path` 直接加载本地图片。
+- `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/` 是上游语音引擎和权重目录，业务层只应通过 `agent_tools/tts/gptsovits/service.py` 访问。
+- `agent_tools/function_tools/router.py` 的 `get_weather()` 当前是模拟数据，不是真实天气接口。
 
 ## 发布打包
 
@@ -389,4 +400,4 @@ flowchart TD
 bash build_release.sh
 ```
 
-脚本会复制项目代码和配置，排除 `.git`、IDE 配置、缓存、SQLite、生成 wav、原始 `spica_data` 文件和完整 GPT-SoVITS 目录；然后重新创建空的 `GPT-SoVITS-v2pro-20250604-nvidia50/`、空的 `spica_data/` 子目录骨架，并生成 `=` 后为空的 `xiaosan.env`。如果用 Git 推送 release 目录，注意 Git 本身不会记录真正的空目录，需要按 README 重新创建这些目录或自行添加占位文件。
+脚本会复制项目代码和配置，排除 `.git`、IDE 配置、缓存、SQLite、生成 wav、原始 `spica_data` 文件和完整 GPT-SoVITS 目录；然后重新创建空的 `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`、空的 `spica_data/` 子目录骨架，并生成 `=` 后为空的 `xiaosan.env`。如果用 Git 推送 release 目录，注意 Git 本身不会记录真正的空目录，需要按 README 重新创建这些目录或自行添加占位文件。

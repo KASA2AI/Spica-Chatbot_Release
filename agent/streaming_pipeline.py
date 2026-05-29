@@ -18,8 +18,10 @@ from agent.nodes import (
 )
 from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
+from agent.text_normalizer import normalize_square_brackets_for_speech
 from common.timing import elapsed_ms, log_timing, now_ms
-from agent_tools.router import run_local_tool, should_use_tools
+from agent_tools.function_tools import run_local_tool, should_use_tools
+from agent_tools.tts.schemas import TTSRequest
 
 
 _SENTINEL = object()
@@ -201,6 +203,7 @@ def build_tts_text(display_text: str) -> str:
     text = re.sub(r"\be\^\{[^}]*\}", "", text)
     text = re.sub(r"[A-Za-z0-9_\\]+(?:\s*[=+\-*/^<>]\s*[A-Za-z0-9_\\{}().]+)+", "", text)
     text = _strip_formula_brackets(text)
+    text = normalize_square_brackets_for_speech(text)
     text = text.replace("『", "").replace("』", "").replace("「", "").replace("」", "")
     text = re.sub(r"[#*_~>|]+", "", text)
     text = re.sub(r"\s*=\s*", "は", text)
@@ -327,7 +330,7 @@ def _produce_stream_events(
                 next_emit["index"] += 1
 
     def submit_unit(display_text: str) -> None:
-        display_text = (display_text or "").strip()
+        display_text = normalize_square_brackets_for_speech((display_text or "").strip())
         if not display_text:
             return
 
@@ -458,7 +461,8 @@ def _produce_stream_events(
 
         state.raw_model_output = "".join(raw_model_parts)
         state.parsed_reply = parse_model_reply(state.raw_model_output or "")
-        state.answer = state.parsed_reply["answer"]
+        state.answer = normalize_square_brackets_for_speech(state.parsed_reply["answer"])
+        state.parsed_reply["answer"] = state.answer
         state.emotion = normalize_emotion(state.emotion_override or state.parsed_reply["emotion"])
         if not created_units and state.answer:
             fallback_splitter = PlayUnitSplitter(
@@ -899,20 +903,26 @@ def _synthesize_unit_audio(
     if unit_index == 0:
         set_timing_once("first_tts_start_ms", tts_start_relative_ms)
     try:
-        if services.tts_tool is None:
-            raise RuntimeError("TTS tool is not configured")
-        result = services.tts_tool.synthesize(
-            text=unit["tts_text"],
-            emotion=unit["emotion"],
-            tts_param_overrides=state.tts_param_overrides,
+        if services.tts_adapter is None:
+            raise RuntimeError("TTS adapter is not configured")
+        result = services.tts_adapter.synthesize(
+            TTSRequest(
+                text=unit["tts_text"],
+                emotion=unit["emotion"],
+                extra={"tts_param_overrides": state.tts_param_overrides or {}},
+            )
         )
-        duration_ms = result.get("timing", {}).get("tts_total_ms")
+        if not result.ok:
+            raise RuntimeError(result.error or "TTS synthesis failed")
+        duration_ms = result.duration_ms
+        if not isinstance(duration_ms, (int, float)):
+            duration_ms = result.timing.get("tts_total_ms")
         if not isinstance(duration_ms, (int, float)):
             duration_ms = elapsed_ms(tts_start_ms)
         unit_timing["tts_duration_ms"] = duration_ms
         return {
-            "audio_url": result.get("audio_url"),
-            "audio_path": result.get("audio_path"),
+            "audio_url": result.audio_url,
+            "audio_path": result.audio_path,
             "audio_error": None,
             "tts_result": result,
             "duration_ms": duration_ms,

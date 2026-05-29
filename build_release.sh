@@ -9,7 +9,7 @@ PROJECT_ROOT_REAL="$(realpath -m "${PROJECT_ROOT}")"
 RELEASE_DIR_REAL="$(realpath -m "${RELEASE_DIR}")"
 TMP_DIR_REAL="$(realpath -m "${TMP_DIR}")"
 
-GPT_DIR="GPT-SoVITS-v2pro-20250604-nvidia50"
+GPT_DIR="agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50"
 SPICA_DATA_DIR="spica_data"
 GENERATED_VOICE_DIR="static/generated_voice"
 
@@ -23,9 +23,7 @@ SOURCE_DIRS=(
   static
   templates
   tests
-  tts
   ui
-  visual
 )
 
 SOURCE_FILES=(
@@ -49,6 +47,8 @@ TAR_EXCLUDES=(
   --exclude='.DS_Store'
   --exclude='*.env'
   --exclude='.env'
+  --exclude="${GPT_DIR}"
+  --exclude="${GPT_DIR}/*"
   --exclude="${GENERATED_VOICE_DIR}/*"
 )
 

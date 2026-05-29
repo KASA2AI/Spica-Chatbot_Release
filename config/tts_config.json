@@ -1,7 +1,8 @@
 {
-  "gptsovits_root": "../GPT-SoVITS-v2pro-20250604-nvidia50",
-  "gpt_model_path": "../GPT-SoVITS-v2pro-20250604-nvidia50/GPT_weights_v2ProPlus/spcia-e25.ckpt",
-  "sovits_model_path": "../GPT-SoVITS-v2pro-20250604-nvidia50/SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth",
+  "provider": "gptsovits_current",
+  "gptsovits_root": "../agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50",
+  "gpt_model_path": "../agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_weights_v2ProPlus/spcia-e25.ckpt",
+  "sovits_model_path": "../agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth",
   "ref_language": "日文",
   "target_language": "日文",
   "output_dir": "../static/generated_voice",
@@ -9,7 +10,7 @@
   "reload_model_each_request": false,
   "warmup_on_startup": true,
   "warmup_emotion": "happy",
-  "warmup_synthesize": false,
+  "warmup_synthesize": true,
   "warmup_text": "はい。",
   "tts_params": {
     "top_p": 1,

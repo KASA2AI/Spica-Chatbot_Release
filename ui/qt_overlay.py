@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
 
 from agent import SimpleAgent
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from tts.gptsovits_service import GPTSoVITSTool
-from visual.diff_service import VisualDiffService
+from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, build_tts_adapter, load_tts_config
+from agent_tools.visual import VisualDiffService
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -41,7 +41,7 @@ DIALOG_FILTER_PATH = BASE_DIR / "spica_data" / "diffs" / "ui" / "_mw_filter01.pn
 DEBUG_NORMAL_WINDOW = False
 MIN_UI_SCALE = 0.6
 MAX_UI_SCALE = 1.8
-MIN_WINDOW_SIZE = QSize(520, 420)
+MIN_WINDOW_SIZE = QSize(460, 360)
 CHARACTER_HIT_ALPHA_THRESHOLD = 8
 CHARACTER_HIT_MARGIN = 7
 
@@ -163,27 +163,47 @@ class StartupWarmupWorker(QThread):
     def __init__(
         self,
         agent: SimpleAgent,
-        tts_tool: GPTSoVITSTool,
+        tts_provider: Any,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self.agent = agent
-        self.tts_tool = tts_tool
+        self.tts_provider = tts_provider
 
     def run(self) -> None:
         try:
             model = str(getattr(self.agent, "model", "") or "unknown")
             self.status_changed.emit(f"LLM API 初始化完成：{model}")
-            config = self.tts_tool.public_config()
-            if not bool(config.get("warmup_on_startup", True)):
-                self.finished_ok.emit("LLM API 已初始化，GPT-SoVITS 启动预热已关闭。")
+            public_config = getattr(self.tts_provider, "public_config", None)
+            warmup = getattr(self.tts_provider, "warmup", None)
+            if public_config is None or warmup is None:
+                provider_name = str(getattr(self.tts_provider, "name", None) or "TTS")
+                self.finished_ok.emit(f"LLM API 已初始化，{provider_name} 无需启动预热。")
                 return
 
-            emotion = str(config.get("warmup_emotion") or "happy")
-            self.status_changed.emit(f"正在预热  GPT-SoVITS 模型...")
-            result = self.tts_tool.warmup(emotion=emotion)
-            duration_ms = float(result.get("duration_ms") or 0)
-            self.finished_ok.emit(f"GPT-SoVITS 模型已就绪（{duration_ms:.0f}ms）。")
+            provider_name = str(getattr(self.tts_provider, "name", None) or "TTS")
+            config = public_config()
+            if not bool(config.get("warmup_on_startup", True)):
+                self.finished_ok.emit(f"LLM API 已初始化，{provider_name} 启动预热已关闭。")
+                return
+
+            configured_emotions = config.get("warmup_emotions")
+            if isinstance(configured_emotions, list) and configured_emotions:
+                emotions = [str(item) for item in configured_emotions if str(item).strip()]
+            else:
+                emotions = [str(config.get("warmup_emotion") or "happy")]
+            if not emotions:
+                emotions = [str(config.get("warmup_emotion") or "happy")]
+
+            self.status_changed.emit(f"正在预热 {provider_name} 模型...")
+            results = [warmup(emotion=item, synthesize=True) for item in emotions]
+            failed_results = [item for item in results if not item.get("ok")]
+            total_duration_ms = sum(float(item.get("duration_ms") or 0) for item in results)
+            if failed_results:
+                messages = ", ".join(str(item.get("error") or "unknown") for item in failed_results)
+                self.failed.emit(f"{provider_name} warmup failed：{messages}")
+                return
+            self.finished_ok.emit(f"{provider_name} 模型已就绪（{total_duration_ms:.0f}ms）。")
         except Exception as exc:
             self.failed.emit(f"启动预热失败：{exc}")
 
@@ -953,6 +973,7 @@ class OverlayWindow(QWidget):
 
         self.visual_tool: VisualDiffService | None = None
         self.tts_tool: GPTSoVITSTool | None = None
+        self.tts_adapter: Any | None = None
         self.agent: SimpleAgent | None = None
         self.chat_worker: ChatWorker | None = None
         self.speech_worker: SpeechWorker | None = None
@@ -965,6 +986,7 @@ class OverlayWindow(QWidget):
         self.resize_origin_pos: QPoint | None = None
         self.resize_origin_ui_scale = 1.0
         self.current_pixmap: QPixmap | None = None
+        self.pixmap_cache: dict[str, QPixmap] = {}
         self.available_costumes: list[str] = []
         self.selected_costume: str | None = None
         self.interlocutor_name = DEFAULT_INTERLOCUTOR_NAME
@@ -1031,10 +1053,18 @@ class OverlayWindow(QWidget):
     def _init_backend(self) -> None:
         try:
             self.visual_tool = VisualDiffService()
-            self.tts_tool = GPTSoVITSTool()
-            self.agent = SimpleAgent(tts_tool=self.tts_tool, visual_tool=self.visual_tool)
+            tts_config = load_tts_config()
+            tts_provider = str(tts_config.get("provider") or tts_config.get("tts_provider") or "gptsovits_current")
+            if tts_provider in CURRENT_GPTSOVITS_PROVIDERS:
+                self.tts_tool = GPTSoVITSTool()
+                self.tts_adapter = build_tts_adapter(tts_config, service=self.tts_tool)
+            else:
+                self.tts_tool = None
+                self.tts_adapter = build_tts_adapter(tts_config)
+            self.agent = SimpleAgent(tts_adapter=self.tts_adapter, visual_tool=self.visual_tool)
             self.interlocutor_name = self.agent.interlocutor_name
-            self.dialogue.set_dialogue_text("LLM API 初始化完成，准备预热 GPT-SoVITS...")
+            provider_name = str(getattr(self.tts_adapter, "name", None) or tts_provider)
+            self.dialogue.set_dialogue_text(f"LLM API 初始化完成，准备预热 {provider_name}...")
         except Exception as exc:
             if self.visual_tool is None:
                 try:
@@ -1044,10 +1074,10 @@ class OverlayWindow(QWidget):
             self.dialogue.set_dialogue_text(f"初始化后端失败：{exc}")
 
     def _start_startup_warmup(self) -> None:
-        if self.agent is None or self.tts_tool is None:
+        if self.agent is None or self.tts_adapter is None:
             return
 
-        self.startup_warmup_worker = StartupWarmupWorker(self.agent, self.tts_tool, self)
+        self.startup_warmup_worker = StartupWarmupWorker(self.agent, self.tts_adapter, self)
         self.startup_warmup_worker.status_changed.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.finished_ok.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.failed.connect(self.dialogue.set_dialogue_text)
@@ -1056,12 +1086,12 @@ class OverlayWindow(QWidget):
     def _size_to_screen(self) -> None:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
-            self.resize(900, 760)
+            self.resize(760, 620)
             return
 
         available = screen.availableGeometry()
-        width = min(max(820, int(available.width() * 0.60)), int(available.width() * 0.90))
-        height = min(max(720, int(available.height() * 0.91)), available.height())
+        width = min(max(720, int(available.width() * 0.48)), int(available.width() * 0.78))
+        height = min(max(560, int(available.height() * 0.70)), int(available.height() * 0.82))
         x = available.x() + (available.width() - width) // 2
         y = available.y() + available.height() - height
         self.setGeometry(x, y, width, height)
@@ -1130,10 +1160,10 @@ class OverlayWindow(QWidget):
         dialogue_y = input_y - scaled_px(14, scale) - dialogue_height
         self.dialogue.setGeometry(dialogue_x, dialogue_y, dialogue_width, dialogue_height)
 
-        base_character_height = min(int(height * 0.82), dialogue_y + int(dialogue_height * 0.62))
-        character_height = max(scaled_px(280, scale), min(int(base_character_height * self.character_scale * scale), int(height * 0.98)))
+        base_character_height = min(int(height * 0.86), dialogue_y + int(dialogue_height * 0.68))
+        character_height = max(scaled_px(280, scale), min(int(base_character_height * self.character_scale * scale), int(height * 0.96)))
         character_width = self._character_width_for_height(character_height)
-        character_width = min(character_width, int(width * 0.82))
+        character_width = min(character_width, int(width * 0.94))
         character_x = (width - character_width) // 2
         character_bottom = min(height - 8, input_y + int(input_height * 0.28))
         character_y = max(0, character_bottom - character_height)
@@ -1174,11 +1204,48 @@ class OverlayWindow(QWidget):
     def set_character_image(self, path: str | Path | None) -> None:
         if not path:
             return
+        cache_key = str(Path(path).resolve())
+        cached_pixmap = self.pixmap_cache.get(cache_key)
+        if cached_pixmap is not None and not cached_pixmap.isNull():
+            self.current_pixmap = cached_pixmap
+            self._layout_overlay()
+            return
+
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
             return
-        self.current_pixmap = pixmap
+        self.current_pixmap = self._trim_transparent_pixmap(pixmap)
+        self.pixmap_cache[cache_key] = self.current_pixmap
         self._layout_overlay()
+
+    def _trim_transparent_pixmap(self, pixmap: QPixmap) -> QPixmap:
+        image = pixmap.toImage()
+        if image.isNull() or not image.hasAlphaChannel():
+            return pixmap
+
+        left = image.width()
+        top = image.height()
+        right = -1
+        bottom = -1
+        for y in range(image.height()):
+            for x in range(image.width()):
+                if image.pixelColor(x, y).alpha() <= CHARACTER_HIT_ALPHA_THRESHOLD:
+                    continue
+                left = min(left, x)
+                top = min(top, y)
+                right = max(right, x)
+                bottom = max(bottom, y)
+
+        if right < left or bottom < top:
+            return pixmap
+
+        padding = 4
+        left = max(0, left - padding)
+        top = max(0, top - padding)
+        right = min(image.width() - 1, right + padding)
+        bottom = min(image.height() - 1, bottom + padding)
+        crop_rect = QRect(left, top, right - left + 1, bottom - top + 1)
+        return pixmap.copy(crop_rect)
 
     def _apply_ui_scale(self) -> None:
         self.dialogue.apply_scale(self.ui_scale)

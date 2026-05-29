@@ -9,8 +9,10 @@ from memory.control import save_extracted_memories
 from agent.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_spica_prompt
 from agent.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
+from agent.text_normalizer import normalize_square_brackets_for_speech
 from common.timing import elapsed_ms, log_timing, now_ms
-from agent_tools.router import run_local_tool, should_use_tools
+from agent_tools.function_tools import run_local_tool, should_use_tools
+from agent_tools.tts.schemas import TTSRequest, TTSResult
 
 
 def node_timer(func: Callable[[AgentState, AgentServices], AgentState]):
@@ -44,6 +46,34 @@ def _get_attr(value: Any, key: str, default: Any = None) -> Any:
     if isinstance(value, dict):
         return value.get(key, default)
     return getattr(value, key, default)
+
+
+def _tts_adapter_name(services: AgentServices) -> str:
+    return str(getattr(services.tts_adapter, "name", None) or "tts")
+
+
+def _build_tts_request(state: AgentState, text: str, emotion: str) -> TTSRequest:
+    return TTSRequest(
+        text=text,
+        emotion=emotion,
+        extra={"tts_param_overrides": state.tts_param_overrides or {}},
+    )
+
+
+def _legacy_tts_chunks(result: TTSResult) -> list[str]:
+    return [
+        str(chunk.get("text") or "")
+        for chunk in result.chunks
+        if isinstance(chunk, dict) and chunk.get("text")
+    ]
+
+
+def _legacy_tts_chunk_audio(result: TTSResult) -> list[dict[str, Any]]:
+    return [
+        dict(chunk)
+        for chunk in result.chunks
+        if isinstance(chunk, dict) and (chunk.get("audio_path") or chunk.get("audio_url"))
+    ]
 
 
 @node_timer
@@ -239,7 +269,8 @@ def parse_reply_node(state: AgentState, services: AgentServices) -> AgentState:
     if _skip_if_error(state):
         return state
     state.parsed_reply = parse_model_reply(state.raw_model_output or "")
-    state.answer = state.parsed_reply["answer"]
+    state.answer = normalize_square_brackets_for_speech(state.parsed_reply["answer"])
+    state.parsed_reply["answer"] = state.answer
     state.emotion = normalize_emotion(state.emotion_override or state.parsed_reply["emotion"])
     return state
 
@@ -313,37 +344,51 @@ def build_visual_node(state: AgentState, services: AgentServices) -> AgentState:
 def synthesize_tts_node(state: AgentState, services: AgentServices) -> AgentState:
     if _skip_if_error(state):
         return state
-    if services.tts_tool is None:
+    provider = _tts_adapter_name(services)
+    if services.tts_adapter is None:
         state.tools.append(
             {
-                "name": "gptsovits_tts",
+                "name": provider,
                 "required": True,
                 "ok": False,
-                "error": "TTS tool is not configured.",
+                "error": "TTS adapter is not configured.",
             }
         )
-        state.error = {"code": "TTS_TOOL_NOT_CONFIGURED", "message": "GPT-SoVITS tool 未初始化。"}
+        state.error = {"code": "TTS_TOOL_NOT_CONFIGURED", "message": "TTS adapter 未初始化。"}
         return state
     try:
-        state.tts_result = services.tts_tool.synthesize(
-            text=state.answer or "",
-            emotion=state.emotion or "happy",
-            tts_param_overrides=state.tts_param_overrides,
+        state.tts_result = services.tts_adapter.synthesize(
+            _build_tts_request(
+                state,
+                text=state.answer or "",
+                emotion=state.emotion or "happy",
+            )
         )
-        if state.tts_result.get("timing"):
-            state.timing.update(state.tts_result["timing"])
+        if state.tts_result.timing:
+            state.timing.update(state.tts_result.timing)
+        if not state.tts_result.ok:
+            state.tools.append(
+                {
+                    "name": state.tts_result.provider,
+                    "required": True,
+                    "ok": False,
+                    "error": state.tts_result.error,
+                }
+            )
+            state.error = {"code": "TTS_FAILED", "message": state.tts_result.error or "TTS synthesis failed."}
+            return state
         state.tools.append(
             {
-                "name": "gptsovits_tts",
+                "name": state.tts_result.provider,
                 "required": True,
                 "ok": True,
-                "audio_url": state.tts_result["audio_url"],
+                "audio_url": state.tts_result.audio_url,
             }
         )
     except Exception as exc:
         state.tools.append(
             {
-                "name": "gptsovits_tts",
+                "name": provider,
                 "required": True,
                 "ok": False,
                 "error": str(exc),
@@ -377,12 +422,12 @@ def build_response_node(state: AgentState, services: AgentServices) -> AgentStat
     }
 
     if state.tts_result:
-        payload["audio_url"] = state.tts_result.get("audio_url")
-        payload["audio_path"] = state.tts_result.get("audio_path")
-        payload["tts_params"] = state.tts_result.get("tts_params")
-        payload["tts_chunks"] = state.tts_result.get("tts_chunks")
-        payload["tts_chunk_audio"] = state.tts_result.get("tts_chunk_audio")
-        payload["reference"] = state.tts_result.get("reference")
+        payload["audio_url"] = state.tts_result.audio_url
+        payload["audio_path"] = state.tts_result.audio_path
+        payload["tts_chunks"] = _legacy_tts_chunks(state.tts_result)
+        payload["tts_chunk_audio"] = _legacy_tts_chunk_audio(state.tts_result)
+        if state.tts_result.error:
+            payload["tts_error"] = state.tts_result.error
 
     if state.error:
         payload["error"] = state.error

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from visual.diff_service import VisualDiffService
+from agent_tools.visual import VisualDiffService
 
 
 class VisualClassifierTests(unittest.TestCase):

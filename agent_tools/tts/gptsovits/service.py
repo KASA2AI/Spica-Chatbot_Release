@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import sys
@@ -9,16 +10,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agent.text_normalizer import normalize_square_brackets_for_speech
 from common.timing import elapsed_ms, log_timing, now_ms
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "tts_config.json"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "static" / "generated_voice"
 PROXY_ENV_KEYS = ("all_proxy", "ALL_PROXY", "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
 UNSAFE_TTS_CHUNK_ENDINGS = ("、", "，", ",")
 SHORT_TTS_OPENERS = {"もちろん。", "はい。", "ええ。", "そうですね。"}
 DEFAULT_RUNTIME_CACHE_ROOT = Path("/tmp/spica_chatbot_cache")
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -85,41 +88,64 @@ class GPTSoVITSTool:
 
         The warmup emotion only chooses the reference sample used to initialize
         the TTS service. Visual diff selection is handled separately by
-        visual/diff_service.py and does not read this value.
+        agent_tools/visual/diff_service.py and does not read this value.
         """
         with self._lock:
             start_ms = now_ms()
-            self.reload_config()
-            emotion_key = self.normalize_emotion(emotion or self.config.get("warmup_emotion") or "happy")
-            sample = self._emotion_sample(emotion_key)
-            gpt_model_path = self._resolve_path(sample.get("gpt_model_path") or self.config["gpt_model_path"])
-            sovits_model_path = self._resolve_path(sample.get("sovits_model_path") or self.config["sovits_model_path"])
-            ref_language = sample.get("ref_language") or self.config.get("ref_language", "日文")
-            target_language = self.config.get("target_language", "日文")
-            should_synthesize = bool(self.config.get("warmup_synthesize", False) if synthesize is None else synthesize)
+            emotion_key = str(emotion or "unknown")
+            should_synthesize = bool(synthesize) if synthesize is not None else False
 
-            self._lazy_import()
-            with pushd(self.gptsovits_root):
-                self._ensure_models(gpt_model_path, sovits_model_path, ref_language, target_language)
-                if should_synthesize:
-                    warmup_text = str(self.config.get("warmup_text") or "はい。")
-                    list(
-                        self._get_tts_wav(
-                            ref_wav_path=str(sample["ref_audio_path"]),
-                            prompt_text=sample["prompt_text"],
-                            prompt_language=self._i18n(ref_language),
-                            text=warmup_text,
-                            text_language=self._i18n(target_language),
-                            top_p=1,
-                            temperature=1,
-                            inp_refs=None,
-                            how_to_cut="不切",
-                            pause_second=0.3,
-                            speed=1,
-                            top_k=15,
-                            ref_free=False,
+            try:
+                self.reload_config()
+                emotion_key = self.normalize_emotion(emotion or self.config.get("warmup_emotion") or "happy")
+                sample = self._emotion_sample(emotion_key)
+                gpt_model_path = self._resolve_path(sample.get("gpt_model_path") or self.config["gpt_model_path"])
+                sovits_model_path = self._resolve_path(sample.get("sovits_model_path") or self.config["sovits_model_path"])
+                ref_language = sample.get("ref_language") or self.config.get("ref_language", "日文")
+                target_language = self.config.get("target_language", "日文")
+                should_synthesize = bool(
+                    self.config.get("warmup_synthesize", False) if synthesize is None else synthesize
+                )
+
+                self._lazy_import()
+                with pushd(self.gptsovits_root):
+                    self._ensure_models(gpt_model_path, sovits_model_path, ref_language, target_language)
+                    if should_synthesize:
+                        warmup_text = str(self.config.get("warmup_text") or "はい。")
+                        list(
+                            self._get_tts_wav(
+                                ref_wav_path=str(sample["ref_audio_path"]),
+                                prompt_text=sample["prompt_text"],
+                                prompt_language=self._i18n(ref_language),
+                                text=warmup_text,
+                                text_language=self._i18n(target_language),
+                                top_p=1,
+                                temperature=1,
+                                inp_refs=None,
+                                how_to_cut="不切",
+                                pause_second=0.3,
+                                speed=1,
+                                top_k=15,
+                                ref_free=False,
+                            )
                         )
-                    )
+            except Exception as exc:
+                duration_ms = elapsed_ms(start_ms)
+                log_timing("tts_warmup", duration_ms, emotion=emotion_key, synthesize=should_synthesize, ok=False)
+                logger.warning(
+                    "GPT-SoVITS warmup failed emotion=%s synthesize=%s: %s",
+                    emotion_key,
+                    should_synthesize,
+                    exc,
+                    exc_info=True,
+                )
+                return {
+                    "ok": False,
+                    "emotion": emotion_key,
+                    "synthesize": should_synthesize,
+                    "duration_ms": duration_ms,
+                    "error": str(exc),
+                }
 
             duration_ms = elapsed_ms(start_ms)
             log_timing("tts_warmup", duration_ms, emotion=emotion_key, synthesize=should_synthesize)
@@ -446,6 +472,7 @@ class GPTSoVITSTool:
         return params
 
     def _normalize_tts_text(self, text: str) -> str:
+        text = self._normalize_square_brackets(text)
         text = self._clean_tts_punctuation(text.strip())
         text = re.sub(r"[、，,]+$", "。", text)
         if not text:
@@ -518,6 +545,9 @@ class GPTSoVITSTool:
         text = re.sub(r"[、，,]{2,}", "、", text)
         text = re.sub(r"。{2,}", "。", text)
         return text
+
+    def _normalize_square_brackets(self, text: str) -> str:
+        return normalize_square_brackets_for_speech(text)
 
     def _chunk_must_continue(self, text: str) -> bool:
         compact = re.sub(r"\s+", "", text or "")

@@ -12,6 +12,7 @@ Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 Py
 - 本地工具调用示例：时间、模拟天气、四则计算器。
 - 流式生成播放：LLM 增量文本 -> 断句播放单元 -> 并行立绘选择和 TTS -> 按顺序播放。
 - GPT-SoVITS 本地日语语音合成，按情绪选择参考音频。
+- 唱歌触发：识别“唱一首/唱一下/来一首”等请求，搜索网易云歌曲，分离人声和伴奏，再用 Applio/RVC 转成 Spica 声线并混音播放。
 - 本地投票式立绘差分选择，支持 8 套服装、3 类手部动作、27 个表情编号。
 - 可选中文麦克风识别，依赖 `speech_recognition` 和系统麦克风后端。
 
@@ -39,7 +40,8 @@ Spica-Chatbot/
 ├── agent_tools/
 │   ├── function_tools/
 │   │   ├── router.py              # LLM function tool schema、启发式路由和执行
-│   │   └── local_tools.py         # 时间、计算器、todo 等独立工具示例
+│   │   ├── local_tools.py         # 时间、计算器、todo 等独立工具示例
+│   │   └── song/                  # 唱歌请求解析、网易云检索、伴奏分离、RVC 转声线和混音
 │   ├── tts/
 │   │   ├── base.py                # TTSAdapter 协议
 │   │   ├── schemas.py             # TTSRequest / TTSResult
@@ -63,6 +65,7 @@ Spica-Chatbot/
 │   ├── voice/                     # TTS 情绪参考音频和 prompt
 │   └── diffs/                     # 立绘差分、差分规则、UI 贴图
 ├── static/generated_voice/        # GPT-SoVITS 输出 wav，运行时生成
+├── static/generated_song/         # 唱歌缓存和最终混音 wav，运行时生成
 ├── tests/                         # 单元测试和流水线 smoke test
 ├── run_ibus.sh                    # Linux ibus 输入法启动脚本
 ```
@@ -88,7 +91,20 @@ Spica-Chatbot/
 
    如果你的目录名、权重文件名或版本不同，修改 `config/tts_config.json` 里的 `gptsovits_root`、`gpt_model_path` 和 `sovits_model_path`。
 
-2. 准备 `spica_data` 素材目录。
+2. 准备唱歌功能依赖。
+
+   唱歌功能默认读取 `agent_tools/function_tools/song/song_config.json`。发布包里的 `agent_tools/function_tools/song/Applio/` 不包含上游 Applio/RVC 代码、分离模型或声线权重，使用前需要自行放入对应环境和模型文件。默认配置需要：
+
+   ```text
+   agent_tools/function_tools/song/Applio/
+   ├── logs/spica/spica_200e_57000s.pth
+   ├── logs/spica/spica.index
+   └── assets/uvr5_weights/UVR-MDX-NET-Inst_HQ_3.onnx
+   ```
+
+   如果模型路径、设备或混音参数不同，修改 `agent_tools/function_tools/song/song_config.json`。唱歌运行产物会写入 `static/generated_song/`，可以直接删除后重新生成。
+
+3. 准备 `spica_data` 素材目录。
 
    发布包里的 `spica_data/` 只保留空目录和空子目录，不包含角色卡、立绘差分、参考音频、SQLite 记忆库或生成音频。需要按下面约定补齐：
 
@@ -97,7 +113,7 @@ Spica-Chatbot/
    - `spica_data/diffs/`：放入 `expression_hand_pose_rules.json`、`preview_png.png`、`ui/_mw_filter01.png`，以及各服装目录和表情 PNG；路径需与 `config/visual_config.json` 保持一致。
    - `spica_data/memory.sqlite3` 不需要手动创建，运行时会自动生成或迁移。
 
-3. 准备 Python 环境。
+4. 准备 Python 环境。
 
    项目当前脚本示例使用 `/home/san/anaconda3/envs/gptsovits/bin/python3.11`。如果新建环境，建议 Python 3.10 或 3.11，并安装 GPT-SoVITS 所需依赖。
 
@@ -113,7 +129,7 @@ Spica-Chatbot/
    pip install SpeechRecognition PyAudio
    ```
 
-4. 创建 `xiaosan.env`。
+5. 创建 `xiaosan.env`。
 
    发布包中的 `xiaosan.env` 会保留变量名并清空 `=` 后面的值。使用前填入自己的 OpenAI 兼容接口配置，不要提交真实密钥。
 
@@ -141,7 +157,7 @@ Spica-Chatbot/
    | `PLAY_UNIT_MAX_CHARS` | `96` | 流式播放单元最大长度 |
    | `VISUAL_STREAM_WORKERS` | `2` | 流式立绘选择线程数 |
 
-5. 启动桌面 Overlay。
+6. 启动桌面 Overlay。
 
    ```bash
    /home/san/anaconda3/envs/gptsovits/bin/python webui_qt.py
@@ -153,13 +169,13 @@ Spica-Chatbot/
    ./run_ibus.sh
    ```
 
-6. 命令行记忆测试。
+7. 命令行记忆测试。
 
    ```bash
    python examples/llm_demo.py
    ```
 
-7. 运行测试。
+8. 运行测试。
 
    ```bash
    python -m pytest tests
@@ -197,6 +213,24 @@ SQLite 记忆表会自动迁移新增字段：`memory_key`、`memory_type`、`so
 - `tts_params.sentence_chunking`：是否把长文本切成多个 TTS chunk。
 - `emotions`：`happy`、`angry`、`sad`、`surprised` 的参考音频和 prompt。
 
+### 唱歌配置
+
+`agent_tools/function_tools/song/song_config.json` 控制歌曲搜索、缓存、UVR 伴奏分离、Applio/RVC 声线转换和最终混音。
+
+关键字段：
+
+- `enabled`：是否启用唱歌功能。
+- `generated_root`：唱歌缓存和最终 wav 输出目录，默认 `static/generated_song`。
+- `applio_root`：Applio/RVC 根目录。
+- `search.limit` / `search.bitrate`：网易云搜索条数和音频码率。
+- `separator.model_filename`：UVR 分离模型文件名。
+- `separator.swap_stems`：交换分离出的 vocal/instrumental stem，适配不同分离模型输出。
+- `rvc.voice_model`：默认 RVC 声线名称。
+- `rvc.voices.<name>.model_path` / `index_path`：声线模型和索引文件。
+- `mix.instrumental_gain` / `vocal_gain` / `normalize_peak`：伴奏、人声和峰值归一化参数。
+
+Overlay 中输入类似 `spica唱歌 青花瓷`、`唱一下 周杰伦 的 稻香` 或 `来一首 十年` 会直接进入唱歌流程；唱歌准备或播放期间再次发送消息会取消当前歌曲。
+
 ### 立绘配置
 
 `config/visual_config.json` 控制差分素材、服装、对白框和角色布局。
@@ -227,12 +261,15 @@ flowchart TD
     SVC --> TOOL[本地工具<br/>时间/天气/计算]
     SVC --> VIS[VisualDiffService<br/>立绘差分]
     SVC --> TTS[GPTSoVITSTool<br/>语音合成]
+    UI --> SONG[SongPipeline<br/>歌曲检索/分离/RVC/混音]
 
     TTS --> GSV[GPT-SoVITS<br/>inference_webui]
     GSV --> WAV[static/generated_voice/*.wav]
     VIS --> IMG[spica_data/diffs/*.png]
+    SONG --> SONGWAV[static/generated_song/final/*.wav]
 
     WAV --> UI
+    SONGWAV --> UI
     IMG --> UI
     UI --> OUT[对白打字机<br/>立绘切换<br/>音频播放]
 ```
@@ -355,6 +392,7 @@ flowchart TD
 | `memory/extractor.py` | 用规则识别“记住、我喜欢、叫我”等可保存事实 |
 | `agent_tools/function_tools/router.py` | 定义 LLM function tool schema，判断是否启用工具，执行本地工具 |
 | `agent_tools/function_tools/local_tools.py` | 时间、计算器、todo 等本地工具示例 |
+| `agent_tools/function_tools/song/` | 唱歌请求解析、网易云歌曲检索、音频下载、伴奏分离、RVC 转声线和混音 |
 | `agent_tools/visual/diff_service.py` | 本地投票式表情和手部动作选择，解析差分图片 |
 | `agent_tools/tts/base.py` / `schemas.py` | TTS 前端协议和标准请求/返回结构 |
 | `agent_tools/tts/manager.py` / `adapters/` | 根据配置选择 TTS provider，并适配同步/流式 pipeline |
@@ -365,8 +403,10 @@ flowchart TD
 
 - `spica_data/memory.sqlite3`：长期记忆数据库，运行时更新。
 - `static/generated_voice/*.wav`：语音输出，运行时生成。
+- `static/generated_song/`：唱歌原曲缓存、分离结果、RVC 人声和最终混音，运行时生成。
 - `spica_data/diffs/`：立绘差分素材和规则，不是运行缓存；发布包只保留空目录骨架。
 - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`：发布包只保留空目录，占位给用户放入上游语音引擎、依赖和权重。
+- `agent_tools/function_tools/song/Applio/`：发布包不内置上游 Applio/RVC 环境、UVR 模型或声线权重。
 - `xiaosan.env`：本地密钥配置；发布包只保留空值模板，不应提交真实密钥。
 
 `.gitignore` 已忽略 Python 缓存、环境文件、生成语音和 SQLite 运行数据库。
@@ -380,6 +420,7 @@ flowchart TD
 - `tests/test_recent_memory.py`：短期记忆只保留最近轮次。
 - `tests/test_pipeline_smoke.py`：同步 pipeline、工具路由、DeepSeek Chat Completions 兼容。
 - `tests/test_streaming_pipeline.py`：流式事件顺序、句段拆分、TTS 文本清洗、DeepSeek 流式兼容。
+- `tests/test_song_trigger.py`：唱歌触发语句解析和非唱歌问题排除。
 - `tests/test_tts_adapters.py`：TTS adapter 请求/返回映射和失败兜底。
 - `tests/test_visual_classifier.py`：本地立绘分类器对说明、不满、悲伤语气的选择。
 

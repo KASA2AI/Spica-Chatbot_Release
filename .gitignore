@@ -10,6 +10,8 @@ xiaosan.env
 .DS_Store
 
 static/generated_voice/*.wav
+static/generated_song/**
+!static/generated_song/.gitkeep
 spica_data/*.sqlite3
 spica_data/*.sqlite3-*
 

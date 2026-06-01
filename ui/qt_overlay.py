@@ -27,8 +27,10 @@ from PySide6.QtWidgets import (
 
 from agent import SimpleAgent
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from agent_tools.function_tools.song import CancellationToken, SongPipeline, SongRequest, parse_song_request
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, build_tts_adapter, load_tts_config
 from agent_tools.visual import VisualDiffService
+from hardware.respeaker.speech_worker import SpeechWorker, is_fatal_speech_error
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -157,6 +159,39 @@ class ChatWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class SongWorker(QThread):
+    completed = Signal(int, dict)
+    failed = Signal(int, str)
+
+    def __init__(
+        self,
+        request: SongRequest,
+        job_id: int,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.request = request
+        self.job_id = job_id
+        self.cancellation = CancellationToken()
+
+    def cancel(self) -> None:
+        self.cancellation.cancel()
+        self.requestInterruption()
+
+    def run(self) -> None:
+        try:
+            result = SongPipeline().run(self.request, self.cancellation)
+            if self.isInterruptionRequested() or self.cancellation.cancelled():
+                return
+            if result.ok:
+                self.completed.emit(self.job_id, result.to_payload())
+            else:
+                self.failed.emit(self.job_id, result.error or result.message or "唱歌任务失败。")
+        except Exception as exc:
+            if not self.isInterruptionRequested() and not self.cancellation.cancelled():
+                self.failed.emit(self.job_id, str(exc))
+
+
 class StartupWarmupWorker(QThread):
     status_changed = Signal(str)
     finished_ok = Signal(str)
@@ -208,54 +243,6 @@ class StartupWarmupWorker(QThread):
             self.finished_ok.emit(f"{provider_name} 模型已就绪（{total_duration_ms:.0f}ms）。")
         except Exception as exc:
             self.failed.emit(f"启动预热失败：{exc}")
-
-
-class SpeechWorker(QThread):
-    status_changed = Signal(str)
-    recognized = Signal(str)
-    failed = Signal(str)
-
-    def run(self) -> None:
-        try:
-            import speech_recognition as sr
-        except Exception:
-            self.failed.emit("缺少 speech_recognition / PyAudio，无法启用麦克风识别。")
-            return
-
-        try:
-            recognizer = sr.Recognizer()
-            with sr.Microphone() as source:
-                self.status_changed.emit("正在校准麦克风...")
-                recognizer.adjust_for_ambient_noise(source, duration=0.35)
-                audio = None
-                while not self.isInterruptionRequested():
-                    self.status_changed.emit("正在听...")
-                    try:
-                        audio = recognizer.listen(source, timeout=0.8, phrase_time_limit=14)
-                        break
-                    except sr.WaitTimeoutError:
-                        continue
-                if self.isInterruptionRequested() or audio is None:
-                    return
-            self.status_changed.emit("识别中...")
-            if self.isInterruptionRequested():
-                return
-            text = recognizer.recognize_google(audio, language="zh-CN")
-        except sr.UnknownValueError:
-            self.failed.emit("没有听清楚，请再说一次。")
-            return
-        except sr.RequestError as exc:
-            self.failed.emit(f"语音识别服务不可用：{exc}")
-            return
-        except Exception as exc:
-            self.failed.emit(f"语音识别失败：{exc}")
-            return
-
-        text = (text or "").strip()
-        if text:
-            self.recognized.emit(text)
-        else:
-            self.failed.emit("没有识别到有效中文。")
 
 
 class TintedDialogueBox(QFrame):
@@ -1009,9 +996,15 @@ class OverlayWindow(QWidget):
         self.stream_pending_units: dict[int, dict[str, Any]] = {}
         self.next_stream_index = 0
         self.stream_done = False
+        self.song_worker: SongWorker | None = None
+        self.song_session_id = 0
+        self.song_preparing = False
+        self.song_playback_active = False
 
         self.audio_output = None
         self.media_player = None
+        self.song_audio_output = None
+        self.song_media_player = None
         self.preloaded_audio_players: dict[int, tuple[Any, Any, Path]] = {}
         self.settings_panel: SettingsPanel | None = None
 
@@ -1264,6 +1257,14 @@ class OverlayWindow(QWidget):
         if not message:
             self.input_panel.input.setFocus()
             return
+        song_was_busy = self._is_song_busy()
+        if song_was_busy:
+            self._cancel_current_song(show_message=False)
+        song_request = parse_song_request(message)
+        if song_request is not None and not song_was_busy:
+            self.input_panel.input.clear()
+            self._start_song_request(song_request)
+            return
         if self.agent is None:
             self.dialogue.set_dialogue_text("后端未初始化，请检查 OPENAI_API_KEY 和本地依赖。")
             return
@@ -1283,6 +1284,152 @@ class OverlayWindow(QWidget):
         self.chat_worker.failed.connect(self._handle_chat_error)
         self.chat_worker.start()
 
+    def _start_song_request(self, request: SongRequest) -> None:
+        self._cancel_current_song(show_message=False)
+        self._stop_conversation_for_song()
+        self.song_session_id += 1
+        job_id = self.song_session_id
+        self.song_preparing = True
+        self.song_playback_active = False
+        self.set_busy(False)
+        self._start_typewriter("Spica 正在清嗓", interval_ms=70)
+        self.input_panel.input.setFocus(Qt.FocusReason.OtherFocusReason)
+
+        self.song_worker = SongWorker(request, job_id, self)
+        self.song_worker.completed.connect(self._handle_song_ready)
+        self.song_worker.failed.connect(self._handle_song_error)
+        self.song_worker.finished.connect(lambda jid=job_id: self._handle_song_worker_finished(jid))
+        self.song_worker.start()
+
+    def _stop_conversation_for_song(self) -> None:
+        if self.chat_worker and self.chat_worker.isRunning():
+            self.chat_worker.requestInterruption()
+        if self.speech_worker and self.speech_worker.isRunning():
+            self.voice_session_id += 1
+            self.speech_worker.requestInterruption()
+        self.streaming_mode = False
+        self.stream_pending_units = {}
+        self.stream_done = False
+        self._clear_cue_timers()
+        self._stop_audio()
+        self._release_preloaded_audio_players()
+        self.playback_items = []
+        self.playback_index = 0
+        self.playback_active = False
+        self.current_audio_finished = False
+        self.current_text_finished = False
+
+    def _is_song_busy(self) -> bool:
+        return bool(self.song_preparing or self.song_playback_active)
+
+    def _cancel_current_song(self, show_message: bool = True) -> None:
+        had_song = self._is_song_busy()
+        self.song_session_id += 1
+        if self.song_worker and self.song_worker.isRunning():
+            self.song_worker.cancel()
+        self._release_song_audio_player()
+        self.song_preparing = False
+        self.song_playback_active = False
+        self.set_busy(False)
+        if show_message and had_song:
+            self._start_typewriter("好，先不唱了。", interval_ms=45)
+            if self.voice_mode_active:
+                self._schedule_next_voice_recording(500)
+
+    def _handle_song_ready(self, job_id: int, payload: dict[str, Any]) -> None:
+        if job_id != self.song_session_id:
+            return
+        if not bool(payload.get("ok")):
+            self._handle_song_error(job_id, str(payload.get("error") or "唱歌任务失败。"))
+            return
+        audio_path = payload.get("final_audio_path")
+        if not audio_path:
+            self._handle_song_error(job_id, "唱歌任务没有返回音频文件。")
+            return
+        self.song_preparing = False
+        self.song_playback_active = True
+        self.set_busy(False)
+        self._start_typewriter("唱歌中", interval_ms=70)
+        self._play_song_audio(audio_path, job_id)
+
+    def _handle_song_error(self, job_id: int, message: str) -> None:
+        if job_id != self.song_session_id:
+            return
+        self.song_preparing = False
+        self.song_playback_active = False
+        self._release_song_audio_player()
+        self.set_busy(False)
+        self._start_typewriter(f"唱歌失败：{message}", interval_ms=45)
+        if self.voice_mode_active:
+            self._schedule_next_voice_recording(900)
+
+    def _handle_song_worker_finished(self, job_id: int) -> None:
+        del job_id
+        worker = self.sender()
+        if worker is self.song_worker:
+            self.song_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _play_song_audio(self, audio_path: Any, job_id: int) -> None:
+        self._release_song_audio_player()
+        if QMediaPlayer is None or QAudioOutput is None:
+            self._handle_song_error(job_id, "当前 Qt 环境没有可用的音频播放组件。")
+            return
+        path = Path(str(audio_path))
+        if not path.exists():
+            self._handle_song_error(job_id, f"音频文件不存在：{path}")
+            return
+        self.song_audio_output = QAudioOutput(self)
+        self.song_audio_output.setVolume(0.92)
+        self.song_media_player = QMediaPlayer(self)
+        self.song_media_player.setAudioOutput(self.song_audio_output)
+        self.song_media_player.mediaStatusChanged.connect(
+            lambda status, jid=job_id: self._handle_song_media_status(status, jid)
+        )
+        self.song_media_player.setSource(QUrl.fromLocalFile(str(path)))
+        self.song_media_player.play()
+
+    def _handle_song_media_status(self, status, job_id: int) -> None:
+        if job_id != self.song_session_id or not self.song_playback_active:
+            return
+        if status == QMediaPlayer.MediaStatus.InvalidMedia:
+            self._handle_song_error(job_id, "歌曲音频无法播放。")
+            return
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._finish_song_playback()
+
+    def _finish_song_playback(self) -> None:
+        self._release_song_audio_player()
+        self.song_preparing = False
+        self.song_playback_active = False
+        self.set_busy(False)
+        self._start_typewriter("唱完了。", interval_ms=45)
+        if self.voice_mode_active:
+            self._schedule_next_voice_recording(500)
+        else:
+            self.input_panel.input.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _release_song_audio_player(self) -> None:
+        media_player = self.song_media_player
+        audio_output = self.song_audio_output
+        self.song_media_player = None
+        self.song_audio_output = None
+        if media_player is not None:
+            try:
+                media_player.stop()
+            except Exception:
+                pass
+            try:
+                media_player.deleteLater()
+            except Exception:
+                pass
+        if audio_output is not None:
+            try:
+                audio_output.deleteLater()
+            except Exception:
+                pass
+
     def _reset_stream_state(self) -> None:
         self._release_preloaded_audio_players()
         self.streaming_mode = True
@@ -1296,6 +1443,8 @@ class OverlayWindow(QWidget):
         self.current_text_finished = False
 
     def _handle_stream_event(self, event_name: str, data: dict[str, Any]) -> None:
+        if self._is_song_busy():
+            return
         if event_name == "status":
             self._handle_stream_status(data)
             return
@@ -1393,6 +1542,8 @@ class OverlayWindow(QWidget):
         self._play_tts_sequence(result, visual, answer)
 
     def _handle_chat_error(self, message: str) -> None:
+        if self._is_song_busy():
+            return
         self.streaming_mode = False
         self.stream_pending_units = {}
         self.playback_active = False
@@ -1856,6 +2007,7 @@ class OverlayWindow(QWidget):
             (self.chat_worker and self.chat_worker.isRunning())
             or self.playback_active
             or self.streaming_mode
+            or self._is_song_busy()
         )
 
     def _handle_speech_status(self, message: str, session_id: int) -> None:
@@ -1883,13 +2035,7 @@ class OverlayWindow(QWidget):
             self.set_busy(False)
 
     def _speech_error_is_fatal(self, message: str) -> bool:
-        fatal_markers = (
-            "缺少 speech_recognition",
-            "Could not find PyAudio",
-            "No Default Input Device",
-            "Invalid input device",
-        )
-        return any(marker in message for marker in fatal_markers)
+        return is_fatal_speech_error(message)
 
     def _handle_speech_finished(self, session_id: int) -> None:
         if self.speech_worker and not self.speech_worker.isRunning():
@@ -1907,6 +2053,9 @@ class OverlayWindow(QWidget):
         self._schedule_next_voice_recording(650)
 
     def set_busy(self, busy: bool) -> None:
+        if self._is_song_busy():
+            self.input_panel.set_busy(False, voice_enabled=True)
+            return
         self.input_panel.set_busy(busy, voice_enabled=(not busy or self.voice_mode_active))
 
     def open_settings_panel(self) -> None:
@@ -2184,6 +2333,10 @@ class OverlayWindow(QWidget):
         self._stop_typewriter()
         self._stop_audio()
         self._release_preloaded_audio_players()
+        self._release_song_audio_player()
+        if self.song_worker and self.song_worker.isRunning():
+            self.song_worker.cancel()
+            self.song_worker.wait(1500)
         if self.chat_worker and self.chat_worker.isRunning():
             self.chat_worker.requestInterruption()
             self.chat_worker.wait(1500)

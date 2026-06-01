@@ -10,8 +10,11 @@ RELEASE_DIR_REAL="$(realpath -m "${RELEASE_DIR}")"
 TMP_DIR_REAL="$(realpath -m "${TMP_DIR}")"
 
 GPT_DIR="agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50"
+APPLIO_DIR="agent_tools/function_tools/song/Applio"
 SPICA_DATA_DIR="spica_data"
+THIRD_PARTY_DIR="third_party"
 GENERATED_VOICE_DIR="static/generated_voice"
+GENERATED_SONG_DIR="static/generated_song"
 
 SOURCE_DIRS=(
   agent
@@ -49,7 +52,10 @@ TAR_EXCLUDES=(
   --exclude='.env'
   --exclude="${GPT_DIR}"
   --exclude="${GPT_DIR}/*"
+  --exclude="${APPLIO_DIR}"
+  --exclude="${APPLIO_DIR}/*"
   --exclude="${GENERATED_VOICE_DIR}/*"
+  --exclude="${GENERATED_SONG_DIR}/*"
 )
 
 die() {
@@ -66,6 +72,26 @@ copy_release_item() {
 
   tar -C "${PROJECT_ROOT}" "${TAR_EXCLUDES[@]}" -cf - "${item}" \
     | tar -C "${TMP_DIR_REAL}" -xf -
+}
+
+copy_directory_skeleton() {
+  local dir="$1"
+  local rel
+
+  if [[ -d "${PROJECT_ROOT}/${dir}" ]]; then
+    while IFS= read -r -d '' rel; do
+      mkdir -p "${TMP_DIR_REAL}/${rel}"
+    done < <(
+      cd "${PROJECT_ROOT}"
+      find "${dir}" \
+        -type d \
+        ! -name '__pycache__' \
+        ! -name '.pytest_cache' \
+        -print0
+    )
+  else
+    mkdir -p "${TMP_DIR_REAL}/${dir}"
+  fi
 }
 
 if [[ -z "${PROJECT_ROOT_REAL}" || "${PROJECT_ROOT_REAL}" == "/" ]]; then
@@ -98,17 +124,13 @@ for item in "${SOURCE_DIRS[@]}"; do
 done
 
 mkdir -p "${TMP_DIR_REAL}/${GPT_DIR}"
+mkdir -p "${TMP_DIR_REAL}/${APPLIO_DIR}"
 
-if [[ -d "${PROJECT_ROOT}/${SPICA_DATA_DIR}" ]]; then
-  while IFS= read -r -d '' dir; do
-    rel="${dir#${PROJECT_ROOT}/}"
-    mkdir -p "${TMP_DIR_REAL}/${rel}"
-  done < <(find "${PROJECT_ROOT}/${SPICA_DATA_DIR}" -type d -print0)
-else
-  mkdir -p "${TMP_DIR_REAL}/${SPICA_DATA_DIR}"
-fi
+copy_directory_skeleton "${SPICA_DATA_DIR}"
+copy_directory_skeleton "${THIRD_PARTY_DIR}"
 
 mkdir -p "${TMP_DIR_REAL}/${GENERATED_VOICE_DIR}"
+mkdir -p "${TMP_DIR_REAL}/${GENERATED_SONG_DIR}"
 
 if [[ -f "${PROJECT_ROOT}/xiaosan.env" ]]; then
   awk '
@@ -136,5 +158,8 @@ mv "${TMP_DIR_REAL}" "${RELEASE_DIR_REAL}"
 
 echo "Release directory created: ${RELEASE_DIR_REAL}"
 echo "GPT-SoVITS placeholder is empty: ${RELEASE_DIR_REAL}/${GPT_DIR}"
+echo "Applio placeholder is empty: ${RELEASE_DIR_REAL}/${APPLIO_DIR}"
 echo "spica_data files were stripped; directory skeleton was preserved."
+echo "third_party files were stripped; directory skeleton was preserved."
 echo "Generated voice files were stripped; output directory was preserved."
+echo "Generated song files were stripped; output directory was preserved."

@@ -1,0 +1,72 @@
+{
+  "enabled": true,
+  "generated_root": "static/generated_song",
+  "applio_root": "agent_tools/function_tools/song/Applio",
+  "search": {
+    "limit": 20,
+    "bitrate": 320000
+  },
+  "separator": {
+    "model_filename": "UVR-MDX-NET-Inst_HQ_3.onnx",
+    "output_format": "WAV",
+    "swap_stems": true,
+    "extra_kwargs": {}
+  },
+  "rvc": {
+    "voice_model": "spica",
+    "voices": {
+      "spica": {
+        "model_path": "agent_tools/function_tools/song/Applio/logs/spica/spica_200e_57000s.pth",
+        "index_path": "agent_tools/function_tools/song/Applio/logs/spica/spica.index",
+        "f0_method": "rmvpe",
+        "transpose": 0,
+        "index_rate": 0.75,
+        "protect": 0.33,
+        "device": "cuda",
+        "volume_envelope": 1.0,
+        "split_audio": false,
+        "f0_autotune": false,
+        "f0_autotune_strength": 1.0,
+        "proposed_pitch": false,
+        "proposed_pitch_threshold": 155.0,
+        "clean_audio": false,
+        "clean_strength": 0.5,
+        "export_format": "WAV",
+        "embedder_model": "contentvec",
+        "embedder_model_custom": null,
+        "reference_audio_dir": "spica_data/voice/happy/refs",
+        "sid": 0
+      }
+    }
+  },
+  "mix": {
+    "instrumental_gain": 0.88,
+    "vocal_gain": 1.0,
+    "normalize_peak": 0.95,
+    "output_subtype": "PCM_16"
+  },
+  "intent": {
+    "enabled": true,
+    "thresholds": {
+      "direct_execute": 0.9,
+      "confirm": 0.7,
+      "llm_fallback_min": 0.45,
+      "llm_fallback_max": 0.75
+    },
+    "llm_fallback": {
+      "enabled": true,
+      "provider": "openai_compatible",
+      "model": "deepseek-v4-flash",
+      "api_key_env": "sk-f7d5ec5bee944333b7d81108cae27bf6",
+      "base_url_env": "https://api.deepseek.com/v1",
+      "timeout_sec": 3,
+      "max_tokens": 180,
+      "temperature": 0
+    },
+    "safety": {
+      "never_execute_without_song_object": true,
+      "llm_can_only_classify": true,
+      "llm_can_start_pipeline": false
+    }
+  }
+}

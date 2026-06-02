@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -20,33 +21,66 @@ class SongPipeline:
         self.config = load_song_config(config_path)
         self.dirs = ensure_song_dirs(self.config)
 
-    def run(self, request: SongRequest, cancellation: CancellationToken | None = None) -> SongJobResult:
+    def run(
+        self,
+        request: SongRequest,
+        cancellation: CancellationToken | None = None,
+        progress: Callable[[str, dict[str, Any]], None] | None = None,
+    ) -> SongJobResult:
         cancellation = cancellation or CancellationToken()
         try:
-            return self._run(request, cancellation)
+            return self._run(request, cancellation, progress)
         except SongJobCancelled:
             return SongJobResult(ok=False, message="已取消唱歌。", error="cancelled")
         except Exception as exc:
             return SongJobResult(ok=False, message=f"唱歌失败：{exc}", error=str(exc))
 
-    def _run(self, request: SongRequest, cancellation: CancellationToken) -> SongJobResult:
+    def _run(
+        self,
+        request: SongRequest,
+        cancellation: CancellationToken,
+        progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> SongJobResult:
         if not bool(self.config.get("enabled", True)):
             raise RuntimeError("唱歌功能已在 song_config.json 中关闭。")
         cancellation.throw_if_cancelled()
 
         search_config = self.config.get("search", {})
+        self._emit_progress(progress, "search_start", {"query": request.search_keyword()})
         song = search_best_song(request, limit=int(search_config.get("limit", 20)))
+        self._emit_progress(
+            progress,
+            "search_done",
+            {
+                "song_id": song.song_id,
+                "title": song.title,
+                "artist": song.artist_text,
+                "album": song.album,
+                "score": song.score,
+            },
+        )
         cancellation.throw_if_cancelled()
 
-        url = get_audio_url(song.song_id, bitrate=int(search_config.get("bitrate", 320000)))
+        bitrate = int(search_config.get("bitrate", 320000))
+        self._emit_progress(progress, "audio_url_start", {"song_id": song.song_id, "bitrate": bitrate})
+        url = get_audio_url(song.song_id, bitrate=bitrate)
+        self._emit_progress(progress, "audio_url_done", {"song_id": song.song_id, "extension": extension_from_url(url)})
         original_path = self._original_path(song.song_id, extension_from_url(url))
         if not request.prefer_cache or not original_path.exists():
             download_config = self.config.get("download", {})
+            self._emit_progress(progress, "download_start", {"song_id": song.song_id, "path": str(original_path)})
             download_audio(
                 url,
                 original_path,
                 timeout_sec=int(download_config.get("timeout_sec", 60)),
                 user_agent=str(download_config.get("user_agent") or ""),
+            )
+            self._emit_progress(progress, "download_done", {"song_id": song.song_id, "path": str(original_path)})
+        else:
+            self._emit_progress(
+                progress,
+                "cache_hit",
+                {"stage": "download", "song_id": song.song_id, "path": str(original_path)},
             )
         cancellation.throw_if_cancelled()
 
@@ -57,6 +91,11 @@ class SongPipeline:
         separated_dir = self.dirs["separated"] / separated_key
         vocal_path = separated_dir / "vocals.wav"
         instrumental_path = separated_dir / "instrumental.wav"
+        self._emit_progress(
+            progress,
+            "separate_start",
+            {"song_id": song.song_id, "cache_key": separated_key, "source_path": str(original_path)},
+        )
         if not request.prefer_cache or not vocal_path.exists() or not instrumental_path.exists():
             if separated_dir.exists() and not request.prefer_cache:
                 shutil.rmtree(separated_dir)
@@ -77,6 +116,20 @@ class SongPipeline:
                 shutil.copyfile(tmp_instrumental, instrumental_path)
             finally:
                 shutil.rmtree(tmp_separated, ignore_errors=True)
+            separate_cached = False
+        else:
+            separate_cached = True
+        self._emit_progress(
+            progress,
+            "separate_done",
+            {
+                "song_id": song.song_id,
+                "cache_key": separated_key,
+                "cached": separate_cached,
+                "vocal_path": str(vocal_path),
+                "instrumental_path": str(instrumental_path),
+            },
+        )
         cancellation.throw_if_cancelled()
 
         rvc_config = self._voice_config(request.voice_model)
@@ -97,6 +150,11 @@ class SongPipeline:
             }
         )
         rvc_path = self.dirs["rvc"] / f"{rvc_key}.wav"
+        self._emit_progress(
+            progress,
+            "rvc_start",
+            {"song_id": song.song_id, "cache_key": rvc_key, "vocal_path": str(vocal_path)},
+        )
         if not request.prefer_cache or not rvc_path.exists():
             tmp_vocal = self.dirs["tmp"] / f"{uuid.uuid4().hex}_vocal.wav"
             prepared_vocal = trim_audio_file(vocal_path, tmp_vocal, request.max_duration_sec)
@@ -112,6 +170,14 @@ class SongPipeline:
             finally:
                 if prepared_vocal == tmp_vocal:
                     tmp_vocal.unlink(missing_ok=True)
+            rvc_cached = False
+        else:
+            rvc_cached = True
+        self._emit_progress(
+            progress,
+            "rvc_done",
+            {"song_id": song.song_id, "cache_key": rvc_key, "cached": rvc_cached, "rvc_vocal_path": str(rvc_path)},
+        )
         cancellation.throw_if_cancelled()
 
         mix_params = dict(self.config.get("mix", {}))
@@ -142,6 +208,11 @@ class SongPipeline:
             "mix_params": mix_params,
             "search_score": song.score,
         }
+        self._emit_progress(
+            progress,
+            "mix_start",
+            {"song_id": song.song_id, "final_audio_path": str(final_path), "rvc_vocal_path": str(rvc_path)},
+        )
         if not request.prefer_cache or not final_path.exists():
             mix_vocal_with_instrumental(
                 rvc_path,
@@ -151,6 +222,25 @@ class SongPipeline:
                 max_duration_sec=request.max_duration_sec,
             )
             _write_json(final_path.with_suffix(".json"), metadata)
+            mix_cached = False
+        else:
+            mix_cached = True
+        self._emit_progress(
+            progress,
+            "mix_done",
+            {"song_id": song.song_id, "cached": mix_cached, "final_audio_path": str(final_path)},
+        )
+
+        self._emit_progress(
+            progress,
+            "ready",
+            {
+                "song_id": song.song_id,
+                "title": song.title,
+                "artist": song.artist_text,
+                "final_audio_path": str(final_path),
+            },
+        )
 
         return SongJobResult(
             ok=True,
@@ -209,6 +299,19 @@ class SongPipeline:
         params = {key: rvc_config[key] for key in allowed if key in rvc_config}
         params["max_duration_sec"] = max_duration_sec
         return params
+
+    def _emit_progress(
+        self,
+        progress: Callable[[str, dict[str, Any]], None] | None,
+        stage: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if progress is None:
+            return
+        try:
+            progress(stage, payload)
+        except Exception:
+            pass
 
 
 def _stable_hash(value: Any) -> str:

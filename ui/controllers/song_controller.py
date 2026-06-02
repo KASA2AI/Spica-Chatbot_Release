@@ -166,6 +166,7 @@ class SongController(QObject):
         self.focus_input()
 
         self.song_worker = SongWorker(request, job_id, self)
+        self.song_worker.progress.connect(self.handle_song_progress)
         self.song_worker.completed.connect(self.handle_song_ready)
         self.song_worker.failed.connect(self.handle_song_error)
         self.song_worker.finished.connect(lambda jid=job_id: self._handle_song_worker_finished(jid))
@@ -304,6 +305,11 @@ class SongController(QObject):
         self._set_state(SongState.PLAYING)
         self.typewriter_controller.start("唱歌中", interval_ms=70)
         self._play_song_audio(audio_path, job_id)
+
+    def handle_song_progress(self, job_id: int, stage: str, payload: dict[str, Any]) -> None:
+        if job_id != self.ui_state.session_id:
+            return
+        logger.debug("event=song_pipeline_progress job_id=%s stage=%s payload=%s", job_id, stage, payload)
 
     def handle_song_error(self, job_id: int, message: str) -> None:
         if job_id != self.ui_state.session_id:

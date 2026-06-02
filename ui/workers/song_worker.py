@@ -8,6 +8,7 @@ from agent_tools.function_tools.song import CancellationToken, SongPipeline, Son
 class SongWorker(QThread):
     completed = Signal(int, dict)
     failed = Signal(int, str)
+    progress = Signal(int, str, dict)
 
     def __init__(
         self,
@@ -26,7 +27,11 @@ class SongWorker(QThread):
 
     def run(self) -> None:
         try:
-            result = SongPipeline().run(self.request, self.cancellation)
+            result = SongPipeline().run(
+                self.request,
+                self.cancellation,
+                progress=lambda stage, payload: self._emit_progress(stage, payload),
+            )
             if self.isInterruptionRequested() or self.cancellation.cancelled():
                 return
             if result.ok:
@@ -37,3 +42,7 @@ class SongWorker(QThread):
             if not self.isInterruptionRequested() and not self.cancellation.cancelled():
                 self.failed.emit(self.job_id, str(exc))
 
+    def _emit_progress(self, stage: str, payload: dict) -> None:
+        if self.isInterruptionRequested() or self.cancellation.cancelled():
+            return
+        self.progress.emit(self.job_id, stage, payload)

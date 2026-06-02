@@ -8,6 +8,7 @@ TMP_DIR="${RELEASE_DIR}.tmp"
 PROJECT_ROOT_REAL="$(realpath -m "${PROJECT_ROOT}")"
 RELEASE_DIR_REAL="$(realpath -m "${RELEASE_DIR}")"
 TMP_DIR_REAL="$(realpath -m "${TMP_DIR}")"
+PRESERVED_GIT=false
 
 GPT_DIR="agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50"
 APPLIO_DIR="agent_tools/function_tools/song/Applio"
@@ -153,10 +154,20 @@ else
   } > "${TMP_DIR_REAL}/xiaosan.env"
 fi
 
+if [[ -e "${RELEASE_DIR_REAL}/.git" ]]; then
+  mv "${RELEASE_DIR_REAL}/.git" "${TMP_DIR_REAL}/.git"
+  PRESERVED_GIT=true
+fi
+
 rm -rf "${RELEASE_DIR_REAL}"
 mv "${TMP_DIR_REAL}" "${RELEASE_DIR_REAL}"
 
 echo "Release directory created: ${RELEASE_DIR_REAL}"
+if [[ "${PRESERVED_GIT}" == "true" ]]; then
+  echo "Existing Git metadata was preserved: ${RELEASE_DIR_REAL}/.git"
+else
+  echo "No existing Git metadata found to preserve."
+fi
 echo "GPT-SoVITS placeholder is empty: ${RELEASE_DIR_REAL}/${GPT_DIR}"
 echo "Applio placeholder is empty: ${RELEASE_DIR_REAL}/${APPLIO_DIR}"
 echo "spica_data files were stripped; directory skeleton was preserved."

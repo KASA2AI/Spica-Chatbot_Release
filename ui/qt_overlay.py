@@ -1,0 +1,740 @@
+from __future__ import annotations
+
+import sys
+import uuid
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
+from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QWidget
+
+from agent import SimpleAgent
+from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, build_tts_adapter, load_tts_config
+from agent_tools.visual import VisualDiffService
+from ui.controllers.audio_controller import AudioController
+from ui.controllers.chat_stream_controller import ChatStreamController
+from ui.controllers.interaction_controller import InteractionController
+from ui.controllers.song_controller import SongController
+from ui.controllers.typewriter_controller import TypewriterController
+from ui.controllers.voice_input_controller import VoiceInputController
+from ui.workers.startup_warmup_worker import StartupWarmupWorker
+from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, scaled_px
+from ui.widgets.dialogue_box import TintedDialogueBox
+from ui.widgets.input_panel import InputPanel
+from ui.widgets.resize_handle import CornerResizeHandle
+from ui.widgets.settings_panel import SettingsPanel
+from ui.widgets.window_controls import WindowControls
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+DEBUG_NORMAL_WINDOW = False
+MIN_WINDOW_SIZE = QSize(460, 360)
+CHARACTER_HIT_ALPHA_THRESHOLD = 8
+CHARACTER_HIT_MARGIN = 7
+
+
+class OverlayWindow(QWidget):
+    def __init__(self) -> None:
+        super().__init__(None)
+        self.setWindowTitle("Spica Overlay")
+        self.setMinimumSize(MIN_WINDOW_SIZE)
+        if DEBUG_NORMAL_WINDOW:
+            self.setWindowFlags(Qt.WindowType.Window)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, False)
+        else:
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.Window
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("OverlayWindow { background: transparent; }")
+
+        self.visual_tool: VisualDiffService | None = None
+        self.tts_tool: GPTSoVITSTool | None = None
+        self.tts_adapter: Any | None = None
+        self.agent: SimpleAgent | None = None
+        self.chat_stream_controller: ChatStreamController | None = None
+        self.song_controller: SongController | None = None
+        self.voice_input_controller: VoiceInputController | None = None
+        self.interaction_controller: InteractionController | None = None
+        self.startup_warmup_worker: StartupWarmupWorker | None = None
+        self.conversation_id = str(uuid.uuid4())
+        self.drag_offset: QPoint | None = None
+        self.resize_origin_geometry: QRect | None = None
+        self.resize_origin_pos: QPoint | None = None
+        self.resize_origin_ui_scale = 1.0
+        self.current_pixmap: QPixmap | None = None
+        self.pixmap_cache: dict[str, QPixmap] = {}
+        self.available_costumes: list[str] = []
+        self.selected_costume: str | None = None
+        self.interlocutor_name = DEFAULT_INTERLOCUTOR_NAME
+        self.character_scale = 1.0
+        self.ui_scale = 1.0
+        self.settings_panel: SettingsPanel | None = None
+
+        self.character_label = QLabel(self)
+        self.character_label.setObjectName("character")
+        self.character_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+        self.character_label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.character_label.setStyleSheet("QLabel#character { background: transparent; }")
+        self.character_label.setScaledContents(False)
+        self.character_label.installEventFilter(self)
+
+        try:
+            shadow = QGraphicsDropShadowEffect(self.character_label)
+            shadow.setBlurRadius(28)
+            shadow.setOffset(0, 18)
+            shadow.setColor(QColor(12, 18, 24, 86))
+            self.character_label.setGraphicsEffect(shadow)
+        except Exception:
+            pass
+
+        self.dialogue = TintedDialogueBox(self)
+        self.dialogue.installEventFilter(self)
+        self.typewriter_controller = TypewriterController(self, self.dialogue.set_dialogue_text)
+        self.audio_controller = AudioController(self)
+
+        self.input_panel = InputPanel(self)
+        self.input_panel.send_requested.connect(self.send_message)
+        self.input_panel.voice_requested.connect(self.toggle_voice)
+        self.voice_input_controller = VoiceInputController(
+            parent=self,
+            set_voice_active=self.input_panel.set_voice_active,
+            set_busy=self.set_busy,
+            is_conversation_busy=self._is_conversation_busy,
+            set_dialogue_text=self.dialogue.set_dialogue_text,
+            on_recognized_text=lambda text: None,
+            backend_ready=lambda: self.agent is not None,
+        )
+        self.song_controller = SongController(
+            parent=self,
+            chat_stream_controller=None,
+            audio_controller=self.audio_controller,
+            typewriter_controller=self.typewriter_controller,
+            visual_overrides_provider=self._visual_overrides,
+            set_busy=self.set_busy,
+            focus_input=self._focus_input,
+            stop_conversation_for_song=lambda: None,
+            voice_mode_active_provider=self._is_voice_mode_active,
+            schedule_voice_recording=self._schedule_next_voice_recording,
+        )
+        self.interaction_controller = InteractionController(
+            parent=self,
+            chat_stream_controller=None,
+            song_controller=self.song_controller,
+            audio_controller=self.audio_controller,
+            voice_input_controller=self.voice_input_controller,
+            focus_input=self._focus_input,
+            set_busy=self.set_busy,
+        )
+        self.voice_input_controller.set_on_recognized_text(self.interaction_controller.handle_user_text)
+        self.song_controller.set_stop_conversation_for_song(self.interaction_controller.stop_conversation_for_song)
+
+        self.window_controls = WindowControls(self)
+        self.window_controls.settings_requested.connect(self.open_settings_panel)
+        self.window_controls.minimize_requested.connect(self.minimize_overlay)
+        self.window_controls.close_requested.connect(self.close)
+        self.window_controls.installEventFilter(self)
+
+        self.resize_handle = CornerResizeHandle(self)
+
+        self._apply_ui_scale()
+        self._init_backend()
+        self._load_default_character()
+        self._size_to_screen()
+        self._start_startup_warmup()
+
+    def _init_backend(self) -> None:
+        try:
+            self.visual_tool = VisualDiffService()
+            tts_config = load_tts_config()
+            tts_provider = str(tts_config.get("provider") or tts_config.get("tts_provider") or "gptsovits_current")
+            if tts_provider in CURRENT_GPTSOVITS_PROVIDERS:
+                self.tts_tool = GPTSoVITSTool()
+                self.tts_adapter = build_tts_adapter(tts_config, service=self.tts_tool)
+            else:
+                self.tts_tool = None
+                self.tts_adapter = build_tts_adapter(tts_config)
+            self.agent = SimpleAgent(tts_adapter=self.tts_adapter, visual_tool=self.visual_tool)
+            self._init_chat_stream_controller()
+            self.interlocutor_name = self.agent.interlocutor_name
+            provider_name = str(getattr(self.tts_adapter, "name", None) or tts_provider)
+            self.dialogue.set_dialogue_text(f"LLM API 初始化完成，准备预热 {provider_name}...")
+        except Exception as exc:
+            if self.visual_tool is None:
+                try:
+                    self.visual_tool = VisualDiffService()
+                except Exception:
+                    self.visual_tool = None
+            self.dialogue.set_dialogue_text(f"初始化后端失败：{exc}")
+
+    def _init_chat_stream_controller(self) -> None:
+        if self.agent is None:
+            self.chat_stream_controller = None
+            return
+        self.chat_stream_controller = ChatStreamController(
+            parent=self,
+            agent=self.agent,
+            conversation_id_provider=lambda: self.conversation_id,
+            visual_overrides_provider=self._visual_overrides,
+            audio_controller=self.audio_controller,
+            typewriter_controller=self.typewriter_controller,
+            set_character_image=lambda image: self.set_character_image(BASE_DIR / str(image)),
+            set_busy=self.set_busy,
+            on_chat_done=self._handle_chat_stream_done,
+            on_error=self._handle_chat_error,
+            apply_visual=self._apply_visual,
+        )
+        if self.song_controller is not None:
+            self.song_controller.set_chat_stream_controller(self.chat_stream_controller)
+        if self.interaction_controller is not None:
+            self.interaction_controller.set_chat_stream_controller(self.chat_stream_controller)
+
+    def _start_startup_warmup(self) -> None:
+        if self.agent is None or self.tts_adapter is None:
+            return
+
+        self.startup_warmup_worker = StartupWarmupWorker(self.agent, self.tts_adapter, self)
+        self.startup_warmup_worker.status_changed.connect(self.dialogue.set_dialogue_text)
+        self.startup_warmup_worker.finished_ok.connect(self.dialogue.set_dialogue_text)
+        self.startup_warmup_worker.failed.connect(self.dialogue.set_dialogue_text)
+        self.startup_warmup_worker.start()
+
+    def _size_to_screen(self) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(760, 620)
+            return
+
+        available = screen.availableGeometry()
+        width = min(max(720, int(available.width() * 0.48)), int(available.width() * 0.78))
+        height = min(max(560, int(available.height() * 0.70)), int(available.height() * 0.82))
+        x = available.x() + (available.width() - width) // 2
+        y = available.y() + available.height() - height
+        self.setGeometry(x, y, width, height)
+
+    def _load_default_character(self) -> None:
+        if self.visual_tool is None:
+            return
+
+        try:
+            config = self.visual_tool.config
+            costumes = self.visual_tool.list_costume_sets()
+            costume, _mode = self.visual_tool.choose_costume(costumes, config=config)
+            self.available_costumes = costumes
+            self.selected_costume = costume
+            self._set_default_character_for_costume(costume)
+
+            dialog = config.get("dialog", {})
+            self.dialogue.speaker_label.setText(str(dialog.get("speaker") or "spica").lower())
+        except Exception as exc:
+            self.dialogue.set_dialogue_text(f"载入差分失败：{exc}")
+
+    def _set_default_character_for_costume(self, costume: str | None) -> None:
+        if self.visual_tool is None or not costume:
+            return
+
+        config = self.visual_tool.config
+        character = config.get("character", {})
+        expression_id = str(character.get("default_expression_id") or "000").zfill(3)
+        hand_pose = self.visual_tool.normalize_hand_pose(character.get("default_hand_pose") or "normal")
+        image_path = self.visual_tool.resolve_expression_image(costume, hand_pose, expression_id)
+        if image_path:
+            self.set_character_image(image_path)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._layout_overlay()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        QTimer.singleShot(
+            0,
+            lambda: self.input_panel.input.setFocus(Qt.FocusReason.ActiveWindowFocusReason),
+        )
+
+    def _layout_overlay(self) -> None:
+        width = self.width()
+        height = self.height()
+        scale = self.ui_scale
+
+        controls_width = self.window_controls.sizeHint().width()
+        controls_height = self.window_controls.sizeHint().height()
+        top_margin = scaled_px(14, scale)
+        self.window_controls.setGeometry(width - controls_width - top_margin, top_margin, controls_width, controls_height)
+
+        horizontal_margin = max(scaled_px(18, scale), int(width * 0.055))
+        input_height = scaled_px(58, scale)
+        input_width = min(width - horizontal_margin * 2, scaled_px(760, scale))
+        bottom_margin = max(scaled_px(16, scale), int(height * 0.022))
+        input_x = (width - input_width) // 2
+        input_y = height - bottom_margin - input_height
+        self.input_panel.setGeometry(input_x, input_y, input_width, input_height)
+
+        dialogue_width = min(width - horizontal_margin * 2, scaled_px(930, scale))
+        dialogue_height = max(scaled_px(164, scale), min(scaled_px(250, scale), int(height * 0.24 * scale)))
+        dialogue_x = (width - dialogue_width) // 2
+        dialogue_y = input_y - scaled_px(14, scale) - dialogue_height
+        self.dialogue.setGeometry(dialogue_x, dialogue_y, dialogue_width, dialogue_height)
+
+        base_character_height = min(int(height * 0.86), dialogue_y + int(dialogue_height * 0.68))
+        character_height = max(scaled_px(280, scale), min(int(base_character_height * self.character_scale * scale), int(height * 0.96)))
+        character_width = self._character_width_for_height(character_height)
+        character_width = min(character_width, int(width * 0.94))
+        character_x = (width - character_width) // 2
+        character_bottom = min(height - 8, input_y + int(input_height * 0.28))
+        character_y = max(0, character_bottom - character_height)
+        self.character_label.setGeometry(character_x, character_y, character_width, character_height)
+        self._rescale_character()
+
+        self.character_label.lower()
+        self.dialogue.raise_()
+        self.input_panel.raise_()
+        if self.settings_panel and self.settings_panel.isVisible():
+            panel_width = min(scaled_px(356, scale), max(scaled_px(318, scale), int(width * 0.34)))
+            panel_room = max(scaled_px(230, scale), height - controls_height - scaled_px(46, scale) - top_margin)
+            panel_height = min(scaled_px(326, scale), panel_room)
+            self.settings_panel.setGeometry(width - panel_width - top_margin, controls_height + scaled_px(22, scale), panel_width, panel_height)
+            self.settings_panel.raise_()
+        handle_size = self.resize_handle.width()
+        self.resize_handle.setGeometry(width - handle_size, height - handle_size, handle_size, handle_size)
+        self.resize_handle.raise_()
+        self.window_controls.raise_()
+        self._update_click_through_mask()
+
+    def _character_width_for_height(self, target_height: int) -> int:
+        if self.current_pixmap is None or self.current_pixmap.isNull():
+            return int(target_height * 0.55)
+        ratio = self.current_pixmap.width() / max(1, self.current_pixmap.height())
+        return max(220, int(target_height * ratio))
+
+    def _rescale_character(self) -> None:
+        if self.current_pixmap is None or self.current_pixmap.isNull():
+            return
+        scaled = self.current_pixmap.scaled(
+            self.character_label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.character_label.setPixmap(scaled)
+
+    def set_character_image(self, path: str | Path | None) -> None:
+        if not path:
+            return
+        cache_key = str(Path(path).resolve())
+        cached_pixmap = self.pixmap_cache.get(cache_key)
+        if cached_pixmap is not None and not cached_pixmap.isNull():
+            self.current_pixmap = cached_pixmap
+            self._layout_overlay()
+            return
+
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            return
+        self.current_pixmap = self._trim_transparent_pixmap(pixmap)
+        self.pixmap_cache[cache_key] = self.current_pixmap
+        self._layout_overlay()
+
+    def _trim_transparent_pixmap(self, pixmap: QPixmap) -> QPixmap:
+        image = pixmap.toImage()
+        if image.isNull() or not image.hasAlphaChannel():
+            return pixmap
+
+        left = image.width()
+        top = image.height()
+        right = -1
+        bottom = -1
+        for y in range(image.height()):
+            for x in range(image.width()):
+                if image.pixelColor(x, y).alpha() <= CHARACTER_HIT_ALPHA_THRESHOLD:
+                    continue
+                left = min(left, x)
+                top = min(top, y)
+                right = max(right, x)
+                bottom = max(bottom, y)
+
+        if right < left or bottom < top:
+            return pixmap
+
+        padding = 4
+        left = max(0, left - padding)
+        top = max(0, top - padding)
+        right = min(image.width() - 1, right + padding)
+        bottom = min(image.height() - 1, bottom + padding)
+        crop_rect = QRect(left, top, right - left + 1, bottom - top + 1)
+        return pixmap.copy(crop_rect)
+
+    def _apply_ui_scale(self) -> None:
+        self.typewriter_controller.set_scale(self.ui_scale)
+        self.dialogue.apply_scale(self.ui_scale)
+        self.input_panel.apply_scale(self.ui_scale)
+        self.window_controls.apply_scale(self.ui_scale)
+        self.resize_handle.apply_scale(self.ui_scale)
+        if self.settings_panel is not None:
+            self.settings_panel.apply_scale(self.ui_scale)
+        self._layout_overlay()
+
+    def send_message(self) -> None:
+        message = self.input_panel.input.text().strip()
+        if not message:
+            self.input_panel.input.setFocus()
+            return
+
+        self.input_panel.input.clear()
+        if self.interaction_controller is not None:
+            self.interaction_controller.handle_user_text(message)
+
+    def _is_song_busy(self) -> bool:
+        return bool(self.song_controller is not None and self.song_controller.is_busy())
+
+    def _focus_input(self) -> None:
+        self.input_panel.input.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _handle_chat_stream_done(self) -> None:
+        if self._is_voice_mode_active():
+            self._schedule_next_voice_recording(320)
+        else:
+            self._focus_input()
+
+    def _handle_chat_error(self, message: str) -> None:
+        if self._is_song_busy():
+            return
+        self.typewriter_controller.stop()
+        self.dialogue.set_dialogue_text(f"请求失败：{message}")
+        self.set_busy(False)
+        self._schedule_next_voice_recording(900)
+
+    def _visual_overrides(self) -> dict[str, str]:
+        if self.selected_costume:
+            return {"costume_mode": "fixed", "costume_set": self.selected_costume}
+        return {"costume_mode": "random"}
+
+    def _apply_visual(self, visual: dict[str, Any]) -> None:
+        dialog = visual.get("dialog") if isinstance(visual.get("dialog"), dict) else {}
+        speaker = str(dialog.get("speaker") or "spica").lower()
+        self.dialogue.speaker_label.setText(speaker)
+
+    def toggle_voice(self, checked: bool = False) -> None:
+        del checked
+        if self.voice_input_controller is not None:
+            self.voice_input_controller.toggle()
+
+    def _schedule_next_voice_recording(self, delay_ms: int = 320) -> None:
+        if self.voice_input_controller is not None:
+            self.voice_input_controller.schedule_next_recording(delay_ms)
+
+    def _is_voice_mode_active(self) -> bool:
+        return bool(self.voice_input_controller is not None and self.voice_input_controller.voice_mode_active)
+
+    def _is_conversation_busy(self) -> bool:
+        return bool(
+            (self.chat_stream_controller is not None and self.chat_stream_controller.is_busy())
+            or self._is_song_busy()
+        )
+
+    def set_busy(self, busy: bool) -> None:
+        if self._is_song_busy():
+            self.input_panel.set_busy(False, voice_enabled=True)
+            return
+        self.input_panel.set_busy(busy, voice_enabled=(not busy or self._is_voice_mode_active()))
+
+    def open_settings_panel(self) -> None:
+        if self.settings_panel is None:
+            self.settings_panel = SettingsPanel(self)
+            self.settings_panel.costume_changed.connect(self.set_costume)
+            self.settings_panel.interlocutor_name_changed.connect(self.set_interlocutor_name)
+            self.settings_panel.scale_changed.connect(self.set_character_scale)
+            self.settings_panel.overall_scale_changed.connect(self.set_overall_scale)
+            self.settings_panel.typing_speed_changed.connect(self.set_typewriter_speed)
+            self.settings_panel.apply_scale(self.ui_scale)
+            self.settings_panel.hide()
+
+        if self.visual_tool is not None:
+            self.available_costumes = self.visual_tool.list_costume_sets()
+        self.settings_panel.set_costumes(self.available_costumes, self.selected_costume)
+        self.settings_panel.set_interlocutor_name(self.interlocutor_name)
+        self.settings_panel.set_scale(self.character_scale)
+        self.settings_panel.set_overall_scale(self.ui_scale)
+        self.settings_panel.set_typing_speed(self.typewriter_controller.typewriter_speed)
+        self.settings_panel.setVisible(not self.settings_panel.isVisible())
+        self._layout_overlay()
+
+    def minimize_overlay(self) -> None:
+        self.showMinimized()
+
+    def set_costume(self, costume: str) -> None:
+        costume = (costume or "").strip()
+        if not costume:
+            return
+        self.selected_costume = costume
+        self._set_default_character_for_costume(costume)
+
+    def set_interlocutor_name(self, name: str) -> None:
+        name = (name or DEFAULT_INTERLOCUTOR_NAME).strip() or DEFAULT_INTERLOCUTOR_NAME
+        self.interlocutor_name = name
+        if self.agent is not None:
+            self.interlocutor_name = self.agent.set_interlocutor_name(name)
+        if self.settings_panel is not None:
+            self.settings_panel.set_interlocutor_name(self.interlocutor_name)
+
+    def set_character_scale(self, scale: float) -> None:
+        self.character_scale = max(0.5, min(1.8, float(scale)))
+        self._layout_overlay()
+
+    def set_overall_scale(self, scale: float) -> None:
+        self.ui_scale = max(MIN_UI_SCALE, min(MAX_UI_SCALE, float(scale)))
+        self._apply_ui_scale()
+
+    def set_typewriter_speed(self, speed: float) -> None:
+        self.typewriter_controller.set_speed(speed)
+
+    def _start_corner_resize(self, event: QMouseEvent) -> None:
+        self.drag_offset = None
+        self.resize_origin_geometry = self.geometry()
+        self.resize_origin_pos = event.globalPosition().toPoint()
+        self.resize_origin_ui_scale = self.ui_scale
+
+    def _corner_resize_to(self, event: QMouseEvent) -> None:
+        if self.resize_origin_geometry is None or self.resize_origin_pos is None:
+            return
+
+        origin = self.resize_origin_geometry
+        delta = event.globalPosition().toPoint() - self.resize_origin_pos
+        width_ratio = (origin.width() + delta.x()) / max(1, origin.width())
+        height_ratio = (origin.height() + delta.y()) / max(1, origin.height())
+        factor = max(width_ratio, height_ratio)
+
+        min_factor = max(
+            MIN_WINDOW_SIZE.width() / max(1, origin.width()),
+            MIN_WINDOW_SIZE.height() / max(1, origin.height()),
+            MIN_UI_SCALE / max(0.01, self.resize_origin_ui_scale),
+        )
+        max_factor = MAX_UI_SCALE / max(0.01, self.resize_origin_ui_scale)
+
+        available_geometry: QRect | None = None
+        screen = QGuiApplication.screenAt(origin.center()) or QGuiApplication.primaryScreen()
+        if screen is not None:
+            available_geometry = screen.availableGeometry()
+            max_width = max(MIN_WINDOW_SIZE.width(), available_geometry.width())
+            max_height = max(MIN_WINDOW_SIZE.height(), available_geometry.height())
+            max_factor = min(
+                max_factor,
+                max_width / max(1, origin.width()),
+                max_height / max(1, origin.height()),
+            )
+
+        if max_factor < min_factor:
+            max_factor = min_factor
+        factor = max(min_factor, min(max_factor, factor))
+        new_width = max(MIN_WINDOW_SIZE.width(), round(origin.width() * factor))
+        new_height = max(MIN_WINDOW_SIZE.height(), round(origin.height() * factor))
+        new_x = origin.x()
+        new_y = origin.y()
+        if available_geometry is not None:
+            new_x = min(new_x, available_geometry.right() + 1 - new_width)
+            new_y = min(new_y, available_geometry.bottom() + 1 - new_height)
+            new_x = max(available_geometry.x(), new_x)
+            new_y = max(available_geometry.y(), new_y)
+        self.ui_scale = max(MIN_UI_SCALE, min(MAX_UI_SCALE, self.resize_origin_ui_scale * factor))
+        if self.settings_panel is not None:
+            self.settings_panel.set_overall_scale(self.ui_scale)
+        self.setGeometry(new_x, new_y, new_width, new_height)
+        self._apply_ui_scale()
+
+    def _finish_corner_resize(self, event: QMouseEvent) -> None:
+        del event
+        self.resize_origin_geometry = None
+        self.resize_origin_pos = None
+        self._update_click_through_mask()
+
+    def _update_click_through_mask(self) -> None:
+        if DEBUG_NORMAL_WINDOW:
+            self.clearMask()
+            return
+        if self.width() <= 1 or self.height() <= 1:
+            return
+
+        region = QRegion(self._controls_drag_rect())
+        region = region.united(self._character_hit_region())
+        for widget, margin in (
+            (self.dialogue, 1),
+            (self.input_panel, 1),
+            (self.window_controls, 2),
+            (self.settings_panel, 1),
+            (self.resize_handle, 2),
+        ):
+            region = region.united(self._widget_hit_region(widget, margin))
+
+        if region.isEmpty():
+            self.clearMask()
+            return
+        self.setMask(region.intersected(QRegion(self.rect())))
+
+    def _controls_drag_rect(self) -> QRect:
+        controls_rect = self.window_controls.geometry()
+        if controls_rect.isEmpty():
+            return QRect()
+        top_margin = max(1, controls_rect.y())
+        height = controls_rect.height() + top_margin * 2
+        return QRect(0, 0, self.width(), min(self.height(), height))
+
+    def _widget_hit_region(self, widget: QWidget | None, margin: int = 0) -> QRegion:
+        if widget is None or widget.isHidden():
+            return QRegion()
+        rect = widget.geometry().adjusted(-margin, -margin, margin, margin).intersected(self.rect())
+        if rect.isEmpty():
+            return QRegion()
+        return QRegion(rect)
+
+    def _character_hit_region(self) -> QRegion:
+        if self.character_label.isHidden():
+            return QRegion()
+        pixmap = self.character_label.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return QRegion()
+
+        pixmap_rect = self._character_pixmap_rect(pixmap)
+        if pixmap_rect.isEmpty():
+            return QRegion()
+        if self.resize_origin_geometry is not None:
+            return QRegion(
+                pixmap_rect.adjusted(
+                    -CHARACTER_HIT_MARGIN,
+                    -CHARACTER_HIT_MARGIN,
+                    CHARACTER_HIT_MARGIN,
+                    CHARACTER_HIT_MARGIN,
+                ).intersected(self.rect())
+            )
+
+        image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+        region = self._alpha_hit_region(image, pixmap_rect.topLeft())
+        if region.isEmpty():
+            return QRegion(pixmap_rect.intersected(self.rect()))
+        return region.intersected(QRegion(self.rect()))
+
+    def _character_pixmap_rect(self, pixmap: QPixmap) -> QRect:
+        label_rect = self.character_label.geometry()
+        pixmap_width = pixmap.width()
+        pixmap_height = pixmap.height()
+        alignment = self.character_label.alignment()
+
+        x = label_rect.x()
+        if bool(alignment & Qt.AlignmentFlag.AlignHCenter):
+            x += (label_rect.width() - pixmap_width) // 2
+        elif bool(alignment & Qt.AlignmentFlag.AlignRight):
+            x += label_rect.width() - pixmap_width
+
+        y = label_rect.y()
+        if bool(alignment & Qt.AlignmentFlag.AlignVCenter):
+            y += (label_rect.height() - pixmap_height) // 2
+        elif bool(alignment & Qt.AlignmentFlag.AlignBottom):
+            y += label_rect.height() - pixmap_height
+
+        return QRect(x, y, pixmap_width, pixmap_height)
+
+    def _alpha_hit_region(self, image: QImage, origin: QPoint) -> QRegion:
+        if image.isNull():
+            return QRegion()
+
+        width = image.width()
+        height = image.height()
+        margin = CHARACTER_HIT_MARGIN
+        region = QRegion()
+
+        def add_run(start: int, stop: int, y: int) -> None:
+            nonlocal region
+            left = max(0, start - margin)
+            right = min(width, stop + margin)
+            top = max(0, y - margin)
+            bottom = min(height, y + margin + 1)
+            if right <= left or bottom <= top:
+                return
+            region = region.united(
+                QRegion(QRect(origin.x() + left, origin.y() + top, right - left, bottom - top))
+            )
+
+        for y in range(height):
+            run_start = -1
+            for x in range(width):
+                if image.pixelColor(x, y).alpha() > CHARACTER_HIT_ALPHA_THRESHOLD:
+                    if run_start < 0:
+                        run_start = x
+                elif run_start >= 0:
+                    add_run(run_start, x, y)
+                    run_start = -1
+            if run_start >= 0:
+                add_run(run_start, width, y)
+
+        return region
+
+    def eventFilter(self, watched: QObject, event) -> bool:  # noqa: N802 - Qt override
+        draggable_widgets = (
+            getattr(self, "character_label", None),
+            getattr(self, "dialogue", None),
+            getattr(self, "window_controls", None),
+        )
+        if watched in draggable_widgets:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self._start_drag(event)
+                return False
+            if event.type() == QEvent.Type.MouseMove and self.drag_offset is not None:
+                self._drag_to(event)
+                return True
+            if event.type() == QEvent.Type.MouseButtonRelease:
+                self.drag_offset = None
+                return False
+        return super().eventFilter(watched, event)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._start_drag(event)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+        if self.drag_offset is not None:
+            self._drag_to(event)
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+        self.drag_offset = None
+        super().mouseReleaseEvent(event)
+
+    def _start_drag(self, event: QMouseEvent) -> None:
+        self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def _drag_to(self, event: QMouseEvent) -> None:
+        self.move(event.globalPosition().toPoint() - self.drag_offset)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self.typewriter_controller.stop()
+        self.audio_controller.stop_all()
+        if self.song_controller is not None:
+            self.song_controller.shutdown(1500)
+        if self.chat_stream_controller is not None:
+            self.chat_stream_controller.shutdown(1500)
+        if self.voice_input_controller is not None:
+            self.voice_input_controller.shutdown(1500)
+        if self.startup_warmup_worker and self.startup_warmup_worker.isRunning():
+            self.startup_warmup_worker.quit()
+            self.startup_warmup_worker.wait(1500)
+        super().closeEvent(event)
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
+    window = OverlayWindow()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

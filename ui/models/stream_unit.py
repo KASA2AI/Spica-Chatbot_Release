@@ -17,3 +17,19 @@ class StreamUnitState:
     visual_ready: bool = True
     playback_started: bool = False
     playback_finished: bool = False
+    stream_id: int | None = None
+    stream_kind: str | None = None
+    text_ready_at_ms: float | None = None
+    audio_started_at_ms: float | None = None
+    audio_ready_at_ms: float | None = None
+    playback_started_at_ms: float | None = None
+    audio_finished_at_ms: float | None = None
+    text_finished_at_ms: float | None = None
+    playback_advance_at_ms: float | None = None
+    playback_finished_at_ms: float | None = None
+    audio_error: str | None = None
+    last_wait_reason: str | None = None
+
+    @property
+    def timeline(self) -> "StreamUnitState":
+        return self

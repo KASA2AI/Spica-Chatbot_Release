@@ -8,14 +8,14 @@ from ui.widgets.common import scaled_px
 
 
 class TypewriterController(QObject):
-    def __init__(self, parent: QObject, set_text: Callable[[str], None]) -> None:
+    def __init__(self, parent: QObject, set_text: Callable[[str], None], default_speed: float = 1.0) -> None:
         super().__init__(parent)
         self._set_text = set_text
         self.typing_timer: QTimer | None = None
         self.typing_text = ""
         self.typing_index = 0
         self.typing_finished_callback = None
-        self.typewriter_speed = 1.0
+        self.typewriter_speed = max(0.5, min(3.0, float(default_speed)))
         self.ui_scale = 1.0
 
     def start(self, text: str, interval_ms: int | None = None, on_finished=None) -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,7 @@ from ui.controllers.interaction_controller import InteractionController
 from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.controllers.voice_input_controller import VoiceInputController
+from ui.overlay_config import OverlayConfig, load_overlay_config
 from ui.workers.startup_warmup_worker import StartupWarmupWorker
 from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, scaled_px
 from ui.widgets.dialogue_box import TintedDialogueBox
@@ -32,6 +35,8 @@ DEBUG_NORMAL_WINDOW = False
 MIN_WINDOW_SIZE = QSize(460, 360)
 CHARACTER_HIT_ALPHA_THRESHOLD = 8
 CHARACTER_HIT_MARGIN = 7
+
+logger = logging.getLogger(__name__)
 
 
 class OverlayWindow(QWidget):
@@ -56,6 +61,7 @@ class OverlayWindow(QWidget):
         self.setAutoFillBackground(False)
         self.setStyleSheet("OverlayWindow { background: transparent; }")
 
+        self.overlay_config: OverlayConfig = load_overlay_config()
         self.visual_tool: VisualDiffService | None = None
         self.tts_tool: GPTSoVITSTool | None = None
         self.tts_adapter: Any | None = None
@@ -71,12 +77,18 @@ class OverlayWindow(QWidget):
         self.resize_origin_pos: QPoint | None = None
         self.resize_origin_ui_scale = 1.0
         self.current_pixmap: QPixmap | None = None
+        self.current_pixmap_cache_key: str | None = None
         self.pixmap_cache: dict[str, QPixmap] = {}
+        self.scaled_pixmap_cache: dict[tuple[str, int, int, float, float], QPixmap] = {}
         self.available_costumes: list[str] = []
         self.selected_costume: str | None = None
         self.interlocutor_name = DEFAULT_INTERLOCUTOR_NAME
-        self.character_scale = 1.0
-        self.ui_scale = 1.0
+        self.character_scale = self.overlay_config.default_character_scale
+        self.ui_scale = self.overlay_config.default_ui_scale
+        self.character_label_height_scale = self.overlay_config.character_label_height_scale
+        self.overlay_initial_height_scale = self.overlay_config.overlay_initial_height_scale
+        self.character_max_height_ratio = self.overlay_config.character_max_height_ratio
+        self._last_layout_log_state: tuple[Any, ...] | None = None
         self.settings_panel: SettingsPanel | None = None
 
         self.character_label = QLabel(self)
@@ -98,7 +110,11 @@ class OverlayWindow(QWidget):
 
         self.dialogue = TintedDialogueBox(self)
         self.dialogue.installEventFilter(self)
-        self.typewriter_controller = TypewriterController(self, self.dialogue.set_dialogue_text)
+        self.typewriter_controller = TypewriterController(
+            self,
+            self.dialogue.set_dialogue_text,
+            default_speed=self.overlay_config.default_typewriter_speed,
+        )
         self.audio_controller = AudioController(self)
 
         self.input_panel = InputPanel(self)
@@ -215,7 +231,11 @@ class OverlayWindow(QWidget):
 
         available = screen.availableGeometry()
         width = min(max(720, int(available.width() * 0.48)), int(available.width() * 0.78))
-        height = min(max(560, int(available.height() * 0.70)), int(available.height() * 0.82))
+        base_height = min(max(560, int(available.height() * 0.70)), int(available.height() * 0.82))
+        height = min(
+            available.height(),
+            max(MIN_WINDOW_SIZE.height(), int(base_height * self.overlay_initial_height_scale)),
+        )
         x = available.x() + (available.width() - width) // 2
         y = available.y() + available.height() - height
         self.setGeometry(x, y, width, height)
@@ -251,6 +271,7 @@ class OverlayWindow(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
+        self._clear_scaled_pixmap_cache("resize")
         self._layout_overlay()
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -285,13 +306,21 @@ class OverlayWindow(QWidget):
         self.dialogue.setGeometry(dialogue_x, dialogue_y, dialogue_width, dialogue_height)
 
         base_character_height = min(int(height * 0.86), dialogue_y + int(dialogue_height * 0.68))
-        character_height = max(scaled_px(280, scale), min(int(base_character_height * self.character_scale * scale), int(height * 0.96)))
+        raw_character_height = int(
+            base_character_height
+            * self.character_scale
+            * self.character_label_height_scale
+            * scale
+        )
+        max_character_height = int(height * self.character_max_height_ratio)
+        character_height = max(scaled_px(280, scale), min(raw_character_height, max_character_height))
         character_width = self._character_width_for_height(character_height)
         character_width = min(character_width, int(width * 0.94))
         character_x = (width - character_width) // 2
         character_bottom = min(height - 8, input_y + int(input_height * 0.28))
         character_y = max(0, character_bottom - character_height)
         self.character_label.setGeometry(character_x, character_y, character_width, character_height)
+        self._log_overlay_layout_config()
         self._rescale_character()
 
         self.character_label.lower()
@@ -309,40 +338,180 @@ class OverlayWindow(QWidget):
         self.window_controls.raise_()
         self._update_click_through_mask()
 
+    def _log_overlay_layout_config(self) -> None:
+        state = (
+            round(float(self.character_scale), 4),
+            round(float(self.ui_scale), 4),
+            round(float(self.typewriter_controller.typewriter_speed), 4),
+            round(float(self.character_label_height_scale), 4),
+            round(float(self.overlay_initial_height_scale), 4),
+            round(float(self.character_max_height_ratio), 4),
+            self.character_label.width(),
+            self.character_label.height(),
+            self.width(),
+            self.height(),
+        )
+        if state == self._last_layout_log_state:
+            return
+        self._last_layout_log_state = state
+        logger.info(
+            "event=overlay_layout_config default_character_scale=%s default_ui_scale=%s "
+            "default_typewriter_speed=%s character_label_height_scale=%s "
+            "overlay_initial_height_scale=%s character_max_height_ratio=%s "
+            "final_character_label_size=%sx%s window_size=%sx%s",
+            self.overlay_config.default_character_scale,
+            self.overlay_config.default_ui_scale,
+            self.overlay_config.default_typewriter_speed,
+            self.character_label_height_scale,
+            self.overlay_initial_height_scale,
+            self.character_max_height_ratio,
+            self.character_label.width(),
+            self.character_label.height(),
+            self.width(),
+            self.height(),
+        )
+
     def _character_width_for_height(self, target_height: int) -> int:
         if self.current_pixmap is None or self.current_pixmap.isNull():
             return int(target_height * 0.55)
         ratio = self.current_pixmap.width() / max(1, self.current_pixmap.height())
         return max(220, int(target_height * ratio))
 
+    def _now_ms(self) -> float:
+        return round(time.perf_counter() * 1000.0, 2)
+
+    def _duration_ms(self, started_at_ms: float) -> float:
+        return round(self._now_ms() - started_at_ms, 2)
+
+    def _log_character_image_event(self, event: str, **fields: Any) -> None:
+        field_parts = " ".join(f"{key}={value!r}" for key, value in fields.items())
+        suffix = f" {field_parts}" if field_parts else ""
+        logger.info("event=%s monotonic_ms=%s%s", event, self._now_ms(), suffix)
+
+    def _clear_scaled_pixmap_cache(self, reason: str) -> None:
+        if not self.scaled_pixmap_cache:
+            return
+        cache_size = len(self.scaled_pixmap_cache)
+        self.scaled_pixmap_cache.clear()
+        self._log_character_image_event("scaled_cache_clear", reason=reason, cache_size=cache_size)
+
+    def _scaled_pixmap_cache_key(self) -> tuple[str, int, int, float, float] | None:
+        if not self.current_pixmap_cache_key:
+            return None
+        size = self.character_label.size()
+        if size.width() <= 0 or size.height() <= 0:
+            return None
+        return (
+            self.current_pixmap_cache_key,
+            size.width(),
+            size.height(),
+            round(float(self.ui_scale), 4),
+            round(float(self.character_scale), 4),
+        )
+
     def _rescale_character(self) -> None:
         if self.current_pixmap is None or self.current_pixmap.isNull():
             return
+        scaled_cache_key = self._scaled_pixmap_cache_key()
+        if scaled_cache_key is not None:
+            cached_scaled = self.scaled_pixmap_cache.get(scaled_cache_key)
+            if cached_scaled is not None and not cached_scaled.isNull():
+                self._log_character_image_event(
+                    "scaled_cache_hit",
+                    path=scaled_cache_key[0],
+                    label_size=f"{scaled_cache_key[1]}x{scaled_cache_key[2]}",
+                    cache_size=len(self.scaled_pixmap_cache),
+                )
+                label_started_at_ms = self._now_ms()
+                self._log_character_image_event("label_update_start")
+                self.character_label.setPixmap(cached_scaled)
+                self._log_character_image_event(
+                    "label_update_done",
+                    duration_ms=self._duration_ms(label_started_at_ms),
+                )
+                return
+
+            self._log_character_image_event(
+                "scaled_cache_miss",
+                path=scaled_cache_key[0] if scaled_cache_key is not None else None,
+                label_size=f"{self.character_label.width()}x{self.character_label.height()}",
+                cache_size=len(self.scaled_pixmap_cache),
+            )
+
+        scale_started_at_ms = self._now_ms()
+        self._log_character_image_event(
+            "pixmap_scale_start",
+            label_size=f"{self.character_label.width()}x{self.character_label.height()}",
+            pixmap_size=f"{self.current_pixmap.width()}x{self.current_pixmap.height()}",
+        )
         scaled = self.current_pixmap.scaled(
             self.character_label.size(),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        self._log_character_image_event(
+            "pixmap_scale_done",
+            duration_ms=self._duration_ms(scale_started_at_ms),
+            scaled_size=f"{scaled.width()}x{scaled.height()}",
+        )
+        if scaled_cache_key is not None and not scaled.isNull():
+            self.scaled_pixmap_cache[scaled_cache_key] = scaled
+        label_started_at_ms = self._now_ms()
+        self._log_character_image_event("label_update_start")
         self.character_label.setPixmap(scaled)
+        self._log_character_image_event(
+            "label_update_done",
+            duration_ms=self._duration_ms(label_started_at_ms),
+        )
 
     def set_character_image(self, path: str | Path | None) -> None:
         if not path:
             return
+        started_at_ms = self._now_ms()
         cache_key = str(Path(path).resolve())
-        cached_pixmap = self.pixmap_cache.get(cache_key)
-        if cached_pixmap is not None and not cached_pixmap.isNull():
-            self.current_pixmap = cached_pixmap
+        self._log_character_image_event("set_character_image_start", path=cache_key)
+        raw_pixmap = self.pixmap_cache.get(cache_key)
+        if raw_pixmap is not None and not raw_pixmap.isNull():
+            self._log_character_image_event("cache_hit", path=cache_key, cache_size=len(self.pixmap_cache))
+            self._log_character_image_event("raw_cache_hit", path=cache_key, cache_size=len(self.pixmap_cache))
+            self.current_pixmap = raw_pixmap
+            self.current_pixmap_cache_key = cache_key
             self._layout_overlay()
+            duration_ms = self._duration_ms(started_at_ms)
+            self._log_character_image_event("set_character_image_done", path=cache_key, duration_ms=duration_ms)
+            if duration_ms > 100:
+                logger.warning("event=set_character_image_slow monotonic_ms=%s path=%r duration_ms=%s", self._now_ms(), cache_key, duration_ms)
             return
 
+        self._log_character_image_event("cache_miss", path=cache_key, cache_size=len(self.pixmap_cache))
+        self._log_character_image_event("raw_cache_miss", path=cache_key, cache_size=len(self.pixmap_cache))
+        load_started_at_ms = self._now_ms()
+        self._log_character_image_event("image_load_start", path=cache_key)
         pixmap = QPixmap(str(path))
+        self._log_character_image_event(
+            "image_load_done",
+            path=cache_key,
+            duration_ms=self._duration_ms(load_started_at_ms),
+            is_null=pixmap.isNull(),
+        )
         if pixmap.isNull():
+            duration_ms = self._duration_ms(started_at_ms)
+            self._log_character_image_event("set_character_image_done", path=cache_key, duration_ms=duration_ms, loaded=False)
+            if duration_ms > 100:
+                logger.warning("event=set_character_image_slow monotonic_ms=%s path=%r duration_ms=%s", self._now_ms(), cache_key, duration_ms)
             return
-        self.current_pixmap = self._trim_transparent_pixmap(pixmap)
+        self.current_pixmap = pixmap
+        self.current_pixmap_cache_key = cache_key
         self.pixmap_cache[cache_key] = self.current_pixmap
         self._layout_overlay()
+        duration_ms = self._duration_ms(started_at_ms)
+        self._log_character_image_event("set_character_image_done", path=cache_key, duration_ms=duration_ms, loaded=True)
+        if duration_ms > 100:
+            logger.warning("event=set_character_image_slow monotonic_ms=%s path=%r duration_ms=%s", self._now_ms(), cache_key, duration_ms)
 
     def _trim_transparent_pixmap(self, pixmap: QPixmap) -> QPixmap:
+        # This is an O(width * height) Python alpha scan. Keep it out of
+        # playback hot paths; use only for offline/explicit image processing.
         image = pixmap.toImage()
         if image.isNull() or not image.hasAlphaChannel():
             return pixmap
@@ -372,6 +541,7 @@ class OverlayWindow(QWidget):
         return pixmap.copy(crop_rect)
 
     def _apply_ui_scale(self) -> None:
+        self._clear_scaled_pixmap_cache("ui_scale")
         self.typewriter_controller.set_scale(self.ui_scale)
         self.dialogue.apply_scale(self.ui_scale)
         self.input_panel.apply_scale(self.ui_scale)
@@ -485,7 +655,10 @@ class OverlayWindow(QWidget):
             self.settings_panel.set_interlocutor_name(self.interlocutor_name)
 
     def set_character_scale(self, scale: float) -> None:
-        self.character_scale = max(0.5, min(1.8, float(scale)))
+        next_scale = max(0.5, min(1.8, float(scale)))
+        if next_scale != self.character_scale:
+            self._clear_scaled_pixmap_cache("character_scale")
+        self.character_scale = next_scale
         self._layout_overlay()
 
     def set_overall_scale(self, scale: float) -> None:

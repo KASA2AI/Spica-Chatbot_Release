@@ -5,6 +5,7 @@ import json
 import shutil
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,13 @@ from agent_tools.function_tools.song.models import CancellationToken, SongJobCan
 from agent_tools.function_tools.song.netease import download_audio, extension_from_url, get_audio_url, search_best_song
 from agent_tools.function_tools.song.rvc import infer_spica_vocal
 from agent_tools.function_tools.song.separator import separate_vocals
+
+
+@dataclass
+class _SongLightStageResult:
+    song: Any
+    original_path: Path
+    search_config: dict[str, Any]
 
 
 class SongPipeline:
@@ -26,10 +34,11 @@ class SongPipeline:
         request: SongRequest,
         cancellation: CancellationToken | None = None,
         progress: Callable[[str, dict[str, Any]], None] | None = None,
+        before_heavy_stage: Callable[[], None] | None = None,
     ) -> SongJobResult:
         cancellation = cancellation or CancellationToken()
         try:
-            return self._run(request, cancellation, progress)
+            return self._run(request, cancellation, progress, before_heavy_stage)
         except SongJobCancelled:
             return SongJobResult(ok=False, message="已取消唱歌。", error="cancelled")
         except Exception as exc:
@@ -40,7 +49,21 @@ class SongPipeline:
         request: SongRequest,
         cancellation: CancellationToken,
         progress: Callable[[str, dict[str, Any]], None] | None,
+        before_heavy_stage: Callable[[], None] | None,
     ) -> SongJobResult:
+        light_result = self._run_light_stage(request, cancellation, progress)
+        cancellation.throw_if_cancelled()
+        if before_heavy_stage is not None:
+            before_heavy_stage()
+        cancellation.throw_if_cancelled()
+        return self._run_heavy_stage(request, cancellation, progress, light_result)
+
+    def _run_light_stage(
+        self,
+        request: SongRequest,
+        cancellation: CancellationToken,
+        progress: Callable[[str, dict[str, Any]], None] | None,
+    ) -> _SongLightStageResult:
         if not bool(self.config.get("enabled", True)):
             raise RuntimeError("唱歌功能已在 song_config.json 中关闭。")
         cancellation.throw_if_cancelled()
@@ -83,6 +106,18 @@ class SongPipeline:
                 {"stage": "download", "song_id": song.song_id, "path": str(original_path)},
             )
         cancellation.throw_if_cancelled()
+
+        return _SongLightStageResult(song=song, original_path=original_path, search_config=search_config)
+
+    def _run_heavy_stage(
+        self,
+        request: SongRequest,
+        cancellation: CancellationToken,
+        progress: Callable[[str, dict[str, Any]], None] | None,
+        light_result: _SongLightStageResult,
+    ) -> SongJobResult:
+        song = light_result.song
+        original_path = light_result.original_path
 
         separator_config = self.config.get("separator", {})
         separator_params = self._separator_params(separator_config)

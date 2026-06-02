@@ -386,7 +386,7 @@ class OverlayWindow(QWidget):
     def _log_character_image_event(self, event: str, **fields: Any) -> None:
         field_parts = " ".join(f"{key}={value!r}" for key, value in fields.items())
         suffix = f" {field_parts}" if field_parts else ""
-        logger.info("event=%s monotonic_ms=%s%s", event, self._now_ms(), suffix)
+        logger.debug("event=%s monotonic_ms=%s%s", event, self._now_ms(), suffix)
 
     def _clear_scaled_pixmap_cache(self, reason: str) -> None:
         if not self.scaled_pixmap_cache:

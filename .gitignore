@@ -8,7 +8,6 @@ xiaosan.env
 xiaosan.env
 
 .DS_Store
-.idea/
 
 static/generated_voice/*.wav
 spica_data/*.sqlite3

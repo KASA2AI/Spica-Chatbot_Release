@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -20,7 +21,7 @@ from ui.controllers.audio_controller import AudioController
 from ui.controllers.chat_stream_controller import ChatStreamController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.models.playback import AudioOwner, AudioToken
-from ui.models.song_ui import SongUiState
+from ui.models.song_ui import SongPlaybackGate, SongUiState
 from ui.workers.song_worker import SongWorker
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,145 @@ class SongController(QObject):
         self.song_worker: SongWorker | None = None
         self.retired_song_workers: list[SongWorker] = []
         self.audio_session_id = 0
+
+    def _now_ms(self) -> float:
+        return round(time.perf_counter() * 1000.0, 2)
+
+    def _log_value(self, value: Any) -> str:
+        if isinstance(value, str):
+            return repr(value)
+        return str(value)
+
+    def _log_song_event(
+        self,
+        event: str,
+        *,
+        job_id: int | None = None,
+        session_id: int | None = None,
+        **fields: Any,
+    ) -> None:
+        if session_id is None:
+            session_id = self.ui_state.session_id
+        field_parts = " ".join(f"{key}={self._log_value(value)}" for key, value in fields.items())
+        suffix = f" {field_parts}" if field_parts else ""
+        logger.debug(
+            "event=%s session_id=%s job_id=%s state=%s auto_play=%s prelude_active=%s "
+            "clear_throat_active=%s monotonic_ms=%s%s",
+            event,
+            session_id,
+            job_id,
+            self.ui_state.state.value,
+            self.ui_state.auto_play,
+            self.ui_state.prelude_active,
+            self.ui_state.clear_throat_active,
+            self._now_ms(),
+            suffix,
+        )
+
+    def _reset_playback_gate_for_request(
+        self,
+        *,
+        prelude_required: bool,
+        reason: str,
+        user_paused: bool = False,
+    ) -> None:
+        self.ui_state.playback_gate = SongPlaybackGate(
+            prelude_done=not prelude_required,
+            clear_throat_done=not prelude_required,
+            song_ready=False,
+            user_paused=user_paused,
+        )
+        self._sync_legacy_state_from_playback_gate(reason=reason)
+        self._log_playback_gate(reason=reason)
+
+    def _reset_playback_gate_to_idle(self, *, reason: str) -> None:
+        self.ui_state.playback_gate = SongPlaybackGate()
+        self._sync_legacy_state_from_playback_gate(reason=reason)
+        self._log_playback_gate(reason=reason)
+
+    def _update_playback_gate(
+        self,
+        *,
+        reason: str,
+        prelude_done: bool | None = None,
+        clear_throat_done: bool | None = None,
+        song_ready: bool | None = None,
+        user_paused: bool | None = None,
+    ) -> None:
+        gate = self.ui_state.playback_gate
+        if prelude_done is not None:
+            gate.prelude_done = prelude_done
+        if clear_throat_done is not None:
+            gate.clear_throat_done = clear_throat_done
+        if song_ready is not None:
+            gate.song_ready = song_ready
+        if user_paused is not None:
+            gate.user_paused = user_paused
+        self._sync_legacy_state_from_playback_gate(reason=reason)
+        self._log_playback_gate(reason=reason)
+
+    def _sync_legacy_state_from_playback_gate(self, *, reason: str) -> None:
+        # Compatibility mirrors are read-only properties on SongUiState now.
+        del reason
+        return
+
+    def _maybe_play_ready_song(self, *, reason: str) -> bool:
+        gate = self.ui_state.playback_gate
+        self._log_playback_gate(reason=f"{reason}_before_maybe_play")
+
+        if self.ui_state.state not in {SongState.PREPARING, SongState.READY}:
+            return False
+
+        audio_path = self.ui_state.pending_audio_path or self.ui_state.context.pending_audio_path
+        if not audio_path:
+            return False
+
+        if not gate.song_ready:
+            self._update_playback_gate(reason=reason, song_ready=True)
+            gate = self.ui_state.playback_gate
+        else:
+            self._sync_legacy_state_from_playback_gate(reason=reason)
+
+        if not gate.can_play:
+            if self.ui_state.state == SongState.PREPARING:
+                self._set_state(SongState.READY)
+            if gate.user_paused:
+                self.typewriter_controller.start("准备好了。说继续我再唱。", interval_ms=45)
+                self.focus_input()
+            self._log_playback_gate(reason=f"{reason}_blocked")
+            return False
+
+        self._set_state(SongState.PLAYING)
+        self.set_busy(False)
+        if reason == "resume_ready":
+            self.typewriter_controller.start("继续唱。", interval_ms=45)
+        else:
+            self.typewriter_controller.start("唱歌中", interval_ms=70)
+        self._play_song_audio(audio_path, self.ui_state.session_id)
+        self._log_playback_gate(reason=f"{reason}_play")
+        return True
+
+    def _log_playback_gate(self, *, reason: str) -> None:
+        gate = self.ui_state.playback_gate
+        logger.debug(
+            "event=song_playback_gate_snapshot session_id=%s state=%s reason=%s "
+            "prelude_done=%s clear_throat_done=%s song_ready=%s user_paused=%s can_play=%s "
+            "legacy_auto_play=%s legacy_prelude_active=%s legacy_clear_throat_active=%s "
+            "legacy_user_paused_preparing=%s monotonic_ms=%s",
+            self.ui_state.session_id,
+            self.ui_state.state.value,
+            reason,
+            gate.prelude_done,
+            gate.clear_throat_done,
+            gate.song_ready,
+            gate.user_paused,
+            gate.can_play,
+            self.ui_state.auto_play,
+            self.ui_state.prelude_active,
+            self.ui_state.clear_throat_active,
+            self.ui_state.user_paused_preparing,
+            self._now_ms(),
+        )
 
     def set_chat_stream_controller(self, chat_stream_controller: ChatStreamController | None) -> None:
         self.chat_stream_controller = chat_stream_controller
@@ -126,9 +266,14 @@ class SongController(QObject):
             return
 
         self.stop_conversation_for_song()
-        self.ui_state.prelude_active = True
-        self.ui_state.user_paused_preparing = False
-        self.start_song_request(request, auto_play=False, show_message=False, stop_conversation=False)
+        self.start_song_request(
+            request,
+            auto_play=False,
+            show_message=False,
+            stop_conversation=False,
+            prelude_required=True,
+        )
+        self._log_playback_gate(reason="prelude_mark_active")
         self._start_song_prelude_chat(request)
 
     def start_song_request(
@@ -138,28 +283,31 @@ class SongController(QObject):
         show_message: bool = True,
         *,
         stop_conversation: bool = True,
+        prelude_required: bool = False,
     ) -> None:
         if stop_conversation:
             self.stop_conversation_for_song()
         self._prune_retired_song_workers()
         self.ui_state.session_id += 1
         job_id = self.ui_state.session_id
-        logger.debug(
-            "event=song_request_start job_id=%s auto_play=%s show_message=%s stop_conversation=%s query=%r",
-            job_id,
-            auto_play,
-            show_message,
-            stop_conversation,
-            request.search_keyword(),
+        self._log_song_event(
+            "song_request_start",
+            job_id=job_id,
+            requested_auto_play=auto_play,
+            show_message=show_message,
+            stop_conversation=stop_conversation,
+            query=request.search_keyword(),
         )
         self._set_state(SongState.PREPARING)
         self._clear_pending_song_hint()
-        self._set_auto_play(auto_play)
-        self.ui_state.clear_throat_active = False
-        self.ui_state.user_paused_preparing = False
         self.ui_state.context.pending_request = request
         self.ui_state.context.pending_audio_path = None
         self.ui_state.pending_audio_path = None
+        self._reset_playback_gate_for_request(
+            prelude_required=prelude_required,
+            reason="song_request_start",
+            user_paused=bool(not auto_play and not prelude_required),
+        )
         self.set_busy(False)
         if show_message:
             self.typewriter_controller.start("Spica 正在清嗓", interval_ms=70)
@@ -170,31 +318,23 @@ class SongController(QObject):
         self.song_worker.completed.connect(self.handle_song_ready)
         self.song_worker.failed.connect(self.handle_song_error)
         self.song_worker.finished.connect(lambda jid=job_id: self._handle_song_worker_finished(jid))
-        logger.debug("event=song_worker_start job_id=%s query=%r", job_id, request.search_keyword())
+        self._log_song_event("song_worker_start", job_id=job_id, query=request.search_keyword())
         self.song_worker.start()
 
     def cancel(self, show_message: bool = True) -> None:
         had_song = self.is_busy()
-        logger.debug(
-            "event=song_cancel session_id=%s state=%s show_message=%s had_song=%s",
-            self.ui_state.session_id,
-            self.ui_state.state.value,
-            show_message,
-            had_song,
-        )
+        self._log_song_event("song_cancel", show_message=show_message, had_song=had_song)
         self.ui_state.session_id += 1
-        if self.ui_state.prelude_active:
+        if not self.ui_state.playback_gate.prelude_done:
             self._stop_song_prelude()
         self._retire_song_worker(cancel=True)
         self.audio_controller.stop_song()
         self._set_state(SongState.IDLE)
         self._clear_pending_song_hint()
-        self._set_auto_play(True)
-        self.ui_state.clear_throat_active = False
-        self.ui_state.user_paused_preparing = False
         self.ui_state.context.pending_request = None
         self.ui_state.context.pending_audio_path = None
         self.ui_state.pending_audio_path = None
+        self._reset_playback_gate_to_idle(reason="cancel")
         self.set_busy(False)
         if show_message and had_song:
             self.typewriter_controller.start("好，先不唱了。", interval_ms=45)
@@ -213,8 +353,7 @@ class SongController(QObject):
             return
 
         if self.ui_state.state == SongState.PREPARING:
-            self._set_auto_play(False)
-            self.ui_state.user_paused_preparing = True
+            self._update_playback_gate(reason="pause_preparing", user_paused=True)
             self.typewriter_controller.start("好，准备好后先不播放。说继续我再唱。", interval_ms=45)
             self.focus_input()
             return
@@ -233,19 +372,20 @@ class SongController(QObject):
             return
 
         if self.ui_state.state == SongState.READY:
-            if self.ui_state.prelude_active:
+            if not self.ui_state.playback_gate.prelude_done:
                 self._stop_song_prelude()
             audio_path = self.ui_state.pending_audio_path or self.ui_state.context.pending_audio_path
             if not audio_path:
                 self.typewriter_controller.start("现在没有可以继续的歌曲。", interval_ms=45)
                 return
-            self._set_auto_play(True)
-            self.ui_state.user_paused_preparing = False
-            self.ui_state.clear_throat_active = False
-            self._set_state(SongState.PLAYING)
-            self.set_busy(False)
-            self.typewriter_controller.start("继续唱。", interval_ms=45)
-            self._play_song_audio(audio_path, self.ui_state.session_id)
+            self._update_playback_gate(
+                reason="resume_ready",
+                prelude_done=True,
+                clear_throat_done=True,
+                song_ready=True,
+                user_paused=False,
+            )
+            self._maybe_play_ready_song(reason="resume_ready")
             return
 
         self.typewriter_controller.start("现在没有可以继续的歌曲。", interval_ms=45)
@@ -291,47 +431,36 @@ class SongController(QObject):
         if not audio_path:
             self.handle_song_error(job_id, "唱歌任务没有返回音频文件。")
             return
-        logger.debug("event=song_ready job_id=%s audio_path=%s auto_play=%s", job_id, audio_path, self.ui_state.auto_play)
+        self._log_song_event("song_ready", job_id=job_id, audio_path=audio_path)
         self.ui_state.pending_audio_path = str(audio_path)
         self.ui_state.context.pending_audio_path = str(audio_path)
+        self._update_playback_gate(reason="song_ready", song_ready=True)
         self.set_busy(False)
-        if not self.ui_state.auto_play:
-            self._set_state(SongState.READY)
-            if (self.ui_state.prelude_active or self.ui_state.clear_throat_active) and not self.ui_state.user_paused_preparing:
-                return
-            self.typewriter_controller.start("准备好了。说继续我再唱。", interval_ms=45)
-            self.focus_input()
-            return
-        self._set_state(SongState.PLAYING)
-        self.typewriter_controller.start("唱歌中", interval_ms=70)
-        self._play_song_audio(audio_path, job_id)
+        self._maybe_play_ready_song(reason="song_ready")
 
     def handle_song_progress(self, job_id: int, stage: str, payload: dict[str, Any]) -> None:
         if job_id != self.ui_state.session_id:
             return
-        logger.debug("event=song_pipeline_progress job_id=%s stage=%s payload=%s", job_id, stage, payload)
+        self._log_song_event("song_pipeline_progress", job_id=job_id, stage=stage, payload=payload)
 
     def handle_song_error(self, job_id: int, message: str) -> None:
         if job_id != self.ui_state.session_id:
             return
-        logger.debug("event=song_error job_id=%s message=%r", job_id, message)
+        self._log_song_event("song_error", job_id=job_id, message=message)
         self._set_state(SongState.ERROR)
         self._clear_pending_song_hint()
-        self._set_auto_play(True)
-        self.ui_state.prelude_active = False
-        self.ui_state.clear_throat_active = False
-        self.ui_state.user_paused_preparing = False
         self.ui_state.context.pending_request = None
         self.ui_state.context.pending_audio_path = None
         self.ui_state.pending_audio_path = None
         self.audio_controller.stop_song()
+        self._reset_playback_gate_to_idle(reason="song_error")
         self.set_busy(False)
         self.typewriter_controller.start(f"唱歌失败：{message}", interval_ms=45)
         if self.voice_mode_active_provider():
             self.schedule_voice_recording(900)
 
     def finish_song_playback(self) -> None:
-        logger.debug("event=song_play_end session_id=%s", self.ui_state.session_id)
+        self._log_song_event("song_play_end")
         self.audio_controller.stop_song()
         self.ui_state.context.last_request = self.ui_state.context.pending_request
         self.ui_state.context.last_audio_path = self.ui_state.context.pending_audio_path
@@ -340,10 +469,7 @@ class SongController(QObject):
         self.ui_state.pending_audio_path = None
         self._set_state(SongState.IDLE)
         self._clear_pending_song_hint()
-        self._set_auto_play(True)
-        self.ui_state.prelude_active = False
-        self.ui_state.clear_throat_active = False
-        self.ui_state.user_paused_preparing = False
+        self._reset_playback_gate_to_idle(reason="song_finished")
         self.set_busy(False)
         self.typewriter_controller.start("唱完了。", interval_ms=45)
         if self.voice_mode_active_provider():
@@ -372,7 +498,7 @@ class SongController(QObject):
             self._finish_song_prelude()
             return
         prompt = self._song_prelude_prompt(request)
-        logger.debug("event=song_prelude_start session_id=%s query=%r", self.ui_state.session_id, request.search_keyword())
+        self._log_song_event("song_prelude_start", query=request.search_keyword())
         self.chat_stream_controller.start_song_prelude(
             prompt,
             self.visual_overrides_provider(),
@@ -388,14 +514,15 @@ class SongController(QObject):
         )
 
     def _finish_song_prelude(self) -> None:
-        if not self.ui_state.prelude_active:
+        if self.ui_state.playback_gate.prelude_done:
             return
-        self.ui_state.prelude_active = False
-        logger.debug("event=song_prelude_done session_id=%s state=%s", self.ui_state.session_id, self.ui_state.state.value)
+        self._update_playback_gate(reason="prelude_done", prelude_done=True)
+        gate = self.ui_state.playback_gate
+        self._log_song_event("song_prelude_done")
 
         if self.ui_state.state not in {SongState.PREPARING, SongState.READY}:
             return
-        if self.ui_state.user_paused_preparing:
+        if gate.user_paused:
             if self.ui_state.state == SongState.READY:
                 self.typewriter_controller.start("准备好了。说继续我再唱。", interval_ms=45)
             else:
@@ -403,9 +530,8 @@ class SongController(QObject):
             self.focus_input()
             return
 
-        self.ui_state.clear_throat_active = True
-        logger.debug("event=clear_throat_start session_id=%s", self.ui_state.session_id)
-        self._set_auto_play(False)
+        self._update_playback_gate(reason="clear_throat_start", clear_throat_done=False)
+        self._log_song_event("clear_throat_start")
         job_id = self.ui_state.session_id
         self.typewriter_controller.start(
             "Spica 正在清嗓",
@@ -416,35 +542,29 @@ class SongController(QObject):
     def _finish_song_clear_throat(self, job_id: int) -> None:
         if job_id != self.ui_state.session_id:
             return
-        self.ui_state.clear_throat_active = False
-        logger.debug("event=clear_throat_done job_id=%s state=%s", job_id, self.ui_state.state.value)
-        if self.ui_state.user_paused_preparing:
+        self._update_playback_gate(reason="clear_throat_done", clear_throat_done=True)
+        gate = self.ui_state.playback_gate
+        self._log_song_event("clear_throat_done", job_id=job_id)
+        if gate.user_paused:
             return
-        self._set_auto_play(True)
-        if self.ui_state.state == SongState.READY:
-            self._play_ready_song_after_prelude()
+        self._maybe_play_ready_song(reason="clear_throat_done")
 
     def _play_ready_song_after_prelude(self) -> None:
-        if self.ui_state.state != SongState.READY:
-            return
-        audio_path = self.ui_state.pending_audio_path or self.ui_state.context.pending_audio_path
-        if not audio_path:
-            return
-        self._set_state(SongState.PLAYING)
-        self.set_busy(False)
-        self.typewriter_controller.start("唱歌中", interval_ms=70)
-        self._play_song_audio(audio_path, self.ui_state.session_id)
+        self._maybe_play_ready_song(reason="play_ready_after_prelude")
 
     def _stop_song_prelude(self) -> None:
-        self.ui_state.prelude_active = False
-        self.ui_state.clear_throat_active = False
-        self.ui_state.user_paused_preparing = False
+        self._update_playback_gate(
+            reason="prelude_stopped",
+            prelude_done=True,
+            clear_throat_done=True,
+            user_paused=False,
+        )
         if self.chat_stream_controller is not None:
             self.chat_stream_controller.stop_current()
 
     def _play_song_audio(self, audio_path: Any, job_id: int) -> None:
         token = self._next_audio_token()
-        logger.debug("event=song_play_start job_id=%s token_id=%s audio_path=%s", job_id, token.id, audio_path)
+        self._log_song_event("song_play_start", job_id=job_id, token_id=token.id, audio_path=audio_path)
         self.audio_controller.play_song(
             audio_path,
             token,
@@ -510,10 +630,6 @@ class SongController(QObject):
     def _set_state(self, state: SongState) -> None:
         self.ui_state.state = state
         self.ui_state.context.state = state
-
-    def _set_auto_play(self, auto_play: bool) -> None:
-        self.ui_state.auto_play = auto_play
-        self.ui_state.context.auto_play = auto_play
 
     def _clear_pending_song_hint(self) -> None:
         clear_pending_song_hint(self.ui_state.context)

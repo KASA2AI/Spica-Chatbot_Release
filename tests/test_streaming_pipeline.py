@@ -209,11 +209,19 @@ class StreamingPipelineTests(unittest.TestCase):
 
         event_names = [event["event"] for event in events]
         unit_events = [event for event in events if event["event"] == "unit_ready"]
+        visual_events = [event for event in events if event["event"] == "unit_visual_ready"]
         done = [event for event in events if event["event"] == "done"][-1]["data"]
 
         self.assertEqual(event_names[0], "status")
         self.assertNotIn("token_delta", event_names)
         self.assertEqual([event["data"]["index"] for event in unit_events], [0, 1])
+        self.assertEqual(sorted(event["data"]["index"] for event in visual_events), [0, 1])
+        self.assertIn("unit_visual_ready", event_names)
+        self.assertIn("unit_ready", event_names)
+        self.assertEqual(visual_events[0]["data"]["visual"]["selection_source"], "local_vote_classifier")
+        self.assertIn("cue", visual_events[0]["data"])
+        self.assertEqual(visual_events[0]["data"]["timing"]["visual_ms"], 3.0)
+        self.assertIn("visual_ready_ms", visual_events[0]["data"]["timing"])
         self.assertEqual(unit_events[0]["data"]["visual"]["selection_source"], "local_vote_classifier")
         self.assertEqual(unit_events[0]["data"]["timing"]["visual_ms"], 3.0)
         self.assertEqual(unit_events[0]["data"]["timing"]["tts_ms"], 2.0)

@@ -13,7 +13,11 @@ from ui.controllers.audio_controller import AudioController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.models.playback import AudioOwner, AudioToken
 from ui.models.stream import StreamKind, StreamToken
-from ui.models.stream_unit import StreamUnitState
+from ui.models.stream_unit import (
+    StreamUnitState,
+    is_stream_unit_ready_for_playback,
+    merge_stream_unit_state,
+)
 from ui.workers.chat_worker import ChatWorker
 
 logger = logging.getLogger(__name__)
@@ -134,7 +138,17 @@ class ChatStreamController(QObject):
         token = self._next_stream_token(kind)
         self.current_stream_kind = kind
         self.current_prelude_on_done = on_done if kind == StreamKind.SONG_PRELUDE else None
-        logger.debug("event=stream_start stream_id=%s kind=%s message_len=%s", token.id, kind.value, len(message))
+        logger.debug(
+            "event=stream_start stream_id=%s kind=%s message_len=%s next_stream_index=%s "
+            "playback_active=%s pending_indexes=%s monotonic_ms=%s",
+            token.id,
+            kind.value,
+            len(message),
+            self.next_stream_index,
+            self.playback_active,
+            sorted(self.stream_pending_units),
+            self._now_ms(),
+        )
 
         self._reset_playback_state(streaming=True)
         self.set_busy(True)
@@ -254,7 +268,7 @@ class ChatStreamController(QObject):
     def _handle_stream_event(self, event_name: str, data: dict[str, Any]) -> None:
         token = self._active_stream_signal_token()
         if token is None:
-            logger.debug("event=stale_event_ignored source=stream_event name=%s", event_name)
+            self._log_stale_event_ignored("stream_event", name=event_name)
             return
         if event_name == "status":
             self._handle_stream_status(data)
@@ -268,6 +282,9 @@ class ChatStreamController(QObject):
         if event_name == "unit_audio_ready":
             self._handle_stream_unit_audio_ready(data)
             return
+        if event_name == "unit_visual_ready":
+            self._handle_stream_unit_visual_ready(data)
+            return
         if event_name == "unit_ready":
             self._handle_stream_unit_ready(data)
             return
@@ -279,6 +296,17 @@ class ChatStreamController(QObject):
             self._invalidate_stream_token(token)
             self._handle_stream_error(str(data.get("message") or "请求失败。"), token.kind)
             return
+        logger.debug(
+            "event=stream_event_ignored_unknown stream_id=%s kind=%s name=%s next_stream_index=%s "
+            "playback_active=%s pending_indexes=%s monotonic_ms=%s",
+            token.id,
+            token.kind.value,
+            event_name,
+            self.next_stream_index,
+            self.playback_active,
+            sorted(self.stream_pending_units),
+            self._now_ms(),
+        )
 
     def _handle_stream_status(self, data: dict[str, Any]) -> None:
         state = str(data.get("state") or "")
@@ -289,7 +317,7 @@ class ChatStreamController(QObject):
         index = self._stream_unit_index_from_data(data)
         unit = self._unit_for_update(index, create=True)
         if unit is None:
-            logger.debug("event=stale_event_ignored source=unit_text_ready index=%s", index)
+            self._log_stale_event_ignored("unit_text_ready", index=index)
             return
 
         unit.display_text = str(data.get("display_text") or data.get("tts_text") or unit.display_text or "……")
@@ -309,7 +337,7 @@ class ChatStreamController(QObject):
         index = self._stream_unit_index_from_data(data)
         unit = self._unit_for_update(index, create=True)
         if unit is None:
-            logger.debug("event=stale_event_ignored source=unit_audio_started index=%s", index)
+            self._log_stale_event_ignored("unit_audio_started", index=index)
             return
 
         unit.tts_text = str(data.get("tts_text")) if data.get("tts_text") is not None else unit.tts_text
@@ -324,7 +352,7 @@ class ChatStreamController(QObject):
         index = self._stream_unit_index_from_data(data)
         unit = self._unit_for_update(index, create=True)
         if unit is None:
-            logger.debug("event=stale_event_ignored source=unit_audio_ready index=%s", index)
+            self._log_stale_event_ignored("unit_audio_ready", index=index)
             return
 
         unit.audio_path = str(data.get("audio_path")) if data.get("audio_path") else unit.audio_path
@@ -342,12 +370,42 @@ class ChatStreamController(QObject):
             self._preload_next_pending_stream_unit()
         self._pump_stream_playback()
 
+    def _handle_stream_unit_visual_ready(self, data: dict[str, Any]) -> None:
+        index = self._stream_unit_index_from_data(data)
+        unit = self._unit_for_update(index, create=True)
+        if unit is None:
+            self._log_stale_event_ignored("unit_visual_ready", index=index)
+            return
+
+        visual = data.get("visual") if isinstance(data.get("visual"), dict) else {}
+        cue = data.get("cue") if isinstance(data.get("cue"), dict) else {}
+        if not cue:
+            cue = self._cue_from_visual_payload(visual)
+        visual_error = data.get("visual_error")
+        unit.visual = visual
+        unit.cue = cue
+        unit.visual_ready = True
+        unit.timeline.visual_ready_at_ms = self._now_ms()
+        unit.timeline.visual_error = str(visual_error) if visual_error else None
+        image_path = cue.get("image_path") if isinstance(cue, dict) else None
+        self._log_ui_playback_event(
+            "unit_visual_ready",
+            unit=unit,
+            visual_ready_at_ms=unit.timeline.visual_ready_at_ms,
+            has_visual=bool(visual),
+            has_cue=bool(cue),
+            has_image_path=bool(image_path),
+            visual_error=unit.timeline.visual_error,
+        )
+        self._apply_unit_visual_if_current(unit, reason="unit_visual_ready")
+
     def _handle_stream_unit_ready(self, data: dict[str, Any]) -> None:
         index = self._stream_unit_index_from_data(data)
         target = self._unit_for_update(index, create=True)
         if target is None:
-            logger.debug("event=stale_event_ignored source=unit_ready index=%s", index)
+            self._log_stale_event_ignored("unit_ready", index=index)
             return
+        visual_was_ready = target.visual_ready and target.timeline.visual_ready_at_ms is not None
         unit = self._stream_unit_from_ready_event(data)
         self._merge_stream_unit(target, unit)
         self._stamp_unit_stream(target)
@@ -356,6 +414,22 @@ class ChatStreamController(QObject):
             target.timeline.text_ready_at_ms = ready_at_ms
         if target.audio_ready and target.timeline.audio_ready_at_ms is None:
             target.timeline.audio_ready_at_ms = ready_at_ms
+        if target.visual and target.timeline.visual_ready_at_ms is None:
+            target.timeline.visual_ready_at_ms = ready_at_ms
+        if target.visual and not visual_was_ready:
+            target.visual_ready = True
+            self._apply_unit_visual_if_current(target, reason="unit_ready_compat")
+        self._log_ui_playback_event(
+            "unit_ready",
+            unit=target,
+            level=logging.DEBUG,
+            has_audio=bool(target.audio_path),
+            has_visual=bool(target.visual),
+            has_cue=bool(target.cue),
+            visual_ready_at_ms=target.timeline.visual_ready_at_ms,
+            audio_error=target.timeline.audio_error,
+            visual_error=target.timeline.visual_error,
+        )
         self._log_unit_queued(target)
         if self.playback_active:
             self._preload_next_pending_stream_unit()
@@ -385,7 +459,7 @@ class ChatStreamController(QObject):
     def _handle_chat_worker_error(self, message: str) -> None:
         token = self._active_stream_signal_token()
         if token is None:
-            logger.debug("event=stale_event_ignored source=worker_error message=%r", message)
+            self._log_stale_event_ignored("worker_error", message=message)
             return
         self._invalidate_stream_token(token)
         self._handle_stream_error(message, token.kind)
@@ -456,6 +530,7 @@ class ChatStreamController(QObject):
         logger.log(
             level,
             "event=%s stream_id=%s kind=%s index=%s next_stream_index=%s text_ready=%s audio_ready=%s "
+            "visual_ready=%s "
             "current_audio_finished=%s current_text_finished=%s playback_active=%s pending_indexes=%s "
             "monotonic_ms=%s%s",
             event,
@@ -465,8 +540,25 @@ class ChatStreamController(QObject):
             self.next_stream_index,
             unit.text_ready if unit is not None else None,
             unit.audio_ready if unit is not None else None,
+            unit.visual_ready if unit is not None else None,
             self.current_audio_finished,
             self.current_text_finished,
+            self.playback_active,
+            sorted(self.stream_pending_units),
+            self._now_ms(),
+            suffix,
+        )
+
+    def _log_stale_event_ignored(self, source: str, **fields: Any) -> None:
+        field_parts = " ".join(f"{key}={self._log_value(value)}" for key, value in fields.items())
+        suffix = f" {field_parts}" if field_parts else ""
+        logger.debug(
+            "event=stale_event_ignored stream_id=%s kind=%s source=%s next_stream_index=%s "
+            "playback_active=%s pending_indexes=%s monotonic_ms=%s%s",
+            self._active_stream_id(),
+            self._active_stream_kind_value(),
+            source,
+            self.next_stream_index,
             self.playback_active,
             sorted(self.stream_pending_units),
             self._now_ms(),
@@ -483,6 +575,38 @@ class ChatStreamController(QObject):
             return Path(str(path)).exists()
         except (OSError, TypeError, ValueError):
             return False
+
+    def _cue_from_visual_payload(self, visual: dict[str, Any]) -> dict[str, Any]:
+        cue = visual.get("cue") if isinstance(visual.get("cue"), dict) else {}
+        if cue:
+            return cue
+        cues = visual.get("cues") if isinstance(visual.get("cues"), list) else []
+        if cues and isinstance(cues[0], dict):
+            return cues[0]
+        return {}
+
+    def _apply_unit_visual_if_current(self, unit: StreamUnitState, *, reason: str) -> None:
+        if not self.playback_active or self.current_unit is not unit:
+            return
+
+        if unit.visual:
+            self.apply_visual(unit.visual)
+        image_path = unit.cue.get("image_path") if isinstance(unit.cue, dict) else None
+        if image_path:
+            QTimer.singleShot(
+                0,
+                lambda target=unit, target_image=image_path: self._set_unit_image_after_playback_start(
+                    target,
+                    target_image,
+                ),
+            )
+        self._log_ui_playback_event(
+            "unit_visual_applied",
+            unit=unit,
+            reason=reason,
+            has_visual=bool(unit.visual),
+            has_image_path=bool(image_path),
+        )
 
     def _play_item_log_fields(self, unit: StreamUnitState, image_path: Any) -> dict[str, Any]:
         return {
@@ -538,40 +662,28 @@ class ChatStreamController(QObject):
         return unit
 
     def _merge_stream_unit(self, target: StreamUnitState, source: StreamUnitState) -> None:
-        target.display_text = source.display_text
-        target.tts_text = source.tts_text
-        target.audio_path = source.audio_path
-        target.visual = source.visual
-        target.cue = source.cue
-        target.text_ready = source.text_ready
-        target.audio_ready = source.audio_ready
-        target.visual_ready = source.visual_ready
-        if source.timeline.audio_error is not None:
-            target.timeline.audio_error = source.timeline.audio_error
+        merge_stream_unit_state(target, source)
 
     def _log_unit_queued(self, unit: StreamUnitState) -> None:
         logger.debug(
-            "event=unit_queued stream_id=%s kind=%s index=%s has_audio=%s text_ready=%s audio_ready=%s pending=%s",
+            "event=unit_queued stream_id=%s kind=%s index=%s has_audio=%s text_ready=%s "
+            "audio_ready=%s visual_ready=%s pending=%s",
             self._unit_stream_id(unit),
             self._unit_stream_kind(unit),
             unit.index,
             bool(unit.audio_path),
             unit.text_ready,
             unit.audio_ready,
+            unit.visual_ready,
             sorted(self.stream_pending_units),
         )
 
     def _unit_ready_for_playback(self, unit: StreamUnitState) -> bool:
-        return bool(unit.text_ready and unit.audio_ready)
+        return is_stream_unit_ready_for_playback(unit)
 
     def _stream_unit_from_ready_event(self, data: dict[str, Any]) -> StreamUnitState:
         visual = data.get("visual") if isinstance(data.get("visual"), dict) else {}
-        self.apply_visual(visual)
-        cues = visual.get("cues") if isinstance(visual.get("cues"), list) else []
-        cue = cues[0] if cues and isinstance(cues[0], dict) else {}
-        if not cue:
-            maybe_cue = visual.get("cue") if isinstance(visual.get("cue"), dict) else {}
-            cue = maybe_cue
+        cue = self._cue_from_visual_payload(visual)
 
         try:
             index = int(data.get("index") or 0)
@@ -589,6 +701,8 @@ class ChatStreamController(QObject):
             cue=cue,
         )
         unit.timeline.audio_error = str(data.get("audio_error")) if data.get("audio_error") else None
+        visual_error = data.get("visual_error") or visual.get("selection_error")
+        unit.timeline.visual_error = str(visual_error) if visual_error else None
         return unit
 
     def _log_pump_wait_not_ready(self, unit: StreamUnitState) -> None:
@@ -668,9 +782,14 @@ class ChatStreamController(QObject):
     def _end_stream_playback(self) -> None:
         completed_kind = self.current_stream_kind
         logger.debug(
-            "event=stream_finished stream_id=%s kind=%s",
+            "event=stream_finished stream_id=%s kind=%s next_stream_index=%s playback_active=%s "
+            "pending_indexes=%s monotonic_ms=%s",
             self.active_stream_token.id if self.active_stream_token else None,
             completed_kind.value if completed_kind else None,
+            self.next_stream_index,
+            self.playback_active,
+            sorted(self.stream_pending_units),
+            self._now_ms(),
         )
         self.streaming_mode = False
         self.stream_pending_units = {}
@@ -707,7 +826,18 @@ class ChatStreamController(QObject):
         self.current_unit = unit
         self.current_audio_finished = False
         self.current_text_finished = False
-        cue = unit.cue
+        if unit.visual_ready and unit.visual:
+            if not unit.cue:
+                unit.cue = self._cue_from_visual_payload(unit.visual)
+            self.apply_visual(unit.visual)
+            self._log_ui_playback_event(
+                "unit_visual_applied",
+                unit=unit,
+                reason="playback_start_visual_ready",
+                has_visual=bool(unit.visual),
+                has_image_path=bool(unit.cue.get("image_path") if isinstance(unit.cue, dict) else None),
+            )
+        cue = unit.cue if isinstance(unit.cue, dict) else {}
         image_path = cue.get("image_path")
         self._log_play_item_event("play_item_enter", unit, image_path)
 

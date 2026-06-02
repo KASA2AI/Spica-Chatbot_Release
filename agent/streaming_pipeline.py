@@ -377,12 +377,13 @@ def _produce_stream_events(
             },
         )
         visual_future = visual_executor.submit(
-            _build_unit_visual,
+            _build_unit_visual_and_emit,
             services,
             state,
             unit,
             request_start_ms,
             set_timing_once,
+            put_unit_event,
         )
         tts_future = tts_executor.submit(
             _synthesize_unit_audio,
@@ -902,6 +903,45 @@ def _build_unit_visual(
     finally:
         if unit_index == 0:
             set_timing_once("first_visual_ready_ms", round(now_ms() - request_start_ms, 2))
+
+
+def _cue_from_visual_payload(visual: dict[str, Any]) -> dict[str, Any]:
+    cue = visual.get("cue") if isinstance(visual.get("cue"), dict) else {}
+    if cue:
+        return cue
+    cues = visual.get("cues") if isinstance(visual.get("cues"), list) else []
+    if cues and isinstance(cues[0], dict):
+        return cues[0]
+    return {}
+
+
+def _build_unit_visual_and_emit(
+    services: AgentServices,
+    state: AgentState,
+    unit: dict[str, Any],
+    request_start_ms: float,
+    set_timing_once: Any,
+    put_unit_event: Any,
+) -> dict[str, Any]:
+    visual = _build_unit_visual(services, state, unit, request_start_ms, set_timing_once)
+    unit_timing = unit["timing"]
+    unit_index = int(unit["index"])
+    visual_ready_ms = round(now_ms() - request_start_ms, 2)
+    unit_timing["visual_ready_ms"] = visual_ready_ms
+    put_unit_event(
+        "unit_visual_ready",
+        {
+            "index": unit_index,
+            "visual": visual,
+            "cue": _cue_from_visual_payload(visual),
+            "visual_error": visual.get("selection_error"),
+            "timing": {
+                "visual_ms": unit_timing.get("visual_classifier_duration_ms"),
+                "visual_ready_ms": visual_ready_ms,
+            },
+        },
+    )
+    return visual
 
 
 def _synthesize_unit_audio(

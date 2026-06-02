@@ -37,6 +37,8 @@ from agent_tools.function_tools.song import (
     SongRequest,
     SongState,
     build_song_request_from_intent,
+    clear_pending_song_hint,
+    update_pending_song_hint_from_intent,
 )
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, build_tts_adapter, load_tts_config
 from agent_tools.visual import VisualDiffService
@@ -1281,6 +1283,8 @@ class OverlayWindow(QWidget):
             self.input_panel.input.clear()
             self._handle_song_intent(intent)
             return
+        if self.song_state == SongState.INTENT_CONFIRMING:
+            self._exit_song_intent_confirmation()
 
         interrupt_song = self._is_song_busy()
         if interrupt_song:
@@ -1313,16 +1317,18 @@ class OverlayWindow(QWidget):
         if intent.action == SongAction.SING:
             request = build_song_request_from_intent(intent)
             if request is None:
-                self._start_typewriter("想听哪一首？可以说歌名，或者说‘周杰伦的稻香’。", interval_ms=45)
+                self._start_typewriter("想听哪一首？可以说歌名。", interval_ms=45)
                 return
             if self.song_state in {SongState.PREPARING, SongState.READY, SongState.PLAYING, SongState.PAUSED}:
                 self._cancel_current_song(show_message=False)
+            clear_pending_song_hint(self.song_context)
             self._start_song_request_with_prelude(request)
             return
 
         if intent.action == SongAction.SEARCH:
             self.song_state = SongState.INTENT_CONFIRMING
             self.song_context.state = self.song_state
+            update_pending_song_hint_from_intent(self.song_context, intent)
             self._start_typewriter("想听哪一首？可以说歌名，或者说‘周杰伦的稻香’。", interval_ms=45)
             self.input_panel.input.setFocus(Qt.FocusReason.OtherFocusReason)
             return
@@ -1373,6 +1379,11 @@ class OverlayWindow(QWidget):
 
         if intent.action == SongAction.REJECT:
             self._start_chat_message(intent.original_text)
+
+    def _exit_song_intent_confirmation(self) -> None:
+        clear_pending_song_hint(self.song_context)
+        self.song_state = SongState.IDLE
+        self.song_context.state = self.song_state
 
     def _start_song_request_with_prelude(self, request: SongRequest) -> None:
         if self.agent is None:
@@ -1552,6 +1563,7 @@ class OverlayWindow(QWidget):
         job_id = self.song_session_id
         self.song_state = SongState.PREPARING
         self.song_context.state = self.song_state
+        clear_pending_song_hint(self.song_context)
         self.song_auto_play = auto_play
         self.song_context.auto_play = auto_play
         self.song_clear_throat_active = False
@@ -1607,6 +1619,7 @@ class OverlayWindow(QWidget):
         self._release_song_audio_player()
         self.song_state = SongState.IDLE
         self.song_context.state = self.song_state
+        clear_pending_song_hint(self.song_context)
         self.song_auto_play = True
         self.song_context.auto_play = True
         self.song_clear_throat_active = False
@@ -1656,6 +1669,7 @@ class OverlayWindow(QWidget):
             return
         self.song_state = SongState.ERROR
         self.song_context.state = self.song_state
+        clear_pending_song_hint(self.song_context)
         self.song_auto_play = True
         self.song_context.auto_play = True
         self.song_prelude_active = False
@@ -1717,6 +1731,7 @@ class OverlayWindow(QWidget):
         self.pending_song_audio_path = None
         self.song_state = SongState.IDLE
         self.song_context.state = self.song_state
+        clear_pending_song_hint(self.song_context)
         self.song_auto_play = True
         self.song_context.auto_play = True
         self.song_prelude_active = False

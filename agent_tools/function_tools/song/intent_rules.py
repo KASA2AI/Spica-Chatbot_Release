@@ -48,19 +48,70 @@ _SEARCH_PATTERNS = (
 _WEAK_OBJECTS = {"歌", "歌曲", "音乐", "一首歌", "随便", "随便一首", "什么歌"}
 _STYLE_KEYWORDS = {
     "摇滚",
+    "摇滚歌",
+    "摇滚音乐",
     "流行",
+    "流行歌",
+    "流行音乐",
     "爵士",
+    "爵士歌",
+    "爵士音乐",
     "民谣",
+    "民谣歌",
+    "民谣音乐",
     "古风",
+    "古风歌",
+    "古风音乐",
     "电子",
+    "电子音乐",
     "纯音乐",
     "日语歌",
+    "日文歌",
+    "日语音乐",
     "英文歌",
+    "英语歌",
+    "英文音乐",
     "中文歌",
     "粤语歌",
     "动漫歌",
+    "动漫音乐",
     "游戏音乐",
 }
+
+_AMBIGUOUS_FOLLOWUP_PATTERNS = (
+    r"^(随便|随便一首|都行|都可以)$",
+    r"^(他的|她的|它的)?代表作$",
+    r"^那首.*(火|红|热门|经典).*$",
+    r"^(伤感|开心|治愈|安静|轻松|热血|燃|舒缓|温柔|浪漫).*的?$",
+    r"^不要太(吵|闹|快).*$",
+    r"^适合.*的?$",
+)
+
+_PLAIN_CHAT_FOLLOWUP_PATTERNS = (
+    r"^(你|妳|我们|咱们).*(刚刚|刚才|之前|说到|聊到|讲到|继续聊|继续说).*$",
+    r".*(建议|解释|安慰|问题|方案|原因|代码|报错|视频|录音|下一段|上一段).*",
+    r".*(讲讲|说说|聊聊|分析|解释一下).*$",
+    r".*(什么|怎么|为什么|哪里|哪了|哪儿).*$",
+)
+
+_NON_SONG_OBJECT_KEYWORDS = (
+    "建议",
+    "解释",
+    "安慰",
+    "问题",
+    "方案",
+    "答案",
+    "意见",
+    "视频",
+    "录音",
+    "下一段",
+    "上一段",
+    "这段",
+    "那段",
+    "音频",
+    "播客",
+    "有声书",
+)
 
 
 def normalize_song_text(text: str) -> str:
@@ -81,8 +132,14 @@ def parse_song_control_intent(
     if not normalized:
         return _intent(SongAction.NONE, 0.0, text)
 
-    if current_state in {SongState.PREPARING, SongState.PLAYING, SongState.PAUSED, SongState.READY}:
-        if _matches_any(normalized, (r"^(别唱了|不要唱了|取消|算了|停掉|stop)$",)):
+    if current_state in {
+        SongState.INTENT_CONFIRMING,
+        SongState.PREPARING,
+        SongState.PLAYING,
+        SongState.PAUSED,
+        SongState.READY,
+    }:
+        if _matches_any(normalized, (r"^(别唱了|不要唱了|不听了|取消|算了|停掉|stop)$",)):
             return _intent(SongAction.CANCEL, 0.98, text, reason="control_cancel")
 
     if current_state in {SongState.PLAYING, SongState.PREPARING}:
@@ -133,6 +190,8 @@ def parse_song_command_intent(text: str) -> SongIntent:
         if not match:
             continue
         song_text = _clean_song_text(match.group("song"))
+        if _looks_like_non_song_object(song_text):
+            return _intent(SongAction.REJECT, 0.95, text, reason="non_song_object")
         if not song_text or _looks_like_generic_object(song_text) or _looks_like_artist_or_style_request(song_text):
             return _intent(
                 SongAction.SEARCH,
@@ -160,6 +219,8 @@ def parse_song_command_intent(text: str) -> SongIntent:
         if not match:
             continue
         song_text = _clean_song_text(match.group("song"))
+        if _looks_like_non_song_object(song_text):
+            return _intent(SongAction.REJECT, 0.95, text, reason="non_song_object")
         if not song_text or _looks_like_generic_object(song_text) or _looks_like_artist_or_style_request(song_text):
             return _intent(
                 SongAction.SEARCH,
@@ -185,6 +246,8 @@ def parse_song_command_intent(text: str) -> SongIntent:
         if not match:
             continue
         object_text = _clean_song_text(match.group("object"))
+        if _looks_like_non_song_object(object_text):
+            return _intent(SongAction.REJECT, 0.95, text, reason="non_song_object")
         confidence = 0.66 if not object_text or _looks_like_generic_object(object_text) else 0.78
         return _intent(
             SongAction.SEARCH,
@@ -204,13 +267,50 @@ def parse_song_followup_intent(
     context: SongContext | None = None,
 ) -> SongIntent:
     current_state = _coerce_state(state)
+    normalized = normalize_song_text(text)
+
+    if current_state == SongState.INTENT_CONFIRMING:
+        if not normalized:
+            return _intent(SongAction.NONE, 0.0, text)
+        if _matches_any(normalized, (r"^(不听了|取消|算了|别唱了|不要唱了)$",)):
+            return _intent(SongAction.CANCEL, 0.98, text, reason="followup_cancel")
+        if any(re.search(pattern, normalized, flags=re.I) for pattern in _REJECT_PATTERNS):
+            return _intent(SongAction.REJECT, 0.96, text, reason="negative_song_query")
+
+        song_text = _extract_followup_song_text(normalized)
+        if song_text is not None:
+            if _looks_like_non_song_object(song_text) or _looks_like_plain_chat_followup(song_text):
+                return _intent(SongAction.REJECT, 0.94, text, reason="non_song_followup")
+            if (
+                not song_text
+                or _looks_like_generic_object(song_text)
+                or _looks_like_artist_or_style_request(song_text)
+                or _needs_llm_followup(song_text)
+            ):
+                return _intent(SongAction.NONE, 0.0, text, reason="ambiguous_song_followup")
+            artist, title = _split_artist_title(song_text)
+            return _intent(
+                SongAction.SING,
+                0.93,
+                text,
+                query=_build_query(title, artist, song_text),
+                title=title,
+                artist=artist,
+                reason="intent_confirming_song_title",
+            )
+
+        if _looks_like_plain_chat_followup(normalized) or _looks_like_non_song_object(normalized):
+            return _intent(SongAction.REJECT, 0.94, text, reason="plain_chat_followup")
+        if _needs_llm_followup(normalized):
+            return _intent(SongAction.NONE, 0.0, text, reason="ambiguous_song_followup")
+        return _intent(SongAction.NONE, 0.0, text)
+
     has_selection_context = current_state == SongState.CANDIDATE_SELECTING or bool(
         getattr(context, "pending_candidates", None) or getattr(context, "candidate_options", None)
     )
     if not has_selection_context:
         return _intent(SongAction.NONE, 0.0, text)
 
-    normalized = normalize_song_text(text)
     index_map = {
         "1": 0,
         "第一个": 0,
@@ -330,3 +430,92 @@ def _looks_like_artist_or_style_request(song_text: str) -> bool:
 
 def _looks_like_non_song_question(song_text: str) -> bool:
     return song_text in {"歌", "歌曲", "音乐"} or "什么歌" in song_text
+
+
+def _looks_like_non_song_object(text: str) -> bool:
+    cleaned = _clean_song_text(text)
+    if not cleaned:
+        return False
+    if cleaned in _STYLE_KEYWORDS:
+        return False
+    return any(keyword in cleaned for keyword in _NON_SONG_OBJECT_KEYWORDS)
+
+
+def extract_pending_song_hint(intent: SongIntent) -> tuple[str | None, str | None, str | None]:
+    raw_query = _clean_song_text(intent.query or intent.title or intent.artist or "")
+    artist = _clean_song_text(intent.artist or "")
+    style = None
+
+    inferred_artist, inferred_style = _extract_artist_style_hint(raw_query)
+    if not artist:
+        artist = inferred_artist or ""
+    style = inferred_style
+
+    return (raw_query or None), (artist or None), (style or None)
+
+
+def update_pending_song_hint_from_intent(context: SongContext | None, intent: SongIntent) -> None:
+    if context is None:
+        return
+    raw_query, artist, style = extract_pending_song_hint(intent)
+    context.pending_song_raw_query = raw_query
+    context.pending_song_artist = artist
+    context.pending_song_style = style
+
+
+def _extract_followup_song_text(text: str) -> str | None:
+    explicit_patterns = (
+        r"^(?:我(?:还|也|再|就)?想听|我(?:还|也|再|就)?要听|(?:还|也|再|就)?想听)\s*(?P<song>.+)$",
+        r"^(?:来一首|请唱|唱一下|唱一首|播放)\s*(?P<song>.+)$",
+    )
+    for pattern in explicit_patterns:
+        match = re.search(pattern, text, flags=re.I)
+        if match:
+            return _clean_song_text(match.group("song"))
+    if _needs_llm_followup(text):
+        return _clean_song_text(text)
+    if _looks_like_plain_chat_followup(text):
+        return None
+    return _clean_song_text(text)
+
+
+def _needs_llm_followup(text: str) -> bool:
+    cleaned = _clean_song_text(text)
+    if not cleaned:
+        return False
+    if cleaned in _WEAK_OBJECTS:
+        return True
+    return _matches_any(cleaned, _AMBIGUOUS_FOLLOWUP_PATTERNS)
+
+
+def _looks_like_plain_chat_followup(text: str) -> bool:
+    cleaned = _clean_song_text(text)
+    if not cleaned:
+        return False
+    return _matches_any(cleaned, _PLAIN_CHAT_FOLLOWUP_PATTERNS)
+
+
+def _extract_artist_style_hint(text: str) -> tuple[str | None, str | None]:
+    cleaned = _clean_song_text(text)
+    if not cleaned:
+        return None, None
+    if cleaned in _STYLE_KEYWORDS:
+        return None, cleaned
+
+    possessive = re.match(r"^(.+?)\s*的\s*(?:歌|歌曲|音乐)$", cleaned)
+    if possessive:
+        value = _clean_song_text(possessive.group(1))
+        if value in _STYLE_KEYWORDS:
+            return None, value
+        return (value or None), None
+
+    for suffix in ("歌曲", "音乐", "风格"):
+        if cleaned.endswith(suffix):
+            value = _clean_song_text(cleaned[: -len(suffix)])
+            if not value:
+                return None, None
+            if value in _STYLE_KEYWORDS or suffix == "风格":
+                return None, value
+            return value, None
+
+    return cleaned, None

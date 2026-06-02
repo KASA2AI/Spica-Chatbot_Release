@@ -35,7 +35,6 @@ class SongIntentLLMClassifier:
         context: SongContext | None = None,
         rule_intent: SongIntent | None = None,
     ) -> SongIntent:
-        del context
         payload = {
             "model": self.model,
             "messages": [
@@ -46,6 +45,7 @@ class SongIntentLLMClassifier:
                         {
                             "user_text": user_text,
                             "current_state": _state_value(state),
+                            "pending_song_hint": _context_payload(context),
                             "rule_intent": _intent_payload(rule_intent),
                         },
                         ensure_ascii=False,
@@ -161,6 +161,10 @@ class SongIntentLLMClassifier:
             "or asks what a song means, use action=reject. "
             "If the user clearly asks Spica to sing, play, cover, or perform a specific song, use action=sing. "
             "If the user wants an artist/style/music but no specific song title is present, use action=search and needs_confirmation=true. "
+            "When current_state is intent_confirming, the user may be answering a previous generic song request. "
+            "Use pending_song_hint to interpret that follow-up. If the user gives a concrete song title, return action=sing. "
+            "If the user only adds artist/style/filter words, return action=search with needs_confirmation=true. "
+            "If the user cancels, return action=cancel. If the user is clearly just chatting, return action=reject or none. "
             "When current_state is playing, paused, preparing, or ready, classify pause/resume/cancel/change before song requests. "
             "Never invent song titles. Return this JSON schema exactly: "
             '{"action":"sing","confidence":0.0,"query":null,"title":null,"artist":null,'
@@ -181,6 +185,20 @@ def _intent_payload(intent: SongIntent | None) -> dict[str, Any] | None:
         "needs_confirmation": intent.needs_confirmation,
         "reason": intent.reason,
         "source": intent.source,
+    }
+
+
+def _context_payload(context: SongContext | None) -> dict[str, Any]:
+    if context is None:
+        return {
+            "pending_song_raw_query": None,
+            "pending_song_artist": None,
+            "pending_song_style": None,
+        }
+    return {
+        "pending_song_raw_query": context.pending_song_raw_query,
+        "pending_song_artist": context.pending_song_artist,
+        "pending_song_style": context.pending_song_style,
     }
 
 

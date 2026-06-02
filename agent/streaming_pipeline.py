@@ -321,6 +321,9 @@ def _produce_stream_events(
     def put_status(state_name: str, message: str) -> None:
         output_queue.put({"event": "status", "data": {"state": state_name, "message": message}})
 
+    def put_unit_event(event_name: str, event_data: dict[str, Any]) -> None:
+        output_queue.put({"event": event_name, "data": event_data})
+
     def put_ready(index: int, event_data: dict[str, Any]) -> None:
         with ready_lock:
             ready_units[index] = event_data
@@ -361,6 +364,18 @@ def _produce_stream_events(
             "full_answer_so_far": full_answer_so_far,
             "timing": unit_timing,
         }
+        put_unit_event(
+            "unit_text_ready",
+            {
+                "index": index,
+                "display_text": display_text,
+                "tts_text": tts_text,
+                "emotion": emotion,
+                "timing": {
+                    "unit_created_ms": unit_timing["unit_created_ms"],
+                },
+            },
+        )
         visual_future = visual_executor.submit(
             _build_unit_visual,
             services,
@@ -376,6 +391,7 @@ def _produce_stream_events(
             unit,
             request_start_ms,
             set_timing_once,
+            put_unit_event,
         )
         ready_futures.append(
             ready_executor.submit(
@@ -894,6 +910,7 @@ def _synthesize_unit_audio(
     unit: dict[str, Any],
     request_start_ms: float,
     set_timing_once: Any,
+    put_unit_event: Any,
 ) -> dict[str, Any]:
     unit_timing = unit["timing"]
     unit_index = int(unit["index"])
@@ -902,6 +919,24 @@ def _synthesize_unit_audio(
     unit_timing["tts_start_ms"] = tts_start_relative_ms
     if unit_index == 0:
         set_timing_once("first_tts_start_ms", tts_start_relative_ms)
+    put_unit_event(
+        "unit_audio_started",
+        {
+            "index": unit_index,
+            "tts_text": unit["tts_text"],
+            "emotion": unit["emotion"],
+            "timing": {
+                "tts_start_ms": tts_start_relative_ms,
+            },
+        },
+    )
+    audio_payload: dict[str, Any] = {
+        "audio_url": None,
+        "audio_path": None,
+        "audio_error": None,
+        "tts_result": None,
+        "duration_ms": None,
+    }
     try:
         if services.tts_adapter is None:
             raise RuntimeError("TTS adapter is not configured")
@@ -920,7 +955,7 @@ def _synthesize_unit_audio(
         if not isinstance(duration_ms, (int, float)):
             duration_ms = elapsed_ms(tts_start_ms)
         unit_timing["tts_duration_ms"] = duration_ms
-        return {
+        audio_payload = {
             "audio_url": result.audio_url,
             "audio_path": result.audio_path,
             "audio_error": None,
@@ -931,7 +966,7 @@ def _synthesize_unit_audio(
         duration_ms = elapsed_ms(tts_start_ms)
         unit_timing["tts_duration_ms"] = duration_ms
         unit_timing["tts_error"] = str(exc)
-        return {
+        audio_payload = {
             "audio_url": None,
             "audio_path": None,
             "audio_error": str(exc),
@@ -944,6 +979,21 @@ def _synthesize_unit_audio(
         if unit_index == 0:
             set_timing_once("first_tts_done_ms", tts_done_relative_ms)
             set_timing_once("first_audio_ready_ms", tts_done_relative_ms)
+        put_unit_event(
+            "unit_audio_ready",
+            {
+                "index": unit_index,
+                "audio_url": audio_payload.get("audio_url"),
+                "audio_path": audio_payload.get("audio_path"),
+                "audio_error": audio_payload.get("audio_error"),
+                "timing": {
+                    "tts_ms": unit_timing.get("tts_duration_ms"),
+                    "tts_start_ms": unit_timing.get("tts_start_ms"),
+                    "tts_done_ms": unit_timing.get("tts_done_ms"),
+                },
+            },
+        )
+    return audio_payload
 
 
 def _finalize_unit(

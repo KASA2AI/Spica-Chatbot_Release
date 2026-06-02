@@ -12,6 +12,7 @@ from ui.controllers.audio_controller import AudioController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.models.playback import AudioOwner, AudioToken
 from ui.models.stream import StreamKind, StreamToken
+from ui.models.stream_unit import StreamUnitState
 from ui.workers.chat_worker import ChatWorker
 
 logger = logging.getLogger(__name__)
@@ -53,10 +54,10 @@ class ChatStreamController(QObject):
         self.audio_session_id = 0
 
         self.streaming_mode = False
-        self.stream_pending_units: dict[int, dict[str, Any]] = {}
+        self.stream_pending_units: dict[int, StreamUnitState] = {}
         self.next_stream_index = 0
         self.stream_done = False
-        self.playback_items: list[dict[str, Any]] = []
+        self.playback_items: list[StreamUnitState] = []
         self.playback_index = 0
         self.playback_active = False
         self.current_audio_finished = False
@@ -265,14 +266,14 @@ class ChatStreamController(QObject):
             self.typewriter_controller.start("正在处理工具...", interval_ms=55)
 
     def _handle_stream_unit_ready(self, data: dict[str, Any]) -> None:
-        item = self._playback_item_from_stream_unit(data)
-        self.stream_pending_units[int(item["index"])] = item
+        unit = self._stream_unit_from_ready_event(data)
+        self.stream_pending_units[unit.index] = unit
         logger.debug(
             "event=unit_queued stream_id=%s kind=%s index=%s has_audio=%s pending=%s",
             self.active_stream_token.id if self.active_stream_token else None,
             self.current_stream_kind.value if self.current_stream_kind else None,
-            item.get("index"),
-            bool(item.get("audio_path")),
+            unit.index,
+            bool(unit.audio_path),
             sorted(self.stream_pending_units),
         )
         if self.playback_active:
@@ -292,7 +293,7 @@ class ChatStreamController(QObject):
             sorted(self.stream_pending_units),
         )
         if units_count == 0 and answer and self.next_stream_index == 0:
-            self.stream_pending_units[0] = {"index": 0, "text": answer, "audio_path": None, "cue": {}}
+            self.stream_pending_units[0] = StreamUnitState(index=0, display_text=answer)
         self._pump_stream_playback()
 
     def _handle_chat_worker_error(self, message: str) -> None:
@@ -314,7 +315,7 @@ class ChatStreamController(QObject):
         self.current_stream_kind = None
         self.on_error(message)
 
-    def _playback_item_from_stream_unit(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _stream_unit_from_ready_event(self, data: dict[str, Any]) -> StreamUnitState:
         visual = data.get("visual") if isinstance(data.get("visual"), dict) else {}
         self.apply_visual(visual)
         cues = visual.get("cues") if isinstance(visual.get("cues"), list) else []
@@ -327,29 +328,34 @@ class ChatStreamController(QObject):
             index = int(data.get("index") or 0)
         except (TypeError, ValueError):
             index = self.next_stream_index
-        text = str(data.get("display_text") or data.get("tts_text") or "……")
-        return {
-            "index": index,
-            "text": text,
-            "audio_path": data.get("audio_path"),
-            "cue": cue,
-        }
+        tts_text = str(data.get("tts_text")) if data.get("tts_text") is not None else None
+        display_text = str(data.get("display_text") or tts_text or "……")
+        audio_path = str(data.get("audio_path")) if data.get("audio_path") else None
+        return StreamUnitState(
+            index=index,
+            display_text=display_text,
+            tts_text=tts_text,
+            audio_path=audio_path,
+            visual=visual,
+            cue=cue,
+        )
 
     def _pump_stream_playback(self) -> None:
         if not self.streaming_mode or self.playback_active:
             return
 
-        item = self.stream_pending_units.pop(self.next_stream_index, None)
-        if item is not None:
+        unit = self.stream_pending_units.pop(self.next_stream_index, None)
+        if unit is not None:
             self.next_stream_index += 1
-            self.playback_items = [item]
+            unit.playback_started = True
+            self.playback_items = [unit]
             self.playback_index = 0
             self.playback_active = True
             logger.debug(
                 "event=playback_start stream_id=%s kind=%s item=%s next_stream_index=%s",
                 self.active_stream_token.id if self.active_stream_token else None,
                 self.current_stream_kind.value if self.current_stream_kind else None,
-                item.get("index"),
+                unit.index,
                 self.next_stream_index,
             )
             self._play_next_tts_item()
@@ -395,23 +401,21 @@ class ChatStreamController(QObject):
             self._finish_playback()
             return
 
-        item = self.playback_items[self.playback_index]
+        unit = self.playback_items[self.playback_index]
         self.current_audio_finished = False
         self.current_text_finished = False
-        cue = item.get("cue") if isinstance(item.get("cue"), dict) else {}
+        cue = unit.cue
         image_path = cue.get("image_path")
         if image_path:
             self.set_character_image(image_path)
 
-        self.typewriter_controller.start(str(item.get("text") or "……"), on_finished=self._mark_text_finished)
-        self._play_chunk_audio(item.get("audio_path"))
+        self.typewriter_controller.start(str(unit.display_text or "……"), on_finished=self._mark_text_finished)
+        self._play_chunk_audio(unit.audio_path)
         self._preload_next_playback_item()
 
     def _current_playback_item_index(self) -> Any:
         if 0 <= self.playback_index < len(self.playback_items):
-            item = self.playback_items[self.playback_index]
-            if isinstance(item, dict):
-                return item.get("index", self.playback_index)
+            return self.playback_items[self.playback_index].index
         return self.playback_index
 
     def _audio_item_key(self, item_index: Any) -> int | None:
@@ -420,12 +424,12 @@ class ChatStreamController(QObject):
         except (TypeError, ValueError):
             return None
 
-    def _preload_audio_for_item(self, item: dict[str, Any]) -> None:
-        item_key = self._audio_item_key(item.get("index"))
+    def _preload_audio_for_unit(self, unit: StreamUnitState) -> None:
+        item_key = self._audio_item_key(unit.index)
         if item_key is None:
             return
 
-        audio_path = item.get("audio_path")
+        audio_path = unit.audio_path
         if not audio_path:
             return
         if self.audio_controller.preload_chat_audio(item_key, audio_path):
@@ -435,9 +439,9 @@ class ChatStreamController(QObject):
         self._preload_next_pending_stream_unit()
 
     def _preload_next_pending_stream_unit(self) -> None:
-        item = self.stream_pending_units.get(self.next_stream_index)
-        if isinstance(item, dict):
-            self._preload_audio_for_item(item)
+        unit = self.stream_pending_units.get(self.next_stream_index)
+        if unit is not None:
+            self._preload_audio_for_unit(unit)
 
     def _play_chunk_audio(self, audio_path: Any) -> None:
         self.audio_controller.release_chat_audio()
@@ -479,6 +483,8 @@ class ChatStreamController(QObject):
         if not self.current_audio_finished or not self.current_text_finished:
             return
         item_index = self._current_playback_item_index()
+        if 0 <= self.playback_index < len(self.playback_items):
+            self.playback_items[self.playback_index].playback_finished = True
         self.playback_index += 1
         self.current_audio_finished = False
         self.current_text_finished = False

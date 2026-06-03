@@ -2,7 +2,7 @@
 
 Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 PySide6 做透明悬浮窗口，用 OpenAI 兼容接口生成日语角色回复，再把回复拆成可播放片段，驱动立绘差分选择和 GPT-SoVITS 语音合成。
 
-当前默认入口是桌面悬浮 UI：`webui_qt.py` -> `ui/qt_overlay.py`。`templates/index.html` 是旧版 Web/Flask 页面模板，当前仓库没有对应 Flask 路由，默认不再使用。
+当前默认入口是桌面悬浮 UI：`webui_qt.py` -> `ui/qt_overlay.py`。UI 内部已拆分为 controllers、workers、models 和 widgets，聊天、点歌、语音输入、音频播放和打字机效果分别由独立模块维护。
 
 ## 功能概览
 
@@ -13,15 +13,25 @@ Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 Py
 - 流式生成播放：LLM 增量文本 -> 断句播放单元 -> 并行立绘选择和 TTS -> 按顺序播放。
 - GPT-SoVITS 本地日语语音合成，按情绪选择参考音频。
 - 本地投票式立绘差分选择，支持 8 套服装、3 类手部动作、27 个表情编号。
-- 可选中文麦克风识别，依赖 `speech_recognition` 和系统麦克风后端。
+- 点歌/翻唱链路：网易云搜索与下载 -> 人声分离 -> RVC/Applio 变声 -> 混音输出。
+- 可选中文麦克风识别，支持 ReSpeaker USB 4 Mic Array 硬件 VAD，依赖 `speech_recognition`、`PyAudio` 和设备后端。
 
 ## 目录结构
 
 ```text
 Spica-Chatbot/
-├── webui_qt.py                    # 桌面入口，处理 Linux Qt 依赖和输入法环境
+├── webui_qt.py                    # 桌面入口，处理 Linux Qt 依赖、输入法环境和 Overlay 启动
+├── build_release.sh               # 生成发布目录，排除缓存/密钥/运行产物并保留必要骨架
+├── run_ibus.sh                    # Linux ibus 输入法启动脚本
+├── pytest.ini                     # pytest 配置
 ├── ui/
-│   └── qt_overlay.py              # PySide6 透明 Overlay UI、流式播放和音频播放
+│   ├── qt_overlay.py              # PySide6 透明 Overlay 主窗口和模块装配
+│   ├── overlay_config.py          # Overlay 配置加载和默认值
+│   ├── overlay_config.json        # Overlay 外观、布局和运行配置
+│   ├── controllers/               # 交互控制层：聊天流、音频、点歌、语音输入、打字机
+│   ├── workers/                   # Qt 后台线程：聊天、点歌、启动预热
+│   ├── models/                    # UI 状态模型：播放 token、流式单元、点歌状态
+│   └── widgets/                   # 对白框、输入面板、设置面板、窗口控制、图标等组件
 ├── agent/
 │   ├── simple_agent.py            # SimpleAgent 门面，组装 LLM、记忆、工具、TTS、立绘服务
 │   ├── runtime.py                 # 同步 voice pipeline 编排
@@ -30,6 +40,7 @@ Spica-Chatbot/
 │   ├── state.py                   # AgentState / AgentServices 数据结构
 │   ├── prompt_builder.py          # Spica 角色 prompt 构建
 │   ├── reply_parser.py            # 模型 JSON 回复解析和情绪归一化
+│   ├── text_normalizer.py         # TTS/播放前的文本清洗
 │   └── character_loader.py        # 角色卡和对话者设定加载
 ├── memory/
 │   ├── store.py                   # SQLite 长期记忆
@@ -39,7 +50,16 @@ Spica-Chatbot/
 ├── agent_tools/
 │   ├── function_tools/
 │   │   ├── router.py              # LLM function tool schema、启发式路由和执行
-│   │   └── local_tools.py         # 时间、计算器、todo 等独立工具示例
+│   │   ├── local_tools.py         # 时间、计算器、todo 等独立工具示例
+│   │   └── song/
+│   │       ├── intent*.py         # 点歌/暂停/继续/取消等意图识别与规则路由
+│   │       ├── netease.py         # 网易云音乐搜索、音频地址解析和下载
+│   │       ├── separator.py       # 人声/伴奏分离封装
+│   │       ├── rvc.py             # Applio/RVC 推理封装
+│   │       ├── mixer.py           # 人声、伴奏裁剪和混音
+│   │       ├── pipeline.py        # 点歌翻唱完整流水线
+│   │       ├── models.py          # SongRequest / SongJobResult / 状态模型
+│   │       └── song_config.json   # 点歌、缓存、分离、RVC、混音配置
 │   ├── tts/
 │   │   ├── base.py                # TTSAdapter 协议
 │   │   ├── schemas.py             # TTSRequest / TTSResult
@@ -49,8 +69,10 @@ Spica-Chatbot/
 │   │   │   └── service.py         # GPT-SoVITS 后端封装、切句、写 wav、模型预热
 │   │   └── vendors/
 │   │       └── GPT-SoVITS-v2pro-20250604-nvidia50/ # 上游语音引擎占位目录
-│   ├── visual/
-│   │   └── diff_service.py        # 立绘差分选择、服装选择、图片路径解析
+│   └── visual/
+│       └── diff_service.py        # 立绘差分选择、服装选择、图片路径解析
+├── hardware/
+│   └── respeaker/                 # ReSpeaker USB 4 Mic Array 音频采集、灯光控制、硬件 VAD
 ├── common/
 │   └── timing.py                  # 通用计时日志
 ├── examples/
@@ -58,13 +80,22 @@ Spica-Chatbot/
 ├── config/
 │   ├── tts_config.json            # GPT-SoVITS 路径、参考音频、合成参数
 │   └── visual_config.json         # 差分根目录、对白框、服装和选择策略
-├── spica_data/                    # 发布包只保留空目录骨架，素材由用户自行放入
+├── docs/
+│   ├── dev_smoke_tests.md         # 开发期 smoke test 说明
+│   └── manual_smoke_checklist.md  # 手动验收清单
+├── spica_data/                    # 角色卡、语音参考、立绘差分和本地运行数据
 │   ├── Spica_skill/               # 角色卡：SKILL.md/self.md/persona.md/meta.json
 │   ├── voice/                     # TTS 情绪参考音频和 prompt
-│   └── diffs/                     # 立绘差分、差分规则、UI 贴图
-├── static/generated_voice/        # GPT-SoVITS 输出 wav，运行时生成
+│   ├── diffs/                     # 立绘差分、差分规则、UI 贴图
+│   ├── manifest.tsv               # 素材清单
+│   └── memory.sqlite3             # SQLite 长期记忆，运行时生成或更新
+├── static/
+│   ├── generated_voice/           # GPT-SoVITS 对话语音输出，运行时生成
+│   └── generated_song/            # 点歌/翻唱缓存、临时文件和最终音频，运行时生成
 ├── tests/                         # 单元测试和流水线 smoke test
-├── run_ibus.sh                    # Linux ibus 输入法启动脚本
+├── third_party/
+│   └── respeaker_usb_4_mic_array/ # ReSpeaker 调参工具第三方代码
+└── xiaosan.env                    # 本地环境变量模板/配置，真实密钥不要提交
 ```
 
 ## 快速启动
@@ -344,27 +375,41 @@ flowchart TD
 | 文件 | 职责 |
 | --- | --- |
 | `webui_qt.py` | 启动前检查 Linux `libxcb-cursor.so.0`，处理 Qt 输入法兼容，然后进入 Overlay |
-| `ui/qt_overlay.py` | UI、线程、设置面板、流式事件消费、打字机、立绘显示、QMediaPlayer 音频播放 |
+| `ui/qt_overlay.py` | 装配 Overlay 主窗口、配置、控制器、后台 worker 和基础窗口事件 |
+| `ui/controllers/chat_stream_controller.py` | 消费 `stream_voice()` 事件，管理播放单元、停止/取消和流式聊天状态 |
+| `ui/controllers/audio_controller.py` | 封装 QMediaPlayer 播放、音频归属 token 和停止策略 |
+| `ui/controllers/song_controller.py` | 点歌/翻唱 UI 状态机，处理准备、暂停、继续、取消和最终播放 |
+| `ui/controllers/voice_input_controller.py` | 连接麦克风按钮、语音识别 worker 和输入框提交 |
+| `ui/widgets/` | 对白框、输入栏、设置面板、窗口控制、图标和 resize handle |
 | `agent/simple_agent.py` | 读取环境变量，初始化 OpenAI 客户端、记忆、工具，向 UI 暴露同步和流式接口 |
 | `agent/runtime.py` / `agent/nodes.py` | 同步链路编排和每个处理节点 |
 | `agent/streaming_pipeline.py` | 流式 LLM、JSON answer 增量抽取、播放单元拆分、并行 TTS/立绘、事件队列 |
 | `agent/prompt_builder.py` | 构造 Spica 系统提示词，要求模型输出 JSON |
 | `agent/reply_parser.py` | 解析模型 JSON，失败时用启发式情绪兜底 |
+| `agent/text_normalizer.py` | 清洗朗读文本，减少符号、Markdown 和不适合 TTS 的片段 |
 | `memory/store.py` | SQLite 长期记忆表、关键词检索、use_count 更新 |
 | `memory/recent.py` | 每个 conversation_id 的最近 N 轮对话 |
 | `memory/extractor.py` | 用规则识别“记住、我喜欢、叫我”等可保存事实 |
 | `agent_tools/function_tools/router.py` | 定义 LLM function tool schema，判断是否启用工具，执行本地工具 |
 | `agent_tools/function_tools/local_tools.py` | 时间、计算器、todo 等本地工具示例 |
+| `agent_tools/function_tools/song/intent_router.py` | 点歌、暂停、继续、取消等自然语言意图路由 |
+| `agent_tools/function_tools/song/pipeline.py` | 搜歌、下载、分离、RVC、混音和缓存复用的完整点歌流水线 |
+| `agent_tools/function_tools/song/netease.py` | 网易云音乐搜索、音频 URL 解析和下载 |
+| `agent_tools/function_tools/song/separator.py` / `rvc.py` / `mixer.py` | 分离伴奏、人声变声、裁剪和混音封装 |
 | `agent_tools/visual/diff_service.py` | 本地投票式表情和手部动作选择，解析差分图片 |
 | `agent_tools/tts/base.py` / `schemas.py` | TTS 前端协议和标准请求/返回结构 |
 | `agent_tools/tts/manager.py` / `adapters/` | 根据配置选择 TTS provider，并适配同步/流式 pipeline |
 | `agent_tools/tts/gptsovits/service.py` | GPT-SoVITS 后端模型加载、情绪参考音频选择、切句和 wav 输出 |
-| `templates/index.html` | 旧 Web UI 模板，包含 SSE 播放逻辑，但当前不是默认入口 |
+| `hardware/respeaker/audio.py` / `speech_worker.py` | ReSpeaker 硬件 VAD 录音和中文语音识别 worker |
+| `hardware/respeaker/control.py` | ReSpeaker 灯光/硬件控制封装 |
+| `docs/dev_smoke_tests.md` / `docs/manual_smoke_checklist.md` | 开发期 smoke test 和手动验收记录 |
 
 ## 数据和运行产物
 
 - `spica_data/memory.sqlite3`：长期记忆数据库，运行时更新。
 - `static/generated_voice/*.wav`：语音输出，运行时生成。
+- `static/generated_song/cache/`：点歌/翻唱缓存，包含原曲、分离人声/伴奏、RVC 人声、最终混音和元数据。
+- `static/generated_song/tmp/`：点歌流水线临时目录，异常退出后可安全清理。
 - `spica_data/diffs/`：立绘差分素材和规则，不是运行缓存；发布包只保留空目录骨架。
 - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`：发布包只保留空目录，占位给用户放入上游语音引擎、依赖和权重。
 - `xiaosan.env`：本地密钥配置；发布包只保留空值模板，不应提交真实密钥。
@@ -382,6 +427,8 @@ flowchart TD
 - `tests/test_streaming_pipeline.py`：流式事件顺序、句段拆分、TTS 文本清洗、DeepSeek 流式兼容。
 - `tests/test_tts_adapters.py`：TTS adapter 请求/返回映射和失败兜底。
 - `tests/test_visual_classifier.py`：本地立绘分类器对说明、不满、悲伤语气的选择。
+- `tests/test_chat_stream_controller_units.py`：UI 流式播放单元控制器的排队、停止和收尾行为。
+- `tests/test_song_intent_router.py` / `tests/test_song_trigger.py`：点歌意图路由、触发词、暂停/继续/取消等控制语句。
 
 ## 开发注意事项
 
@@ -390,6 +437,7 @@ flowchart TD
 - 流式链路只播放完整单元，不播放裸 token。
 - `agent_tools/visual/diff_service.py` 的 `image_url` 主要服务旧 Web UI；桌面 Overlay 使用 `image_path` 直接加载本地图片。
 - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/` 是上游语音引擎和权重目录，业务层只应通过 `agent_tools/tts/gptsovits/service.py` 访问。
+- `agent_tools/function_tools/song/Applio/` 是点歌 RVC 依赖的上游 Applio 目录，业务层只应通过 `song/rvc.py` 和 `song/pipeline.py` 访问。
 - `agent_tools/function_tools/router.py` 的 `get_weather()` 当前是模拟数据，不是真实天气接口。
 
 ## 发布打包

@@ -20,6 +20,7 @@ class RecentMemory:
         assistant_text: str,
         user_local_time: str | None = None,
         interaction_mode: str = "chat",
+        screen_observation_context: str | None = None,
     ) -> None:
         turn = {
             "user_text": user_text,
@@ -28,6 +29,8 @@ class RecentMemory:
         }
         if user_local_time:
             turn["user_local_time"] = user_local_time
+        if screen_observation_context:
+            turn["screen_observation_context"] = screen_observation_context
         self._turns[conversation_id].append(turn)
 
     def clear(self, conversation_id: str) -> None:

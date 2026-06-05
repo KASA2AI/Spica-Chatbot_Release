@@ -15,5 +15,3 @@ spica_data/*.sqlite3-*
 
 agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/*
 !agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/.gitkeep
-
-.idea/

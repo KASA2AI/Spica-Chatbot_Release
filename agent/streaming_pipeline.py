@@ -11,17 +11,21 @@ from typing import Any, Iterator
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from memory.control import save_extracted_memories
 from agent.nodes import (
+    analyze_screen_attachment_node,
     build_prompt_node,
     load_recent_context_node,
+    record_screen_tool_result,
     retrieve_long_term_memory_node,
     validate_input_node,
+    _compact_tool_history_for_prompt,
 )
 from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
 from agent.text_normalizer import normalize_square_brackets_for_speech
 from agent.time_context import format_local_time_for_prompt
 from common.timing import elapsed_ms, log_timing, now_ms
-from agent_tools.function_tools import run_local_tool
+from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
+from agent_tools.function_tools.screen.schema import screen_observation_context_for_next_turn
 from agent_tools.tts.schemas import TTSRequest
 
 
@@ -424,6 +428,12 @@ def _produce_stream_events(
 
         state = load_recent_context_node(state, services)
         state = retrieve_long_term_memory_node(state, services)
+        if state.screen_attachment:
+            put_status("tools", "inspecting_screen")
+        state = analyze_screen_attachment_node(state, services)
+        if state.error:
+            output_queue.put({"event": "error", "data": {"message": state.error.get("message") or "截图分析失败。"}})
+            return
         state = build_prompt_node(state, services)
         if state.error:
             output_queue.put({"event": "error", "data": {"message": state.error.get("message") or "请求失败。"}})
@@ -547,13 +557,20 @@ def _prepare_prompt_for_streaming(
         raise RuntimeError("LLM client 未配置。")
 
     model = str(services.config.get("model") or "gpt-4.1-mini")
-    use_tools = bool(services.tool_schemas)
+    active_tool_schemas = (
+        []
+        if state.screen_attachment or state.screen_observation
+        else tool_schemas_for_user_text(state.user_input, services.tool_schemas)
+    )
+    use_tools = bool(active_tool_schemas)
     state.metadata["use_tools"] = use_tools
+    state.metadata["available_tool_schema_count"] = len(services.tool_schemas)
+    state.metadata["selected_tool_schema_count"] = len(active_tool_schemas)
     state.timing["agent_tool_local_ms"] = 0.0
     state.timing["agent_function_calls"] = 0
     state.timing["agent_rounds"] = 0
 
-    if not use_tools or not services.tool_schemas:
+    if not use_tools or not active_tool_schemas:
         return str(state.prompt_input or ""), None
 
     if _prefers_chat_completions(services.llm_client):
@@ -565,7 +582,7 @@ def _prepare_prompt_for_streaming(
     request = {
         "model": model,
         "input": str(state.prompt_input or ""),
-        "tools": services.tool_schemas,
+        "tools": active_tool_schemas,
     }
     response_start_ms = now_ms()
     response = services.llm_client.responses.create(**request)
@@ -596,8 +613,12 @@ def _prepare_prompt_for_streaming(
         tool_start_ms = now_ms()
         tool_name = str(_get_attr(item, "name", ""))
         arguments = str(_get_attr(item, "arguments", "") or "{}")
-        put_status("tools", f"tool:{tool_name}")
+        if tool_name == "inspect_screen":
+            put_status("tools", "inspecting_screen")
+        else:
+            put_status("tools", f"tool:{tool_name}")
         tool_result = run_local_tool(services.tool_functions, tool_name, arguments)
+        record_screen_tool_result(state, tool_name, tool_result)
         tool_duration = elapsed_ms(tool_start_ms)
         state.timing["agent_tool_local_ms"] = round(
             float(state.timing.get("agent_tool_local_ms") or 0) + tool_duration,
@@ -1091,6 +1112,7 @@ def _save_stream_memory(state: AgentState, services: AgentServices) -> None:
                 else None
             ),
             interaction_mode=state.interaction_mode,
+            screen_observation_context=screen_observation_context_for_next_turn(state.screen_observation),
         )
         result = save_extracted_memories(
             memory_store=services.memory_store,
@@ -1122,7 +1144,7 @@ def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, 
         [
             str(prompt_input),
             "[TOOL_RESULTS]",
-            json.dumps(tool_history, ensure_ascii=False),
+            json.dumps(_compact_tool_history_for_prompt(tool_history), ensure_ascii=False),
             "[NEXT_STEP]",
             "请只根据以上工具结果输出最终 JSON，不要 Markdown，不要解释工具链。",
         ]

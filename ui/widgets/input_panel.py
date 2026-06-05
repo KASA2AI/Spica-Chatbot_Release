@@ -4,12 +4,13 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLineEdit, QPushButton, QWidget
 
 from ui.widgets.common import scaled_px
-from ui.widgets.icons import _microphone_icon
+from ui.widgets.icons import _microphone_icon, _screenshot_icon
 
 
 class InputPanel(QFrame):
     send_requested = Signal()
     voice_requested = Signal(bool)
+    screenshot_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -59,6 +60,19 @@ class InputPanel(QFrame):
                 background-color: rgba(167, 232, 255, 180);
                 border: 2px solid rgba(22, 143, 197, 205);
             }
+            QPushButton#screenshotButton {
+                background-color: rgba(255, 255, 255, 150);
+                border: 1px solid rgba(25, 151, 181, 98);
+                border-radius: 19px;
+            }
+            QPushButton#screenshotButton:hover {
+                background-color: rgba(234, 248, 255, 210);
+                border: 1px solid rgba(22, 143, 197, 155);
+            }
+            QPushButton#screenshotButton:checked {
+                background-color: rgba(167, 232, 255, 180);
+                border: 2px solid rgba(22, 143, 197, 205);
+            }
             """
         )
 
@@ -83,12 +97,22 @@ class InputPanel(QFrame):
         self.voice_button.setIconSize(QSize(26, 26))
         self.voice_button.clicked.connect(lambda _checked=False: self.voice_requested.emit(self.voice_button.isChecked()))
 
+        self.screenshot_button = QPushButton(self)
+        self.screenshot_button.setObjectName("screenshotButton")
+        self.screenshot_button.setCheckable(True)
+        self.screenshot_button.setToolTip("截图并随下一条消息发送给 Spica 查看")
+        self.screenshot_button.setFixedSize(38, 38)
+        self.screenshot_button.setIcon(_screenshot_icon())
+        self.screenshot_button.setIconSize(QSize(26, 26))
+        self.screenshot_button.clicked.connect(lambda _checked=False: self.screenshot_requested.emit())
+
         self.send_button = QPushButton("发送", self)
         self.send_button.setObjectName("sendButton")
         self.send_button.setFixedHeight(38)
         self.send_button.clicked.connect(lambda _checked=False: self.send_requested.emit())
 
         layout.addWidget(self.input, 1)
+        layout.addWidget(self.screenshot_button)
         layout.addWidget(self.voice_button)
         layout.addWidget(self.send_button)
         self.apply_scale(1.0)
@@ -96,6 +120,7 @@ class InputPanel(QFrame):
     def set_busy(self, busy: bool, voice_enabled: bool = True) -> None:
         self.input.setEnabled(not busy)
         self.send_button.setEnabled(not busy)
+        self.screenshot_button.setEnabled(not busy)
         self.voice_button.setEnabled(voice_enabled)
 
     def set_voice_active(self, active: bool) -> None:
@@ -103,6 +128,14 @@ class InputPanel(QFrame):
         self.voice_button.setChecked(active)
         self.voice_button.blockSignals(False)
         self.voice_button.setToolTip("关闭语音模式" if active else "语音模式")
+
+    def set_screenshot_pending(self, active: bool) -> None:
+        self.screenshot_button.blockSignals(True)
+        self.screenshot_button.setChecked(active)
+        self.screenshot_button.blockSignals(False)
+        self.screenshot_button.setToolTip(
+            "取消待发送截图" if active else "截图并随下一条消息发送给 Spica 查看"
+        )
 
     def apply_scale(self, scale: float) -> None:
         button_size = scaled_px(38, scale)
@@ -157,11 +190,25 @@ class InputPanel(QFrame):
                 background-color: rgba(167, 232, 255, 180);
                 border: 2px solid rgba(22, 143, 197, 205);
             }}
+            QPushButton#screenshotButton {{
+                background-color: rgba(255, 255, 255, 150);
+                border: 1px solid rgba(25, 151, 181, 98);
+                border-radius: {button_radius}px;
+            }}
+            QPushButton#screenshotButton:hover {{
+                background-color: rgba(234, 248, 255, 210);
+                border: 1px solid rgba(22, 143, 197, 155);
+            }}
+            QPushButton#screenshotButton:checked {{
+                background-color: rgba(167, 232, 255, 180);
+                border: 2px solid rgba(22, 143, 197, 205);
+            }}
             """
         )
         self.layout().setContentsMargins(scaled_px(12, scale), scaled_px(8, scale), scaled_px(12, scale), scaled_px(8, scale))
         self.layout().setSpacing(scaled_px(8, scale))
+        self.screenshot_button.setFixedSize(button_size, button_size)
+        self.screenshot_button.setIconSize(QSize(max(1, icon_size - 2), max(1, icon_size - 2)))
         self.voice_button.setFixedSize(button_size, button_size)
         self.voice_button.setIconSize(QSize(max(1, icon_size - 2), max(1, icon_size - 2)))
         self.send_button.setFixedHeight(send_height)
-

@@ -12,8 +12,17 @@ from agent.state import AgentServices, AgentState
 from agent.text_normalizer import normalize_square_brackets_for_speech
 from agent.time_context import build_local_time_context, format_local_time_for_prompt
 from common.timing import elapsed_ms, log_timing, now_ms
-from agent_tools.function_tools import run_local_tool
+from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
+from agent_tools.function_tools.screen.analyzer import analyze_screen_attachment
+from agent_tools.function_tools.screen.schema import (
+    ScreenToolError,
+    compact_screen_observation_for_prompt,
+    screen_observation_context_for_next_turn,
+)
 from agent_tools.tts.schemas import TTSRequest, TTSResult
+
+
+DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
 
 
 def node_timer(func: Callable[[AgentState, AgentServices], AgentState]):
@@ -81,10 +90,13 @@ def _legacy_tts_chunk_audio(result: TTSResult) -> list[dict[str, Any]]:
 def validate_input_node(state: AgentState, services: AgentServices) -> AgentState:
     state.user_input = (state.user_input or "").strip()
     state.visual_overrides = state.visual_overrides or {}
+    if not state.user_input and state.screen_attachment:
+        state.user_input = DEFAULT_SCREEN_ATTACHMENT_QUESTION
     if state.include_user_time_context and not state.user_local_time:
         state.user_local_time = build_local_time_context()
     state.metadata["user_local_time"] = state.user_local_time if state.include_user_time_context else None
     state.metadata["interaction_mode"] = state.interaction_mode
+    state.metadata["has_screen_attachment"] = bool(state.screen_attachment)
     if not state.user_input:
         state.answer = "メッセージを入力してください。"
         state.emotion = "surprised"
@@ -118,6 +130,68 @@ def retrieve_long_term_memory_node(state: AgentState, services: AgentServices) -
 
 
 @node_timer
+def analyze_screen_attachment_node(state: AgentState, services: AgentServices) -> AgentState:
+    if _skip_if_error(state):
+        return state
+    if not state.screen_attachment:
+        return state
+
+    started_ms = now_ms()
+    try:
+        observation = analyze_screen_attachment(
+            attachment=state.screen_attachment,
+            user_question=state.user_input,
+        )
+        state.screen_observation = observation
+        duration = elapsed_ms(started_ms)
+        state.timing["screen_analysis_ms"] = duration
+        state.metadata["screen_observation_used"] = True
+        state.metadata["screen_observation_schema"] = observation.get("schema_version")
+        state.metadata["screen_observation_target"] = (observation.get("request") or {}).get("target")
+        state.tools.append(
+            {
+                "name": "screen_analyzer",
+                "required": True,
+                "ok": True,
+                "target": (observation.get("request") or {}).get("target"),
+                "source": (observation.get("capture") or {}).get("source"),
+            }
+        )
+        _log_timing(
+            services,
+            "screen_attachment_analysis",
+            duration,
+            target=(observation.get("request") or {}).get("target"),
+            source=(observation.get("capture") or {}).get("source"),
+        )
+    except ScreenToolError as exc:
+        duration = elapsed_ms(started_ms)
+        state.timing["screen_analysis_ms"] = duration
+        state.tools.append(
+            {
+                "name": "screen_analyzer",
+                "required": True,
+                "ok": False,
+                "error": {"code": exc.code, "message": exc.message},
+            }
+        )
+        state.error = {"code": exc.code, "message": exc.message}
+    except Exception as exc:
+        duration = elapsed_ms(started_ms)
+        state.timing["screen_analysis_ms"] = duration
+        state.tools.append(
+            {
+                "name": "screen_analyzer",
+                "required": True,
+                "ok": False,
+                "error": {"code": "SCREEN_ANALYSIS_FAILED", "message": str(exc)},
+            }
+        )
+        state.error = {"code": "SCREEN_ANALYSIS_FAILED", "message": str(exc)}
+    return state
+
+
+@node_timer
 def build_prompt_node(state: AgentState, services: AgentServices) -> AgentState:
     if _skip_if_error(state):
         return state
@@ -132,6 +206,8 @@ def build_prompt_node(state: AgentState, services: AgentServices) -> AgentState:
         interlocutor_name=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
         user_local_time=state.user_local_time if state.include_user_time_context else None,
     )
+    if state.screen_observation:
+        state.prompt_input = _inject_screen_observation(state.prompt_input, state.screen_observation)
     state.metadata["prompt_input_chars"] = len(str(state.prompt_input))
     return state
 
@@ -146,8 +222,15 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
 
     model = str(services.config.get("model") or "gpt-4.1-mini")
     max_rounds = max(1, int(services.config.get("max_tool_rounds", 3)))
-    use_tools = bool(services.tool_schemas)
+    active_tool_schemas = (
+        []
+        if state.screen_attachment or state.screen_observation
+        else tool_schemas_for_user_text(state.user_input, services.tool_schemas)
+    )
+    use_tools = bool(active_tool_schemas)
     state.metadata["use_tools"] = use_tools
+    state.metadata["available_tool_schema_count"] = len(services.tool_schemas)
+    state.metadata["selected_tool_schema_count"] = len(active_tool_schemas)
     state.timing["agent_tool_local_ms"] = 0.0
     state.timing["agent_followup_response_ms"] = 0.0
     state.timing["agent_function_calls"] = 0
@@ -163,7 +246,7 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
 
     if _prefers_chat_completions(services.llm_client):
         state.timing["agent_rounds"] = 1
-        if use_tools and services.tool_schemas:
+        if use_tools and active_tool_schemas:
             state.timing["agent_tool_probe_skipped"] = True
             state.timing["agent_tool_probe_skip_reason"] = "chat_completions_compatible_client"
         response_start_ms = now_ms()
@@ -197,8 +280,8 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
             "model": model,
             "input": prompt_for_round,
         }
-        if use_tools and services.tool_schemas:
-            request["tools"] = services.tool_schemas
+        if use_tools and active_tool_schemas:
+            request["tools"] = active_tool_schemas
 
         response_start_ms = now_ms()
         response = services.llm_client.responses.create(**request)
@@ -240,6 +323,7 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
             tool_name = str(_get_attr(item, "name", ""))
             arguments = str(_get_attr(item, "arguments", "") or "{}")
             tool_result = run_local_tool(services.tool_functions, tool_name, arguments)
+            record_screen_tool_result(state, tool_name, tool_result)
             tool_duration = elapsed_ms(tool_start_ms)
             state.timing["agent_tool_local_ms"] = round(
                 float(state.timing.get("agent_tool_local_ms") or 0) + tool_duration,
@@ -295,6 +379,7 @@ def save_recent_context_node(state: AgentState, services: AgentServices) -> Agen
             else None
         ),
         interaction_mode=state.interaction_mode,
+        screen_observation_context=screen_observation_context_for_next_turn(state.screen_observation),
     )
     return state
 
@@ -457,9 +542,68 @@ def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, 
         [
             str(prompt_input),
             "[TOOL_RESULTS]",
-            json.dumps(tool_history, ensure_ascii=False),
+            json.dumps(_compact_tool_history_for_prompt(tool_history), ensure_ascii=False),
             "[NEXT_STEP]",
             "请只根据以上工具结果输出最终 JSON，不要 Markdown，不要解释工具链。",
+        ]
+    )
+
+
+def record_screen_tool_result(state: AgentState, tool_name: str, tool_result: str) -> None:
+    if tool_name != "inspect_screen":
+        return
+    try:
+        parsed = json.loads(tool_result or "{}")
+    except json.JSONDecodeError:
+        return
+    if not isinstance(parsed, dict) or not parsed.get("ok"):
+        return
+    data = parsed.get("data")
+    if not isinstance(data, dict) or data.get("schema_version") != "screen_observation.v1":
+        return
+    state.screen_observation = data
+    state.metadata["screen_observation_used"] = True
+    state.metadata["screen_observation_schema"] = data.get("schema_version")
+    state.metadata["screen_observation_target"] = (data.get("request") or {}).get("target")
+    state.metadata["screen_observation_source"] = (data.get("capture") or {}).get("source")
+
+
+def _compact_tool_history_for_prompt(tool_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact_history: list[dict[str, Any]] = []
+    for item in tool_history:
+        compact_item = dict(item)
+        if compact_item.get("name") == "inspect_screen":
+            compact_item["output"] = _compact_screen_tool_output(str(compact_item.get("output") or ""))
+        compact_history.append(compact_item)
+    return compact_history
+
+
+def _compact_screen_tool_output(output: str) -> str:
+    try:
+        parsed = json.loads(output or "{}")
+    except json.JSONDecodeError:
+        return output
+    if not isinstance(parsed, dict) or not parsed.get("ok") or not isinstance(parsed.get("data"), dict):
+        return output
+    parsed = dict(parsed)
+    parsed["data"] = compact_screen_observation_for_prompt(parsed["data"])
+    return json.dumps(parsed, ensure_ascii=False)
+
+
+def _inject_screen_observation(prompt_input: Any, observation: dict[str, Any]) -> str:
+    safe_observation = compact_screen_observation_for_prompt(observation)
+    return "\n\n".join(
+        [
+            str(prompt_input),
+            "[SCREEN_OBSERVATION]",
+            json.dumps(safe_observation, ensure_ascii=False),
+            "[SCREEN_OBSERVATION_INSTRUCTIONS]",
+            (
+                "这张截图已经由独立视觉 API 分析完成。请只根据 screen_observation.v1 的内容回答，"
+                "不要要求再次截图，不要声称可以实时观察，不要提及内部工具链。"
+                "如果 observation 表示不确定、低置信度或有 ambiguity，请明确说明不确定，不要编造确定答案。"
+                "如果是任务栏、标签页或数量统计类问题，请说明这是基于截图的估计，并带上限制。"
+            ),
         ]
     )
 

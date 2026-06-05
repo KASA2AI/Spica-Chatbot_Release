@@ -1,14 +1,15 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
 from memory.store import SQLiteMemoryStore
-from agent.nodes import build_prompt_node, call_llm_node, validate_input_node
+from agent.nodes import build_prompt_node, call_llm_node, parse_reply_node, validate_input_node
 from memory.recent import RecentMemory
 from agent.runtime import run_voice_pipeline
 from agent.state import AgentServices, AgentState
-from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
+from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions, is_screen_intent_explicit
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 
 
@@ -57,6 +58,36 @@ class FakeDeepSeekClient:
     def __init__(self, text='{"answer":"こんにちは。","emotion":"happy","emotion_reason":"普通の挨拶。"}'):
         self.base_url = "https://api.deepseek.com/v1"
         self.chat = FakeChat(text)
+
+
+class FakeToolResponses:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            return SimpleNamespace(
+                id="fake-tool-call",
+                output_text="",
+                output=[
+                    SimpleNamespace(
+                        type="function_call",
+                        name="inspect_screen",
+                        arguments=json.dumps(
+                            {"target": "full_screen", "question": "看一下我屏幕"},
+                            ensure_ascii=False,
+                        ),
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=10, output_tokens=5, total_tokens=15),
+            )
+        return FakeResponse('{"answer":"画面にはエラーは見えません。","emotion":"happy","emotion_reason":"画面観察結果の説明。"}')
+
+
+class FakeToolLLMClient:
+    def __init__(self):
+        self.responses = FakeToolResponses()
 
 
 class FakeTTS:
@@ -148,6 +179,80 @@ class PipelineSmokeTest(unittest.TestCase):
             state = call_llm_node(state, services)
             self.assertNotIn("tools", llm.responses.calls[0])
             self.assertFalse(state.metadata["use_tools"])
+
+    def test_screen_intent_passes_tools(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            llm = FakeLLMClient()
+            services = make_services(tmpdir, llm=llm)
+            state = AgentState(conversation_id="c1", user_input="看一下我屏幕")
+            state = validate_input_node(state, services)
+            state = build_prompt_node(state, services)
+            state = call_llm_node(state, services)
+
+            self.assertIn("tools", llm.responses.calls[0])
+            self.assertEqual(llm.responses.calls[0]["tools"][0]["name"], "inspect_screen")
+            self.assertTrue(state.metadata["use_tools"])
+
+    def test_screen_intent_examples(self):
+        should_trigger = [
+            "Spica，看看我现在屏幕在干嘛",
+            "现在我主屏幕上面的报错是什么",
+            "我现在正在浏览的网站是什么",
+            "桌面的女孩可能出自哪个动漫",
+            "浏览器现在打开了几个网站",
+            "看一下任务栏有几个窗口",
+        ]
+        should_not_trigger = [
+            "屏幕尺寸买多大合适",
+            "桌面整理有什么建议",
+            "浏览器推荐哪个好",
+            "游戏陪玩功能怎么设计",
+        ]
+        self.assertEqual([is_screen_intent_explicit(text) for text in should_trigger], [True] * len(should_trigger))
+        self.assertEqual([is_screen_intent_explicit(text) for text in should_not_trigger], [False] * len(should_not_trigger))
+
+    def test_screen_tool_result_can_drive_final_json_reply(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            llm = FakeToolLLMClient()
+            services = make_services(tmpdir, llm=llm)
+            calls = []
+
+            def fake_inspect_screen(target, question):
+                calls.append({"target": target, "question": question})
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "data": {
+                            "schema_version": "screen_observation.v1",
+                            "type": "screen_observation",
+                            "request": {
+                                "user_question": question,
+                                "question_type": "general_observation",
+                                "target": target,
+                            },
+                            "capture": {
+                                "captured_scope": "full_screen",
+                                "source": "automatic_screenshot",
+                            },
+                            "answer": {"direct_answer": "画面にエラーは見えません。", "confidence": 0.9},
+                            "followup": {"context_for_next_turn": "No visible error.", "needs_followup_capture": False, "suggested_capture": None},
+                        },
+                        "error": None,
+                    },
+                    ensure_ascii=False,
+                )
+
+            services.tool_functions = {"inspect_screen": fake_inspect_screen}
+            state = AgentState(conversation_id="c1", user_input="看一下我屏幕")
+            state = validate_input_node(state, services)
+            state = build_prompt_node(state, services)
+            state = call_llm_node(state, services)
+            state = parse_reply_node(state, services)
+
+            self.assertEqual(calls, [{"target": "full_screen", "question": "看一下我屏幕"}])
+            self.assertEqual(len(llm.responses.calls), 2)
+            self.assertIn("[TOOL_RESULTS]", llm.responses.calls[1]["input"])
+            self.assertEqual(state.answer, "画面にはエラーは見えません。")
 
     def test_pipeline_returns_compatible_payload(self):
         with tempfile.TemporaryDirectory() as tmpdir:

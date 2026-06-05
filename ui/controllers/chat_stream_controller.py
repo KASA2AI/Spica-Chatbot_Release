@@ -73,11 +73,17 @@ class ChatStreamController(QObject):
         self._last_playback_advance_index: int | None = None
         self._last_playback_advance_at_ms: float | None = None
 
-    def start_chat(self, message: str, visual_overrides: dict[str, Any] | None = None) -> StreamToken:
+    def start_chat(
+        self,
+        message: str,
+        visual_overrides: dict[str, Any] | None = None,
+        screen_attachment: dict[str, Any] | None = None,
+    ) -> StreamToken:
         return self._start_stream(
             kind=StreamKind.CHAT,
             message=message,
             visual_overrides=visual_overrides,
+            screen_attachment=screen_attachment,
             on_done=None,
         )
 
@@ -91,6 +97,7 @@ class ChatStreamController(QObject):
             kind=StreamKind.SONG_PRELUDE,
             message=prompt,
             visual_overrides=visual_overrides,
+            screen_attachment=None,
             on_done=on_done,
         )
 
@@ -131,6 +138,7 @@ class ChatStreamController(QObject):
         kind: StreamKind,
         message: str,
         visual_overrides: dict[str, Any] | None,
+        screen_attachment: dict[str, Any] | None,
         on_done: Callable[[], None] | None,
     ) -> StreamToken:
         self.stop_current()
@@ -164,6 +172,7 @@ class ChatStreamController(QObject):
             include_user_time_context,
             interaction_mode,
             self,
+            screen_attachment=screen_attachment if kind == StreamKind.CHAT else None,
         )
         worker.token = token
         worker.stream_event.connect(self._handle_stream_event)
@@ -314,7 +323,11 @@ class ChatStreamController(QObject):
 
     def _handle_stream_status(self, data: dict[str, Any]) -> None:
         state = str(data.get("state") or "")
+        message = str(data.get("message") or "")
         if state == "tools" and not self.playback_active:
+            if message == "inspecting_screen":
+                self.typewriter_controller.start("正在查看屏幕...", interval_ms=55)
+                return
             self.typewriter_controller.start("正在处理工具...", interval_ms=55)
 
     def _handle_stream_unit_text_ready(self, data: dict[str, Any]) -> None:

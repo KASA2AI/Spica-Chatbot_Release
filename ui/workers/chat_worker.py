@@ -21,6 +21,7 @@ class ChatWorker(QThread):
         include_user_time_context: bool,
         interaction_mode: str,
         parent: QObject | None = None,
+        screen_attachment: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(parent)
         self.agent = agent
@@ -29,6 +30,7 @@ class ChatWorker(QThread):
         self.visual_overrides = visual_overrides
         self.include_user_time_context = include_user_time_context
         self.interaction_mode = interaction_mode
+        self.screen_attachment = screen_attachment
         self.token: StreamToken | None = None
 
     def run(self) -> None:
@@ -37,6 +39,7 @@ class ChatWorker(QThread):
                 self.message,
                 conversation_id=self.conversation_id,
                 visual_overrides=self.visual_overrides,
+                screen_attachment=self.screen_attachment,
                 include_user_time_context=self.include_user_time_context,
                 interaction_mode=self.interaction_mode,
             ):

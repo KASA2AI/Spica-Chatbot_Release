@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from memory.store import SQLiteMemoryStore
 from memory.recent import RecentMemory
@@ -155,6 +156,51 @@ def make_services(tmpdir, answer_text):
     )
 
 
+def make_screen_attachment():
+    return {
+        "kind": "screen_capture",
+        "target": "selected_region",
+        "source": "manual_region_selection",
+        "captured_at": "2026-06-06T00:00:00+00:00",
+        "image_bytes": b"jpeg-bytes",
+        "mime_type": "image/jpeg",
+        "original_resolution": {"width": 100, "height": 80},
+        "sent_resolution": {"width": 100, "height": 80},
+        "downscaled": False,
+        "format": "jpeg",
+        "quality": 75,
+        "region": {
+            "screen_name": "primary",
+            "logical": {"x": 0, "y": 0, "width": 100, "height": 80},
+            "physical": {"x": 0, "y": 0, "width": 100, "height": 80},
+            "device_pixel_ratio": 1.0,
+        },
+    }
+
+
+def fake_screen_observation(question):
+    return {
+        "schema_version": "screen_observation.v1",
+        "type": "screen_observation",
+        "request": {
+            "user_question": question,
+            "question_type": "general_observation",
+            "target": "selected_region",
+        },
+        "capture": {
+            "captured_scope": "selected_region",
+            "source": "manual_region_selection",
+        },
+        "answer": {"direct_answer": "ブラウザが見えます。", "confidence": 0.8},
+        "followup": {
+            "context_for_next_turn": "selected region shows a browser",
+            "needs_followup_capture": False,
+            "suggested_capture": None,
+        },
+        "limitations": ["single screenshot only"],
+    }
+
+
 class StreamingPipelineTests(unittest.TestCase):
     def test_play_unit_splitter_merges_short_opening_sentence(self):
         text = (
@@ -251,6 +297,26 @@ class StreamingPipelineTests(unittest.TestCase):
         self.assertEqual(client.chat.completions.calls[0]["messages"][0]["role"], "user")
         self.assertTrue(client.chat.completions.calls[0]["stream"])
         self.assertEqual(done["timing"]["llm_stream_fallback_reason"], "chat_completions_compatible_client")
+
+    def test_pending_screenshot_stream_emits_inspecting_screen_status(self):
+        answer = "スクリーンショットにはブラウザが見えます。"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            services = make_services(tmpdir, answer)
+            state = AgentState(
+                conversation_id="c1",
+                user_input="これは何？",
+                screen_attachment=make_screen_attachment(),
+            )
+            with patch(
+                "agent.nodes.analyze_screen_attachment",
+                lambda *, attachment, user_question: fake_screen_observation(user_question),
+            ):
+                events = list(stream_voice_events(state, services))
+
+        statuses = [event["data"] for event in events if event["event"] == "status"]
+        done = [event for event in events if event["event"] == "done"][-1]["data"]
+        self.assertIn({"state": "tools", "message": "inspecting_screen"}, statuses)
+        self.assertEqual(done["answer"], answer)
 
 
 if __name__ == "__main__":

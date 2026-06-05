@@ -121,6 +121,7 @@ class SimpleAgent:
         visual_overrides: dict[str, Any] | None = None,
         include_user_time_context: bool = True,
         interaction_mode: str = "chat",
+        screen_attachment: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         state = AgentState(
             conversation_id=conversation_id or "default",
@@ -130,6 +131,7 @@ class SimpleAgent:
             emotion_override=emotion_override,
             tts_param_overrides=tts_param_overrides,
             visual_overrides=visual_overrides or {},
+            screen_attachment=screen_attachment,
         )
         state = run_voice_pipeline(state, self.services)
         return state.response_payload
@@ -147,6 +149,7 @@ class SimpleAgent:
         visual_overrides: dict[str, Any] | None = None,
         include_user_time_context: bool = True,
         interaction_mode: str = "chat",
+        screen_attachment: dict[str, Any] | None = None,
     ):
         state = AgentState(
             conversation_id=conversation_id or "default",
@@ -156,6 +159,7 @@ class SimpleAgent:
             emotion_override=emotion_override,
             tts_param_overrides=tts_param_overrides,
             visual_overrides=visual_overrides or {},
+            screen_attachment=screen_attachment,
         )
         return stream_voice_events(state, self.services)
 

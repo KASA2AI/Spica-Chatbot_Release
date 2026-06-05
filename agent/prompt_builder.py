@@ -68,9 +68,16 @@ def _format_recent_context(
     for item in recent_context[-3:]:
         user_text = _compact_text(replace_mugi_references(item.get("user_text", ""), name), turn_char_limit)
         assistant_text = _compact_text(replace_mugi_references(item.get("assistant_text", ""), name), turn_char_limit)
+        screen_context = _compact_text(
+            replace_mugi_references(str(item.get("screen_observation_context") or ""), name),
+            420,
+        )
         user_local_time = str(item.get("user_local_time") or "").strip()
         user_label = f"{name}（{user_local_time}）" if user_local_time else name
-        lines.append(f"{user_label}: {user_text}\nスピカ: {assistant_text}")
+        line = f"{user_label}: {user_text}\nスピカ: {assistant_text}"
+        if screen_context:
+            line += f"\n[前回の画面観察] {screen_context}"
+        lines.append(line)
     return "\n".join(lines)
 
 

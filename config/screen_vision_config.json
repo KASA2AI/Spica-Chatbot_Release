@@ -1,0 +1,13 @@
+{
+  "provider": "openai_compatible",
+  "api_key_env": "SPICA_SCREEN_API_KEY",
+  "base_url_env": "SPICA_SCREEN_BASE_URL",
+  "model_env": "SPICA_SCREEN_MODEL",
+  "default_base_url": "https://api.zetatechs.com/v1/",
+  "default_model": "gpt-5.5-medium",
+  "max_long_edge": 1536,
+  "jpeg_quality": 75,
+  "image_detail": "low",
+  "request_timeout_seconds": 30,
+  "debug_save_images": false
+}

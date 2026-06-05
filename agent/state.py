@@ -31,6 +31,8 @@ class AgentState:
     timing: dict[str, Any] = field(default_factory=dict)
     error: dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    screen_attachment: dict[str, Any] | None = None
+    screen_observation: dict[str, Any] | None = None
     response_payload: dict[str, Any] = field(default_factory=dict)
 
 

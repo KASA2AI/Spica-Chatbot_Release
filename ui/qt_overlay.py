@@ -4,15 +4,20 @@ import logging
 import sys
 import time
 import uuid
+from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
+from PySide6.QtCore import QBuffer, QEvent, QIODevice, QObject, QPoint, QRect, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QWidget
 
 from agent import SimpleAgent
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from agent_tools.function_tools.screen.config import load_screen_vision_config
+from agent_tools.function_tools.screen.image_processing import prepare_image_for_vision
+from agent_tools.function_tools.screen.schema import ScreenToolError
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, build_tts_adapter, load_tts_config
 from agent_tools.visual import VisualDiffService
 from ui.controllers.audio_controller import AudioController
@@ -27,6 +32,7 @@ from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, scaled_px
 from ui.widgets.dialogue_box import TintedDialogueBox
 from ui.widgets.input_panel import InputPanel
 from ui.widgets.resize_handle import CornerResizeHandle
+from ui.widgets.screenshot_selector import ScreenshotSelectionOverlay
 from ui.widgets.settings_panel import SettingsPanel
 from ui.widgets.window_controls import WindowControls
 
@@ -90,6 +96,8 @@ class OverlayWindow(QWidget):
         self.character_max_height_ratio = self.overlay_config.character_max_height_ratio
         self._last_layout_log_state: tuple[Any, ...] | None = None
         self.settings_panel: SettingsPanel | None = None
+        self.screenshot_selector: ScreenshotSelectionOverlay | None = None
+        self.pending_screen_attachment: dict[str, Any] | None = None
 
         self.character_label = QLabel(self)
         self.character_label.setObjectName("character")
@@ -120,6 +128,7 @@ class OverlayWindow(QWidget):
         self.input_panel = InputPanel(self)
         self.input_panel.send_requested.connect(self.send_message)
         self.input_panel.voice_requested.connect(self.toggle_voice)
+        self.input_panel.screenshot_requested.connect(self.toggle_screenshot_selection)
         self.voice_input_controller = VoiceInputController(
             parent=self,
             set_voice_active=self.input_panel.set_voice_active,
@@ -149,6 +158,8 @@ class OverlayWindow(QWidget):
             voice_input_controller=self.voice_input_controller,
             focus_input=self._focus_input,
             set_busy=self.set_busy,
+            screen_attachment_provider=lambda: self.pending_screen_attachment,
+            consume_screen_attachment=self.consume_pending_screenshot,
         )
         self.voice_input_controller.set_on_recognized_text(self.interaction_controller.handle_user_text)
         self.song_controller.set_stop_conversation_for_song(self.interaction_controller.stop_conversation_for_song)
@@ -553,13 +564,160 @@ class OverlayWindow(QWidget):
 
     def send_message(self) -> None:
         message = self.input_panel.input.text().strip()
-        if not message:
+        if not message and self.pending_screen_attachment is None:
             self.input_panel.input.setFocus()
             return
 
         self.input_panel.input.clear()
         if self.interaction_controller is not None:
             self.interaction_controller.handle_user_text(message)
+
+    def toggle_screenshot_selection(self) -> None:
+        if self.pending_screen_attachment is not None:
+            self.clear_pending_screenshot(show_message=True)
+            return
+        if self._is_conversation_busy():
+            self.input_panel.set_screenshot_pending(False)
+            return
+        self.input_panel.set_screenshot_pending(False)
+        self._open_screenshot_selector()
+
+    def _open_screenshot_selector(self) -> None:
+        if self.screenshot_selector is not None:
+            try:
+                self.screenshot_selector.close()
+            except Exception:
+                pass
+            self.screenshot_selector = None
+
+        screen = QGuiApplication.screenAt(self.frameGeometry().center()) or QGuiApplication.primaryScreen()
+        self.screenshot_selector = ScreenshotSelectionOverlay(screen=screen)
+        self.screenshot_selector.selection_finished.connect(self._handle_screenshot_selection_finished)
+        self.screenshot_selector.selection_cancelled.connect(self._handle_screenshot_selection_cancelled)
+        self.dialogue.set_dialogue_text("拖拽选择要让 Spica 查看的一块区域，按 Esc 取消。")
+        self.screenshot_selector.begin()
+
+    def _handle_screenshot_selection_finished(self, payload: dict[str, Any]) -> None:
+        self.screenshot_selector = None
+        QTimer.singleShot(120, lambda data=dict(payload): self._capture_selected_region(data))
+
+    def _handle_screenshot_selection_cancelled(self, reason: str) -> None:
+        self.screenshot_selector = None
+        self.input_panel.set_screenshot_pending(False)
+        self.pending_screen_attachment = None
+        if reason == "截图区域太小":
+            self.dialogue.set_dialogue_text("截图区域太小")
+        else:
+            self.dialogue.set_dialogue_text("已取消截图。")
+
+    def _capture_selected_region(self, payload: dict[str, Any]) -> None:
+        try:
+            attachment = self._build_selected_region_attachment(payload)
+            self.pending_screen_attachment = attachment
+            self.input_panel.set_screenshot_pending(True)
+            self.dialogue.set_dialogue_text("截图已准备好。输入问题后发送，或直接发送让我概括。")
+            self._focus_input()
+        except ScreenToolError as exc:
+            self.pending_screen_attachment = None
+            self.input_panel.set_screenshot_pending(False)
+            self.dialogue.set_dialogue_text(f"截图失败：{exc.message}")
+        except Exception as exc:
+            self.pending_screen_attachment = None
+            self.input_panel.set_screenshot_pending(False)
+            self.dialogue.set_dialogue_text(f"截图失败：{exc}")
+
+    def _build_selected_region_attachment(self, payload: dict[str, Any]) -> dict[str, Any]:
+        screen = payload.get("screen") or QGuiApplication.primaryScreen()
+        if screen is None:
+            raise ScreenToolError("SCREEN_CAPTURE_FAILED", "没有可用显示器，无法截图。")
+        logical_rect = payload.get("logical_rect")
+        if not isinstance(logical_rect, QRect) or logical_rect.isEmpty():
+            raise ScreenToolError("SCREEN_CAPTURE_FAILED", "没有有效截图区域。")
+
+        pixmap = screen.grabWindow(
+            0,
+            logical_rect.x(),
+            logical_rect.y(),
+            logical_rect.width(),
+            logical_rect.height(),
+        )
+        if pixmap.isNull():
+            raise ScreenToolError("SCREEN_CAPTURE_FAILED", "系统没有返回截图内容。")
+
+        pil_image = self._pixmap_to_pil_image(pixmap)
+        config = load_screen_vision_config()
+        jpeg_bytes, image_metadata = prepare_image_for_vision(pil_image, config)
+        dpr = float(payload.get("device_pixel_ratio") or screen.devicePixelRatio() or 1.0)
+        physical_rect = self._physical_rect_for_selection(logical_rect, screen.geometry(), dpr, pixmap)
+        quality = int(image_metadata.get("quality") or config.jpeg_quality)
+        return {
+            "kind": "screen_capture",
+            "target": "selected_region",
+            "source": "manual_region_selection",
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "image_bytes": jpeg_bytes,
+            "mime_type": "image/jpeg",
+            "original_resolution": image_metadata.get("original_resolution"),
+            "sent_resolution": image_metadata.get("sent_resolution"),
+            "downscaled": bool(image_metadata.get("downscaled", False)),
+            "format": str(image_metadata.get("format") or "jpeg"),
+            "quality": quality,
+            "region": {
+                "screen_name": str(payload.get("screen_name") or screen.name() or ""),
+                "screen_index": int(payload.get("screen_index") if payload.get("screen_index") is not None else -1),
+                "logical": self._rect_payload(logical_rect),
+                "physical": self._rect_payload(physical_rect),
+                "device_pixel_ratio": dpr,
+            },
+        }
+
+    def _pixmap_to_pil_image(self, pixmap: QPixmap) -> Any:
+        try:
+            from PIL import Image
+        except ImportError as exc:
+            raise ScreenToolError(
+                "SCREEN_CAPTURE_DEPENDENCY_MISSING",
+                "缺少图片处理依赖 Pillow，请安装：pip install Pillow",
+            ) from exc
+
+        image = pixmap.toImage()
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, "PNG")
+        return Image.open(BytesIO(bytes(buffer.data()))).convert("RGB")
+
+    def _physical_rect_for_selection(
+        self,
+        logical_rect: QRect,
+        screen_geometry: QRect,
+        dpr: float,
+        pixmap: QPixmap,
+    ) -> QRect:
+        relative_x = logical_rect.x() - screen_geometry.x()
+        relative_y = logical_rect.y() - screen_geometry.y()
+        width = pixmap.width() or round(logical_rect.width() * dpr)
+        height = pixmap.height() or round(logical_rect.height() * dpr)
+        return QRect(round(relative_x * dpr), round(relative_y * dpr), width, height)
+
+    def _rect_payload(self, rect: QRect) -> dict[str, int]:
+        return {
+            "x": int(rect.x()),
+            "y": int(rect.y()),
+            "width": int(rect.width()),
+            "height": int(rect.height()),
+        }
+
+    def clear_pending_screenshot(self, show_message: bool = False) -> None:
+        self.pending_screen_attachment = None
+        self.input_panel.set_screenshot_pending(False)
+        if show_message:
+            self.dialogue.set_dialogue_text("已取消待发送截图。")
+
+    def consume_pending_screenshot(self) -> dict[str, Any] | None:
+        attachment = self.pending_screen_attachment
+        self.pending_screen_attachment = None
+        self.input_panel.set_screenshot_pending(False)
+        return attachment
 
     def _is_song_busy(self) -> bool:
         return bool(self.song_controller is not None and self.song_controller.is_busy())
@@ -895,6 +1053,12 @@ class OverlayWindow(QWidget):
             self.chat_stream_controller.shutdown(1500)
         if self.voice_input_controller is not None:
             self.voice_input_controller.shutdown(1500)
+        if self.screenshot_selector is not None:
+            try:
+                self.screenshot_selector.close()
+            except Exception:
+                pass
+            self.screenshot_selector = None
         if self.startup_warmup_worker and self.startup_warmup_worker.isRunning():
             self.startup_warmup_worker.quit()
             self.startup_warmup_worker.wait(1500)

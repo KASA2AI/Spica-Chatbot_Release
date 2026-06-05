@@ -10,8 +10,9 @@ from agent.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_spica_prompt
 from agent.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
 from agent.text_normalizer import normalize_square_brackets_for_speech
+from agent.time_context import build_local_time_context, format_local_time_for_prompt
 from common.timing import elapsed_ms, log_timing, now_ms
-from agent_tools.function_tools import run_local_tool, should_use_tools
+from agent_tools.function_tools import run_local_tool
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 
 
@@ -80,6 +81,10 @@ def _legacy_tts_chunk_audio(result: TTSResult) -> list[dict[str, Any]]:
 def validate_input_node(state: AgentState, services: AgentServices) -> AgentState:
     state.user_input = (state.user_input or "").strip()
     state.visual_overrides = state.visual_overrides or {}
+    if state.include_user_time_context and not state.user_local_time:
+        state.user_local_time = build_local_time_context()
+    state.metadata["user_local_time"] = state.user_local_time if state.include_user_time_context else None
+    state.metadata["interaction_mode"] = state.interaction_mode
     if not state.user_input:
         state.answer = "メッセージを入力してください。"
         state.emotion = "surprised"
@@ -125,6 +130,7 @@ def build_prompt_node(state: AgentState, services: AgentServices) -> AgentState:
         memory_budget_chars=int(services.config.get("long_term_memory_budget_chars", 1200)),
         recent_turn_char_limit=int(services.config.get("recent_turn_char_limit", 360)),
         interlocutor_name=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
+        user_local_time=state.user_local_time if state.include_user_time_context else None,
     )
     state.metadata["prompt_input_chars"] = len(str(state.prompt_input))
     return state
@@ -140,7 +146,7 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
 
     model = str(services.config.get("model") or "gpt-4.1-mini")
     max_rounds = max(1, int(services.config.get("max_tool_rounds", 3)))
-    use_tools = should_use_tools(state.user_input)
+    use_tools = bool(services.tool_schemas)
     state.metadata["use_tools"] = use_tools
     state.timing["agent_tool_local_ms"] = 0.0
     state.timing["agent_followup_response_ms"] = 0.0
@@ -149,7 +155,7 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
     state.timing["agent_model"] = model
     state.timing["prompt_input_chars"] = len(str(state.prompt_input or ""))
 
-    _log_timing(services, "tool_router", 0.0, use_tools=use_tools, user_chars=len(state.user_input))
+    _log_timing(services, "tool_schema_gate", 0.0, use_tools=use_tools, user_chars=len(state.user_input))
 
     prompt_for_round = str(state.prompt_input or "")
     tool_history: list[dict[str, Any]] = []
@@ -279,7 +285,17 @@ def parse_reply_node(state: AgentState, services: AgentServices) -> AgentState:
 def save_recent_context_node(state: AgentState, services: AgentServices) -> AgentState:
     if _skip_if_error(state):
         return state
-    services.recent_memory.append_turn(state.conversation_id, state.user_input, state.answer or "")
+    services.recent_memory.append_turn(
+        state.conversation_id,
+        state.user_input,
+        state.answer or "",
+        user_local_time=(
+            format_local_time_for_prompt(state.user_local_time)
+            if state.include_user_time_context
+            else None
+        ),
+        interaction_mode=state.interaction_mode,
+    )
     return state
 
 

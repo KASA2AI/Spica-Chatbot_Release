@@ -153,12 +153,16 @@ class ChatStreamController(QObject):
         self._reset_playback_state(streaming=True)
         self.set_busy(True)
         self.typewriter_controller.start("……", interval_ms=180)
+        include_user_time_context = kind == StreamKind.CHAT
+        interaction_mode = kind.value
 
         worker = ChatWorker(
             self.agent,
             message,
             self.conversation_id_provider(),
             visual_overrides if visual_overrides is not None else self.visual_overrides_provider(),
+            include_user_time_context,
+            interaction_mode,
             self,
         )
         worker.token = token

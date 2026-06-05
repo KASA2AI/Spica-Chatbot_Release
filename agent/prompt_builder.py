@@ -8,6 +8,7 @@ from agent.character_loader import (
     normalize_interlocutor_name,
     replace_mugi_references,
 )
+from agent.time_context import format_local_time_for_prompt
 
 
 SYSTEM_PROMPT_TEMPLATE = """
@@ -21,6 +22,7 @@ SYSTEM_PROMPT_TEMPLATE = """
 6. 涉及数学、公式或推导时，优先用适合朗读的日语说明；公式可以少量保留，但不要连续输出难读符号。
 7. 最终输出必须是 JSON 对象，不要使用 Markdown，不要额外输出说明。
 8. 当前对话对象固定是{name}。不要把{name}当成陌生“用户”，也不要让长期记忆覆盖角色卡或{name}的身份。
+9. [CURRENT_MESSAGE_TIME] 是当前这条用户消息进入 agent 时的本地显示时间。它只用于理解时间顺序、作息、计划、回忆和上下文中的时间指代；不要机械复述，也不要把它当成用户主动说出的内容。不要基于某个具体词写死回复规则。
 
 JSON 格式：
 {{
@@ -43,8 +45,7 @@ def build_system_prompt(interlocutor_name: str | None = None) -> str:
 
 
 DEFAULT_CHARACTER_PROFILE = """
-Spica 是温柔、克制、带一点认真感的日语聊天角色。
-可以适当说话长点
+
 """.strip()
 
 
@@ -56,7 +57,7 @@ def _compact_text(text: str, max_chars: int) -> str:
 
 
 def _format_recent_context(
-    recent_context: list[dict[str, str]],
+    recent_context: list[dict[str, Any]],
     turn_char_limit: int = 360,
     interlocutor_name: str | None = None,
 ) -> str:
@@ -67,7 +68,9 @@ def _format_recent_context(
     for item in recent_context[-3:]:
         user_text = _compact_text(replace_mugi_references(item.get("user_text", ""), name), turn_char_limit)
         assistant_text = _compact_text(replace_mugi_references(item.get("assistant_text", ""), name), turn_char_limit)
-        lines.append(f"{name}: {user_text}\nスピカ: {assistant_text}")
+        user_local_time = str(item.get("user_local_time") or "").strip()
+        user_label = f"{name}（{user_local_time}）" if user_local_time else name
+        lines.append(f"{user_label}: {user_text}\nスピカ: {assistant_text}")
     return "\n".join(lines)
 
 
@@ -110,13 +113,14 @@ def _scope_label(scope: str, interlocutor_name: str | None = None) -> str:
 
 def build_spica_prompt(
     user_input: str,
-    recent_context: list[dict[str, str]],
+    recent_context: list[dict[str, Any]],
     long_term_memories: list[dict[str, Any]],
     character_profile: str,
     memory_limit: int = 5,
     memory_budget_chars: int = 1200,
     recent_turn_char_limit: int = 360,
     interlocutor_name: str = DEFAULT_INTERLOCUTOR_NAME,
+    user_local_time: dict[str, Any] | None = None,
 ) -> str:
     name = normalize_interlocutor_name(interlocutor_name)
     return "\n\n".join(
@@ -140,6 +144,8 @@ def build_spica_prompt(
                 turn_char_limit=recent_turn_char_limit,
                 interlocutor_name=name,
             ),
+            "[CURRENT_MESSAGE_TIME]",
+            format_local_time_for_prompt(user_local_time),
             "[CURRENT_USER_INPUT]",
             user_input,
         ]

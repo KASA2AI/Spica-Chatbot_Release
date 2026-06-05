@@ -9,7 +9,7 @@ Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 Py
 - 透明置顶桌面 Overlay，包含立绘、对白框、输入框、窗口控制和设置面板。
 - OpenAI 兼容 LLM 客户端，支持标准 Responses API，并对 DeepSeek 这类 Chat Completions 兼容客户端做降级适配。
 - 短期上下文记忆和 SQLite 长期记忆。
-- 本地工具调用示例：时间、模拟天气、四则计算器。
+- 可选 LLM function tool 基础设施；默认不注册本地 demo 工具。
 - 流式生成播放：LLM 增量文本 -> 断句播放单元 -> 并行立绘选择和 TTS -> 按顺序播放。
 - GPT-SoVITS 本地日语语音合成，按情绪选择参考音频。
 - 本地投票式立绘差分选择，支持 8 套服装、3 类手部动作、27 个表情编号。
@@ -33,7 +33,7 @@ Spica-Chatbot/
 │   ├── models/                    # UI 状态模型：播放 token、流式单元、点歌状态
 │   └── widgets/                   # 对白框、输入面板、设置面板、窗口控制、图标等组件
 ├── agent/
-│   ├── simple_agent.py            # SimpleAgent 门面，组装 LLM、记忆、工具、TTS、立绘服务
+│   ├── simple_agent.py            # SimpleAgent 门面，组装 LLM、记忆、TTS、立绘服务
 │   ├── runtime.py                 # 同步 voice pipeline 编排
 │   ├── nodes.py                   # 同步 pipeline 节点：prompt、LLM、记忆、立绘、TTS、响应
 │   ├── streaming_pipeline.py      # 流式生成、断句、并行 TTS/立绘、事件输出
@@ -49,8 +49,7 @@ Spica-Chatbot/
 │   └── control.py                 # 记忆保存、去重、裁剪控制
 ├── agent_tools/
 │   ├── function_tools/
-│   │   ├── router.py              # LLM function tool schema、启发式路由和执行
-│   │   ├── local_tools.py         # 时间、计算器、todo 等独立工具示例
+│   │   ├── __init__.py            # 可选 function tool 空默认注册表和通用执行器
 │   │   └── song/
 │   │       ├── intent*.py         # 点歌/暂停/继续/取消等意图识别与规则路由
 │   │       ├── netease.py         # 网易云音乐搜索、音频地址解析和下载
@@ -250,12 +249,12 @@ flowchart TD
     U[用户输入或麦克风识别] --> UI[PySide6 Overlay<br/>ui/qt_overlay.py]
     UI --> CW[ChatWorker<br/>后台线程]
     CW --> AG[SimpleAgent<br/>agent/simple_agent.py]
-    AG --> SVC[AgentServices<br/>LLM/TTS/Visual/Memory/Tools]
+    AG --> SVC[AgentServices<br/>LLM/TTS/Visual/Memory]
 
     SVC --> MEM1[RecentMemory<br/>短期上下文]
     SVC --> MEM2[SQLiteMemoryStore<br/>长期记忆]
     SVC --> LLM[OpenAI 兼容 LLM]
-    SVC --> TOOL[本地工具<br/>时间/天气/计算]
+    SVC --> TOOL[可选 function tools<br/>默认不注册]
     SVC --> VIS[VisualDiffService<br/>立绘差分]
     SVC --> TTS[GPTSoVITSTool<br/>语音合成]
 
@@ -390,8 +389,7 @@ flowchart TD
 | `memory/store.py` | SQLite 长期记忆表、关键词检索、use_count 更新 |
 | `memory/recent.py` | 每个 conversation_id 的最近 N 轮对话 |
 | `memory/extractor.py` | 用规则识别“记住、我喜欢、叫我”等可保存事实 |
-| `agent_tools/function_tools/router.py` | 定义 LLM function tool schema，判断是否启用工具，执行本地工具 |
-| `agent_tools/function_tools/local_tools.py` | 时间、计算器、todo 等本地工具示例 |
+| `agent_tools/function_tools/__init__.py` | 可选 LLM function tool 空默认注册表和通用执行器 |
 | `agent_tools/function_tools/song/intent_router.py` | 点歌、暂停、继续、取消等自然语言意图路由 |
 | `agent_tools/function_tools/song/pipeline.py` | 搜歌、下载、分离、RVC、混音和缓存复用的完整点歌流水线 |
 | `agent_tools/function_tools/song/netease.py` | 网易云音乐搜索、音频 URL 解析和下载 |
@@ -423,7 +421,7 @@ flowchart TD
 - `tests/test_memory_store.py`：SQLite 记忆新增、检索、清空。
 - `tests/test_prompt_builder.py`：prompt 分区和记忆抽取。
 - `tests/test_recent_memory.py`：短期记忆只保留最近轮次。
-- `tests/test_pipeline_smoke.py`：同步 pipeline、工具路由、DeepSeek Chat Completions 兼容。
+- `tests/test_pipeline_smoke.py`：同步 pipeline、默认无 demo 工具、DeepSeek Chat Completions 兼容。
 - `tests/test_streaming_pipeline.py`：流式事件顺序、句段拆分、TTS 文本清洗、DeepSeek 流式兼容。
 - `tests/test_tts_adapters.py`：TTS adapter 请求/返回映射和失败兜底。
 - `tests/test_visual_classifier.py`：本地立绘分类器对说明、不满、悲伤语气的选择。
@@ -438,7 +436,6 @@ flowchart TD
 - `agent_tools/visual/diff_service.py` 的 `image_url` 主要服务旧 Web UI；桌面 Overlay 使用 `image_path` 直接加载本地图片。
 - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/` 是上游语音引擎和权重目录，业务层只应通过 `agent_tools/tts/gptsovits/service.py` 访问。
 - `agent_tools/function_tools/song/Applio/` 是点歌 RVC 依赖的上游 Applio 目录，业务层只应通过 `song/rvc.py` 和 `song/pipeline.py` 访问。
-- `agent_tools/function_tools/router.py` 的 `get_weather()` 当前是模拟数据，不是真实天气接口。
 
 ## 发布打包
 

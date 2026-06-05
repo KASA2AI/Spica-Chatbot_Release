@@ -19,8 +19,9 @@ from agent.nodes import (
 from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
 from agent.text_normalizer import normalize_square_brackets_for_speech
+from agent.time_context import format_local_time_for_prompt
 from common.timing import elapsed_ms, log_timing, now_ms
-from agent_tools.function_tools import run_local_tool, should_use_tools
+from agent_tools.function_tools import run_local_tool
 from agent_tools.tts.schemas import TTSRequest
 
 
@@ -546,7 +547,7 @@ def _prepare_prompt_for_streaming(
         raise RuntimeError("LLM client 未配置。")
 
     model = str(services.config.get("model") or "gpt-4.1-mini")
-    use_tools = should_use_tools(state.user_input)
+    use_tools = bool(services.tool_schemas)
     state.metadata["use_tools"] = use_tools
     state.timing["agent_tool_local_ms"] = 0.0
     state.timing["agent_function_calls"] = 0
@@ -1080,7 +1081,17 @@ def _finalize_unit(
 
 def _save_stream_memory(state: AgentState, services: AgentServices) -> None:
     try:
-        services.recent_memory.append_turn(state.conversation_id, state.user_input, state.answer or "")
+        services.recent_memory.append_turn(
+            state.conversation_id,
+            state.user_input,
+            state.answer or "",
+            user_local_time=(
+                format_local_time_for_prompt(state.user_local_time)
+                if state.include_user_time_context
+                else None
+            ),
+            interaction_mode=state.interaction_mode,
+        )
         result = save_extracted_memories(
             memory_store=services.memory_store,
             conversation_id=state.conversation_id,

@@ -138,7 +138,7 @@ class PipelineSmokeTest(unittest.TestCase):
             self.assertNotIn("tools", llm.responses.calls[0])
             self.assertFalse(state.metadata["use_tools"])
 
-    def test_tool_requests_pass_tools(self):
+    def test_default_demo_tool_requests_do_not_pass_tools(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             llm = FakeLLMClient()
             services = make_services(tmpdir, llm=llm)
@@ -146,8 +146,8 @@ class PipelineSmokeTest(unittest.TestCase):
             state = validate_input_node(state, services)
             state = build_prompt_node(state, services)
             state = call_llm_node(state, services)
-            self.assertIn("tools", llm.responses.calls[0])
-            self.assertTrue(state.metadata["use_tools"])
+            self.assertNotIn("tools", llm.responses.calls[0])
+            self.assertFalse(state.metadata["use_tools"])
 
     def test_pipeline_returns_compatible_payload(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -11,6 +11,9 @@ from agent_tools.tts.schemas import TTSResult
 class AgentState:
     conversation_id: str
     user_input: str
+    user_local_time: dict[str, str] = field(default_factory=dict)
+    include_user_time_context: bool = True
+    interaction_mode: str = "chat"
     emotion_override: str | None = None
     tts_param_overrides: dict[str, Any] | None = None
     visual_overrides: dict[str, Any] = field(default_factory=dict)

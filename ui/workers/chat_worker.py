@@ -18,6 +18,8 @@ class ChatWorker(QThread):
         message: str,
         conversation_id: str,
         visual_overrides: dict[str, Any],
+        include_user_time_context: bool,
+        interaction_mode: str,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -25,6 +27,8 @@ class ChatWorker(QThread):
         self.message = message
         self.conversation_id = conversation_id
         self.visual_overrides = visual_overrides
+        self.include_user_time_context = include_user_time_context
+        self.interaction_mode = interaction_mode
         self.token: StreamToken | None = None
 
     def run(self) -> None:
@@ -33,6 +37,8 @@ class ChatWorker(QThread):
                 self.message,
                 conversation_id=self.conversation_id,
                 visual_overrides=self.visual_overrides,
+                include_user_time_context=self.include_user_time_context,
+                interaction_mode=self.interaction_mode,
             ):
                 if self.isInterruptionRequested():
                     return

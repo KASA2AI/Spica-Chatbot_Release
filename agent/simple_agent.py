@@ -119,10 +119,14 @@ class SimpleAgent:
         emotion_override: str | None = None,
         tts_param_overrides: dict[str, Any] | None = None,
         visual_overrides: dict[str, Any] | None = None,
+        include_user_time_context: bool = True,
+        interaction_mode: str = "chat",
     ) -> dict[str, Any]:
         state = AgentState(
             conversation_id=conversation_id or "default",
             user_input=user_input or "",
+            include_user_time_context=include_user_time_context,
+            interaction_mode=interaction_mode,
             emotion_override=emotion_override,
             tts_param_overrides=tts_param_overrides,
             visual_overrides=visual_overrides or {},
@@ -141,10 +145,14 @@ class SimpleAgent:
         emotion_override: str | None = None,
         tts_param_overrides: dict[str, Any] | None = None,
         visual_overrides: dict[str, Any] | None = None,
+        include_user_time_context: bool = True,
+        interaction_mode: str = "chat",
     ):
         state = AgentState(
             conversation_id=conversation_id or "default",
             user_input=user_input or "",
+            include_user_time_context=include_user_time_context,
+            interaction_mode=interaction_mode,
             emotion_override=emotion_override,
             tts_param_overrides=tts_param_overrides,
             visual_overrides=visual_overrides or {},

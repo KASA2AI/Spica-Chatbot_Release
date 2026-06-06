@@ -16,6 +16,7 @@ import httpx
 from openai import OpenAI
 
 from agent.character_loader import (
+    DEFAULT_CHARACTER_NAME,
     DEFAULT_INTERLOCUTOR_NAME,
     build_character_profile,
     normalize_interlocutor_name,
@@ -37,6 +38,7 @@ def build_agent_services(
     *,
     tts_adapter=None,
     visual_tool=None,
+    character_package=None,
 ) -> AgentServices:
     api_key = secrets.openai_api_key
     if not api_key:
@@ -50,9 +52,19 @@ def build_agent_services(
     interlocutor_name = normalize_interlocutor_name(
         config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME
     )
+    # Active character identity comes from the CharacterPackage (Phase 7);
+    # falling back to Spica defaults when no package is supplied.
+    if character_package is not None:
+        character_id = character_package.character_id
+        character_name = character_package.char_name
+        skill_dir = character_package.skill_dir
+    else:
+        character_id = "spica"
+        character_name = DEFAULT_CHARACTER_NAME
+        skill_dir = config.character.skill_dir
     character_profile = build_character_profile(
         config.character.profile_override,
-        config.character.skill_dir,
+        skill_dir,
         interlocutor_name,
     )
     return AgentServices(
@@ -74,6 +86,8 @@ def build_agent_services(
             "play_unit_min_chars": config.stream.play_unit_min_chars,
             "play_unit_max_chars": config.stream.play_unit_max_chars,
             "visual_stream_workers": config.stream.visual_stream_workers,
+            "character_id": character_id,
+            "character_name": character_name,
         },
         logger=log_timing,
         tool_functions=default_tool_functions(),

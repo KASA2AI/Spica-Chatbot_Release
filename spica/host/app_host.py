@@ -27,6 +27,8 @@ from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
 from spica.core.chat_engine import ChatEngine
+from agent.character_loader import DEFAULT_SPICA_SKILL_DIR
+from spica.core.character import load_character_package
 from spica.host.agent_assembly import build_agent_services
 from spica.plugins.registry import CapabilityRegistry
 from spica.adapters.llm import OpenAICompatibleAdapter
@@ -46,6 +48,7 @@ class AppHost:
         self.tts_tool: Any | None = None
         self.tts_adapter: Any | None = None
         self.services: Any | None = None
+        self.character_package: Any | None = None
         self.chat_engine: Any | None = None
         self.tts_provider: str = "gptsovits_current"
         self.registry = CapabilityRegistry()
@@ -92,11 +95,18 @@ class AppHost:
             self.tts_adapter = self.registry.resolve_tts(
                 self.tts_provider, config=tts_config, service=self.tts_tool
             )
+            self.character_package = load_character_package(
+                self.config.character.package_dir or DEFAULT_SPICA_SKILL_DIR
+            )
+            # Keep skill_dir in sync so ChatEngine.set_interlocutor_name reloads
+            # the active package's persona.
+            self.config.character.skill_dir = self.character_package.skill_dir
             self.services = build_agent_services(
                 self.config,
                 self.secrets,
                 tts_adapter=self.tts_adapter,
                 visual_tool=self.visual_tool,
+                character_package=self.character_package,
             )
             # Resolve and inject the LLM / memory adapters by configured name.
             self.services.llm_adapter = self.registry.resolve_llm(

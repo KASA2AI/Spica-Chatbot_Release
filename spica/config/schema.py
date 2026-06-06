@@ -38,6 +38,7 @@ class CharacterConfig(BaseModel):
     interlocutor_name: str | None = None
     profile_override: str | None = None
     skill_dir: str | None = None
+    package_dir: str | None = None  # active CharacterPackage dir (Phase 7); None -> Spica
 
 
 class StreamConfig(BaseModel):

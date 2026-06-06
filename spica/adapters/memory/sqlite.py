@@ -27,6 +27,11 @@ class SqliteMemoryAdapter:
         self.recent = recent
         self.max_active_memories = max_active_memories
 
+    def _scoped_conversation_id(self, scope: MemoryScope) -> str:
+        # Isolate memory per character (Phase 7): the store key is namespaced by
+        # character_id, so different characters never see each other's memories.
+        return f"{scope.character_id}::{scope.conversation_id or 'default'}"
+
     def commit_turn(
         self,
         scope: MemoryScope,
@@ -37,7 +42,7 @@ class SqliteMemoryAdapter:
         meta = meta or {}
         return save_extracted_memories(
             memory_store=self.store,
-            conversation_id=scope.conversation_id,
+            conversation_id=self._scoped_conversation_id(scope),
             user_input=user_text,
             assistant_answer=assistant_text,
             max_active_memories=int(meta.get("max_active_memories", self.max_active_memories)),
@@ -45,7 +50,7 @@ class SqliteMemoryAdapter:
         )
 
     def retrieve(self, scope: MemoryScope, query: str, limit: int) -> list[MemoryItem]:
-        rows = self.store.search_memories(scope.conversation_id, query, limit=limit)
+        rows = self.store.search_memories(self._scoped_conversation_id(scope), query, limit=limit)
         items: list[MemoryItem] = []
         for row in rows:
             items.append(

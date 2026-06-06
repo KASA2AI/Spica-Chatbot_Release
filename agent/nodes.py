@@ -4,7 +4,7 @@ import json
 from functools import wraps
 from typing import Any, Callable
 
-from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from agent.character_loader import DEFAULT_CHARACTER_NAME, DEFAULT_INTERLOCUTOR_NAME
 from agent.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_spica_prompt
 from agent.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
@@ -218,6 +218,7 @@ def build_prompt_node(state: AgentState, services: AgentServices) -> AgentState:
         memory_budget_chars=int(services.config.get("long_term_memory_budget_chars", 1200)),
         recent_turn_char_limit=int(services.config.get("recent_turn_char_limit", 360)),
         interlocutor_name=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
+        character_name=str(services.config.get("character_name") or DEFAULT_CHARACTER_NAME),
         user_local_time=state.user_local_time if state.include_user_time_context else None,
     )
     if state.screen_observation:

@@ -29,6 +29,7 @@ from agent.state import AgentServices, AgentState
 from agent.streaming_pipeline import stream_voice_events
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
+from spica.core.events import event_from_legacy
 
 
 # --- format-agnostic seam -------------------------------------------------
@@ -176,54 +177,71 @@ class StreamingGoldenTest(unittest.TestCase):
             )
 
     def test_happy_path_event_semantics_and_order(self):
-        events = self._run(GOLDEN_ANSWER)
-        kinds = [_event_kind(e) for e in events]
+        dict_events = self._run(GOLDEN_ANSWER)
+        runtime_events = [event_from_legacy(d) for d in dict_events]
+        # Phase 6A: dict <-> RuntimeEvent is lossless across the boundary.
+        self.assertEqual([e.to_legacy_dict() for e in runtime_events], dict_events)
 
-        # 1. status(thinking) opens the stream; done closes it.
-        self.assertEqual(kinds[0], "status")
-        self.assertEqual(_field(events[0], "state"), "thinking")
-        self.assertEqual(kinds[-1], "done")
+        def _check(events):
+            kinds = [_event_kind(e) for e in events]
 
-        # 2. No raw token leakage across the Host->UI boundary.
-        self.assertTrue(all("token" not in kind for kind in kinds))
+            # 1. status(thinking) opens the stream; done closes it.
+            self.assertEqual(kinds[0], "status")
+            self.assertEqual(_field(events[0], "state"), "thinking")
+            self.assertEqual(kinds[-1], "done")
 
-        # 3. Exactly two ordered, contiguous play units whose display texts
-        #    together reconstruct the full answer.
-        ready = [e for e in events if _event_kind(e) == "unit_ready"]
-        self.assertEqual([_field(e, "index") for e in ready], [0, 1])
-        self.assertEqual("".join(_field(e, "display_text") for e in ready), GOLDEN_ANSWER)
-        for e in ready:
-            self.assertTrue(_field(e, "emotion"))  # every unit carries an emotion
+            # 2. No raw token leakage across the Host->UI boundary.
+            self.assertTrue(all("token" not in kind for kind in kinds))
 
-        # 4. Per-index ordering: a unit's text is announced before it is ready.
-        for index in (0, 1):
-            text_pos = next(
-                i for i, e in enumerate(events)
-                if _event_kind(e) == "unit_text_ready" and _field(e, "index") == index
-            )
-            ready_pos = next(
-                i for i, e in enumerate(events)
-                if _event_kind(e) == "unit_ready" and _field(e, "index") == index
-            )
-            self.assertLess(text_pos, ready_pos)
+            # 3. Exactly two ordered, contiguous play units whose display texts
+            #    together reconstruct the full answer.
+            ready = [e for e in events if _event_kind(e) == "unit_ready"]
+            self.assertEqual([_field(e, "index") for e in ready], [0, 1])
+            self.assertEqual("".join(_field(e, "display_text") for e in ready), GOLDEN_ANSWER)
+            for e in ready:
+                self.assertTrue(_field(e, "emotion"))  # every unit carries an emotion
 
-        # 5. done carries the assembled answer, unit count and parsed emotion.
-        done = events[-1]
-        self.assertEqual(_field(done, "answer"), GOLDEN_ANSWER)
-        self.assertEqual(_field(done, "units_count"), 2)
-        self.assertEqual(_field(done, "emotion"), "happy")
+            # 4. Per-index ordering: a unit's text is announced before it is ready.
+            for index in (0, 1):
+                text_pos = next(
+                    i for i, e in enumerate(events)
+                    if _event_kind(e) == "unit_text_ready" and _field(e, "index") == index
+                )
+                ready_pos = next(
+                    i for i, e in enumerate(events)
+                    if _event_kind(e) == "unit_ready" and _field(e, "index") == index
+                )
+                self.assertLess(text_pos, ready_pos)
+
+            # 5. done carries the assembled answer, unit count and parsed emotion.
+            done = events[-1]
+            self.assertEqual(_field(done, "answer"), GOLDEN_ANSWER)
+            self.assertEqual(_field(done, "units_count"), 2)
+            self.assertEqual(_field(done, "emotion"), "happy")
+
+        # Same assertions hold whether events are legacy dicts or RuntimeEvents.
+        for label, events in (("dict", dict_events), ("runtime", runtime_events)):
+            with self.subTest(path=label):
+                _check(events)
 
     def test_error_path_emits_error_and_no_done(self):
-        events = self._run(GOLDEN_ANSWER, user_input="")
-        kinds = [_event_kind(e) for e in events]
+        dict_events = self._run(GOLDEN_ANSWER, user_input="")
+        runtime_events = [event_from_legacy(d) for d in dict_events]
+        self.assertEqual([e.to_legacy_dict() for e in runtime_events], dict_events)
 
-        self.assertEqual(kinds[0], "status")
-        self.assertEqual(_field(events[0], "state"), "thinking")
-        self.assertIn("error", kinds)
-        self.assertNotIn("done", kinds)
-        self.assertNotIn("unit_ready", kinds)
-        error = next(e for e in events if _event_kind(e) == "error")
-        self.assertTrue(_field(error, "message"))
+        def _check(events):
+            kinds = [_event_kind(e) for e in events]
+            self.assertEqual(kinds[0], "status")
+            self.assertEqual(_field(events[0], "state"), "thinking")
+            self.assertIn("error", kinds)
+            self.assertNotIn("done", kinds)
+            self.assertNotIn("unit_ready", kinds)
+            error = next(e for e in events if _event_kind(e) == "error")
+            self.assertTrue(_field(error, "message"))
+
+        for label, events in (("dict", dict_events), ("runtime", runtime_events)):
+            with self.subTest(path=label):
+                _check(events)
 
 
 if __name__ == "__main__":

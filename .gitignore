@@ -8,6 +8,9 @@ xiaosan.env
 
 .DS_Store
 
+# Local scratch / debug scripts
+temp.py
+
 # IDE / tooling caches
 .idea/
 .pytest_cache/

@@ -24,6 +24,7 @@ from common.timing import log_timing
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
+from spica.core.events import event_from_legacy
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.adapters.gptsovits_current import CurrentGPTSoVITSAdapter
 from agent_tools.tts.base import TTSAdapter
@@ -147,6 +148,32 @@ class SimpleAgent:
         result = self.run_voice(user_input, conversation_id=conversation_id)
         return str(result.get("answer") or "")
 
+    def stream_voice_runtime(
+        self,
+        user_input: str,
+        conversation_id: str = "default",
+        emotion_override: str | None = None,
+        tts_param_overrides: dict[str, Any] | None = None,
+        visual_overrides: dict[str, Any] | None = None,
+        include_user_time_context: bool = True,
+        interaction_mode: str = "chat",
+        screen_attachment: dict[str, Any] | None = None,
+    ):
+        """Stream typed ``RuntimeEvent``s (Phase 6A) -- the same data as
+        ``stream_voice``, adapted at the pipeline's output boundary."""
+        state = AgentState(
+            conversation_id=conversation_id or "default",
+            user_input=user_input or "",
+            include_user_time_context=include_user_time_context,
+            interaction_mode=interaction_mode,
+            emotion_override=emotion_override,
+            tts_param_overrides=tts_param_overrides,
+            visual_overrides=visual_overrides or {},
+            screen_attachment=screen_attachment,
+        )
+        for event in stream_voice_events(state, self.services):
+            yield event_from_legacy(event)
+
     def stream_voice(
         self,
         user_input: str,
@@ -158,17 +185,21 @@ class SimpleAgent:
         interaction_mode: str = "chat",
         screen_attachment: dict[str, Any] | None = None,
     ):
-        state = AgentState(
-            conversation_id=conversation_id or "default",
-            user_input=user_input or "",
-            include_user_time_context=include_user_time_context,
-            interaction_mode=interaction_mode,
+        """Stream legacy dict events for the current UI. This is the reverse
+        adapter (Phase 6A): dicts flow out through ``RuntimeEvent`` and back, so
+        the boundary is now the typed event while ``ChatStreamController`` keeps
+        consuming dicts unchanged."""
+        for event in self.stream_voice_runtime(
+            user_input,
+            conversation_id=conversation_id,
             emotion_override=emotion_override,
             tts_param_overrides=tts_param_overrides,
-            visual_overrides=visual_overrides or {},
+            visual_overrides=visual_overrides,
+            include_user_time_context=include_user_time_context,
+            interaction_mode=interaction_mode,
             screen_attachment=screen_attachment,
-        )
-        return stream_voice_events(state, self.services)
+        ):
+            yield event.to_legacy_dict()
 
     def clear_memory(self, conversation_id: str = "default", clear_long_term: bool = False) -> dict[str, Any]:
         self.recent_memory.clear(conversation_id)

@@ -27,6 +27,7 @@ from agent import SimpleAgent
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
+from spica.core.chat_engine import ChatEngine
 from spica.plugins.registry import CapabilityRegistry
 from spica.adapters.llm import OpenAICompatibleAdapter
 from spica.adapters.memory import SqliteMemoryAdapter
@@ -45,6 +46,7 @@ class AppHost:
         self.tts_tool: Any | None = None
         self.tts_adapter: Any | None = None
         self.agent: Any | None = None
+        self.chat_engine: Any | None = None
         self.tts_provider: str = "gptsovits_current"
         self.registry = CapabilityRegistry()
         self._register_builtin_adapters()
@@ -105,6 +107,9 @@ class AppHost:
                 store=self.agent.memory_store,
                 recent=self.agent.recent_memory,
             )
+            # ChatEngine takes over conversation driving (Phase 6B); SimpleAgent
+            # stays as the assembly/character/memory shell it forwards to.
+            self.chat_engine = ChatEngine(self.agent)
         except Exception:
             if self.visual_tool is None:
                 try:
@@ -115,8 +120,9 @@ class AppHost:
 
     @property
     def conversation_surface(self) -> Any:
-        """Entry point for the chat window. Phase 1: alias to ``SimpleAgent``."""
-        return self.agent
+        """Entry point for the chat window. Phase 6B: the ChatEngine once
+        initialized; falls back to the agent before initialize()."""
+        return self.chat_engine if self.chat_engine is not None else self.agent
 
     @property
     def management_surface(self) -> Any:

@@ -4,19 +4,19 @@ import json
 from pathlib import Path
 from typing import Any
 
+from agent_tools.config_io import read_config_file
 from agent_tools.tts.adapters import CurrentGPTSoVITSAdapter, DummyTTSAdapter
 from agent_tools.tts.base import TTSAdapter
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "tts_config.json"
+DEFAULT_CONFIG_PATH = BASE_DIR / "data" / "config" / "tts.yaml"
 CURRENT_GPTSOVITS_PROVIDERS = {"gptsovits_current", "gptsovits", "current"}
 
 
 def load_tts_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     path = Path(config_path).resolve()
-    with path.open("r", encoding="utf-8") as file:
-        config = json.load(file)
+    config = read_config_file(path)
     config.setdefault("_config_path", str(path))
     return config
 

@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from agent.text_normalizer import normalize_square_brackets_for_speech
+from agent_tools.config_io import read_config_file
 from common.timing import elapsed_ms, log_timing, now_ms
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]
-DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "tts_config.json"
+DEFAULT_CONFIG_PATH = BASE_DIR / "data" / "config" / "tts.yaml"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "static" / "generated_voice"
 PROXY_ENV_KEYS = ("all_proxy", "ALL_PROXY", "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
 UNSAFE_TTS_CHUNK_ENDINGS = ("、", "，", ",")
@@ -68,8 +69,7 @@ class GPTSoVITSTool:
         if not force and mtime == self._config_mtime:
             return
 
-        with self.config_path.open("r", encoding="utf-8") as file:
-            config = json.load(file)
+        config = read_config_file(self.config_path)
 
         self.config = config
         self._config_mtime = mtime

@@ -1,0 +1,6 @@
+egg	use	main_prompt	main_audio	refs_dir
+egg1	default_calm	あそこは風の一族が封じた厄災の力が残ってるわ	あそこは風の一族が封じた厄災の力が残ってるわ.wav	refs
+egg2	serious_warning	風の息遣いを感じていれば、こうなることはわかったはずよ。	風の息遣いを感じていれば、こうなることはわかったはずよ。.wav	refs
+egg3	explain	風の乱れを戻すにはその土地に根付いた旋律が必要なの	風の乱れを戻すにはその土地に根付いた旋律が必要なの.wav	refs
+egg4	gentle_care	私にはこれくらいのことしかしてあげられないから	私にはこれくらいのことしかしてあげられないから.wav	refs
+egg5	question	でも、もしピザ事業が軌道に乗っていったら、どうするのかしら?	でも、もしピザ事業が軌道に乗っていったら、どうするのかしら?.wav	refs

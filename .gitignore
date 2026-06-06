@@ -1,0 +1,30 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.env
+*.env
+xiaosan.env
+
+.DS_Store
+
+# IDE / tooling caches
+.idea/
+.pytest_cache/
+
+# Runtime outputs (generated voice + song cache)
+static/
+
+# Local SQLite memory DB
+spica_data/*.sqlite3
+spica_data/*.sqlite3-*
+
+# Large local character assets (binary); role-card text under Spica_skill stays tracked
+spica_data/diffs/
+spica_data/voice/
+spica_data/output_wav_test/
+
+# Upstream engines / vendored deps (accessed only via wrappers)
+agent_tools/function_tools/song/Applio/
+agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/*
+!agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/.gitkeep

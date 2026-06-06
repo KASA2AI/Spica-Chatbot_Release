@@ -1,0 +1,6 @@
+# Local screen observation pipeline dependencies.
+# Install CUDA-enabled torch separately for the target GPU/runtime.
+mss>=9,<11
+Pillow>=10,<12
+transformers>=4.43,<=4.50
+rapidocr-onnxruntime>=1.4,<2

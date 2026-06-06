@@ -1,0 +1,45 @@
+"""Typed application configuration (Phase 3).
+
+Pydantic models for every tunable knob the conversation core reads. Defaults
+match the historical ``os.getenv(...) or N`` fallbacks exactly, so building an
+``AppConfig`` with no env and no file reproduces today's behaviour.
+
+INVARIANT (CLAUDE.md #1 + #4): this layer is Qt-free and -- together with
+``manager.py`` / ``secrets.py`` -- is the only place allowed to source
+configuration. It must NOT import the ``agent`` package: agent-specific defaults
+(interlocutor name, skill dir) are applied in ``agent`` so this layer stays
+character-agnostic and there is no ``agent -> spica.config -> agent`` cycle.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class LLMConfig(BaseModel):
+    model: str = "gpt-4.1-mini"
+    base_url: str | None = None
+
+
+class MemoryConfig(BaseModel):
+    recent_memory_turns: int = 3
+    recent_context_limit: int = 3
+    long_term_memory_limit: int = 5
+    long_term_memory_budget_chars: int = 1200
+    recent_turn_char_limit: int = 360
+    max_long_term_memories: int = 200
+
+
+class CharacterConfig(BaseModel):
+    # All optional. When unset, the agent layer applies DEFAULT_INTERLOCUTOR_NAME
+    # / DEFAULT_SPICA_SKILL_DIR, keeping this layer character-agnostic.
+    interlocutor_name: str | None = None
+    profile_override: str | None = None
+    skill_dir: str | None = None
+
+
+class AppConfig(BaseModel):
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    character: CharacterConfig = Field(default_factory=CharacterConfig)
+    max_tool_rounds: int = 3

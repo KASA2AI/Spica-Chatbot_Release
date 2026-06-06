@@ -22,7 +22,7 @@ from agent.nodes import (
 )
 from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
-from agent.text_normalizer import normalize_square_brackets_for_speech
+from agent.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
 from agent.time_context import format_local_time_for_prompt
 from common.timing import elapsed_ms, log_timing, now_ms
 from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
@@ -206,64 +206,6 @@ class PlayUnitSplitter:
 
     def _clean_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text or "").strip()
-
-
-def build_tts_text(display_text: str) -> str:
-    text = display_text or ""
-    text = re.sub(r"`+", "", text)
-    text = _replace_math_for_speech(text)
-    text = re.sub(r"\$[^$]*\$", "", text)
-    text = re.sub(r"\\\([^)]*\\\)", "", text)
-    text = re.sub(r"\\\[[^\]]*\\\]", "", text)
-    text = re.sub(r"\be\^\{[^}]*\}", "", text)
-    text = re.sub(r"[A-Za-z0-9_\\]+(?:\s*[=+\-*/^<>]\s*[A-Za-z0-9_\\{}().]+)+", "", text)
-    text = _strip_formula_brackets(text)
-    text = normalize_square_brackets_for_speech(text)
-    text = text.replace("『", "").replace("』", "").replace("「", "").replace("」", "")
-    text = re.sub(r"[#*_~>|]+", "", text)
-    text = re.sub(r"\s*=\s*", "は", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    text = re.sub(r"(?<=[ぁ-んァ-ン一-龯])\s+(?=[ぁ-んァ-ン一-龯])", "", text)
-    text = re.sub(r"\s+([。！？!?、，,；;：:])", r"\1", text)
-    text = re.sub(r"([、，,；;：:])\s+", r"\1", text)
-    text = re.sub(r"[、，,；;：:]+([。！？!?])", r"\1", text)
-    text = re.sub(r"[、，,；;：:]+$", "。", text)
-    text = re.sub(r"。+", "。", text)
-    return text.strip() or (display_text or "").strip()
-
-
-def _replace_math_for_speech(text: str) -> str:
-    text = re.sub(
-        r"e\s*\^\s*\{\s*-\s*i\s*(?:ω|\\omega)\s*t\s*\}",
-        "イーのマイナスアイオメガティー乗",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"f\s*['′’]\s*\(?\s*x\s*\)?",
-        "エフダッシュエックス",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"\bf\s*\(\s*x\s*\)",
-        "エフエックス",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"\ba\s+f\s*\(?\s*x\s*\)?",
-        "エーかけるエフエックス",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(r"\bfx\b", "エフエックス", text, flags=re.IGNORECASE)
-    text = re.sub(r"→\s*2\s*x\b", "は二エックス", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b2\s*x\b", "二エックス", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bx\s*\^\s*2\b", "エックスの二乗", text, flags=re.IGNORECASE)
-    text = text.replace("→", "から")
-    text = re.sub(r"(導関数|微分係数)\s*は\s*エフダッシュエックス", r"\1のエフダッシュエックス", text)
-    return text
 
 
 def stream_voice_events(state: AgentState, services: AgentServices) -> Iterator[dict[str, Any]]:
@@ -941,18 +883,6 @@ def _save_stream_memory(state: AgentState, services: AgentServices) -> None:
         state.metadata.update(result)
     except Exception as exc:
         state.metadata["memory_error"] = str(exc)
-
-
-def _strip_formula_brackets(text: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        inner = match.group(1)
-        if re.search(r"[=+\-*/^{}\\]|[A-Za-z]{2,}\d*", inner):
-            return ""
-        return inner
-
-    text = re.sub(r"（([^（）]*)）", replace, text)
-    text = re.sub(r"\(([^()]*)\)", replace, text)
-    return text
 
 
 def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, Any]]) -> str:

@@ -9,7 +9,8 @@ import threading
 from typing import Any, Iterator
 
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from memory.control import save_extracted_memories
+from spica.adapters.memory import SqliteMemoryAdapter
+from spica.ports.memory import MemoryScope
 from agent.nodes import (
     analyze_screen_attachment_node,
     build_prompt_node,
@@ -27,12 +28,21 @@ from common.timing import elapsed_ms, log_timing, now_ms
 from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
 from agent_tools.function_tools.screen.schema import screen_observation_context_for_next_turn
 from agent_tools.tts.schemas import TTSRequest
+from spica.adapters.llm import OpenAICompatibleAdapter
 
 
 _SENTINEL = object()
 _TERMINATORS = set("。！？!?")
 _CLOSERS = set("」』）)]”’\"'")
 _FIRST_UNIT_WARNING_MS = 3000.0
+
+
+def _llm_adapter(services: AgentServices) -> OpenAICompatibleAdapter:
+    return services.llm_adapter or OpenAICompatibleAdapter(services.llm_client)
+
+
+def _memory_adapter(services: AgentServices):
+    return services.memory_adapter or SqliteMemoryAdapter(services.memory_store, services.recent_memory)
 
 
 class JsonAnswerExtractor:
@@ -481,7 +491,7 @@ def _produce_stream_events(
             handle_raw_delta(prefetched_raw)
         else:
             request = {"model": model, "input": prompt_for_stream}
-            for delta in _iter_response_text(services.llm_client, request, state):
+            for delta in _llm_adapter(services).iter_response_text(request, state):
                 handle_raw_delta(delta)
 
         for unit_text in splitter.flush():
@@ -573,7 +583,7 @@ def _prepare_prompt_for_streaming(
     if not use_tools or not active_tool_schemas:
         return str(state.prompt_input or ""), None
 
-    if _prefers_chat_completions(services.llm_client):
+    if _llm_adapter(services).prefers_chat_completions():
         state.timing["agent_tool_probe_skipped"] = True
         state.timing["agent_tool_probe_skip_reason"] = "chat_completions_compatible_client"
         return str(state.prompt_input or ""), None
@@ -637,210 +647,10 @@ def _prepare_prompt_for_streaming(
     return _build_tool_followup_prompt(state.prompt_input, tool_history), None
 
 
-def _iter_response_text(
-    client: Any,
-    request: dict[str, Any],
-    state: AgentState,
-) -> Iterator[str]:
-    llm_client = _client_with_retry_disabled(client, state)
-    if _prefers_chat_completions(llm_client):
-        state.timing["llm_stream_fallback_used"] = True
-        state.timing["llm_stream_fallback_reason"] = "chat_completions_compatible_client"
-        yield from _iter_chat_completion_text(llm_client, request, state)
-        return
-
-    stream_request = dict(request)
-    stream_request["stream"] = True
-    stream_create_start_ms = now_ms()
-    streamed_text = ""
-    try:
-        stream = llm_client.responses.create(**stream_request)
-        state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
-        log_timing(
-            "llm_stream_create",
-            state.timing["llm_stream_create_ms"],
-            model=request.get("model"),
-            max_retries=state.timing.get("llm_stream_max_retries"),
-            retry_disabled=state.timing.get("llm_stream_retry_disabled"),
-        )
-    except TypeError as exc:
-        state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
-        state.timing["llm_stream_fallback_used"] = True
-        state.timing["llm_stream_fallback_reason"] = "stream_request_type_error"
-        state.timing["llm_stream_error"] = str(exc)
-        yield _fallback_response_text(llm_client, request, state, streamed_text)
-        return
-    except Exception as exc:
-        state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
-        state.timing["llm_stream_fallback_used"] = True
-        state.timing["llm_stream_fallback_reason"] = "stream_create_error"
-        state.timing["llm_stream_error"] = str(exc)
-        log_timing(
-            "llm_stream_fallback",
-            state.timing["llm_stream_create_ms"],
-            phase="create",
-            model=request.get("model"),
-            error=str(exc),
-        )
-        if _is_responses_api_not_found(exc) and _has_chat_completions(llm_client):
-            state.timing["llm_stream_fallback_reason"] = "responses_api_not_found_chat_completions"
-            yield from _iter_chat_completion_text(llm_client, request, state, streamed_text)
-            return
-        yield _fallback_response_text(llm_client, request, state, streamed_text)
-        return
-
-    if hasattr(stream, "output_text"):
-        state.timing["llm_stream_fallback_used"] = True
-        state.timing["llm_stream_fallback_reason"] = "non_stream_response"
-        _record_usage(state, stream)
-        yield str(_get_attr(stream, "output_text", "") or "")
-        return
-
-    state.timing["llm_stream_fallback_used"] = False
-    try:
-        for event in stream:
-            event_type = str(_get_attr(event, "type", "") or "")
-            if event_type == "response.output_text.delta":
-                delta = str(_get_attr(event, "delta", "") or "")
-                streamed_text += delta
-                yield delta
-            elif event_type == "response.completed":
-                response = _get_attr(event, "response")
-                if response is not None:
-                    _record_usage(state, response)
-                    state.response_id = str(_get_attr(response, "id", "") or "") or state.response_id
-            elif event_type == "response.failed":
-                error = _get_attr(event, "error")
-                raise RuntimeError(str(error or "LLM streaming failed."))
-    except Exception as exc:
-        state.timing["llm_stream_fallback_used"] = True
-        state.timing["llm_stream_fallback_reason"] = "stream_iteration_error"
-        state.timing["llm_stream_error"] = str(exc)
-        log_timing(
-            "llm_stream_fallback",
-            elapsed_ms(stream_create_start_ms),
-            phase="iteration",
-            model=request.get("model"),
-            streamed_chars=len(streamed_text),
-            error=str(exc),
-        )
-        yield _fallback_response_text(llm_client, request, state, streamed_text)
-
-
-def _client_with_retry_disabled(client: Any, state: AgentState) -> Any:
-    state.timing["llm_stream_max_retries"] = 0
-    if not hasattr(client, "with_options"):
-        state.timing["llm_stream_retry_disabled"] = False
-        return client
-    try:
-        retry_disabled_client = client.with_options(max_retries=0)
-    except TypeError:
-        state.timing["llm_stream_retry_disabled"] = False
-        return client
-    state.timing["llm_stream_retry_disabled"] = True
-    return retry_disabled_client
-
-
-def _fallback_response_text(
-    client: Any,
-    request: dict[str, Any],
-    state: AgentState,
-    already_streamed: str = "",
-) -> str:
-    if _prefers_chat_completions(client):
-        return "".join(_iter_chat_completion_text(client, request, state, already_streamed))
-
-    fallback_request = {key: value for key, value in request.items() if key != "stream"}
-    fallback_start_ms = now_ms()
-    response = client.responses.create(**fallback_request)
-    fallback_ms = elapsed_ms(fallback_start_ms)
-    state.timing["llm_fallback_response_ms"] = fallback_ms
-    _record_usage(state, response)
-    fallback_text = str(_get_attr(response, "output_text", "") or "")
-    log_timing(
-        "llm_stream_fallback_response",
-        fallback_ms,
-        model=fallback_request.get("model"),
-        fallback_chars=len(fallback_text),
-        already_streamed_chars=len(already_streamed),
-    )
-    if already_streamed and fallback_text.startswith(already_streamed):
-        return fallback_text[len(already_streamed):]
-    return fallback_text
-
-
-def _prefers_chat_completions(client: Any) -> bool:
-    base_url = str(_get_attr(client, "base_url", "") or "").lower()
-    return "deepseek" in base_url and _has_chat_completions(client)
-
-
-def _has_chat_completions(client: Any) -> bool:
-    chat = _get_attr(client, "chat")
-    completions = _get_attr(chat, "completions") if chat is not None else None
-    return completions is not None and hasattr(completions, "create")
-
-
-def _is_responses_api_not_found(exc: Exception) -> bool:
-    status_code = _get_attr(exc, "status_code")
-    if status_code == 404:
-        return True
-    return "404" in str(exc)
-
-
-def _iter_chat_completion_text(
-    client: Any,
-    request: dict[str, Any],
-    state: AgentState,
-    already_streamed: str = "",
-) -> Iterator[str]:
-    chat_request = {
-        "model": request.get("model"),
-        "messages": [{"role": "user", "content": str(request.get("input") or "")}],
-        "stream": True,
-    }
-    chat_start_ms = now_ms()
-    full_text = ""
-    try:
-        stream = client.chat.completions.create(**chat_request)
-        state.timing["llm_chat_stream_create_ms"] = elapsed_ms(chat_start_ms)
-        state.timing["llm_chat_completions_fallback_used"] = True
-        log_timing(
-            "llm_chat_stream_create",
-            state.timing["llm_chat_stream_create_ms"],
-            model=chat_request.get("model"),
-        )
-        for chunk in stream:
-            choices = list(_get_attr(chunk, "choices", []) or [])
-            if not choices:
-                continue
-            delta = _get_attr(choices[0], "delta")
-            content = str(_get_attr(delta, "content", "") or "")
-            if not content:
-                continue
-            full_text += content
-            yield content
-        return
-    except Exception as exc:
-        state.timing["llm_chat_stream_error"] = str(exc)
-        log_timing(
-            "llm_chat_stream_error",
-            elapsed_ms(chat_start_ms),
-            model=chat_request.get("model"),
-            error=str(exc),
-        )
-
-    fallback_request = dict(chat_request)
-    fallback_request["stream"] = False
-    response = client.chat.completions.create(**fallback_request)
-    choices = list(_get_attr(response, "choices", []) or [])
-    if choices:
-        message = _get_attr(choices[0], "message")
-        full_text = str(_get_attr(message, "content", "") or "")
-    _record_usage(state, response)
-    if already_streamed and full_text.startswith(already_streamed):
-        yield full_text[len(already_streamed):]
-    else:
-        yield full_text
+# LLM client I/O + the OpenAI-Responses vs Chat-Completions (DeepSeek) branch and
+# streaming fallbacks were moved to spica/adapters/llm/openai_compatible.py (Phase 5).
+# The pipeline now calls _llm_adapter(services).iter_response_text(...) /
+# .prefers_chat_completions() instead of these in-pipeline functions.
 
 
 def _build_unit_visual(
@@ -1114,13 +924,19 @@ def _save_stream_memory(state: AgentState, services: AgentServices) -> None:
             interaction_mode=state.interaction_mode,
             screen_observation_context=screen_observation_context_for_next_turn(state.screen_observation),
         )
-        result = save_extracted_memories(
-            memory_store=services.memory_store,
-            conversation_id=state.conversation_id,
-            user_input=state.user_input,
-            assistant_answer=state.answer or "",
-            max_active_memories=int(services.config.get("max_long_term_memories", 200)),
-            interlocutor_name=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
+        interlocutor = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
+        result = _memory_adapter(services).commit_turn(
+            MemoryScope(
+                character_id=str(services.config.get("character_id") or "spica"),
+                user_id=interlocutor,
+                conversation_id=state.conversation_id,
+            ),
+            state.user_input,
+            state.answer or "",
+            meta={
+                "interlocutor_name": interlocutor,
+                "max_active_memories": int(services.config.get("max_long_term_memories", 200)),
+            },
         )
         state.metadata.update(result)
     except Exception as exc:

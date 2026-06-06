@@ -17,11 +17,13 @@ from pydantic import BaseModel, Field
 
 
 class LLMConfig(BaseModel):
+    provider: str = "openai_compatible"
     model: str = "gpt-4.1-mini"
     base_url: str | None = None
 
 
 class MemoryConfig(BaseModel):
+    provider: str = "sqlite"
     recent_memory_turns: int = 3
     recent_context_limit: int = 3
     long_term_memory_limit: int = 5

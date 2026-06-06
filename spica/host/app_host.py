@@ -27,13 +27,12 @@ from agent import SimpleAgent
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
-from agent_tools.tts import (
-    CURRENT_GPTSOVITS_PROVIDERS,
-    GPTSoVITSTool,
-    build_tts_adapter,
-    load_tts_config,
-)
-from agent_tools.visual import VisualDiffService
+from spica.plugins.registry import CapabilityRegistry
+from spica.adapters.llm import OpenAICompatibleAdapter
+from spica.adapters.memory import SqliteMemoryAdapter
+from spica.adapters.tts import build_tts
+from spica.adapters.visual import build_spica_visual
+from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, load_tts_config
 
 
 class AppHost:
@@ -47,6 +46,27 @@ class AppHost:
         self.tts_adapter: Any | None = None
         self.agent: Any | None = None
         self.tts_provider: str = "gptsovits_current"
+        self.registry = CapabilityRegistry()
+        self._register_builtin_adapters()
+
+    def _register_builtin_adapters(self) -> None:
+        """Register the built-in capability adapters by name (Phase 5).
+
+        Resolving by the name in config (e.g. ``config.llm.provider``) is what
+        makes "swap the engine by changing a config name" work; this is also the
+        seam Phase 8 plugins register into.
+        """
+        self.registry.register_llm(
+            "openai_compatible", lambda client=None: OpenAICompatibleAdapter(client)
+        )
+        for provider in (*CURRENT_GPTSOVITS_PROVIDERS, "dummy"):
+            self.registry.register_tts(
+                provider, lambda config=None, service=None: build_tts(config, service)
+            )
+        self.registry.register_visual("spica_diff", build_spica_visual)
+        self.registry.register_memory(
+            "sqlite", lambda store=None, recent=None: SqliteMemoryAdapter(store, recent)
+        )
 
     def initialize(self) -> None:
         """Construct the backend services (moved verbatim from the UI).
@@ -59,29 +79,36 @@ class AppHost:
         try:
             self.config = ConfigManager().load()
             self.secrets = load_secrets()
-            self.visual_tool = VisualDiffService()
+            self.visual_tool = self.registry.resolve_visual("spica_diff")
             tts_config = load_tts_config()
             self.tts_provider = str(
                 tts_config.get("provider")
                 or tts_config.get("tts_provider")
                 or "gptsovits_current"
             )
-            if self.tts_provider in CURRENT_GPTSOVITS_PROVIDERS:
-                self.tts_tool = GPTSoVITSTool()
-                self.tts_adapter = build_tts_adapter(tts_config, service=self.tts_tool)
-            else:
-                self.tts_tool = None
-                self.tts_adapter = build_tts_adapter(tts_config)
+            self.tts_tool = GPTSoVITSTool() if self.tts_provider in CURRENT_GPTSOVITS_PROVIDERS else None
+            self.tts_adapter = self.registry.resolve_tts(
+                self.tts_provider, config=tts_config, service=self.tts_tool
+            )
             self.agent = SimpleAgent(
                 tts_adapter=self.tts_adapter,
                 visual_tool=self.visual_tool,
                 config=self.config,
                 secrets=self.secrets,
             )
+            # Resolve and inject the LLM / memory adapters by configured name.
+            self.agent.services.llm_adapter = self.registry.resolve_llm(
+                self.config.llm.provider, client=self.agent.client
+            )
+            self.agent.services.memory_adapter = self.registry.resolve_memory(
+                self.config.memory.provider,
+                store=self.agent.memory_store,
+                recent=self.agent.recent_memory,
+            )
         except Exception:
             if self.visual_tool is None:
                 try:
-                    self.visual_tool = VisualDiffService()
+                    self.visual_tool = build_spica_visual()
                 except Exception:
                     self.visual_tool = None
             raise

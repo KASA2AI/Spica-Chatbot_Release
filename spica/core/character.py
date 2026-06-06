@@ -47,8 +47,8 @@ def load_character_package(package_dir: str | Path) -> CharacterPackage:
         char_name=str(meta.get("char_name") or DEFAULT_CHARACTER_NAME),
         skill_dir=str(root),
         worldbook=str(meta.get("worldbook") or ""),
-        visual_config_path=_opt_str(meta.get("visual_config_path")),
-        tts_config_path=_opt_str(meta.get("tts_config_path")),
+        visual_config_path=_resolve_path(root, meta.get("visual_config_path")),
+        tts_config_path=_resolve_path(root, meta.get("tts_config_path")),
     )
 
 
@@ -61,5 +61,9 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _opt_str(value: Any) -> str | None:
-    return str(value) if value else None
+def _resolve_path(root: Path, value: Any) -> str | None:
+    """Resolve a package asset path: absolute as-is, relative to the package dir."""
+    if not value:
+        return None
+    path = Path(str(value))
+    return str(path if path.is_absolute() else root / path)

@@ -43,6 +43,28 @@ class CharacterPackageLoadTest(unittest.TestCase):
             pkg = load_character_package(root)
         self.assertEqual(pkg.character_id, "no_meta")
 
+    def test_spica_uses_engine_default_assets(self):
+        # Spica package leaves asset paths unset -> engine defaults (Phase 7b).
+        pkg = load_character_package(_REPO / "spica_data" / "Spica_skill")
+        self.assertIsNone(pkg.visual_config_path)
+        self.assertIsNone(pkg.tts_config_path)
+
+    def test_relative_asset_paths_resolve_against_package_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "mina"
+            root.mkdir()
+            (root / "meta.json").write_text(
+                json.dumps(
+                    {"slug": "mina", "visual_config_path": "visual.json",
+                     "tts_config_path": "/abs/tts.json"},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            pkg = load_character_package(root)
+        self.assertEqual(pkg.visual_config_path, str(root / "visual.json"))  # relative -> package dir
+        self.assertEqual(pkg.tts_config_path, "/abs/tts.json")  # absolute kept
+
 
 class MemoryIsolationTest(unittest.TestCase):
     def test_memory_isolated_by_character_id(self):

@@ -13,5 +13,9 @@ from typing import Any
 from agent_tools.visual import VisualDiffService
 
 
-def build_spica_visual(**_kwargs: Any) -> VisualDiffService:
+def build_spica_visual(config_path: Any = None, **_kwargs: Any) -> VisualDiffService:
+    # Phase 7b: use the active character package's visual config when provided;
+    # otherwise the engine default (Spica behaviour unchanged).
+    if config_path:
+        return VisualDiffService(config_path=config_path)
     return VisualDiffService()

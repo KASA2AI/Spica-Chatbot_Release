@@ -84,8 +84,23 @@ class AppHost:
         try:
             self.config = ConfigManager().load()
             self.secrets = load_secrets()
-            self.visual_tool = self.registry.resolve_visual("spica_diff")
-            tts_config = load_tts_config()
+            # Load the active character package first so its asset references
+            # drive visual/tts construction (Phase 7b). Spica's package leaves the
+            # paths unset -> engine defaults -> behaviour unchanged.
+            self.character_package = load_character_package(
+                self.config.character.package_dir or DEFAULT_SPICA_SKILL_DIR
+            )
+            # Keep skill_dir in sync so ChatEngine.set_interlocutor_name reloads
+            # the active package's persona.
+            self.config.character.skill_dir = self.character_package.skill_dir
+            self.visual_tool = self.registry.resolve_visual(
+                "spica_diff", config_path=self.character_package.visual_config_path
+            )
+            tts_config = (
+                load_tts_config(self.character_package.tts_config_path)
+                if self.character_package.tts_config_path
+                else load_tts_config()
+            )
             self.tts_provider = str(
                 tts_config.get("provider")
                 or tts_config.get("tts_provider")
@@ -95,12 +110,6 @@ class AppHost:
             self.tts_adapter = self.registry.resolve_tts(
                 self.tts_provider, config=tts_config, service=self.tts_tool
             )
-            self.character_package = load_character_package(
-                self.config.character.package_dir or DEFAULT_SPICA_SKILL_DIR
-            )
-            # Keep skill_dir in sync so ChatEngine.set_interlocutor_name reloads
-            # the active package's persona.
-            self.config.character.skill_dir = self.character_package.skill_dir
             self.services = build_agent_services(
                 self.config,
                 self.secrets,

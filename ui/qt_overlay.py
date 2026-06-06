@@ -221,7 +221,7 @@ class OverlayWindow(QWidget):
         if self.agent is None or self.tts_adapter is None:
             return
 
-        self.startup_warmup_worker = StartupWarmupWorker(self.agent, self.tts_adapter, self)
+        self.startup_warmup_worker = StartupWarmupWorker(self.host, self)
         self.startup_warmup_worker.status_changed.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.finished_ok.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.failed.connect(self.dialogue.set_dialogue_text)

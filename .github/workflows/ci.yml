@@ -1,0 +1,31 @@
+# Phase 0 safety net: run the test suite on every push / PR.
+#
+# Per the project decision (and CLAUDE.md), tests run inside the local conda env
+# named `gptsovits`, which is where this project's dependencies live. That env
+# exists on the developer's machine, so this workflow targets a self-hosted
+# runner. To run on GitHub-hosted runners instead, change `runs-on` and add a
+# step that recreates the environment (conda env spec, or pip-install the test
+# dependencies).
+#
+# IMPORTANT: only ever invoke `python -m pytest tests`. Never run bare `pytest`
+# from the repo root -- it recurses into the vendored GPT-SoVITS runtime under
+# agent_tools/tts/vendors/.../runtime/ and crashes test collection.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run test suite in conda gptsovits env
+        run: |
+          source "$(conda info --base)/etc/profile.d/conda.sh"
+          conda activate gptsovits
+          python -m pytest tests -q

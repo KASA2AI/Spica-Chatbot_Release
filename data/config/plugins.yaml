@@ -1,0 +1,9 @@
+# Plugin manifest (Phase 8).
+#
+# Each enabled entry loads plugins/<name>/__init__.py and calls its
+# register(registry) to register adapters/tools into the CapabilityRegistry.
+# Changes take effect on restart. Plugins may register adapters/tools only
+# (no UI widgets) in this phase.
+plugins: []
+#  - name: example_tts
+#    enabled: true

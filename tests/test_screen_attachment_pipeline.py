@@ -47,15 +47,19 @@ def make_attachment():
     return {
         "kind": "screen_capture",
         "target": "selected_region",
+        "mode": "region",
         "source": "manual_region_selection",
+        "created_at": "2026-06-06T00:00:00+00:00",
         "captured_at": "2026-06-06T00:00:00+00:00",
-        "image_bytes": b"jpeg-bytes",
-        "mime_type": "image/jpeg",
+        "image_bytes": b"png-bytes",
+        "mime_type": "image/png",
+        "width": 100,
+        "height": 80,
         "original_resolution": {"width": 100, "height": 80},
         "sent_resolution": {"width": 100, "height": 80},
         "downscaled": False,
-        "format": "jpeg",
-        "quality": 75,
+        "format": "png",
+        "quality": None,
         "region": {
             "screen_name": "primary",
             "screen_index": 0,
@@ -73,15 +77,15 @@ def fake_observation(question):
         "request": {
             "user_question": question,
             "question_type": "general_observation",
-            "target": "selected_region",
+            "target": "region",
         },
         "capture": {
-            "captured_scope": "selected_region",
+            "captured_scope": "region",
             "source": "manual_region_selection",
         },
         "answer": {"direct_answer": "ブラウザが見えます。", "confidence": 0.9},
         "followup": {
-            "context_for_next_turn": "selected region shows a browser",
+            "context_for_next_turn": "region shows a browser",
             "needs_followup_capture": False,
             "suggested_capture": None,
         },
@@ -129,7 +133,7 @@ def test_empty_input_with_pending_screenshot_uses_default_question_and_injects_o
         assert calls[0]["attachment"]["target"] == "selected_region"
         assert "tools" not in llm.responses.calls[0]
         assert "[SCREEN_OBSERVATION]" in llm.responses.calls[0]["input"]
-        assert "jpeg-bytes" not in llm.responses.calls[0]["input"]
+        assert "png-bytes" not in llm.responses.calls[0]["input"]
         assert "FULL OCR SHOULD NOT ENTER PROMPT" not in llm.responses.calls[0]["input"]
         assert state.response_payload["answer"] == "スクリーンショットにはブラウザが見えます。"
         assert state.tools[0]["name"] == "screen_analyzer"
@@ -150,7 +154,7 @@ def test_pending_screenshot_disables_repeat_automatic_inspect_screen_even_for_sc
         assert "tools" not in llm.responses.calls[0]
         assert state.metadata["use_tools"] is False
         assert state.metadata["selected_tool_schema_count"] == 0
-        assert json.loads(json.dumps(state.screen_observation, ensure_ascii=False))["request"]["target"] == "selected_region"
+        assert json.loads(json.dumps(state.screen_observation, ensure_ascii=False))["request"]["target"] == "region"
 
 
 def test_screen_followup_context_enters_next_turn_prompt_without_raw_image_or_ocr():
@@ -168,6 +172,6 @@ def test_screen_followup_context_enters_next_turn_prompt_without_raw_image_or_oc
         followup_prompt = llm.responses.calls[-1]["input"]
 
         assert "[前回の画面観察]" in followup_prompt
-        assert "selected region shows a browser" in followup_prompt
-        assert "jpeg-bytes" not in followup_prompt
+        assert "region shows a browser" in followup_prompt
+        assert "png-bytes" not in followup_prompt
         assert "FULL OCR SHOULD NOT ENTER PROMPT" not in followup_prompt

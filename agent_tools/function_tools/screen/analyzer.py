@@ -1,224 +1,297 @@
 from __future__ import annotations
 
-import base64
-import json
+from contextvars import ContextVar
+from io import BytesIO
+from time import perf_counter
 from typing import Any
 
-from agent_tools.function_tools.screen.config import ScreenVisionConfig, load_screen_vision_config
-from agent_tools.function_tools.screen.schema import ScreenToolError, normalize_screen_observation
+from agent_tools.function_tools.screen.backends.rapidocr import ocr_image
+from agent_tools.function_tools.screen.config import ScreenPipelineConfig, load_screen_config
+from agent_tools.function_tools.screen.model_manager import get_moondream_manager
+from agent_tools.function_tools.screen.schema import ScreenToolError, build_screen_observation
 
 
-_SYSTEM_PROMPT = """
-You are Spica's one-shot screen observation module.
-Return only strict JSON. Do not use Markdown.
-Analyze the screenshot only to answer the user's question.
-Do not perform full-document OCR. Extract only important visible text relevant to the question.
-If you notice passwords, tokens, verification codes, private chats, or similarly sensitive content, summarize the type of content without transcribing it exactly.
-Do not claim access to windows, mouse, keyboard, history, files, or live monitoring. This is a single screenshot, which may be full-screen or a manually selected region.
-""".strip()
+_LAST_ANALYSIS_METADATA: ContextVar[dict[str, Any] | None] = ContextVar(
+    "spica_last_screen_analysis_metadata",
+    default=None,
+)
 
 
-def analyze_screen_image(
+def analyze_screen_image_local(
+    image: Any,
+    mode: str,
+    prompt: str | None = None,
     *,
-    jpeg_bytes: bytes,
-    config: ScreenVisionConfig,
-    user_question: str,
-    question_type: str,
-    target: str,
-    capture: dict[str, Any],
+    config: ScreenPipelineConfig | None = None,
+    capture: dict[str, Any] | None = None,
+    performance: dict[str, Any] | None = None,
+    question_type: str | None = None,
 ) -> dict[str, Any]:
-    if not config.api_key:
-        raise ScreenToolError(
-            "SCREEN_API_NOT_CONFIGURED",
-            f"未配置 {config.api_key_env}，无法调用独立 screen vision API。",
-        )
+    config = config or load_screen_config()
+    if not config.enabled:
+        raise ScreenToolError("SCREEN_DISABLED", "本地 screen pipeline 已禁用。")
 
-    try:
-        from openai import OpenAI  # type: ignore[import-not-found]
-    except ImportError as exc:
-        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "缺少 openai 客户端依赖，请安装 openai。") from exc
+    pil_image = _ensure_pil_image(image)
+    target = str(mode or "full_screen")
+    user_question = prompt or ""
+    resolved_question_type = question_type or _classify_screen_question(user_question)
+    capture_payload = _capture_for_image(pil_image, target, capture)
 
-    data_url = "data:image/jpeg;base64," + base64.b64encode(jpeg_bytes).decode("ascii")
-    client = OpenAI(
-        api_key=config.api_key,
-        base_url=config.base_url,
-        timeout=config.request_timeout_seconds,
-    )
-    request = {
-        "model": config.model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _build_user_prompt(user_question, question_type, target, capture)},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": data_url,
-                            "detail": config.image_detail,
-                        },
-                    },
-                ],
-            },
-        ],
-        "temperature": 0,
+    started = perf_counter()
+    metadata: dict[str, Any] = {
+        "screen_analysis_engine": "moondream_local",
+        "screen_analysis_model": config.model_id,
+        "screen_analysis_revision": config.revision,
+        "screen_analysis_local": True,
     }
-
     try:
-        response = _create_chat_completion(client, request)
-        content = _extract_message_content(response)
-        parsed = _parse_json_object(content)
-        if isinstance(parsed.get("data"), dict):
-            parsed = parsed["data"]
-        return normalize_screen_observation(
-            parsed,
-            user_question=user_question,
-            question_type=question_type,
-            target=target,
-            capture=capture,
+        perf = dict(performance or {})
+        errors: list[dict[str, Any]] = []
+        visible_text = {"engine": config.ocr_engine or "rapidocr", "raw_text": "", "blocks": []}
+
+        if config.ocr_enabled:
+            ocr_started = perf_counter()
+            try:
+                ocr_result = ocr_image(pil_image)
+            except Exception as exc:
+                ocr_result = {
+                    "engine": "rapidocr",
+                    "raw_text": "",
+                    "blocks": [],
+                    "error": _stage_error(
+                        "ocr",
+                        "SCREEN_OCR_FAILED",
+                        f"RapidOCR 识别失败：{type(exc).__name__}: {exc}",
+                        exc,
+                    ),
+                }
+            perf["ocr_ms"] = _elapsed_ms(ocr_started)
+            visible_text = {
+                "engine": str(ocr_result.get("engine") or "rapidocr"),
+                "raw_text": str(ocr_result.get("raw_text") or ""),
+                "blocks": ocr_result.get("blocks") if isinstance(ocr_result.get("blocks"), list) else [],
+            }
+            ocr_error = ocr_result.get("error")
+            if isinstance(ocr_error, dict):
+                errors.append(ocr_error)
+        else:
+            perf.setdefault("ocr_ms", 0.0)
+
+        text = ""
+        question = _build_moondream_question(
+            user_question,
+            resolved_question_type,
+            target,
+            bool(config.reasoning),
         )
-    except ScreenToolError:
-        raise
-    except Exception as exc:
-        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", f"屏幕视觉分析失败：{exc}") from exc
+        infer_started = perf_counter()
+        try:
+            text = get_moondream_manager(config).query(pil_image, question, reasoning=bool(config.reasoning))
+        except ScreenToolError as exc:
+            errors.append(_stage_error("moondream", exc.code, exc.message, exc))
+        except Exception as exc:
+            errors.append(
+                _stage_error(
+                    "moondream",
+                    "SCREEN_MOONDREAM_INFERENCE_FAILED",
+                    f"Moondream 推理失败：{type(exc).__name__}: {exc}",
+                    exc,
+                )
+            )
+        finally:
+            moondream_ms = _elapsed_ms(infer_started)
+
+        total_ms = _elapsed_ms(started)
+        perf.setdefault("capture_ms", 0.0)
+        perf["moondream_ms"] = moondream_ms
+        perf["total_ms"] = total_ms
+        metadata["screen_analysis_ocr_ms"] = perf.get("ocr_ms", 0.0)
+        metadata["screen_analysis_moondream_ms"] = moondream_ms
+        metadata["screen_analysis_total_ms"] = total_ms
+
+        return build_screen_observation(
+            user_question=user_question,
+            question_type=resolved_question_type,
+            target=target,
+            capture=capture_payload,
+            visual_summary={
+                "engine": "moondream",
+                "model": config.model_id,
+                "revision": config.revision,
+                "text": text,
+            },
+            visible_text=visible_text,
+            performance=perf,
+            errors=errors,
+            answer={"direct_answer": text, "confidence": 0.0},
+            followup={
+                "context_for_next_turn": text,
+                "needs_followup_capture": False,
+                "suggested_capture": None,
+            },
+        )
+    finally:
+        _LAST_ANALYSIS_METADATA.set(dict(metadata))
+
+
+def analyze_screen_png_local(
+    png_bytes: bytes,
+    mode: str,
+    prompt: str | None = None,
+    *,
+    config: ScreenPipelineConfig | None = None,
+    capture: dict[str, Any] | None = None,
+    performance: dict[str, Any] | None = None,
+    question_type: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(png_bytes, (bytes, bytearray)):
+        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "screen PNG 分析要求 bytes。")
+    image = _image_from_bytes(bytes(png_bytes))
+    capture_payload = {"image_format": "png", **dict(capture or {})}
+    return analyze_screen_image_local(
+        image,
+        mode,
+        prompt,
+        config=config,
+        capture=capture_payload,
+        performance=performance,
+        question_type=question_type,
+    )
 
 
 def analyze_screen_attachment(*, attachment: dict[str, Any], user_question: str) -> dict[str, Any]:
-    config = load_screen_vision_config()
+    config = load_screen_config()
     image_bytes = attachment.get("image_bytes")
     if not isinstance(image_bytes, (bytes, bytearray)):
-        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "pending screenshot 缺少 JPEG 图片数据。")
+        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "pending screenshot 缺少图片数据。")
+    image = _image_from_bytes(bytes(image_bytes))
 
-    target = str(attachment.get("target") or "selected_region")
+    mode = "region"
     source = str(attachment.get("source") or "manual_region_selection")
     capture = {
-        "captured_scope": target,
+        "mode": mode,
+        "captured_scope": mode,
         "source": source,
         "window": None,
         "region": attachment.get("region") if isinstance(attachment.get("region"), dict) else None,
+        "width": _safe_positive_int(attachment.get("width"), image.width),
+        "height": _safe_positive_int(attachment.get("height"), image.height),
+        "image_format": "png",
+        "created_at": attachment.get("created_at") or attachment.get("captured_at"),
+        "captured_at": attachment.get("captured_at"),
+        "mime_type": "image/png",
         "image": {
             "original_resolution": attachment.get("original_resolution"),
             "sent_resolution": attachment.get("sent_resolution"),
             "downscaled": bool(attachment.get("downscaled", False)),
-            "format": str(attachment.get("format") or "jpeg"),
-            "quality": attachment.get("quality"),
+            "format": "png",
         },
-        "captured_at": attachment.get("captured_at"),
-        "mime_type": attachment.get("mime_type") or "image/jpeg",
     }
-    return analyze_screen_image(
-        jpeg_bytes=bytes(image_bytes),
+    return analyze_screen_image_local(
+        image,
+        mode,
+        user_question,
         config=config,
-        user_question=user_question,
-        question_type=_classify_screen_question(user_question),
-        target=target,
         capture=capture,
+        question_type=_classify_screen_question(user_question),
     )
 
 
-def _create_chat_completion(client: Any, request: dict[str, Any]) -> Any:
+def get_last_screen_analysis_metadata() -> dict[str, Any]:
+    return dict(_LAST_ANALYSIS_METADATA.get() or {})
+
+
+def clear_last_screen_analysis_metadata() -> None:
+    _LAST_ANALYSIS_METADATA.set(None)
+
+
+def _ensure_pil_image(image: Any) -> Any:
     try:
-        return client.chat.completions.create(**request, response_format={"type": "json_object"})
-    except TypeError:
-        return client.chat.completions.create(**request)
+        from PIL import Image  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ScreenToolError(
+            "SCREEN_CAPTURE_DEPENDENCY_MISSING",
+            "缺少图片处理依赖 Pillow，请安装 Pillow。",
+        ) from exc
+
+    if not isinstance(image, Image.Image):
+        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "本地 screen analyzer 要求 PIL.Image.Image。")
+    return image
+
+
+def _capture_for_image(image: Any, mode: str, capture: dict[str, Any] | None) -> dict[str, Any]:
+    payload = dict(capture or {})
+    payload.setdefault("mode", mode)
+    payload.setdefault("captured_scope", mode)
+    payload.setdefault("source", "automatic_screenshot" if mode == "full_screen" else "manual_region_selection")
+    payload.setdefault("window", None)
+    payload.setdefault("region", None)
+    payload.setdefault("width", getattr(image, "width", 0))
+    payload.setdefault("height", getattr(image, "height", 0))
+    payload.setdefault("image_format", "png")
+    return payload
+
+
+def _image_from_bytes(image_bytes: bytes) -> Any:
+    try:
+        from PIL import Image  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ScreenToolError(
+            "SCREEN_CAPTURE_DEPENDENCY_MISSING",
+            "缺少图片处理依赖 Pillow，请安装 Pillow。",
+        ) from exc
+    try:
+        return Image.open(BytesIO(image_bytes)).convert("RGB")
     except Exception as exc:
-        if "response_format" not in str(exc):
-            raise
-        return client.chat.completions.create(**request)
+        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", f"pending screenshot 图片解码失败：{exc}") from exc
 
 
-def _build_user_prompt(user_question: str, question_type: str, target: str, capture: dict[str, Any]) -> str:
-    return f"""
-User question: {user_question}
-Question type: {question_type}
-Target: {target}
-Capture metadata: {json.dumps(capture, ensure_ascii=False)}
-
-Output exactly one JSON object with this fixed structure. Keep all keys present. Use null where unknown.
-The object must be the value of data, not a wrapper with ok/error.
-
-{{
-  "schema_version": "screen_observation.v1",
-  "type": "screen_observation",
-  "request": {{
-    "user_question": "{_json_string(user_question)}",
-    "question_type": "{_json_string(question_type)}",
-    "target": "{_json_string(target)}"
-  }},
-  "capture": {{}},
-  "answer": {{
-    "direct_answer": "",
-    "confidence": 0.0
-  }},
-  "scene": {{}},
-  "visible_apps": [],
-  "visible_text": {{}},
-  "objects": [],
-  "ui_elements": [],
-  "counts": [],
-  "identification": null,
-  "diagnosis": null,
-  "game": null,
-  "spatial_hints": [],
-  "ambiguity": [],
-  "followup": {{
-    "context_for_next_turn": "",
-    "needs_followup_capture": false,
-    "suggested_capture": null
-  }},
-  "privacy": {{}},
-  "limitations": []
-}}
-
-Rules:
-- answer.direct_answer must be a concise answer to the user question.
-- followup.context_for_next_turn must summarize reusable context for the main chat model.
-- capture.captured_scope and capture.source must match the provided capture metadata.
-- Do not request or imply live monitoring, clicking, typing, region selection, or window capture.
-- If uncertain, state uncertainty in ambiguity and lower confidence.
-""".strip()
+def _stage_error(stage: str, code: str, message: str, exc: BaseException | None = None) -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "code": code,
+        "message": message,
+        "type": type(exc).__name__ if exc is not None else "",
+        "recoverable": True,
+    }
 
 
-def _json_string(value: str) -> str:
-    return json.dumps(value or "", ensure_ascii=False)[1:-1]
+def _build_moondream_question(user_question: str, question_type: str, target: str, reasoning: bool) -> str:
+    guidance = (
+        "Answer the user's question using only this single screenshot. "
+        "Do not claim live monitoring, clicking, typing, history, files, or background screen access. "
+        "If sensitive content is visible, summarize its type without transcribing secrets. "
+        "If uncertain, say so."
+    )
+    if reasoning:
+        guidance += " Briefly reason about the visible UI before answering."
+    return "\n".join(
+        [
+            guidance,
+            f"Target: {target}",
+            f"Question type: {question_type}",
+            f"User question: {user_question or 'Describe the visible screen.'}",
+        ]
+    )
 
 
-def _extract_message_content(response: Any) -> str:
-    choices = list(getattr(response, "choices", []) or [])
-    if not choices:
-        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "视觉 API 没有返回 choices。")
-    message = getattr(choices[0], "message", None)
-    content = getattr(message, "content", "") if message is not None else ""
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(str(item.get("text") or ""))
-            elif hasattr(item, "text"):
-                parts.append(str(getattr(item, "text") or ""))
-        content = "".join(parts)
-    content = str(content or "").strip()
-    if not content:
-        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "视觉 API 返回内容为空。")
-    return content
+def _elapsed_ms(started: float) -> float:
+    return round((perf_counter() - started) * 1000.0, 3)
 
 
-def _parse_json_object(content: str) -> dict[str, Any]:
+def _format_from_mime(value: Any) -> str:
+    text = str(value or "").lower()
+    if "/" not in text:
+        return ""
+    return text.rsplit("/", 1)[-1]
+
+
+def _safe_positive_int(value: Any, default: int) -> int:
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start < 0 or end <= start:
-            raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "视觉 API 没有返回合法 JSON。")
-        try:
-            parsed = json.loads(content[start:end + 1])
-        except json.JSONDecodeError as exc:
-            raise ScreenToolError("SCREEN_ANALYSIS_FAILED", f"视觉 API 返回 JSON 解析失败：{exc}") from exc
-    if not isinstance(parsed, dict):
-        raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "视觉 API 返回的 JSON 顶层不是对象。")
-    return parsed
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return int(default)
+    return parsed if parsed > 0 else int(default)
 
 
 def _classify_screen_question(question: str) -> str:

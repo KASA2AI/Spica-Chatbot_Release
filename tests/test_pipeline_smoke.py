@@ -9,7 +9,7 @@ from agent.nodes import build_prompt_node, call_llm_node, parse_reply_node, vali
 from memory.recent import RecentMemory
 from agent.runtime import run_voice_pipeline
 from agent.state import AgentServices, AgentState
-from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions, is_screen_intent_explicit
+from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions, is_screen_intent_explicit, should_use_tools
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 
 
@@ -179,6 +179,7 @@ class PipelineSmokeTest(unittest.TestCase):
             state = call_llm_node(state, services)
             self.assertNotIn("tools", llm.responses.calls[0])
             self.assertFalse(state.metadata["use_tools"])
+            self.assertFalse(should_use_tools("现在几点"))
 
     def test_screen_intent_passes_tools(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -210,6 +211,17 @@ class PipelineSmokeTest(unittest.TestCase):
         ]
         self.assertEqual([is_screen_intent_explicit(text) for text in should_trigger], [True] * len(should_trigger))
         self.assertEqual([is_screen_intent_explicit(text) for text in should_not_trigger], [False] * len(should_not_trigger))
+
+    def test_english_screen_intent_examples(self):
+        should_trigger = [
+            "Spica, what is on my screen?",
+            "What is the error on my display?",
+            "How many windows are on the taskbar?",
+            "Please inspect my browser screen.",
+            "What is in my current window?",
+        ]
+        self.assertEqual([is_screen_intent_explicit(text) for text in should_trigger], [True] * len(should_trigger))
+        self.assertTrue(should_use_tools("How many windows are on the taskbar?"))
 
     def test_screen_tool_result_can_drive_final_json_reply(self):
         with tempfile.TemporaryDirectory() as tmpdir:

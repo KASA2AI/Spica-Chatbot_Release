@@ -35,8 +35,13 @@ _SCREEN_TARGET_TERMS = (
     "display",
     "desktop",
     "screenshot",
+    "current window",
+    "main screen",
+    "game screen",
     "browser",
+    "website",
     "webpage",
+    "monitor",
     "taskbar",
 )
 _SCREEN_ACTION_TERMS = (
@@ -63,14 +68,6 @@ _SCREEN_ACTION_TERMS = (
     "how many",
     "error",
 )
-_TIME_TERMS = ("几点", "现在时间", "当前时间", "今天几号", "日期", "星期几", "time", "date")
-_WEATHER_TERMS = ("天气", "气温", "下雨", "下雪", "空气质量", "weather", "temperature")
-_CALCULATOR_TERMS = ("计算", "算一下", "等于多少", "平方", "开方", "calculator")
-_LEGACY_TOOL_NAMES = {
-    "time": {"get_current_time", "current_time", "time", "lookup_time"},
-    "weather": {"get_weather", "weather", "lookup_weather"},
-    "calculator": {"calculator", "calculate", "run_calculator", "math_calculator"},
-}
 
 
 def default_tool_functions() -> dict[str, Callable[..., str]]:
@@ -85,6 +82,10 @@ def run_local_tool(tool_functions: dict[str, Callable[..., str]], name: str, arg
     except json.JSONDecodeError as exc:
         return tool_error("INVALID_TOOL_ARGUMENTS_JSON", f"工具参数不是合法 JSON：{exc}")
     try:
+        if name == "inspect_screen":
+            from agent_tools.function_tools.screen.analyzer import clear_last_screen_analysis_metadata
+
+            clear_last_screen_analysis_metadata()
         return tool_functions[name](**parsed_args)
     except TypeError as exc:
         return tool_error("TOOL_ARGUMENTS_MISMATCH", f"工具参数不匹配：{exc}")
@@ -93,7 +94,7 @@ def run_local_tool(tool_functions: dict[str, Callable[..., str]], name: str, arg
 
 
 def should_use_tools(user_text: str) -> bool:
-    return bool(_tool_names_for_text(user_text))
+    return bool(tool_schemas_for_user_text(user_text, TOOL_SCHEMAS))
 
 
 def tool_schemas_for_user_text(user_text: str, schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -107,37 +108,17 @@ def is_screen_intent_explicit(user_text: str) -> bool:
     text = _normalize_text(user_text)
     if not text:
         return False
-    has_target = any(term in text for term in _SCREEN_TARGET_TERMS)
-    has_action = any(term in text for term in _SCREEN_ACTION_TERMS)
+    compact_text = re.sub(r"\s+", "", text)
+    has_target = any(_contains_intent_term(text, compact_text, term) for term in _SCREEN_TARGET_TERMS)
+    has_action = any(_contains_intent_term(text, compact_text, term) for term in _SCREEN_ACTION_TERMS)
     return has_target and has_action
 
 
 def _tool_names_for_text(user_text: str) -> set[str]:
-    text = _normalize_text(user_text)
     names: set[str] = set()
-    if is_screen_intent_explicit(text):
+    if is_screen_intent_explicit(user_text):
         names.add("inspect_screen")
-    if _is_time_intent(text):
-        names.update(_LEGACY_TOOL_NAMES["time"])
-    if _is_weather_intent(text):
-        names.update(_LEGACY_TOOL_NAMES["weather"])
-    if _is_calculator_intent(text):
-        names.update(_LEGACY_TOOL_NAMES["calculator"])
     return names
-
-
-def _is_time_intent(text: str) -> bool:
-    return any(term in text for term in _TIME_TERMS)
-
-
-def _is_weather_intent(text: str) -> bool:
-    return any(term in text for term in _WEATHER_TERMS)
-
-
-def _is_calculator_intent(text: str) -> bool:
-    if any(term in text for term in _CALCULATOR_TERMS):
-        return True
-    return bool(re.search(r"\d+(?:\.\d+)?\s*[+\-*/×÷]\s*\d+", text))
 
 
 def _schema_name(schema: dict[str, Any]) -> str:
@@ -151,4 +132,14 @@ def _schema_name(schema: dict[str, Any]) -> str:
 
 
 def _normalize_text(text: str) -> str:
-    return re.sub(r"\s+", "", (text or "").strip().lower())
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _contains_intent_term(text: str, compact_text: str, term: str) -> bool:
+    normalized_term = _normalize_text(term)
+    if not normalized_term:
+        return False
+    if normalized_term in text:
+        return True
+    compact_term = re.sub(r"\s+", "", normalized_term)
+    return compact_term in compact_text

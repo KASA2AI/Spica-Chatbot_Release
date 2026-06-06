@@ -41,11 +41,10 @@ def test_input_panel_has_screenshot_button_and_signal(qapp):
 
 
 def test_overlay_sets_and_cancels_pending_screenshot(qapp):
-    attachment = {"kind": "screen_capture", "target": "selected_region", "image_bytes": b"jpeg"}
+    attachment = {"kind": "screen_capture", "target": "selected_region", "mode": "region", "image_bytes": b"png"}
     with patch.object(OverlayWindow, "_init_backend", lambda self: None):
         window = OverlayWindow()
-    with patch.object(window, "_build_selected_region_attachment", return_value=attachment):
-        window._capture_selected_region({})
+    window._handle_screenshot_worker_done(attachment)
 
     assert window.pending_screen_attachment is attachment
     assert window.input_panel.screenshot_button.isChecked()

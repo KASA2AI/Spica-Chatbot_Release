@@ -13,7 +13,11 @@ from agent.text_normalizer import normalize_square_brackets_for_speech
 from agent.time_context import build_local_time_context, format_local_time_for_prompt
 from common.timing import elapsed_ms, log_timing, now_ms
 from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
-from agent_tools.function_tools.screen.analyzer import analyze_screen_attachment
+from agent_tools.function_tools.screen.analyzer import (
+    analyze_screen_attachment,
+    clear_last_screen_analysis_metadata,
+    get_last_screen_analysis_metadata,
+)
 from agent_tools.function_tools.screen.schema import (
     ScreenToolError,
     compact_screen_observation_for_prompt,
@@ -137,6 +141,7 @@ def analyze_screen_attachment_node(state: AgentState, services: AgentServices) -
         return state
 
     started_ms = now_ms()
+    clear_last_screen_analysis_metadata()
     try:
         observation = analyze_screen_attachment(
             attachment=state.screen_attachment,
@@ -148,6 +153,7 @@ def analyze_screen_attachment_node(state: AgentState, services: AgentServices) -
         state.metadata["screen_observation_used"] = True
         state.metadata["screen_observation_schema"] = observation.get("schema_version")
         state.metadata["screen_observation_target"] = (observation.get("request") or {}).get("target")
+        _record_screen_analysis_metadata(state)
         state.tools.append(
             {
                 "name": "screen_analyzer",
@@ -163,10 +169,14 @@ def analyze_screen_attachment_node(state: AgentState, services: AgentServices) -
             duration,
             target=(observation.get("request") or {}).get("target"),
             source=(observation.get("capture") or {}).get("source"),
+            stream_enabled=state.timing.get("screen_analysis_stream_enabled"),
+            stream_fallback_used=state.timing.get("screen_analysis_stream_fallback_used"),
+            first_delta_ms=state.timing.get("screen_analysis_first_delta_ms"),
         )
     except ScreenToolError as exc:
         duration = elapsed_ms(started_ms)
         state.timing["screen_analysis_ms"] = duration
+        _record_screen_analysis_metadata(state)
         state.tools.append(
             {
                 "name": "screen_analyzer",
@@ -179,6 +189,7 @@ def analyze_screen_attachment_node(state: AgentState, services: AgentServices) -
     except Exception as exc:
         duration = elapsed_ms(started_ms)
         state.timing["screen_analysis_ms"] = duration
+        _record_screen_analysis_metadata(state)
         state.tools.append(
             {
                 "name": "screen_analyzer",
@@ -566,6 +577,23 @@ def record_screen_tool_result(state: AgentState, tool_name: str, tool_result: st
     state.metadata["screen_observation_schema"] = data.get("schema_version")
     state.metadata["screen_observation_target"] = (data.get("request") or {}).get("target")
     state.metadata["screen_observation_source"] = (data.get("capture") or {}).get("source")
+    _record_screen_analysis_metadata(state)
+
+
+def _record_screen_analysis_metadata(state: AgentState) -> None:
+    metadata = get_last_screen_analysis_metadata()
+    for key in ("screen_analysis_stream_enabled", "screen_analysis_stream_fallback_used"):
+        if key in metadata:
+            state.timing[key] = metadata[key]
+            state.metadata[key] = metadata[key]
+    if metadata.get("screen_analysis_first_delta_ms") is not None:
+        state.timing["screen_analysis_first_delta_ms"] = metadata["screen_analysis_first_delta_ms"]
+    for key in ("screen_analysis_engine", "screen_analysis_model", "screen_analysis_revision", "screen_analysis_local"):
+        if key in metadata:
+            state.metadata[key] = metadata[key]
+    for key in ("screen_analysis_moondream_ms", "screen_analysis_total_ms"):
+        if key in metadata:
+            state.timing[key] = metadata[key]
 
 
 def _compact_tool_history_for_prompt(tool_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -599,7 +627,7 @@ def _inject_screen_observation(prompt_input: Any, observation: dict[str, Any]) -
             json.dumps(safe_observation, ensure_ascii=False),
             "[SCREEN_OBSERVATION_INSTRUCTIONS]",
             (
-                "这张截图已经由独立视觉 API 分析完成。请只根据 screen_observation.v1 的内容回答，"
+                "这张截图已经由本地 screen analyzer 分析完成。请只根据 screen_observation.v1 的内容回答，"
                 "不要要求再次截图，不要声称可以实时观察，不要提及内部工具链。"
                 "如果 observation 表示不确定、低置信度或有 ambiguity，请明确说明不确定，不要编造确定答案。"
                 "如果是任务栏、标签页或数量统计类问题，请说明这是基于截图的估计，并带上限制。"

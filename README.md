@@ -133,7 +133,8 @@ Spica-Chatbot/
 
    ```bash
    cd /home/san/ai_code/Spica-Chatbot
-   pip install openai httpx python-dotenv PySide6 soundfile numpy pytest
+   pip install openai httpx python-dotenv PySide6 soundfile numpy pytest mss Pillow
+   pip install -r requirements-screen.txt
    pip install -r agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/requirements.txt
    ```
 
@@ -170,6 +171,23 @@ Spica-Chatbot/
    | `PLAY_UNIT_MIN_CHARS` | `18` | 流式播放单元最小长度 |
    | `PLAY_UNIT_MAX_CHARS` | `96` | 流式播放单元最大长度 |
    | `VISUAL_STREAM_WORKERS` | `2` | 流式立绘选择线程数 |
+   | `SPICA_SCREEN_ENABLED` | `true` | 是否启用本地 screen pipeline |
+   | `SPICA_SCREEN_PROVIDER` | `moondream_local` | 本地 screen pipeline provider |
+   | `SPICA_SCREEN_MODEL_ID` | `vikhyatk/moondream2` | 本地 Moondream 模型 ID |
+   | `SPICA_SCREEN_REVISION` | `2025-06-21` | 本地 Moondream revision |
+   | `SPICA_SCREEN_DEVICE` | `cuda` | 本地推理设备 |
+   | `SPICA_SCREEN_DTYPE` | `bfloat16` | 本地推理 dtype；4090 默认优先 `bfloat16`，兼容性需要时可设 `auto` |
+   | `SPICA_SCREEN_MAX_SIDE` | `768` | 本地 screen 分析输入最长边 |
+   | `SPICA_SCREEN_REASONING` | `false` | 是否启用额外推理提示 |
+   | `SPICA_SCREEN_PRELOAD` | `false` | 启动时是否预加载本地 screen 模型 |
+   | `SPICA_SCREEN_OCR_ENABLED` | `true` | 是否启用本地 OCR |
+   | `SPICA_SCREEN_OCR_ENGINE` | `rapidocr` | 本地 OCR 引擎 |
+   | `SPICA_SCREEN_CAPTURE_FORMAT` | `png` | screen pipeline 内部截图格式 |
+   | `SPICA_SCREEN_INFER_TIMEOUT_SEC` | `30` | 本地 screen 分析超时 |
+   | `SPICA_SCREEN_LOG_TIMING` | `true` | 是否记录 screen 阶段耗时 |
+   | `SPICA_SCREEN_DEBUG_SAVE` | `false` | 显式开启时保存调试截图；默认不落盘 |
+
+   Screen observation 使用本地配置 `config/screen_vision_config.json`，流程为本地截图、本地 RapidOCR 文字读取、本地 Moondream 屏幕理解，不上传图片。自然语言明确要求查看屏幕/桌面/显示器/画面时触发 `inspect_screen`，只做一次 `target=full_screen` 的自动主屏幕截图；截图按钮使用手动选区并随下一条消息发送，走 `mode=region` / `source=manual_region_selection`，不会再次自动截图，也不会把原始图片注入主聊天模型。
 
 5. 启动桌面 Overlay。
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -15,6 +16,48 @@ class ScreenToolError(RuntimeError):
         self.message = message
 
 
+def build_screen_observation(
+    *,
+    user_question: str = "",
+    question_type: str = "general_observation",
+    target: str = "full_screen",
+    capture: dict[str, Any] | None = None,
+    visual_summary: dict[str, Any] | str | None = None,
+    visible_text: dict[str, Any] | None = None,
+    performance: dict[str, Any] | None = None,
+    errors: list[Any] | None = None,
+    answer: dict[str, Any] | str | None = None,
+    followup: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a local screen_observation.v1 payload.
+
+    The new local pipeline should use this builder. It emits the new local
+    fields while preserving legacy keys consumed by the existing agent layer.
+    """
+
+    observation = empty_screen_observation(
+        user_question=user_question,
+        question_type=question_type,
+        target=target,
+        capture=_normalize_capture_payload(capture, target=target),
+    )
+    observation["visual_summary"] = _normalize_visual_summary(visual_summary)
+    observation["visible_text"] = _normalize_visible_text(visible_text)
+    observation["performance"] = _normalize_performance(performance)
+    observation["errors"] = _normalize_errors(errors)
+
+    answer_payload = _normalize_answer(answer)
+    if not answer_payload["direct_answer"]:
+        answer_payload["direct_answer"] = str(observation["visual_summary"].get("text") or "").strip()
+    observation["answer"] = answer_payload
+
+    followup_payload = _normalize_followup(followup)
+    if not followup_payload["context_for_next_turn"]:
+        followup_payload["context_for_next_turn"] = observation["answer"]["direct_answer"]
+    observation["followup"] = followup_payload
+    return observation
+
+
 def empty_screen_observation(
     *,
     user_question: str,
@@ -23,14 +66,17 @@ def empty_screen_observation(
     capture: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
+        "schema": SCREEN_OBSERVATION_SCHEMA_VERSION,
         "schema_version": SCREEN_OBSERVATION_SCHEMA_VERSION,
         "type": SCREEN_OBSERVATION_TYPE,
+        "source": "screen",
         "request": {
             "user_question": user_question or "",
             "question_type": question_type or "general_observation",
             "target": target or "full_screen",
         },
-        "capture": capture or {},
+        "capture": _normalize_capture_payload(capture, target=target),
+        "visual_summary": _normalize_visual_summary(None),
         "answer": {
             "direct_answer": "",
             "confidence": 0.0,
@@ -53,6 +99,8 @@ def empty_screen_observation(
         },
         "privacy": {},
         "limitations": [],
+        "performance": _normalize_performance(None),
+        "errors": [],
     }
 
 
@@ -74,37 +122,34 @@ def normalize_screen_observation(
         _deep_update(base, value)
 
     base["schema_version"] = SCREEN_OBSERVATION_SCHEMA_VERSION
+    base["schema"] = SCREEN_OBSERVATION_SCHEMA_VERSION
     base["type"] = SCREEN_OBSERVATION_TYPE
+    base["source"] = str(base.get("source") or "screen")
     base["request"] = {
         **base.get("request", {}),
         "user_question": user_question or "",
         "question_type": question_type or "general_observation",
         "target": target or "full_screen",
     }
-    base["capture"] = {**(base.get("capture") or {}), **capture}
+    merged_capture = {**(base.get("capture") or {}), **capture}
+    base["capture"] = _normalize_capture_payload(merged_capture, target=target)
 
-    answer = base.get("answer") if isinstance(base.get("answer"), dict) else {}
-    direct_answer = str(answer.get("direct_answer") or "").strip()
-    confidence = _safe_float(answer.get("confidence"), default=0.0)
-    base["answer"] = {
-        **answer,
-        "direct_answer": direct_answer,
-        "confidence": max(0.0, min(1.0, confidence)),
-    }
+    base["visual_summary"] = _normalize_visual_summary(base.get("visual_summary"))
+    base["visible_text"] = _normalize_visible_text(base.get("visible_text"))
+    base["performance"] = _normalize_performance(base.get("performance"))
+    base["errors"] = _normalize_errors(base.get("errors"))
+    base["answer"] = _normalize_answer(base.get("answer"))
 
-    followup = base.get("followup") if isinstance(base.get("followup"), dict) else {}
-    base["followup"] = {
-        "context_for_next_turn": str(followup.get("context_for_next_turn") or ""),
-        "needs_followup_capture": bool(followup.get("needs_followup_capture", False)),
-        "suggested_capture": followup.get("suggested_capture"),
-    }
+    base["followup"] = _normalize_followup(base.get("followup") if isinstance(base.get("followup"), dict) else None)
 
     for key in ("visible_apps", "objects", "ui_elements", "counts", "spatial_hints", "ambiguity", "limitations"):
         if not isinstance(base.get(key), list):
             base[key] = []
-    for key in ("scene", "visible_text", "privacy"):
+    for key in ("scene", "visible_text", "privacy", "visual_summary", "performance"):
         if not isinstance(base.get(key), dict):
             base[key] = {}
+    if not isinstance(base.get("errors"), list):
+        base["errors"] = []
     return base
 
 
@@ -128,8 +173,10 @@ def compact_screen_observation_for_prompt(observation: dict[str, Any] | None) ->
     followup = observation.get("followup") if isinstance(observation.get("followup"), dict) else {}
 
     compact: dict[str, Any] = {
+        "schema": observation.get("schema") or SCREEN_OBSERVATION_SCHEMA_VERSION,
         "schema_version": observation.get("schema_version") or SCREEN_OBSERVATION_SCHEMA_VERSION,
         "type": observation.get("type") or SCREEN_OBSERVATION_TYPE,
+        "source": observation.get("source") or "screen",
         "request": {
             "user_question": _compact_text(str(request.get("user_question") or ""), 240),
             "question_type": request.get("question_type") or "",
@@ -152,6 +199,20 @@ def compact_screen_observation_for_prompt(observation: dict[str, Any] | None) ->
         "limitations": _compact_list(observation.get("limitations"), 5, 180),
     }
 
+    visual_summary = observation.get("visual_summary") if isinstance(observation.get("visual_summary"), dict) else {}
+    visual_text = _compact_text(str(visual_summary.get("text") or ""), 520)
+    if visual_text:
+        compact["visual_summary"] = {
+            "engine": visual_summary.get("engine") or "moondream",
+            "model": visual_summary.get("model") or "",
+            "revision": visual_summary.get("revision") or "",
+            "text": visual_text,
+        }
+
+    errors = _normalize_errors(observation.get("errors"))
+    if errors:
+        compact["errors"] = _compact_list(errors, 5, 220)
+
     for key in ("diagnosis", "identification", "counts", "game"):
         value = observation.get(key)
         if _has_content(value):
@@ -171,6 +232,9 @@ def screen_observation_context_for_next_turn(observation: dict[str, Any] | None)
     context = str(followup.get("context_for_next_turn") or "").strip()
     if not context:
         context = str(answer.get("direct_answer") or "").strip()
+    if not context:
+        visual_summary = observation.get("visual_summary") if isinstance(observation.get("visual_summary"), dict) else {}
+        context = str(visual_summary.get("text") or "").strip()
     if not context:
         return ""
     request = observation.get("request") if isinstance(observation.get("request"), dict) else {}
@@ -196,6 +260,135 @@ def _safe_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_capture_payload(value: dict[str, Any] | None, *, target: str) -> dict[str, Any]:
+    capture = dict(value or {})
+    image = capture.get("image") if isinstance(capture.get("image"), dict) else {}
+    mode = str(capture.get("mode") or capture.get("captured_scope") or target or "full_screen")
+    image_format = str(
+        capture.get("image_format")
+        or capture.get("format")
+        or image.get("format")
+        or _format_from_mime(capture.get("mime_type"))
+        or "png"
+    ).lower()
+
+    capture["mode"] = mode
+    capture["width"] = _safe_int(capture.get("width"), _resolution_value(capture, image, "width"))
+    capture["height"] = _safe_int(capture.get("height"), _resolution_value(capture, image, "height"))
+    capture["created_at"] = str(capture.get("created_at") or capture.get("captured_at") or _utc_now())
+    capture["image_format"] = image_format
+    capture.setdefault("captured_scope", mode)
+    capture.setdefault("source", "automatic_screenshot" if mode == "full_screen" else "manual_region_selection")
+    return capture
+
+
+def _normalize_visual_summary(value: dict[str, Any] | str | None) -> dict[str, Any]:
+    if isinstance(value, str):
+        value = {"text": value}
+    summary = dict(value or {})
+    return {
+        "engine": str(summary.get("engine") or "moondream"),
+        "model": str(summary.get("model") or "vikhyatk/moondream2"),
+        "revision": str(summary.get("revision") or "2025-06-21"),
+        "text": str(summary.get("text") or "").strip(),
+    }
+
+
+def _normalize_visible_text(value: dict[str, Any] | None) -> dict[str, Any]:
+    visible = dict(value or {})
+    blocks = visible.get("blocks")
+    return {
+        **visible,
+        "engine": str(visible.get("engine") or "rapidocr"),
+        "raw_text": str(visible.get("raw_text") or visible.get("raw") or visible.get("text") or ""),
+        "blocks": blocks if isinstance(blocks, list) else [],
+    }
+
+
+def _normalize_performance(value: dict[str, Any] | None) -> dict[str, float]:
+    perf = dict(value or {})
+    return {
+        "capture_ms": round(_safe_float(perf.get("capture_ms"), 0.0), 3),
+        "ocr_ms": round(_safe_float(perf.get("ocr_ms"), 0.0), 3),
+        "moondream_ms": round(_safe_float(perf.get("moondream_ms"), 0.0), 3),
+        "total_ms": round(_safe_float(perf.get("total_ms"), 0.0), 3),
+    }
+
+
+def _normalize_errors(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    raw_errors = value if isinstance(value, list) else [value]
+    errors: list[dict[str, Any]] = []
+    for item in raw_errors:
+        if isinstance(item, dict):
+            errors.append(
+                {
+                    "stage": str(item.get("stage") or ""),
+                    "code": str(item.get("code") or ""),
+                    "message": str(item.get("message") or item.get("error") or ""),
+                    "recoverable": bool(item.get("recoverable", True)),
+                }
+            )
+        else:
+            errors.append({"stage": "", "code": "", "message": str(item), "recoverable": True})
+    return [error for error in errors if error["message"] or error["code"]]
+
+
+def _normalize_answer(value: dict[str, Any] | str | None) -> dict[str, Any]:
+    if isinstance(value, str):
+        value = {"direct_answer": value}
+    answer = dict(value or {})
+    confidence = _safe_float(answer.get("confidence"), default=0.0)
+    return {
+        **answer,
+        "direct_answer": str(answer.get("direct_answer") or "").strip(),
+        "confidence": max(0.0, min(1.0, confidence)),
+    }
+
+
+def _normalize_followup(value: dict[str, Any] | None) -> dict[str, Any]:
+    followup = dict(value or {})
+    return {
+        "context_for_next_turn": str(followup.get("context_for_next_turn") or ""),
+        "needs_followup_capture": bool(followup.get("needs_followup_capture", False)),
+        "suggested_capture": followup.get("suggested_capture"),
+    }
+
+
+def _resolution_value(capture: dict[str, Any], image: dict[str, Any], key: str) -> int:
+    for container in (
+        capture.get("sent_resolution"),
+        capture.get("original_resolution"),
+        image.get("sent_resolution"),
+        image.get("original_resolution"),
+        image,
+    ):
+        if isinstance(container, dict):
+            parsed = _safe_int(container.get(key), 0)
+            if parsed:
+                return parsed
+    return 0
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _format_from_mime(value: Any) -> str:
+    text = str(value or "").lower()
+    if "/" not in text:
+        return ""
+    return text.rsplit("/", 1)[-1]
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _compact_text(text: str, max_chars: int) -> str:

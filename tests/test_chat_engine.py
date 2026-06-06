@@ -1,5 +1,5 @@
-"""Phase 6B: ChatEngine drives a turn via the existing pipeline, and forwards
-unknown attributes to the wrapped (SimpleAgent-like) shell.
+"""Phase 6B/6D: ChatEngine drives a turn via the existing pipeline and owns the
+character / memory management dissolved from SimpleAgent.
 
 Self-contained fakes; no real LLM/TTS.
 """
@@ -10,11 +10,13 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from memory.recent import RecentMemory
-from memory.store import SQLiteMemoryStore
+from agent.character_loader import replace_mugi_references
 from agent.state import AgentServices
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
+from memory.recent import RecentMemory
+from memory.store import SQLiteMemoryStore
+from spica.config.schema import AppConfig, CharacterConfig
 from spica.core.chat_engine import ChatEngine
 from spica.core.events import DoneEvent, RuntimeEvent
 
@@ -88,26 +90,17 @@ def _make_services(tmp, answer):
     )
 
 
-class _FakeAgentShell:
-    def __init__(self, services):
-        self.services = services
-        self.interlocutor_name = "麦"
-        self.model = "fake-model"
-        self.set_calls = []
-
-    def set_interlocutor_name(self, name):
-        self.set_calls.append(name)
-        self.interlocutor_name = name
-        return name
+def _config():
+    # profile_override keeps set_interlocutor_name hermetic (no role-card files).
+    return AppConfig(character=CharacterConfig(profile_override="麦のプロフィール"))
 
 
 ANSWER = "もちろん。フーリエ変換は信号を分解します。必要なら具体例も出しますよ。"
 
 
-class ChatEngineTest(unittest.TestCase):
+class ChatEngineDrivingTest(unittest.TestCase):
     def _engine(self, tmp):
-        services = _make_services(tmp, ANSWER)
-        return ChatEngine(_FakeAgentShell(services))
+        return ChatEngine(_make_services(tmp, ANSWER), _config())
 
     def test_run_voice_drives_pipeline(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -137,13 +130,37 @@ class ChatEngineTest(unittest.TestCase):
         self.assertIsInstance(events[-1], DoneEvent)
         self.assertEqual(events[-1].answer, ANSWER)
 
-    def test_forwards_unknown_attrs_to_agent_shell(self):
+
+class ChatEngineManagementTest(unittest.TestCase):
+    def _engine(self, tmp):
+        return ChatEngine(_make_services(tmp, ANSWER), _config())
+
+    def test_model_and_interlocutor_attrs(self):
         with tempfile.TemporaryDirectory() as tmp:
             engine = self._engine(tmp)
-            self.assertEqual(engine.interlocutor_name, "麦")  # forwarded attribute
-            self.assertEqual(engine.model, "fake-model")  # used by StartupWarmupWorker
-            self.assertEqual(engine.set_interlocutor_name("レン"), "レン")  # forwarded method
-            self.assertEqual(engine._agent.set_calls, ["レン"])
+        self.assertEqual(engine.model, "fake-model")  # used by StartupWarmupWorker
+        self.assertEqual(engine.interlocutor_name, "麦")
+
+    def test_set_interlocutor_name_reloads_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._engine(tmp)
+            self.assertEqual(engine.set_interlocutor_name("レン"), "レン")
+            self.assertEqual(engine.services.config["interlocutor_name"], "レン")
+            self.assertEqual(
+                engine.services.config["character_profile"],
+                replace_mugi_references("麦のプロフィール", "レン"),
+            )
+
+    def test_memory_management(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._engine(tmp)
+            mid = engine.remember("好きな色は青", conversation_id="c1")
+            self.assertIsInstance(mid, int)
+            listed = engine.list_memory("c1")
+            self.assertTrue(any("青" in str(m.get("content", "")) for m in listed))
+            cleared = engine.clear_memory("c1", clear_long_term=True)
+            self.assertTrue(cleared["ok"])
+            self.assertTrue(cleared["cleared"]["long_term_memory"])
 
 
 if __name__ == "__main__":

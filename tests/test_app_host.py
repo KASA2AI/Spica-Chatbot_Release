@@ -15,15 +15,17 @@ from spica.host.app_host import AppHost
 class AppHostSmokeTest(unittest.TestCase):
     def test_package_root_imports_with_empty_services(self):
         host = AppHost()
-        self.assertIsNone(host.agent)
+        self.assertIsNone(host.chat_engine)
+        self.assertIsNone(host.services)
         self.assertIsNone(host.visual_tool)
         self.assertIsNone(host.tts_adapter)
         self.assertIsNone(host.tts_tool)
 
-    def test_conversation_surface_aliases_agent(self):
+    def test_conversation_surface_is_chat_engine(self):
         host = AppHost()
+        self.assertIsNone(host.conversation_surface)  # before initialize()
         sentinel = object()
-        host.agent = sentinel
+        host.chat_engine = sentinel
         self.assertIs(host.conversation_surface, sentinel)
 
     def test_management_surface_not_implemented_until_phase_8(self):

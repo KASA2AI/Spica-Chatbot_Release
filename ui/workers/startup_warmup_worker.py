@@ -4,8 +4,6 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from agent import SimpleAgent
-
 
 class StartupWarmupWorker(QThread):
     status_changed = Signal(str)
@@ -14,7 +12,7 @@ class StartupWarmupWorker(QThread):
 
     def __init__(
         self,
-        agent: SimpleAgent,
+        agent: Any,
         tts_provider: Any,
         parent: QObject | None = None,
     ) -> None:

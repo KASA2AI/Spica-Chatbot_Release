@@ -23,11 +23,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent import SimpleAgent
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
 from spica.core.chat_engine import ChatEngine
+from spica.host.agent_assembly import build_agent_services
 from spica.plugins.registry import CapabilityRegistry
 from spica.adapters.llm import OpenAICompatibleAdapter
 from spica.adapters.memory import SqliteMemoryAdapter
@@ -45,7 +45,7 @@ class AppHost:
         self.visual_tool: Any | None = None
         self.tts_tool: Any | None = None
         self.tts_adapter: Any | None = None
-        self.agent: Any | None = None
+        self.services: Any | None = None
         self.chat_engine: Any | None = None
         self.tts_provider: str = "gptsovits_current"
         self.registry = CapabilityRegistry()
@@ -92,24 +92,24 @@ class AppHost:
             self.tts_adapter = self.registry.resolve_tts(
                 self.tts_provider, config=tts_config, service=self.tts_tool
             )
-            self.agent = SimpleAgent(
+            self.services = build_agent_services(
+                self.config,
+                self.secrets,
                 tts_adapter=self.tts_adapter,
                 visual_tool=self.visual_tool,
-                config=self.config,
-                secrets=self.secrets,
             )
             # Resolve and inject the LLM / memory adapters by configured name.
-            self.agent.services.llm_adapter = self.registry.resolve_llm(
-                self.config.llm.provider, client=self.agent.client
+            self.services.llm_adapter = self.registry.resolve_llm(
+                self.config.llm.provider, client=self.services.llm_client
             )
-            self.agent.services.memory_adapter = self.registry.resolve_memory(
+            self.services.memory_adapter = self.registry.resolve_memory(
                 self.config.memory.provider,
-                store=self.agent.memory_store,
-                recent=self.agent.recent_memory,
+                store=self.services.memory_store,
+                recent=self.services.recent_memory,
             )
-            # ChatEngine takes over conversation driving (Phase 6B); SimpleAgent
-            # stays as the assembly/character/memory shell it forwards to.
-            self.chat_engine = ChatEngine(self.agent)
+            # ChatEngine is the conversation core (Phase 6D: SimpleAgent dissolved
+            # into ChatEngine + spica/host/agent_assembly).
+            self.chat_engine = ChatEngine(self.services, self.config)
         except Exception:
             if self.visual_tool is None:
                 try:
@@ -120,9 +120,8 @@ class AppHost:
 
     @property
     def conversation_surface(self) -> Any:
-        """Entry point for the chat window. Phase 6B: the ChatEngine once
-        initialized; falls back to the agent before initialize()."""
-        return self.chat_engine if self.chat_engine is not None else self.agent
+        """Entry point for the chat window: the ChatEngine (None before initialize)."""
+        return self.chat_engine
 
     @property
     def management_surface(self) -> Any:

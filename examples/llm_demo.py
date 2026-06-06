@@ -1,8 +1,13 @@
-from agent import SimpleAgent
+from spica.config.manager import ConfigManager
+from spica.config.secrets import load_secrets
+from spica.core.chat_engine import ChatEngine
+from spica.host.agent_assembly import build_agent_services
 
 
 def main():
-    agent = SimpleAgent()
+    config = ConfigManager().load()
+    services = build_agent_services(config, load_secrets())
+    agent = ChatEngine(services, config)
     conversation_id = "cli-demo"
 
     first_question = "我叫小三，请记住我的名字。"

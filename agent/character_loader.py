@@ -18,6 +18,7 @@ __all__ = [
     "DEFAULT_INTERLOCUTOR_NAME",
     "DEFAULT_SPICA_SKILL_DIR",
     "INTERLOCUTOR_PROFILE_TEMPLATE",
+    "build_character_profile",
     "build_interlocutor_profile",
     "load_spica_character_profile",
     "normalize_interlocutor_name",
@@ -86,6 +87,25 @@ def load_spica_character_profile(skill_dir: str | Path | None = None, interlocut
             parts.append(f"# {title}\n{text}")
 
     return replace_mugi_references("\n\n".join(parts).strip(), interlocutor_name)
+
+
+def build_character_profile(
+    profile_override: str | None,
+    skill_dir: str | Path | None,
+    interlocutor_name: str | None = None,
+) -> str:
+    """Assemble the prompt-ready character profile (Phase 6D, moved from SimpleAgent).
+
+    Used both at assembly time and when the interlocutor name changes. An explicit
+    override wins; otherwise the local Spica role card is loaded from ``skill_dir``.
+    """
+    name = normalize_interlocutor_name(interlocutor_name)
+    if profile_override:
+        return replace_mugi_references(profile_override, name)
+    root = Path(skill_dir) if skill_dir else DEFAULT_SPICA_SKILL_DIR
+    if not root.is_absolute():
+        root = BASE_DIR / root
+    return load_spica_character_profile(root, interlocutor_name=name) or ""
 
 
 def _read_text(path: Path) -> str:

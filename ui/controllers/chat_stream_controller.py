@@ -8,7 +8,6 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QTimer
 
-from agent import SimpleAgent
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.models.playback import AudioOwner, AudioToken
@@ -27,7 +26,7 @@ class ChatStreamController(QObject):
     def __init__(
         self,
         parent: QObject,
-        agent: SimpleAgent,
+        agent: Any,
         conversation_id_provider: Callable[[], str],
         visual_overrides_provider: Callable[[], dict[str, Any]],
         audio_controller: AudioController,

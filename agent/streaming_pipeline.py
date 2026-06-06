@@ -32,18 +32,13 @@ from spica.adapters.llm import OpenAICompatibleAdapter
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
 from spica.runtime.tts_job import synthesize_unit_audio
 from spica.runtime.visual_job import build_unit_visual_and_emit
+from spica.runtime.llm_stream import llm_adapter
+from spica.runtime.memory_commit import save_stream_memory
+from spica.runtime.tool_round import prepare_prompt_for_streaming
 
 
 _SENTINEL = object()
 _FIRST_UNIT_WARNING_MS = 3000.0
-
-
-def _llm_adapter(services: AgentServices) -> OpenAICompatibleAdapter:
-    return services.llm_adapter or OpenAICompatibleAdapter(services.llm_client)
-
-
-def _memory_adapter(services: AgentServices):
-    return services.memory_adapter or SqliteMemoryAdapter(services.memory_store, services.recent_memory)
 
 
 def stream_voice_events(state: AgentState, services: AgentServices) -> Iterator[dict[str, Any]]:
@@ -241,7 +236,7 @@ def _produce_stream_events(
         state.timing["agent_model"] = model
         state.timing["prompt_input_chars"] = len(str(state.prompt_input or ""))
 
-        prompt_for_stream, prefetched_raw = _prepare_prompt_for_streaming(state, services, put_status)
+        prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(state, services, put_status)
         splitter = PlayUnitSplitter(
             min_chars=int(os.getenv("PLAY_UNIT_MIN_CHARS") or services.config.get("play_unit_min_chars") or 18),
             max_chars=int(os.getenv("PLAY_UNIT_MAX_CHARS") or services.config.get("play_unit_max_chars") or 96),
@@ -271,7 +266,7 @@ def _produce_stream_events(
             handle_raw_delta(prefetched_raw)
         else:
             request = {"model": model, "input": prompt_for_stream}
-            for delta in _llm_adapter(services).iter_response_text(request, state):
+            for delta in llm_adapter(services).iter_response_text(request, state):
                 handle_raw_delta(delta)
 
         for unit_text in splitter.flush():
@@ -290,7 +285,7 @@ def _produce_stream_events(
             for unit_text in fallback_splitter.feed(state.answer) + fallback_splitter.flush():
                 submit_unit(unit_text)
 
-        _save_stream_memory(state, services)
+        save_stream_memory(state, services)
 
         for future in ready_futures:
             future.result()
@@ -338,99 +333,9 @@ def _produce_stream_events(
         output_queue.put(_SENTINEL)
 
 
-def _prepare_prompt_for_streaming(
-    state: AgentState,
-    services: AgentServices,
-    put_status: Any,
-) -> tuple[str, str | None]:
-    if services.llm_client is None:
-        raise RuntimeError("LLM client 未配置。")
-
-    model = str(services.config.get("model") or "gpt-4.1-mini")
-    active_tool_schemas = (
-        []
-        if state.screen_attachment or state.screen_observation
-        else tool_schemas_for_user_text(state.user_input, services.tool_schemas)
-    )
-    use_tools = bool(active_tool_schemas)
-    state.metadata["use_tools"] = use_tools
-    state.metadata["available_tool_schema_count"] = len(services.tool_schemas)
-    state.metadata["selected_tool_schema_count"] = len(active_tool_schemas)
-    state.timing["agent_tool_local_ms"] = 0.0
-    state.timing["agent_function_calls"] = 0
-    state.timing["agent_rounds"] = 0
-
-    if not use_tools or not active_tool_schemas:
-        return str(state.prompt_input or ""), None
-
-    if _llm_adapter(services).prefers_chat_completions():
-        state.timing["agent_tool_probe_skipped"] = True
-        state.timing["agent_tool_probe_skip_reason"] = "chat_completions_compatible_client"
-        return str(state.prompt_input or ""), None
-
-    put_status("tools", "processing_tools")
-    request = {
-        "model": model,
-        "input": str(state.prompt_input or ""),
-        "tools": active_tool_schemas,
-    }
-    response_start_ms = now_ms()
-    response = services.llm_client.responses.create(**request)
-    response_ms = elapsed_ms(response_start_ms)
-    state.timing["agent_rounds"] = 1
-    state.timing["agent_response_initial_ms"] = response_ms
-    _record_usage(state, response)
-    log_timing(
-        "agent_response",
-        response_ms,
-        phase="tool_probe",
-        model=model,
-        use_tools=True,
-        round=1,
-    )
-
-    function_calls = [
-        item for item in list(_get_attr(response, "output", []) or [])
-        if _get_attr(item, "type") == "function_call"
-    ]
-    if not function_calls:
-        state.response_id = str(_get_attr(response, "id", "") or "") or None
-        return str(state.prompt_input or ""), str(_get_attr(response, "output_text", "") or "")
-
-    tool_history: list[dict[str, Any]] = []
-    for item in function_calls:
-        state.timing["agent_function_calls"] += 1
-        tool_start_ms = now_ms()
-        tool_name = str(_get_attr(item, "name", ""))
-        arguments = str(_get_attr(item, "arguments", "") or "{}")
-        if tool_name == "inspect_screen":
-            put_status("tools", "inspecting_screen")
-        else:
-            put_status("tools", f"tool:{tool_name}")
-        tool_result = run_local_tool(services.tool_functions, tool_name, arguments)
-        record_screen_tool_result(state, tool_name, tool_result)
-        tool_duration = elapsed_ms(tool_start_ms)
-        state.timing["agent_tool_local_ms"] = round(
-            float(state.timing.get("agent_tool_local_ms") or 0) + tool_duration,
-            2,
-        )
-        tool_history.append({"name": tool_name, "arguments": arguments, "output": tool_result})
-        log_timing(
-            "agent_tool_local",
-            tool_duration,
-            name=tool_name,
-            arguments_chars=len(arguments),
-            output_chars=len(tool_result),
-        )
-
-    put_status("thinking", "thinking")
-    return _build_tool_followup_prompt(state.prompt_input, tool_history), None
-
-
-# LLM client I/O + the OpenAI-Responses vs Chat-Completions (DeepSeek) branch and
-# streaming fallbacks were moved to spica/adapters/llm/openai_compatible.py (Phase 5).
-# The pipeline now calls _llm_adapter(services).iter_response_text(...) /
-# .prefers_chat_completions() instead of these in-pipeline functions.
+# Tool probe/followup moved to spica/runtime/tool_round.py (Phase 6C).
+# LLM client I/O + the OpenAI-Responses vs Chat-Completions (DeepSeek) branch
+# live in spica/adapters/llm (Phase 5), accessed via spica/runtime/llm_stream.
 
 
 # Per-unit visual selection + TTS synthesis jobs moved to
@@ -480,62 +385,6 @@ def _finalize_unit(
     put_ready(int(unit["index"]), data)
 
 
-def _save_stream_memory(state: AgentState, services: AgentServices) -> None:
-    try:
-        services.recent_memory.append_turn(
-            state.conversation_id,
-            state.user_input,
-            state.answer or "",
-            user_local_time=(
-                format_local_time_for_prompt(state.user_local_time)
-                if state.include_user_time_context
-                else None
-            ),
-            interaction_mode=state.interaction_mode,
-            screen_observation_context=screen_observation_context_for_next_turn(state.screen_observation),
-        )
-        interlocutor = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
-        result = _memory_adapter(services).commit_turn(
-            MemoryScope(
-                character_id=str(services.config.get("character_id") or "spica"),
-                user_id=interlocutor,
-                conversation_id=state.conversation_id,
-            ),
-            state.user_input,
-            state.answer or "",
-            meta={
-                "interlocutor_name": interlocutor,
-                "max_active_memories": int(services.config.get("max_long_term_memories", 200)),
-            },
-        )
-        state.metadata.update(result)
-    except Exception as exc:
-        state.metadata["memory_error"] = str(exc)
-
-
-def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, Any]]) -> str:
-    return "\n\n".join(
-        [
-            str(prompt_input),
-            "[TOOL_RESULTS]",
-            json.dumps(_compact_tool_history_for_prompt(tool_history), ensure_ascii=False),
-            "[NEXT_STEP]",
-            "请只根据以上工具结果输出最终 JSON，不要 Markdown，不要解释工具链。",
-        ]
-    )
-
-
-def _record_usage(state: AgentState, response: Any) -> None:
-    usage = _get_attr(response, "usage")
-    if not usage:
-        return
-    for key in ("input_tokens", "output_tokens", "total_tokens"):
-        value = _get_attr(usage, key)
-        if value is not None:
-            state.timing[key] = value
-
-
-def _get_attr(value: Any, key: str, default: Any = None) -> Any:
-    if isinstance(value, dict):
-        return value.get(key, default)
-    return getattr(value, key, default)
+# save_stream_memory -> spica/runtime/memory_commit.py;
+# _build_tool_followup_prompt -> spica/runtime/tool_round.py;
+# _record_usage / _get_attr -> spica/runtime/llm_stream.py (Phase 6C).

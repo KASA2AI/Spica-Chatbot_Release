@@ -5,13 +5,11 @@ from functools import wraps
 from typing import Any, Callable
 
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from spica.adapters.memory import SqliteMemoryAdapter
-from spica.ports.memory import MemoryScope
 from agent.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_spica_prompt
 from agent.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
 from agent.text_normalizer import normalize_square_brackets_for_speech
-from agent.time_context import build_local_time_context, format_local_time_for_prompt
+from agent.time_context import build_local_time_context
 from common.timing import elapsed_ms, log_timing, now_ms
 from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
 from agent_tools.function_tools.screen.analyzer import (
@@ -22,7 +20,6 @@ from agent_tools.function_tools.screen.analyzer import (
 from agent_tools.function_tools.screen.schema import (
     ScreenToolError,
     compact_screen_observation_for_prompt,
-    screen_observation_context_for_next_turn,
 )
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from spica.adapters.llm import OpenAICompatibleAdapter
@@ -66,18 +63,6 @@ def _get_attr(value: Any, key: str, default: Any = None) -> Any:
 
 def _llm_adapter(services: AgentServices) -> OpenAICompatibleAdapter:
     return services.llm_adapter or OpenAICompatibleAdapter(services.llm_client)
-
-
-def _memory_adapter(services: AgentServices):
-    return services.memory_adapter or SqliteMemoryAdapter(services.memory_store, services.recent_memory)
-
-
-def _memory_scope(state: AgentState, services: AgentServices, interlocutor: str) -> MemoryScope:
-    return MemoryScope(
-        character_id=str(services.config.get("character_id") or "spica"),
-        user_id=interlocutor,
-        conversation_id=state.conversation_id,
-    )
 
 
 def _tts_adapter_name(services: AgentServices) -> str:
@@ -385,41 +370,8 @@ def parse_reply_node(state: AgentState, services: AgentServices) -> AgentState:
     return state
 
 
-@node_timer
-def save_recent_context_node(state: AgentState, services: AgentServices) -> AgentState:
-    if _skip_if_error(state):
-        return state
-    services.recent_memory.append_turn(
-        state.conversation_id,
-        state.user_input,
-        state.answer or "",
-        user_local_time=(
-            format_local_time_for_prompt(state.user_local_time)
-            if state.include_user_time_context
-            else None
-        ),
-        interaction_mode=state.interaction_mode,
-        screen_observation_context=screen_observation_context_for_next_turn(state.screen_observation),
-    )
-    return state
-
-
-@node_timer
-def extract_memory_node(state: AgentState, services: AgentServices) -> AgentState:
-    if _skip_if_error(state):
-        return state
-    interlocutor = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
-    result = _memory_adapter(services).commit_turn(
-        _memory_scope(state, services, interlocutor),
-        state.user_input,
-        state.answer or "",
-        meta={
-            "interlocutor_name": interlocutor,
-            "max_active_memories": int(services.config.get("max_long_term_memories", 200)),
-        },
-    )
-    state.metadata.update(result)
-    return state
+# save_recent_context_node + extract_memory_node were unified with the streaming
+# path into spica/runtime/memory_commit.save_stream_memory (Phase 6D).
 
 
 @node_timer

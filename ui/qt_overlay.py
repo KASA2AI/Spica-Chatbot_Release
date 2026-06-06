@@ -11,10 +11,8 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QWidget
 
-from agent import SimpleAgent
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, build_tts_adapter, load_tts_config
-from agent_tools.visual import VisualDiffService
+from spica.host.app_host import AppHost
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.chat_stream_controller import ChatStreamController
 from ui.controllers.interaction_controller import InteractionController
@@ -64,10 +62,11 @@ class OverlayWindow(QWidget):
         self.setStyleSheet("OverlayWindow { background: transparent; }")
 
         self.overlay_config: OverlayConfig = load_overlay_config()
-        self.visual_tool: VisualDiffService | None = None
-        self.tts_tool: GPTSoVITSTool | None = None
+        self.host: AppHost | None = None
+        self.visual_tool: Any | None = None
+        self.tts_tool: Any | None = None
         self.tts_adapter: Any | None = None
-        self.agent: SimpleAgent | None = None
+        self.agent: Any | None = None
         self.chat_stream_controller: ChatStreamController | None = None
         self.song_controller: SongController | None = None
         self.voice_input_controller: VoiceInputController | None = None
@@ -176,27 +175,24 @@ class OverlayWindow(QWidget):
         self._start_startup_warmup()
 
     def _init_backend(self) -> None:
+        # Composition root now lives in AppHost.initialize() (Phase 1). The UI no
+        # longer constructs services; it reads them back from the host. Qt wiring
+        # (chat stream controller, dialogue messages) stays here.
+        self.host = AppHost()
         try:
-            self.visual_tool = VisualDiffService()
-            tts_config = load_tts_config()
-            tts_provider = str(tts_config.get("provider") or tts_config.get("tts_provider") or "gptsovits_current")
-            if tts_provider in CURRENT_GPTSOVITS_PROVIDERS:
-                self.tts_tool = GPTSoVITSTool()
-                self.tts_adapter = build_tts_adapter(tts_config, service=self.tts_tool)
-            else:
-                self.tts_tool = None
-                self.tts_adapter = build_tts_adapter(tts_config)
-            self.agent = SimpleAgent(tts_adapter=self.tts_adapter, visual_tool=self.visual_tool)
+            self.host.initialize()
+            self.visual_tool = self.host.visual_tool
+            self.tts_tool = self.host.tts_tool
+            self.tts_adapter = self.host.tts_adapter
+            self.agent = self.host.conversation_surface
             self._init_chat_stream_controller()
             self.interlocutor_name = self.agent.interlocutor_name
-            provider_name = str(getattr(self.tts_adapter, "name", None) or tts_provider)
+            provider_name = str(getattr(self.tts_adapter, "name", None) or self.host.tts_provider)
             self.dialogue.set_dialogue_text(f"LLM API 初始化完成，准备预热 {provider_name}...")
         except Exception as exc:
-            if self.visual_tool is None:
-                try:
-                    self.visual_tool = VisualDiffService()
-                except Exception:
-                    self.visual_tool = None
+            # initialize() salvages visual_tool best-effort before re-raising, so
+            # the character can still render even when the backend fails.
+            self.visual_tool = self.host.visual_tool
             self.dialogue.set_dialogue_text(f"初始化后端失败：{exc}")
 
     def _init_chat_stream_controller(self) -> None:
@@ -225,7 +221,7 @@ class OverlayWindow(QWidget):
         if self.agent is None or self.tts_adapter is None:
             return
 
-        self.startup_warmup_worker = StartupWarmupWorker(self.agent, self.tts_adapter, self)
+        self.startup_warmup_worker = StartupWarmupWorker(self.host, self)
         self.startup_warmup_worker.status_changed.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.finished_ok.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.failed.connect(self.dialogue.set_dialogue_text)

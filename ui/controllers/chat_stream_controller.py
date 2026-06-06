@@ -8,7 +8,8 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QTimer
 
-from agent import SimpleAgent
+from spica.core.events import event_from_legacy
+from spica.core.state_machine import ChatStateMachine
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.models.playback import AudioOwner, AudioToken
@@ -27,7 +28,7 @@ class ChatStreamController(QObject):
     def __init__(
         self,
         parent: QObject,
-        agent: SimpleAgent,
+        agent: Any,
         conversation_id_provider: Callable[[], str],
         visual_overrides_provider: Callable[[], dict[str, Any]],
         audio_controller: AudioController,
@@ -57,6 +58,10 @@ class ChatStreamController(QObject):
         self.current_stream_kind: StreamKind | None = None
         self.current_prelude_on_done: Callable[[], None] | None = None
         self.audio_session_id = 0
+
+        # Phase 6E: ChatState is the single source of truth for UI busy-ness.
+        # The booleans below remain as internal playback-loop coordination only.
+        self.state_machine = ChatStateMachine()
 
         self.streaming_mode = False
         self.stream_pending_units: dict[int, StreamUnitState] = {}
@@ -113,11 +118,8 @@ class ChatStreamController(QObject):
         self.set_busy(False)
 
     def is_busy(self) -> bool:
-        return bool(
-            (self.chat_worker and self.chat_worker.isRunning())
-            or self.playback_active
-            or self.streaming_mode
-        )
+        # Phase 6E: UI reads busy-ness from the state machine, not scattered bools.
+        return bool(self.state_machine.is_busy or (self.chat_worker and self.chat_worker.isRunning()))
 
     def shutdown(self, wait_ms: int = 1500) -> None:
         self.stop_current()
@@ -277,12 +279,18 @@ class ChatStreamController(QObject):
         self._pump_wait_logged = set()
         self._last_playback_advance_index = None
         self._last_playback_advance_at_ms = None
+        # Mirror the turn lifecycle into the state machine (Phase 6E).
+        if streaming:
+            self.state_machine.start_turn()
+        else:
+            self.state_machine.stop()
 
     def _handle_stream_event(self, event_name: str, data: dict[str, Any]) -> None:
         token = self._active_stream_signal_token()
         if token is None:
             self._log_stale_event_ignored("stream_event", name=event_name)
             return
+        self.state_machine.on_runtime_event(event_from_legacy({"event": event_name, "data": data}))
         if event_name == "status":
             self._handle_stream_status(data)
             return
@@ -777,6 +785,7 @@ class ChatStreamController(QObject):
             self.playback_index = 0
             self.current_unit = unit
             self.playback_active = True
+            self.state_machine.on_playback_started()
             self._log_ui_playback_event(
                 "playback_start",
                 unit=unit,
@@ -818,6 +827,7 @@ class ChatStreamController(QObject):
         self.current_text_finished = False
         self.audio_controller.release_preloaded()
         self.set_busy(False)
+        self.state_machine.stop()
         if completed_kind == StreamKind.SONG_PRELUDE:
             self._call_prelude_done()
             return
@@ -1103,6 +1113,7 @@ class ChatStreamController(QObject):
             return
         self.audio_controller.release_preloaded()
         self.set_busy(False)
+        self.state_machine.stop()
         if self.current_stream_kind == StreamKind.SONG_PRELUDE:
             self._call_prelude_done()
             return

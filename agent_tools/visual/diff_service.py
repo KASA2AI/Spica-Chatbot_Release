@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from agent_tools.config_io import read_config_file, write_config_file
 from common.timing import elapsed_ms, now_ms
 
 
@@ -15,7 +16,7 @@ PROJECT_ROOT = BASE_DIR
 SPICA_DATA_DIR = PROJECT_ROOT / "spica_data"
 DEFAULT_DIFF_ROOT = SPICA_DATA_DIR / "diffs"
 DEFAULT_RULES_PATH = DEFAULT_DIFF_ROOT / "expression_hand_pose_rules.json"
-DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "visual_config.json"
+DEFAULT_CONFIG_PATH = BASE_DIR / "data" / "config" / "visual.yaml"
 
 HAND_POSE_ALIASES = {
     "normal": "normal",
@@ -176,11 +177,10 @@ class VisualDiffService:
         if not force and mtime == self._config_mtime:
             return
 
-        with self.config_path.open("r", encoding="utf-8") as file:
-            config = json.load(file)
+        config = read_config_file(self.config_path)
 
         if not isinstance(config, dict):
-            raise ValueError("visual_config.json 必须是 JSON 对象。")
+            raise ValueError(f"视觉配置必须是对象：{self.config_path}")
 
         self.config = config
         self._config_mtime = mtime
@@ -196,8 +196,7 @@ class VisualDiffService:
         if not force and mtime == self._rules_mtime:
             return
 
-        with rules_path.open("r", encoding="utf-8") as file:
-            rules = json.load(file)
+        rules = read_config_file(rules_path)
 
         if not isinstance(rules, dict) or not isinstance(rules.get("expressions"), list):
             raise ValueError("差分规则 JSON 缺少 expressions 列表。")
@@ -228,9 +227,7 @@ class VisualDiffService:
             raise ValueError("视觉配置必须是 JSON 对象。")
 
         with self._lock:
-            with self.config_path.open("w", encoding="utf-8") as file:
-                json.dump(new_config, file, ensure_ascii=False, indent=2)
-                file.write("\n")
+            write_config_file(self.config_path, new_config)
             self.reload_config(force=True)
             return self.public_config()
 

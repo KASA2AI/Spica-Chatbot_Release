@@ -74,11 +74,10 @@ Spica-Chatbot/
 │   └── respeaker/                 # ReSpeaker USB 4 Mic Array 音频采集、灯光控制、硬件 VAD
 ├── common/
 │   └── timing.py                  # 通用计时日志
-├── examples/
-│   └── llm_demo.py                # 命令行记忆示例
 ├── config/
-│   ├── tts_config.json            # GPT-SoVITS 路径、参考音频、合成参数
-│   └── visual_config.json         # 差分根目录、对白框、服装和选择策略
+│   └── screen_vision_config.json  # 屏幕观察（Moondream/OCR）配置
+├── data/
+│   └── config/                    # 类型化配置：app.yaml / tts.yaml / visual.yaml / plugins.yaml
 ├── docs/
 │   ├── dev_smoke_tests.md         # 开发期 smoke test 说明
 │   └── manual_smoke_checklist.md  # 手动验收清单
@@ -201,13 +200,7 @@ Spica-Chatbot/
    ./run_ibus.sh
    ```
 
-6. 命令行记忆测试。
-
-   ```bash
-   python examples/llm_demo.py
-   ```
-
-7. 运行测试。
+6. 运行测试。
 
    ```bash
    python -m pytest tests

@@ -4,7 +4,6 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from agent import SimpleAgent
 from ui.models.stream import StreamToken
 
 
@@ -14,7 +13,7 @@ class ChatWorker(QThread):
 
     def __init__(
         self,
-        agent: SimpleAgent,
+        agent: Any,
         message: str,
         conversation_id: str,
         visual_overrides: dict[str, Any],

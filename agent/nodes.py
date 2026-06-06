@@ -4,13 +4,12 @@ import json
 from functools import wraps
 from typing import Any, Callable
 
-from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from memory.control import save_extracted_memories
+from agent.character_loader import DEFAULT_CHARACTER_NAME, DEFAULT_INTERLOCUTOR_NAME
 from agent.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_spica_prompt
 from agent.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from agent.state import AgentServices, AgentState
 from agent.text_normalizer import normalize_square_brackets_for_speech
-from agent.time_context import build_local_time_context, format_local_time_for_prompt
+from agent.time_context import build_local_time_context
 from common.timing import elapsed_ms, log_timing, now_ms
 from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
 from agent_tools.function_tools.screen.analyzer import (
@@ -21,9 +20,9 @@ from agent_tools.function_tools.screen.analyzer import (
 from agent_tools.function_tools.screen.schema import (
     ScreenToolError,
     compact_screen_observation_for_prompt,
-    screen_observation_context_for_next_turn,
 )
 from agent_tools.tts.schemas import TTSRequest, TTSResult
+from spica.adapters.llm import OpenAICompatibleAdapter
 
 
 DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
@@ -60,6 +59,10 @@ def _get_attr(value: Any, key: str, default: Any = None) -> Any:
     if isinstance(value, dict):
         return value.get(key, default)
     return getattr(value, key, default)
+
+
+def _llm_adapter(services: AgentServices) -> OpenAICompatibleAdapter:
+    return services.llm_adapter or OpenAICompatibleAdapter(services.llm_client)
 
 
 def _tts_adapter_name(services: AgentServices) -> str:
@@ -215,6 +218,7 @@ def build_prompt_node(state: AgentState, services: AgentServices) -> AgentState:
         memory_budget_chars=int(services.config.get("long_term_memory_budget_chars", 1200)),
         recent_turn_char_limit=int(services.config.get("recent_turn_char_limit", 360)),
         interlocutor_name=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
+        character_name=str(services.config.get("character_name") or DEFAULT_CHARACTER_NAME),
         user_local_time=state.user_local_time if state.include_user_time_context else None,
     )
     if state.screen_observation:
@@ -255,25 +259,16 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
     tool_history: list[dict[str, Any]] = []
     response = None
 
-    if _prefers_chat_completions(services.llm_client):
+    adapter = _llm_adapter(services)
+    if adapter.prefers_chat_completions():
         state.timing["agent_rounds"] = 1
         if use_tools and active_tool_schemas:
             state.timing["agent_tool_probe_skipped"] = True
             state.timing["agent_tool_probe_skip_reason"] = "chat_completions_compatible_client"
         response_start_ms = now_ms()
-        response = services.llm_client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt_for_round}],
-        )
+        state.raw_model_output = adapter.complete_chat(model, prompt_for_round, state)
         response_duration = elapsed_ms(response_start_ms)
         state.timing["agent_response_initial_ms"] = response_duration
-        _record_usage(state, response)
-        choices = list(_get_attr(response, "choices", []) or [])
-        if choices:
-            message = _get_attr(choices[0], "message")
-            state.raw_model_output = str(_get_attr(message, "content", "") or "")
-        else:
-            state.raw_model_output = ""
         state.timing["raw_answer_chars"] = len(state.raw_model_output or "")
         _log_timing(
             services,
@@ -295,7 +290,7 @@ def call_llm_node(state: AgentState, services: AgentServices) -> AgentState:
             request["tools"] = active_tool_schemas
 
         response_start_ms = now_ms()
-        response = services.llm_client.responses.create(**request)
+        response = adapter.create_responses(**request)
         response_duration = elapsed_ms(response_start_ms)
         if round_index == 0:
             state.timing["agent_response_initial_ms"] = response_duration
@@ -376,39 +371,8 @@ def parse_reply_node(state: AgentState, services: AgentServices) -> AgentState:
     return state
 
 
-@node_timer
-def save_recent_context_node(state: AgentState, services: AgentServices) -> AgentState:
-    if _skip_if_error(state):
-        return state
-    services.recent_memory.append_turn(
-        state.conversation_id,
-        state.user_input,
-        state.answer or "",
-        user_local_time=(
-            format_local_time_for_prompt(state.user_local_time)
-            if state.include_user_time_context
-            else None
-        ),
-        interaction_mode=state.interaction_mode,
-        screen_observation_context=screen_observation_context_for_next_turn(state.screen_observation),
-    )
-    return state
-
-
-@node_timer
-def extract_memory_node(state: AgentState, services: AgentServices) -> AgentState:
-    if _skip_if_error(state):
-        return state
-    result = save_extracted_memories(
-        memory_store=services.memory_store,
-        conversation_id=state.conversation_id,
-        user_input=state.user_input,
-        assistant_answer=state.answer or "",
-        max_active_memories=int(services.config.get("max_long_term_memories", 200)),
-        interlocutor_name=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
-    )
-    state.metadata.update(result)
-    return state
+# save_recent_context_node + extract_memory_node were unified with the streaming
+# path into spica/runtime/memory_commit.save_stream_memory (Phase 6D).
 
 
 @node_timer
@@ -646,12 +610,4 @@ def _record_usage(state: AgentState, response: Any) -> None:
             state.timing[key] = value
 
 
-def _prefers_chat_completions(client: Any) -> bool:
-    base_url = str(_get_attr(client, "base_url", "") or "").lower()
-    return "deepseek" in base_url and _has_chat_completions(client)
-
-
-def _has_chat_completions(client: Any) -> bool:
-    chat = _get_attr(client, "chat")
-    completions = _get_attr(chat, "completions") if chat is not None else None
-    return completions is not None and hasattr(completions, "create")
+_DEEPSEEK_BRANCH_MOVED = "agent.nodes DeepSeek/OpenAI branch moved to spica.adapters.llm (Phase 5)"

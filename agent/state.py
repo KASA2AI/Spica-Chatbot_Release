@@ -47,3 +47,8 @@ class AgentServices:
     logger: Callable[..., None] | None = None
     tool_functions: dict[str, Callable[..., str]] = field(default_factory=dict)
     tool_schemas: list[dict[str, Any]] = field(default_factory=list)
+    # Phase 5: resolved capability adapters. When None, the pipeline lazily wraps
+    # the raw llm_client / memory_store, so callers passing only the legacy fields
+    # keep working unchanged.
+    llm_adapter: Any | None = None
+    memory_adapter: Any | None = None

@@ -28,10 +28,14 @@ class AppHostSmokeTest(unittest.TestCase):
         host.chat_engine = sentinel
         self.assertIs(host.conversation_surface, sentinel)
 
-    def test_management_surface_not_implemented_until_phase_8(self):
+    def test_management_surface_lists_builtin_adapters(self):
+        # Phase 8: management_surface is implemented; before initialize() it
+        # already exposes the registry's built-in adapters and no plugins.
         host = AppHost()
-        with self.assertRaises(NotImplementedError):
-            _ = host.management_surface
+        ms = host.management_surface
+        self.assertIn("openai_compatible", ms.list_adapters("llm"))
+        self.assertIn("sqlite", ms.list_adapters("memory"))
+        self.assertEqual(ms.list_plugins(), [])
 
 
 if __name__ == "__main__":

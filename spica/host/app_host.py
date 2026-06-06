@@ -30,6 +30,8 @@ from spica.core.chat_engine import ChatEngine
 from agent.character_loader import DEFAULT_SPICA_SKILL_DIR
 from spica.core.character import load_character_package
 from spica.host.agent_assembly import build_agent_services
+from spica.host.management import ManagementSurface
+from spica.plugins.host import PluginHost
 from spica.plugins.registry import CapabilityRegistry
 from spica.adapters.llm import OpenAICompatibleAdapter
 from spica.adapters.memory import SqliteMemoryAdapter
@@ -53,6 +55,13 @@ class AppHost:
         self.tts_provider: str = "gptsovits_current"
         self.registry = CapabilityRegistry()
         self._register_builtin_adapters()
+        self.plugin_host = PluginHost(self.registry)
+        self._management = ManagementSurface(
+            registry=self.registry,
+            config_manager=ConfigManager(),
+            plugin_host=self.plugin_host,
+            characters_root=DEFAULT_SPICA_SKILL_DIR.parent,
+        )
 
     def _register_builtin_adapters(self) -> None:
         """Register the built-in capability adapters by name (Phase 5).
@@ -84,6 +93,9 @@ class AppHost:
         try:
             self.config = ConfigManager().load()
             self.secrets = load_secrets()
+            # Load external plugins so they can register adapters/tools into the
+            # registry before capabilities are resolved by configured name (Phase 8).
+            self.plugin_host.load()
             # Load the active character package first so its asset references
             # drive visual/tts construction (Phase 7b). Spica's package leaves the
             # paths unset -> engine defaults -> behaviour unchanged.
@@ -190,5 +202,5 @@ class AppHost:
 
     @property
     def management_surface(self) -> Any:
-        """Entry point for the settings centre. Implemented in Phase 8."""
-        raise NotImplementedError("ManagementSurface 在 Phase 8 实现")
+        """Entry point for the settings centre (Phase 8)."""
+        return self._management

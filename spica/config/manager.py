@@ -88,6 +88,16 @@ class ConfigManager:
         if os.getenv("SPICA_SKILL_DIR"):
             character["skill_dir"] = os.getenv("SPICA_SKILL_DIR")
 
+        stream: dict[str, Any] = {}
+        for env_key, field in (
+            ("PLAY_UNIT_MIN_CHARS", "play_unit_min_chars"),
+            ("PLAY_UNIT_MAX_CHARS", "play_unit_max_chars"),
+            ("VISUAL_STREAM_WORKERS", "visual_stream_workers"),
+        ):
+            value = os.getenv(env_key)
+            if value:
+                stream[field] = int(value)
+
         overrides: dict[str, Any] = {}
         if llm:
             overrides["llm"] = llm
@@ -95,6 +105,8 @@ class ConfigManager:
             overrides["memory"] = memory
         if character:
             overrides["character"] = character
+        if stream:
+            overrides["stream"] = stream
         if os.getenv("MAX_TOOL_ROUNDS"):
             overrides["max_tool_rounds"] = int(os.getenv("MAX_TOOL_ROUNDS"))
         return overrides

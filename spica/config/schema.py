@@ -40,8 +40,15 @@ class CharacterConfig(BaseModel):
     skill_dir: str | None = None
 
 
+class StreamConfig(BaseModel):
+    play_unit_min_chars: int = 18
+    play_unit_max_chars: int = 96
+    visual_stream_workers: int = 2
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     character: CharacterConfig = Field(default_factory=CharacterConfig)
+    stream: StreamConfig = Field(default_factory=StreamConfig)
     max_tool_rounds: int = 3

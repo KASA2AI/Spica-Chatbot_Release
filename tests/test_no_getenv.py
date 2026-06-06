@@ -24,11 +24,9 @@ PERMANENT_ALLOWLIST = {
     "spica/config/secrets.py",
 }
 # Permitted temporarily -- delete the entry when the owning phase migrates it.
-TEMPORARY_ALLOWLIST = {
-    # TODO(Phase 6C): move PLAY_UNIT_* / VISUAL_STREAM_WORKERS into the typed
-    # config / orchestrator, then drop this entry.
-    "agent/streaming_pipeline.py",
-}
+# (Phase 6C migrated PLAY_UNIT_* / VISUAL_STREAM_WORKERS into the typed config;
+# the streaming pipeline no longer reads env, so the temporary entry is gone.)
+TEMPORARY_ALLOWLIST: set[str] = set()
 ALLOWLIST = PERMANENT_ALLOWLIST | TEMPORARY_ALLOWLIST
 
 

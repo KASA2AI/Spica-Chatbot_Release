@@ -27,7 +27,12 @@ from spica.core.events import RuntimeEvent, event_from_legacy
 from spica.runtime.orchestrator import stream_voice_events
 
 
-def run_turn(state: Any, services: Any) -> Iterator[RuntimeEvent]:
-    """Drive one streaming turn, yielding typed ``RuntimeEvent``s in order."""
-    for legacy in stream_voice_events(state, services):
+def run_turn(state: Any, services: Any, exec_strategy: Any = None) -> Iterator[RuntimeEvent]:
+    """Drive one streaming turn, yielding typed ``RuntimeEvent``s in order.
+
+    ``exec_strategy`` (C2) is the injected concurrency policy: ``None`` -> the
+    orchestrator's default ``Threaded`` pools (streaming); ``Inline()`` -> every
+    lane runs synchronously, which the fold-based sync path uses.
+    """
+    for legacy in stream_voice_events(state, services, exec_strategy):
         yield event_from_legacy(legacy)

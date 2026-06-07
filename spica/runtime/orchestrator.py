@@ -13,6 +13,7 @@ Tunables (play-unit sizes, visual workers) come from ``services.config`` (Phase
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import queue
 import threading
 from typing import Any, Iterator
@@ -28,6 +29,7 @@ from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion,
 from agent.state import AgentServices, AgentState
 from agent.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
 from common.timing import log_timing, now_ms
+from spica.runtime.exec_strategy import ExecStrategy, Threaded
 from spica.runtime.llm_stream import llm_adapter
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
@@ -40,14 +42,18 @@ _SENTINEL = object()
 _FIRST_UNIT_WARNING_MS = 3000.0
 
 
-def stream_voice_events(state: AgentState, services: AgentServices) -> Iterator[dict[str, Any]]:
+def stream_voice_events(
+    state: AgentState,
+    services: AgentServices,
+    exec_strategy: ExecStrategy | None = None,
+) -> Iterator[dict[str, Any]]:
     request_start_ms = now_ms()
     yield {"event": "status", "data": {"state": "thinking", "message": "thinking"}}
 
     output_queue: queue.Queue[Any] = queue.Queue()
     producer = threading.Thread(
         target=_produce_stream_events,
-        args=(state, services, request_start_ms, output_queue),
+        args=(state, services, request_start_ms, output_queue, exec_strategy),
         daemon=True,
     )
     producer.start()
@@ -65,17 +71,21 @@ def _produce_stream_events(
     services: AgentServices,
     request_start_ms: float,
     output_queue: queue.Queue[Any],
+    exec_strategy: ExecStrategy | None = None,
 ) -> None:
     timing_lock = threading.Lock()
     unit_timings: list[dict[str, Any]] = []
     created_units: list[str] = []
     first_unit_event = threading.Event()
 
-    visual_executor = concurrent.futures.ThreadPoolExecutor(
-        max_workers=max(1, int(services.config.get("visual_stream_workers") or 2))
-    )
-    tts_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    ready_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+    # Concurrency is an injected policy (C2). Streaming passes None and gets the
+    # default Threaded pools (owning their shutdown); the sync path injects Inline.
+    # The three lanes (visual / serial tts / finalize) live in the strategy.
+    owns_exec = exec_strategy is None
+    if exec_strategy is None:
+        exec_strategy = Threaded(
+            visual_workers=max(1, int(services.config.get("visual_stream_workers") or 2))
+        )
     ready_futures: list[concurrent.futures.Future[Any]] = []
     # C1 ordered release: finalize workers push (index, payload) onto this
     # INTERNAL queue; only the producer thread drains it through the Sequencer
@@ -170,33 +180,24 @@ def _produce_stream_events(
                 },
             },
         )
-        visual_future = visual_executor.submit(
-            build_unit_visual_and_emit,
-            services,
-            state,
-            unit,
-            request_start_ms,
-            set_timing_once,
-            put_unit_event,
+        visual_future = exec_strategy.submit_visual(
+            functools.partial(
+                build_unit_visual_and_emit,
+                services, state, unit, request_start_ms, set_timing_once, put_unit_event,
+            )
         )
-        tts_future = tts_executor.submit(
-            synthesize_unit_audio,
-            services,
-            state,
-            unit,
-            request_start_ms,
-            set_timing_once,
-            put_unit_event,
+        tts_future = exec_strategy.submit_tts(
+            functools.partial(
+                synthesize_unit_audio,
+                services, state, unit, request_start_ms, set_timing_once, put_unit_event,
+            )
         )
         ready_futures.append(
-            ready_executor.submit(
-                _finalize_unit,
-                unit,
-                visual_future,
-                tts_future,
-                request_start_ms,
-                set_timing_once,
-                completion_queue,
+            exec_strategy.submit_finalize(
+                functools.partial(
+                    _finalize_unit,
+                    unit, visual_future, tts_future, request_start_ms, set_timing_once, completion_queue,
+                )
             )
         )
         created_units.append(display_text)
@@ -336,9 +337,8 @@ def _produce_stream_events(
         log_timing("chat_stream_error", relative_ms(), conversation_id=state.conversation_id, error=str(exc))
     finally:
         first_unit_timer.cancel()
-        visual_executor.shutdown(wait=False, cancel_futures=False)
-        tts_executor.shutdown(wait=False, cancel_futures=False)
-        ready_executor.shutdown(wait=False, cancel_futures=False)
+        if owns_exec:
+            exec_strategy.shutdown()
         output_queue.put(_SENTINEL)
 
 

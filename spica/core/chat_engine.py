@@ -20,10 +20,11 @@ from agent.character_loader import (
     normalize_interlocutor_name,
 )
 from agent.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
-from agent.runtime import run_voice_pipeline
 from agent.state import AgentServices, AgentState
 from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
+from spica.runtime.exec_strategy import Inline
+from spica.runtime.fold import fold_events
 from spica.runtime.turn import run_turn
 
 
@@ -72,8 +73,10 @@ class ChatEngine:
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
         )
-        state = run_voice_pipeline(state, self.services)
-        return state.response_payload
+        # Sync path (C2) = drive run_turn with Inline (no thread pools), collect
+        # the typed events, and fold them into the response payload.
+        events = list(run_turn(state, self.services, exec_strategy=Inline()))
+        return fold_events(events, conversation_id=state.conversation_id)
 
     def run(self, user_input: str, conversation_id: str = "default") -> str:
         return str(self.run_voice(user_input, conversation_id=conversation_id).get("answer") or "")

@@ -18,7 +18,7 @@ from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
 from spica.config.schema import AppConfig, CharacterConfig
 from spica.core.chat_engine import ChatEngine
-from spica.core.events import DoneEvent, RuntimeEvent
+from spica.core.events import DoneEvent, ErrorEvent, RuntimeEvent
 
 
 class _FakeResp:
@@ -45,6 +45,16 @@ class _FakeResponses:
 class _FakeLLM:
     def __init__(self, text):
         self.responses = _FakeResponses(text)
+
+
+class _RaisingResponses:
+    def create(self, **kwargs):  # raises for stream create AND non-stream fallback
+        raise RuntimeError("llm exploded mid-turn")
+
+
+class _RaisingLLM:
+    def __init__(self):
+        self.responses = _RaisingResponses()
 
 
 class _FakeVisual:
@@ -161,6 +171,36 @@ class ChatEngineManagementTest(unittest.TestCase):
             cleared = engine.clear_memory("c1", clear_long_term=True)
             self.assertTrue(cleared["ok"])
             self.assertTrue(cleared["cleared"]["long_term_memory"])
+
+
+class ChatEngineErrorPathParityTest(unittest.TestCase):
+    """C2: sync (fold) and streaming agree on the error path -- both for an empty
+    input (validation error) and a mid-stream LLM failure (except branch)."""
+
+    def _engine(self, tmp, llm=None):
+        services = _make_services(tmp, ANSWER)
+        if llm is not None:
+            services.llm_client = llm
+        return ChatEngine(services, _config())
+
+    def _assert_error_consistent(self, engine, user_input):
+        sync = engine.run_voice(user_input, conversation_id="c1")
+        stream = list(engine.stream_voice_runtime(user_input))
+        # sync (fold): error-shaped payload, no answer audio.
+        self.assertIn("error", sync)
+        self.assertIsNone(sync["audio_url"])
+        self.assertEqual(sync["conversation_id"], "c1")
+        # streaming: an error event and no done (C0 main axis).
+        self.assertTrue(any(isinstance(e, ErrorEvent) for e in stream))
+        self.assertFalse(any(isinstance(e, DoneEvent) for e in stream))
+
+    def test_empty_input_error_is_consistent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._assert_error_consistent(self._engine(tmp), "")
+
+    def test_mid_stream_exception_is_consistent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._assert_error_consistent(self._engine(tmp, llm=_RaisingLLM()), "説明して")
 
 
 if __name__ == "__main__":

@@ -14,16 +14,15 @@ from typing import Any
 from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from agent.time_context import format_local_time_for_prompt
 from agent_tools.function_tools.screen.schema import screen_observation_context_for_next_turn
-from spica.adapters.memory import SqliteMemoryAdapter
 from spica.ports.memory import MemoryScope
+from spica.runtime.deps import TurnDeps
 
 
-def memory_adapter(services: Any) -> Any:
-    return services.memory_adapter or SqliteMemoryAdapter(services.memory_store, services.recent_memory)
-
-
-def save_stream_memory(state: Any, services: Any) -> None:
+def save_stream_memory(state: Any, services: Any, deps: Any = None) -> None:
     try:
+        # C3b: identity + the memory port come from typed deps; dict-config
+        # callers (compat sync path / tests) bridge here.
+        deps = deps or TurnDeps.from_legacy_services(services)
         services.recent_memory.append_turn(
             state.conversation_id,
             state.user_input,
@@ -36,10 +35,10 @@ def save_stream_memory(state: Any, services: Any) -> None:
             interaction_mode=state.interaction_mode,
             screen_observation_context=screen_observation_context_for_next_turn(state.screen_observation),
         )
-        interlocutor = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
-        result = memory_adapter(services).commit_turn(
+        interlocutor = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
+        result = deps.memory.commit_turn(
             MemoryScope(
-                character_id=str(services.config.get("character_id") or "spica"),
+                character_id=str(deps.config.character.character_id or "spica"),
                 user_id=interlocutor,
                 conversation_id=state.conversation_id,
             ),
@@ -47,7 +46,7 @@ def save_stream_memory(state: Any, services: Any) -> None:
             state.answer or "",
             meta={
                 "interlocutor_name": interlocutor,
-                "max_active_memories": int(services.config.get("max_long_term_memories", 200)),
+                "max_active_memories": deps.config.memory.max_long_term_memories,
             },
         )
         state.metadata.update(result)

@@ -23,8 +23,8 @@ from agent_tools.function_tools.screen.schema import (
 )
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from spica.adapters.llm import OpenAICompatibleAdapter
+from spica.adapters.memory import SqliteMemoryAdapter
 from spica.ports.memory import MemoryScope
-from spica.runtime.memory_commit import memory_adapter
 
 
 DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
@@ -65,6 +65,12 @@ def _get_attr(value: Any, key: str, default: Any = None) -> Any:
 
 def _llm_adapter(services: AgentServices) -> OpenAICompatibleAdapter:
     return services.llm_adapter or OpenAICompatibleAdapter(services.llm_client)
+
+
+def _memory_adapter(services: AgentServices) -> Any:
+    # Legacy node-path resolver (C3b moved it off spica/runtime/memory_commit so
+    # that hot path runs on deps.memory). Retired with agent/ in C4.
+    return services.memory_adapter or SqliteMemoryAdapter(services.memory_store, services.recent_memory)
 
 
 def _tts_adapter_name(services: AgentServices) -> str:
@@ -138,7 +144,7 @@ def retrieve_long_term_memory_node(state: AgentState, services: AgentServices) -
         user_id=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
         conversation_id=state.conversation_id,
     )
-    items = memory_adapter(services).retrieve(
+    items = _memory_adapter(services).retrieve(
         scope,
         state.user_input,
         limit=int(services.config.get("long_term_memory_limit", 5)),

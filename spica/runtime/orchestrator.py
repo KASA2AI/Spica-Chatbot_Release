@@ -299,7 +299,7 @@ def _produce_stream_events(
             for unit_text in fallback_splitter.feed(state.answer) + fallback_splitter.flush():
                 submit_unit(unit_text)
 
-        save_stream_memory(state, services)
+        save_stream_memory(state, services, deps)
 
         for future in ready_futures:
             future.result()

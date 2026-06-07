@@ -19,6 +19,14 @@ from spica.ports.memory import MemoryItem, MemoryScope
 _SUPPORTED = {"commit_turn", "retrieve"}
 
 
+def scoped_conversation_id(character_id: str, conversation_id: str | None) -> str:
+    # The single definition of the long-term-memory namespace key (Phase 7): the
+    # store key is namespaced by character_id so different characters never see
+    # each other's memories. ChatEngine's manual remember/list/clear reuse this
+    # instead of re-hardcoding the "::" format.
+    return f"{character_id}::{conversation_id or 'default'}"
+
+
 class SqliteMemoryAdapter:
     name = "sqlite"
 
@@ -28,9 +36,7 @@ class SqliteMemoryAdapter:
         self.max_active_memories = max_active_memories
 
     def _scoped_conversation_id(self, scope: MemoryScope) -> str:
-        # Isolate memory per character (Phase 7): the store key is namespaced by
-        # character_id, so different characters never see each other's memories.
-        return f"{scope.character_id}::{scope.conversation_id or 'default'}"
+        return scoped_conversation_id(scope.character_id, scope.conversation_id)
 
     def commit_turn(
         self,
@@ -53,12 +59,15 @@ class SqliteMemoryAdapter:
         rows = self.store.search_memories(self._scoped_conversation_id(scope), query, limit=limit)
         items: list[MemoryItem] = []
         for row in rows:
+            importance = row.get("importance")
             items.append(
                 MemoryItem(
                     text=str(row.get("content", "")),
-                    score=float(row.get("score") or 0.0),
+                    # _row_to_dict carries no "score" key; importance is the proxy.
+                    score=float(importance or 0.0),
                     type=row.get("memory_type") or row.get("type"),
-                    importance=row.get("importance"),
+                    importance=importance,
+                    scope=row.get("scope"),
                 )
             )
         return items

@@ -22,6 +22,7 @@ from agent.character_loader import (
 from agent.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
 from agent.runtime import run_voice_pipeline
 from agent.state import AgentServices, AgentState
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
 from spica.core.events import event_from_legacy
 from spica.runtime.orchestrator import stream_voice_events
@@ -136,16 +137,25 @@ class ChatEngine:
     def set_visual_tool(self, visual_tool: Any | None) -> None:
         self.services.visual_tool = visual_tool
 
+    def _ltm_conversation_id(self, conversation_id: str) -> str:
+        # Long-term store is namespaced by character (Phase 7) so it matches
+        # commit_turn / retrieve; short-term recent_memory stays on the bare
+        # conversation_id. "::" is defined once, in scoped_conversation_id.
+        return scoped_conversation_id(
+            str(self.services.config.get("character_id") or "spica"),
+            conversation_id,
+        )
+
     def clear_memory(self, conversation_id: str = "default", clear_long_term: bool = False) -> dict[str, Any]:
         self.services.recent_memory.clear(conversation_id)
         cleared = {"recent_memory": True, "long_term_memory": False}
         if clear_long_term:
-            self.services.memory_store.clear_memories(conversation_id)
+            self.services.memory_store.clear_memories(self._ltm_conversation_id(conversation_id))
             cleared["long_term_memory"] = True
         return {"ok": True, "conversation_id": conversation_id, "cleared": cleared}
 
     def list_memory(self, conversation_id: str = "default", limit: int = 50) -> list[dict[str, Any]]:
-        return self.services.memory_store.list_memories(conversation_id, limit=limit)
+        return self.services.memory_store.list_memories(self._ltm_conversation_id(conversation_id), limit=limit)
 
     def remember(
         self,
@@ -155,7 +165,7 @@ class ChatEngine:
         importance: float = 0.8,
     ) -> int:
         return self.services.memory_store.upsert_memory(
-            conversation_id=conversation_id,
+            conversation_id=self._ltm_conversation_id(conversation_id),
             scope=scope,
             content=content,
             importance=importance,

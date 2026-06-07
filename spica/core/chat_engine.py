@@ -24,8 +24,7 @@ from agent.runtime import run_voice_pipeline
 from agent.state import AgentServices, AgentState
 from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
-from spica.core.events import event_from_legacy
-from spica.runtime.orchestrator import stream_voice_events
+from spica.runtime.turn import run_turn
 
 
 class ChatEngine:
@@ -90,13 +89,12 @@ class ChatEngine:
         interaction_mode: str = "chat",
         screen_attachment: dict[str, Any] | None = None,
     ):
-        """Drive a turn, yielding typed ``RuntimeEvent``s (Phase 6A boundary)."""
+        """Drive a turn, yielding typed ``RuntimeEvent``s via the run_turn entry."""
         state = self._build_state(
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
         )
-        for event in stream_voice_events(state, self.services):
-            yield event_from_legacy(event)
+        yield from run_turn(state, self.services)
 
     def stream_voice(
         self,

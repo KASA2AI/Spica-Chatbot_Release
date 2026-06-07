@@ -1,459 +1,489 @@
 # Spica Chatbot
 
-Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 PySide6 做透明悬浮窗口，用 OpenAI 兼容接口生成日语角色回复，再把回复拆成可播放片段，驱动立绘差分选择和 GPT-SoVITS 语音合成。
+Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 PySide6 提供透明置顶 Overlay，用 OpenAI 兼容接口生成角色回复，并把回复拆成可播放单元，驱动本地立绘差分、GPT-SoVITS 语音合成、短期/长期记忆、屏幕观察、点歌翻唱和可选语音输入。
 
-当前默认入口是桌面悬浮 UI：`webui_qt.py` -> `ui/qt_overlay.py`。UI 内部已拆分为 controllers、workers、models 和 widgets，聊天、点歌、语音输入、音频播放和打字机效果分别由独立模块维护。
+当前代码已经完成平台化重构的主要骨架：UI 不再直接组装 LLM/TTS/Visual/Memory 服务，后端由 `AppHost` 统一装配，核心对话由 `ChatEngine` 驱动，能力通过 ports/adapters 和 `CapabilityRegistry` 注册，跨 Host 到 UI 的运行事件用 `RuntimeEvent` dataclass 表达。
 
-## 功能概览
+## 当前状态
 
-- 透明置顶桌面 Overlay，包含立绘、对白框、输入框、窗口控制和设置面板。
-- OpenAI 兼容 LLM 客户端，支持标准 Responses API，并对 DeepSeek 这类 Chat Completions 兼容客户端做降级适配。
-- 短期上下文记忆和 SQLite 长期记忆。
-- 可选 LLM function tool 基础设施；默认不注册本地 demo 工具。
-- 流式生成播放：LLM 增量文本 -> 断句播放单元 -> 并行立绘选择和 TTS -> 按顺序播放。
-- GPT-SoVITS 本地日语语音合成，按情绪选择参考音频。
-- 本地投票式立绘差分选择，支持 8 套服装、3 类手部动作、27 个表情编号。
-- 点歌/翻唱链路：网易云搜索与下载 -> 人声分离 -> RVC/Applio 变声 -> 混音输出。
-- 可选中文麦克风识别，支持 ReSpeaker USB 4 Mic Array 硬件 VAD，依赖 `speech_recognition`、`PyAudio` 和设备后端。
+- 桌面入口：`webui_qt.py` -> `ui/qt_overlay.py`。
+- 组装根：`spica.host.app_host.AppHost.initialize()`。
+- 对话核心：`spica.core.chat_engine.ChatEngine`。
+- 流式运行时：`spica.runtime.orchestrator.stream_voice_events()`。
+- 配置入口：`spica.config.manager.ConfigManager` + `data/config/*.yaml` + `xiaosan.env`。
+- 能力注册：`spica.plugins.registry.CapabilityRegistry`。
+- 角色包：`spica.core.character.CharacterPackage`，默认使用 `spica_data/Spica_skill`。
+- UI 状态：`spica.core.state_machine.ChatStateMachine` 驱动忙碌、生成、播放、暂停和错误状态。
 
-## 目录结构
+## 功能
+
+- PySide6 透明置顶桌面 Overlay，包含立绘、对白框、输入框、截图按钮、语音按钮、窗口控制和设置面板。
+- OpenAI 兼容 LLM adapter，支持 Responses API，并对 DeepSeek 这类 Chat Completions 兼容客户端做分支适配。
+- 流式生成播放：LLM delta -> JSON answer 提取 -> 播放单元切分 -> 并行立绘选择和 TTS -> 按 index 顺序播放。
+- GPT-SoVITS 本地日语 TTS，按情绪选择参考音频，支持启动预热。
+- 本地立绘差分选择，基于回复文本和情绪投票选择表情、手势、服装、对白样式。
+- RecentMemory 短期上下文和 SQLite 长期记忆，长期记忆通过 `MemoryPort` 按 `character_id::conversation_id` 隔离。
+- 本地屏幕观察工具 `inspect_screen`，只有用户明确要求查看屏幕时触发，走本地截图、RapidOCR 和 Moondream，不上传图片。
+- 手动截图附件，用户框选区域后随下一条消息进入本地 screen pipeline。
+- 点歌/翻唱链路：意图识别 -> 网易云搜索和下载 -> 人声分离 -> Applio/RVC 变声 -> 混音输出。
+- 可选 ReSpeaker USB 4 Mic Array 语音输入，使用硬件 VAD 和 `speech_recognition` 中文识别。
+- 插件入口：插件可注册 adapters/tools，当前阶段不开放 UI widget 插件。
+
+## 架构
+
+```mermaid
+flowchart TD
+    User[用户输入/截图/语音] --> UI[PySide6 Overlay]
+    UI --> Host[AppHost]
+    Host --> Config[ConfigManager + Secrets]
+    Host --> Registry[CapabilityRegistry]
+    Registry --> LLM[LLMPort: OpenAICompatibleAdapter]
+    Registry --> TTS[TTSPort: GPT-SoVITS / dummy]
+    Registry --> Visual[VisualPort: SpicaDiff]
+    Registry --> Memory[MemoryPort: SQLite]
+    Host --> Engine[ChatEngine]
+    Engine --> Runtime[stream_voice_events]
+    Runtime --> Tools[inspect_screen / local tools]
+    Runtime --> Splitter[JsonAnswerExtractor + PlayUnitSplitter]
+    Splitter --> Jobs[Visual job + TTS job]
+    Jobs --> Events[RuntimeEvent / legacy dict bridge]
+    Events --> Controller[ChatStreamController]
+    Controller --> Playback[Typewriter + Audio + Character Image]
+```
+
+### 分层约束
+
+`spica/` 是平台核心，不能 import PySide、PyQt、shiboken 或其他 GUI 库。这个约束由 `tests/test_layering.py` 守住。
+
+业务代码不能直接读取 `os.getenv()` 或 `os.environ`。环境变量只能在 `spica/config/manager.py` 和 `spica/config/secrets.py` 读取，其他层必须通过 `AppConfig` 或 `Secrets` 获取配置。这个约束由 `tests/test_no_getenv.py` 守住。
+
+Host 只做组装和窄接口转发，业务逻辑在 `ChatEngine`、runtime 组件、adapters、memory 和 tool 模块中。
+
+### 主要目录
 
 ```text
-Spica-Chatbot/
-├── webui_qt.py                    # 桌面入口，处理 Linux Qt 依赖、输入法环境和 Overlay 启动
-├── build_release.sh               # 生成发布目录，排除缓存/密钥/运行产物并保留必要骨架
-├── run_ibus.sh                    # Linux ibus 输入法启动脚本
-├── pytest.ini                     # pytest 配置
-├── ui/
-│   ├── qt_overlay.py              # PySide6 透明 Overlay 主窗口和模块装配
-│   ├── overlay_config.py          # Overlay 配置加载和默认值
-│   ├── overlay_config.json        # Overlay 外观、布局和运行配置
-│   ├── controllers/               # 交互控制层：聊天流、音频、点歌、语音输入、打字机
-│   ├── workers/                   # Qt 后台线程：聊天、点歌、启动预热
-│   ├── models/                    # UI 状态模型：播放 token、流式单元、点歌状态
-│   └── widgets/                   # 对白框、输入面板、设置面板、窗口控制、图标等组件
-├── agent/
-│   ├── simple_agent.py            # SimpleAgent 门面，组装 LLM、记忆、TTS、立绘服务
-│   ├── runtime.py                 # 同步 voice pipeline 编排
-│   ├── nodes.py                   # 同步 pipeline 节点：prompt、LLM、记忆、立绘、TTS、响应
-│   ├── streaming_pipeline.py      # 流式生成、断句、并行 TTS/立绘、事件输出
-│   ├── state.py                   # AgentState / AgentServices 数据结构
-│   ├── prompt_builder.py          # Spica 角色 prompt 构建
-│   ├── reply_parser.py            # 模型 JSON 回复解析和情绪归一化
-│   ├── text_normalizer.py         # TTS/播放前的文本清洗
-│   └── character_loader.py        # 角色卡和对话者设定加载
-├── memory/
-│   ├── store.py                   # SQLite 长期记忆
-│   ├── recent.py                  # 内存短期对话上下文
-│   ├── extractor.py               # 从用户输入抽取可保存记忆
-│   └── control.py                 # 记忆保存、去重、裁剪控制
+.
+├── webui_qt.py                         # 桌面启动入口，处理 Linux Qt/xcb/输入法/ALSA 环境
+├── spica/
+│   ├── host/                           # AppHost 组装根、backend assembly、ManagementSurface
+│   ├── core/                           # ChatEngine、RuntimeEvent、ChatStateMachine、CharacterPackage
+│   ├── runtime/                        # 流式编排、LLM stream、工具轮、播放单元、TTS/Visual job、memory commit
+│   ├── ports/                          # LLM/TTS/Visual/Memory/Tool 协议
+│   ├── adapters/                       # OpenAI 兼容 LLM、SQLite memory、GPT-SoVITS TTS、Spica visual adapter
+│   ├── config/                         # Pydantic AppConfig、ConfigManager、Secrets
+│   └── plugins/                        # CapabilityRegistry、PluginHost、plugin manifest
+├── agent/                              # prompt、reply parser、同步节点、AgentState/AgentServices 兼容层
 ├── agent_tools/
-│   ├── function_tools/
-│   │   ├── __init__.py            # 可选 function tool 空默认注册表和通用执行器
-│   │   └── song/
-│   │       ├── intent*.py         # 点歌/暂停/继续/取消等意图识别与规则路由
-│   │       ├── netease.py         # 网易云音乐搜索、音频地址解析和下载
-│   │       ├── separator.py       # 人声/伴奏分离封装
-│   │       ├── rvc.py             # Applio/RVC 推理封装
-│   │       ├── mixer.py           # 人声、伴奏裁剪和混音
-│   │       ├── pipeline.py        # 点歌翻唱完整流水线
-│   │       ├── models.py          # SongRequest / SongJobResult / 状态模型
-│   │       └── song_config.json   # 点歌、缓存、分离、RVC、混音配置
-│   ├── tts/
-│   │   ├── base.py                # TTSAdapter 协议
-│   │   ├── schemas.py             # TTSRequest / TTSResult
-│   │   ├── manager.py             # 根据配置构建 TTS adapter
-│   │   ├── adapters/              # 前端适配层：current GPT-SoVITS / dummy
-│   │   ├── gptsovits/
-│   │   │   └── service.py         # GPT-SoVITS 后端封装、切句、写 wav、模型预热
-│   │   └── vendors/
-│   │       └── GPT-SoVITS-v2pro-20250604-nvidia50/ # 上游语音引擎占位目录
-│   └── visual/
-│       └── diff_service.py        # 立绘差分选择、服装选择、图片路径解析
-├── hardware/
-│   └── respeaker/                 # ReSpeaker USB 4 Mic Array 音频采集、灯光控制、硬件 VAD
-├── common/
-│   └── timing.py                  # 通用计时日志
-├── config/
-│   └── screen_vision_config.json  # 屏幕观察（Moondream/OCR）配置
-├── data/
-│   └── config/                    # 类型化配置：app.yaml / tts.yaml / visual.yaml / plugins.yaml
-├── docs/
-│   ├── dev_smoke_tests.md         # 开发期 smoke test 说明
-│   └── manual_smoke_checklist.md  # 手动验收清单
-├── spica_data/                    # 角色卡、语音参考、立绘差分和本地运行数据
-│   ├── Spica_skill/               # 角色卡：SKILL.md/self.md/persona.md/meta.json
-│   ├── voice/                     # TTS 情绪参考音频和 prompt
-│   ├── diffs/                     # 立绘差分、差分规则、UI 贴图
-│   ├── manifest.tsv               # 素材清单
-│   └── memory.sqlite3             # SQLite 长期记忆，运行时生成或更新
-├── static/
-│   ├── generated_voice/           # GPT-SoVITS 对话语音输出，运行时生成
-│   └── generated_song/            # 点歌/翻唱缓存、临时文件和最终音频，运行时生成
-├── tests/                         # 单元测试和流水线 smoke test
-├── third_party/
-│   └── respeaker_usb_4_mic_array/ # ReSpeaker 调参工具第三方代码
-└── xiaosan.env                    # 本地环境变量模板/配置，真实密钥不要提交
+│   ├── function_tools/screen/           # 本地截图、RapidOCR、Moondream screen pipeline
+│   ├── function_tools/song/             # 点歌意图、网易云、分离、RVC、混音 pipeline
+│   ├── tts/                             # TTSAdapter、GPT-SoVITS service、dummy adapter
+│   └── visual/                          # VisualDiffService 本地立绘差分选择
+├── memory/                             # RecentMemory、SQLiteMemoryStore、规则记忆抽取和去重
+├── hardware/respeaker/                 # ReSpeaker 录音、USB control、Qt speech worker
+├── ui/                                 # PySide6 UI、controllers、workers、models、widgets
+├── data/config/                        # TTS、visual、plugin YAML 配置
+├── config/screen_vision_config.json     # 本地屏幕观察配置
+├── spica_data/                         # 角色卡、立绘、参考音频、本地记忆数据，发布仓库不带大素材
+├── static/generated_voice/             # 对话 TTS 输出，运行时生成
+├── static/generated_song/              # 点歌翻唱缓存和输出，运行时生成
+├── third_party/                        # 第三方硬件辅助代码，发布仓库不带
+├── tests/                              # 单元测试、golden、层级守卫、adapter 合同测试
+└── build_release.sh                    # 历史发布脚本，发布规则见本文后面的“发布规则”
 ```
 
 ## 快速启动
 
-1. 准备 GPT-SoVITS。
+### 1. 准备 Python 环境
 
-   发布包里的 `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/` 是空占位目录，不包含上游 GPT-SoVITS 代码、虚拟环境、模型权重或运行产物。使用前需要把匹配的 GPT-SoVITS v2Pro / nvidia50 版本解压或克隆到这个目录，完成后应至少能看到：
-
-   ```text
-   agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/
-   ├── requirements.txt
-   ├── GPT_SoVITS/inference_webui.py
-   ├── GPT_weights_v2ProPlus/
-   └── SoVITS_weights_v2ProPlus/
-   ```
-
-   默认 `config/tts_config.json` 指向：
-
-   - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_weights_v2ProPlus/spcia-e25.ckpt`
-   - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth`
-
-   如果你的目录名、权重文件名或版本不同，修改 `config/tts_config.json` 里的 `gptsovits_root`、`gpt_model_path` 和 `sovits_model_path`。
-
-2. 准备 `spica_data` 素材目录。
-
-   发布包里的 `spica_data/` 只保留空目录和空子目录，不包含角色卡、立绘差分、参考音频、SQLite 记忆库或生成音频。需要按下面约定补齐：
-
-   - `spica_data/Spica_skill/`：放入 `SKILL.md`、`self.md`、`persona.md`、`meta.json`；也可以用 `SPICA_SKILL_DIR` 或 `SPICA_CHARACTER_PROFILE` 指向其他角色设定。
-   - `spica_data/voice/{happy,angry,sad,surprised}/`：每个情绪目录放 `prompt.txt` 和 `config/tts_config.json` 中配置的参考 wav；`refs/` 目录放入 GPT-SoVITS 需要的补充参考音频。
-   - `spica_data/diffs/`：放入 `expression_hand_pose_rules.json`、`preview_png.png`、`ui/_mw_filter01.png`，以及各服装目录和表情 PNG；路径需与 `config/visual_config.json` 保持一致。
-   - `spica_data/memory.sqlite3` 不需要手动创建，运行时会自动生成或迁移。
-
-3. 准备 Python 环境。
-
-   项目当前脚本示例使用 `/home/san/anaconda3/envs/gptsovits/bin/python3.11`。如果新建环境，建议 Python 3.10 或 3.11，并安装 GPT-SoVITS 所需依赖。
-
-   ```bash
-   cd /home/san/ai_code/Spica-Chatbot
-   pip install openai httpx python-dotenv PySide6 soundfile numpy pytest mss Pillow
-   pip install -r requirements-screen.txt
-   pip install -r agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/requirements.txt
-   ```
-
-   可选语音输入：
-
-   ```bash
-   pip install SpeechRecognition PyAudio
-   ```
-
-4. 创建 `xiaosan.env`。
-
-   发布包中的 `xiaosan.env` 会保留变量名并清空 `=` 后面的值。使用前填入自己的 OpenAI 兼容接口配置，不要提交真实密钥。
-
-   ```env
-   OPENAI_API_KEY=你的密钥
-   OPENAI_BASE_URL=https://api.openai.com/v1
-   MODEL=gpt-4.1-mini
-   ```
-
-   可选环境变量：
-
-   | 变量 | 默认值 | 作用 |
-   | --- | --- | --- |
-   | `RECENT_MEMORY_TURNS` | `3` | 内存短期记忆保留轮数 |
-   | `RECENT_CONTEXT_LIMIT` | `3` | 每次 prompt 注入的短期上下文轮数 |
-   | `LONG_TERM_MEMORY_LIMIT` | `5` | SQLite 长期记忆检索条数 |
-   | `LONG_TERM_MEMORY_BUDGET_CHARS` | `1200` | 每次 prompt 注入的长期记忆字符预算 |
-   | `RECENT_TURN_CHAR_LIMIT` | `360` | 单轮短期上下文注入字符上限 |
-   | `MAX_LONG_TERM_MEMORIES` | `200` | 单个 conversation 保留的长期记忆上限 |
-   | `MAX_TOOL_ROUNDS` | `3` | LLM 工具调用最大轮数 |
-   | `SPICA_SKILL_DIR` | `spica_data/Spica_skill` | 默认角色卡目录 |
-   | `SPICA_USER_NAME` | `麦` | 默认对话者名称，会映射原角色卡中的速川麦/麦 |
-   | `SPICA_CHARACTER_PROFILE` | 读取默认角色卡 | 覆盖角色设定 |
-   | `PLAY_UNIT_MIN_CHARS` | `18` | 流式播放单元最小长度 |
-   | `PLAY_UNIT_MAX_CHARS` | `96` | 流式播放单元最大长度 |
-   | `VISUAL_STREAM_WORKERS` | `2` | 流式立绘选择线程数 |
-   | `SPICA_SCREEN_ENABLED` | `true` | 是否启用本地 screen pipeline |
-   | `SPICA_SCREEN_PROVIDER` | `moondream_local` | 本地 screen pipeline provider |
-   | `SPICA_SCREEN_MODEL_ID` | `vikhyatk/moondream2` | 本地 Moondream 模型 ID |
-   | `SPICA_SCREEN_REVISION` | `2025-06-21` | 本地 Moondream revision |
-   | `SPICA_SCREEN_DEVICE` | `cuda` | 本地推理设备 |
-   | `SPICA_SCREEN_DTYPE` | `bfloat16` | 本地推理 dtype；4090 默认优先 `bfloat16`，兼容性需要时可设 `auto` |
-   | `SPICA_SCREEN_MAX_SIDE` | `768` | 本地 screen 分析输入最长边 |
-   | `SPICA_SCREEN_REASONING` | `false` | 是否启用额外推理提示 |
-   | `SPICA_SCREEN_PRELOAD` | `false` | 启动时是否预加载本地 screen 模型 |
-   | `SPICA_SCREEN_OCR_ENABLED` | `true` | 是否启用本地 OCR |
-   | `SPICA_SCREEN_OCR_ENGINE` | `rapidocr` | 本地 OCR 引擎 |
-   | `SPICA_SCREEN_CAPTURE_FORMAT` | `png` | screen pipeline 内部截图格式 |
-   | `SPICA_SCREEN_INFER_TIMEOUT_SEC` | `30` | 本地 screen 分析超时 |
-   | `SPICA_SCREEN_LOG_TIMING` | `true` | 是否记录 screen 阶段耗时 |
-   | `SPICA_SCREEN_DEBUG_SAVE` | `false` | 显式开启时保存调试截图；默认不落盘 |
-
-   Screen observation 使用本地配置 `config/screen_vision_config.json`，流程为本地截图、本地 RapidOCR 文字读取、本地 Moondream 屏幕理解，不上传图片。自然语言明确要求查看屏幕/桌面/显示器/画面时触发 `inspect_screen`，只做一次 `target=full_screen` 的自动主屏幕截图；截图按钮使用手动选区并随下一条消息发送，走 `mode=region` / `source=manual_region_selection`，不会再次自动截图，也不会把原始图片注入主聊天模型。
-
-5. 启动桌面 Overlay。
-
-   ```bash
-   /home/san/anaconda3/envs/gptsovits/bin/python webui_qt.py
-   ```
-
-   Linux ibus 环境可以使用：
-
-   ```bash
-   ./run_ibus.sh
-   ```
-
-6. 运行测试。
-
-   ```bash
-   python -m pytest tests
-   ```
-
-   不建议直接在仓库根目录运行无参数 `pytest`，因为它可能递归扫描内置 `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/runtime/` 里的第三方包。
-
-## 配置说明
-
-### 角色卡与对话对象
-
-默认启动时，`agent/simple_agent.py` 会读取 `spica_data/Spica_skill/` 下的 `SKILL.md`、`self.md`、`persona.md` 和 `meta.json`，作为 Spica 的角色卡注入 prompt。
-
-Prompt 还会额外注入固定对话对象设定：当前输入始终视为 `SPICA_USER_NAME` 指定的人说的话，默认是 `麦`。角色卡里原本属于速川麦/麦的恋爱、同居、家人、重逢等人物事迹会在运行时映射成当前对话者名称；小麦、麦田、麦畑等普通词不会被替换。
-
-桌面 Overlay 的设置面板里也可以临时编辑用户名。长期记忆只补充当前用户名的偏好、两人的相处细节或项目设置，不能覆盖角色卡和当前用户名的身份。
-
-### 记忆控制
-
-长期记忆写入路径现在统一为：规则抽取候选记忆 -> 过滤覆盖系统/角色卡的危险记忆 -> 按语义 key upsert 去重 -> 必要时按重要度裁剪。同步回复和流式回复共用同一套逻辑。
-
-SQLite 记忆表会自动迁移新增字段：`memory_key`、`memory_type`、`source`、`confidence`、`pinned`、`status`。旧数据库可以直接继续使用。
-
-### TTS 配置
-
-`config/tts_config.json` 控制 GPT-SoVITS 的路径、模型权重、输出目录、预热策略和情绪参考音频。
-
-关键字段：
-
-- `provider`：TTS provider，默认 `gptsovits_current`；测试可切到 `dummy`。
-- `gptsovits_root`：内置 GPT-SoVITS 根目录。
-- `gpt_model_path` / `sovits_model_path`：默认 GPT 和 SoVITS 权重。
-- `output_dir`：wav 输出目录，默认 `static/generated_voice`。
-- `warmup_on_startup`：Overlay 启动后是否预热模型。
-- `tts_params.sentence_chunking`：是否把长文本切成多个 TTS chunk。
-- `emotions`：`happy`、`angry`、`sad`、`surprised` 的参考音频和 prompt。
-
-### 立绘配置
-
-`config/visual_config.json` 控制差分素材、服装、对白框和角色布局。
-
-关键字段：
-
-- `diff_root`：差分根目录，默认 `spica_data/diffs`。
-- `rules_path`：表情和手部动作规则 JSON。
-- `costume_mode`：`random` 或 `fixed`。
-- `selected_costume`：固定服装模式下使用的服装。
-- `segments`：非流式回答的断句和合并策略。
-- `selection`：差分平滑策略。
-- `dialog`：对白框颜色、滤镜、说话人名称。
-- `character`：默认表情、默认手部动作、角色显示位置。
-
-## 整体架构图
-
-```mermaid
-flowchart TD
-    U[用户输入或麦克风识别] --> UI[PySide6 Overlay<br/>ui/qt_overlay.py]
-    UI --> CW[ChatWorker<br/>后台线程]
-    CW --> AG[SimpleAgent<br/>agent/simple_agent.py]
-    AG --> SVC[AgentServices<br/>LLM/TTS/Visual/Memory]
-
-    SVC --> MEM1[RecentMemory<br/>短期上下文]
-    SVC --> MEM2[SQLiteMemoryStore<br/>长期记忆]
-    SVC --> LLM[OpenAI 兼容 LLM]
-    SVC --> TOOL[可选 function tools<br/>默认不注册]
-    SVC --> VIS[VisualDiffService<br/>立绘差分]
-    SVC --> TTS[GPTSoVITSTool<br/>语音合成]
-
-    TTS --> GSV[GPT-SoVITS<br/>inference_webui]
-    GSV --> WAV[static/generated_voice/*.wav]
-    VIS --> IMG[spica_data/diffs/*.png]
-
-    WAV --> UI
-    IMG --> UI
-    UI --> OUT[对白打字机<br/>立绘切换<br/>音频播放]
-```
-
-## 同步流水线逻辑图
-
-`SimpleAgent.run_voice()` 使用 `runtime.run_voice_pipeline()`，适合一次性返回完整结果。
-
-```mermaid
-flowchart TD
-    A[AgentState<br/>conversation_id/user_input] --> B[validate_input_node<br/>清洗输入]
-    B --> C[load_recent_context_node<br/>读取短期上下文]
-    C --> D[retrieve_long_term_memory_node<br/>SQLite 关键词检索]
-    D --> E[build_prompt_node<br/>拼接 SYSTEM/角色/记忆/当前输入]
-    E --> F[call_llm_node<br/>Responses API 或 Chat Completions]
-    F --> G{需要工具?}
-    G -- 是 --> H[run_local_tool<br/>执行本地工具]
-    H --> I[_build_tool_followup_prompt<br/>工具结果回填]
-    I --> F
-    G -- 否 --> J[parse_reply_node<br/>解析 JSON answer/emotion]
-    J --> K[save_recent_context_node<br/>写短期记忆]
-    K --> L[extract_memory_node<br/>规则抽取长期记忆]
-    L --> M[build_visual_node<br/>选择立绘 cue]
-    M --> N[synthesize_tts_node<br/>合成 wav]
-    N --> O[build_response_node<br/>封装 payload]
-```
-
-## 流式播放局部架构图
-
-Overlay 默认使用 `SimpleAgent.stream_voice()`。它不会把 token 直接交给 UI，而是等到形成可播放句段后再输出 `unit_ready`。
-
-```mermaid
-flowchart TD
-    A[stream_voice_events] --> B[status: thinking]
-    B --> C[_produce_stream_events<br/>后台生产线程]
-    C --> D[validate/load memory/build prompt]
-    D --> E[_prepare_prompt_for_streaming<br/>必要时先做工具探测]
-    E --> F[_iter_response_text<br/>LLM 流式文本]
-    F --> G[JsonAnswerExtractor<br/>从 JSON 中增量抽取 answer]
-    G --> H[PlayUnitSplitter<br/>按句号/问号/长度拆播放单元]
-    H --> I[submit_unit]
-    I --> J1[visual_executor<br/>build_unit_visual_payload]
-    I --> J2[tts_executor<br/>synthesize 单句音频]
-    J1 --> K[_finalize_unit]
-    J2 --> K
-    K --> L[按 index 排序输出 unit_ready]
-    L --> M[Overlay _pump_stream_playback]
-    M --> N[立绘切换 + 打字机 + QMediaPlayer]
-    F --> O[done<br/>保存记忆并返回 timing]
-```
-
-事件类型：
-
-| 事件 | 说明 |
-| --- | --- |
-| `status` | 当前状态，例如 thinking 或 tools |
-| `unit_ready` | 一个可播放单元，包含文本、音频路径、立绘 cue、耗时 |
-| `done` | 完整回答、最终情绪、总单元数和 timing |
-| `error` | 流水线异常 |
-
-## 立绘选择局部架构图
-
-立绘选择完全在本地完成，不调用模型。核心入口是 `VisualDiffService.build_visual_payload()` 和 `build_unit_visual_payload()`。
-
-```mermaid
-flowchart TD
-    A[回答文本或当前播放单元] --> B[split_segments<br/>按标点断句]
-    B --> C[analyze_visual_text<br/>命中 signal lexicon]
-    C --> D[EMOTION_GROUP_PRIORS<br/>叠加模型情绪先验]
-    D --> E[score_expression<br/>按 group/subtype/关键词/强度打分]
-    E --> F[choose_hand_pose_for_expression<br/>normal/arms_crossed/index_finger]
-    F --> G[normalize_selection<br/>校验 expression_id 和 hand_pose]
-    G --> H[resolve_expression_image<br/>服装/动作目录/face001_id.png]
-    H --> I[cue<br/>image_path/image_url/reason]
-```
-
-差分素材当前约定：
-
-- 服装目录：`spica_data/diffs/<服装名>/`
-- 手部动作目录：`抱肩`、`普通动作`、`竖食指`
-- 表情文件名匹配：`*face001_<id>.png`
-- 规则文件：`spica_data/diffs/expression_hand_pose_rules.json`
-
-## TTS 局部架构图
-
-TTS 分成两层：`TTSAdapter` 是前端协议，pipeline 只依赖 `TTSRequest` / `TTSResult`；`GPTSoVITSTool` 是当前 GPT-SoVITS 后端实现，由 `CurrentGPTSoVITSAdapter` 包装后接入 pipeline。
-
-```mermaid
-flowchart TD
-    A[pipeline] --> B[TTSRequest]
-    B --> C[build_tts_adapter<br/>读取 provider]
-    C --> D[CurrentGPTSoVITSAdapter]
-    D --> E[GPTSoVITSTool.synthesize]
-    E --> F[reload_config<br/>读取 tts_config.json]
-    F --> G[_lazy_import<br/>导入 GPT-SoVITS]
-    G --> H[_ensure_models<br/>切换 GPT/SoVITS 权重]
-    H --> I[get_tts_wav<br/>逐 chunk 合成]
-    I --> J[TTSResult<br/>audio_url/audio_path/chunks/timing]
-```
-
-集成的上游入口：
-
-- `change_gpt_weights(gpt_path=...)`
-- `change_sovits_weights(sovits_path=..., prompt_language=..., text_language=...)`
-- `get_tts_wav(...)`
-
-## 主要模块职责
-
-| 文件 | 职责 |
-| --- | --- |
-| `webui_qt.py` | 启动前检查 Linux `libxcb-cursor.so.0`，处理 Qt 输入法兼容，然后进入 Overlay |
-| `ui/qt_overlay.py` | 装配 Overlay 主窗口、配置、控制器、后台 worker 和基础窗口事件 |
-| `ui/controllers/chat_stream_controller.py` | 消费 `stream_voice()` 事件，管理播放单元、停止/取消和流式聊天状态 |
-| `ui/controllers/audio_controller.py` | 封装 QMediaPlayer 播放、音频归属 token 和停止策略 |
-| `ui/controllers/song_controller.py` | 点歌/翻唱 UI 状态机，处理准备、暂停、继续、取消和最终播放 |
-| `ui/controllers/voice_input_controller.py` | 连接麦克风按钮、语音识别 worker 和输入框提交 |
-| `ui/widgets/` | 对白框、输入栏、设置面板、窗口控制、图标和 resize handle |
-| `agent/simple_agent.py` | 读取环境变量，初始化 OpenAI 客户端、记忆、工具，向 UI 暴露同步和流式接口 |
-| `agent/runtime.py` / `agent/nodes.py` | 同步链路编排和每个处理节点 |
-| `agent/streaming_pipeline.py` | 流式 LLM、JSON answer 增量抽取、播放单元拆分、并行 TTS/立绘、事件队列 |
-| `agent/prompt_builder.py` | 构造 Spica 系统提示词，要求模型输出 JSON |
-| `agent/reply_parser.py` | 解析模型 JSON，失败时用启发式情绪兜底 |
-| `agent/text_normalizer.py` | 清洗朗读文本，减少符号、Markdown 和不适合 TTS 的片段 |
-| `memory/store.py` | SQLite 长期记忆表、关键词检索、use_count 更新 |
-| `memory/recent.py` | 每个 conversation_id 的最近 N 轮对话 |
-| `memory/extractor.py` | 用规则识别“记住、我喜欢、叫我”等可保存事实 |
-| `agent_tools/function_tools/__init__.py` | 可选 LLM function tool 空默认注册表和通用执行器 |
-| `agent_tools/function_tools/song/intent_router.py` | 点歌、暂停、继续、取消等自然语言意图路由 |
-| `agent_tools/function_tools/song/pipeline.py` | 搜歌、下载、分离、RVC、混音和缓存复用的完整点歌流水线 |
-| `agent_tools/function_tools/song/netease.py` | 网易云音乐搜索、音频 URL 解析和下载 |
-| `agent_tools/function_tools/song/separator.py` / `rvc.py` / `mixer.py` | 分离伴奏、人声变声、裁剪和混音封装 |
-| `agent_tools/visual/diff_service.py` | 本地投票式表情和手部动作选择，解析差分图片 |
-| `agent_tools/tts/base.py` / `schemas.py` | TTS 前端协议和标准请求/返回结构 |
-| `agent_tools/tts/manager.py` / `adapters/` | 根据配置选择 TTS provider，并适配同步/流式 pipeline |
-| `agent_tools/tts/gptsovits/service.py` | GPT-SoVITS 后端模型加载、情绪参考音频选择、切句和 wav 输出 |
-| `hardware/respeaker/audio.py` / `speech_worker.py` | ReSpeaker 硬件 VAD 录音和中文语音识别 worker |
-| `hardware/respeaker/control.py` | ReSpeaker 灯光/硬件控制封装 |
-| `docs/dev_smoke_tests.md` / `docs/manual_smoke_checklist.md` | 开发期 smoke test 和手动验收记录 |
-
-## 数据和运行产物
-
-- `spica_data/memory.sqlite3`：长期记忆数据库，运行时更新。
-- `static/generated_voice/*.wav`：语音输出，运行时生成。
-- `static/generated_song/cache/`：点歌/翻唱缓存，包含原曲、分离人声/伴奏、RVC 人声、最终混音和元数据。
-- `static/generated_song/tmp/`：点歌流水线临时目录，异常退出后可安全清理。
-- `spica_data/diffs/`：立绘差分素材和规则，不是运行缓存；发布包只保留空目录骨架。
-- `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`：发布包只保留空目录，占位给用户放入上游语音引擎、依赖和权重。
-- `xiaosan.env`：本地密钥配置；发布包只保留空值模板，不应提交真实密钥。
-
-`.gitignore` 已忽略 Python 缓存、环境文件、生成语音和 SQLite 运行数据库。
-
-## 测试覆盖
-
-测试重点在无真实 LLM/TTS 的情况下验证核心逻辑：
-
-- `tests/test_memory_store.py`：SQLite 记忆新增、检索、清空。
-- `tests/test_prompt_builder.py`：prompt 分区和记忆抽取。
-- `tests/test_recent_memory.py`：短期记忆只保留最近轮次。
-- `tests/test_pipeline_smoke.py`：同步 pipeline、默认无 demo 工具、DeepSeek Chat Completions 兼容。
-- `tests/test_streaming_pipeline.py`：流式事件顺序、句段拆分、TTS 文本清洗、DeepSeek 流式兼容。
-- `tests/test_tts_adapters.py`：TTS adapter 请求/返回映射和失败兜底。
-- `tests/test_visual_classifier.py`：本地立绘分类器对说明、不满、悲伤语气的选择。
-- `tests/test_chat_stream_controller_units.py`：UI 流式播放单元控制器的排队、停止和收尾行为。
-- `tests/test_song_intent_router.py` / `tests/test_song_trigger.py`：点歌意图路由、触发词、暂停/继续/取消等控制语句。
-
-## 开发注意事项
-
-- LLM 最终输出必须是 JSON：`answer`、`emotion`、`emotion_reason`。
-- `answer` 应是适合直接朗读的自然日语，避免长公式和难读符号。
-- 流式链路只播放完整单元，不播放裸 token。
-- `agent_tools/visual/diff_service.py` 的 `image_url` 主要服务旧 Web UI；桌面 Overlay 使用 `image_path` 直接加载本地图片。
-- `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/` 是上游语音引擎和权重目录，业务层只应通过 `agent_tools/tts/gptsovits/service.py` 访问。
-- `agent_tools/function_tools/song/Applio/` 是点歌 RVC 依赖的上游 Applio 目录，业务层只应通过 `song/rvc.py` 和 `song/pipeline.py` 访问。
-
-## 发布打包
-
-运行下面命令会在本项目上一层生成 `Spica-Chatbot_release/`：
+项目当前开发环境是 conda `gptsovits`，Python 3.10/3.11 均可。示例：
 
 ```bash
-bash build_release.sh
+cd /home/san/ai_code/Spica-Chatbot
+conda activate gptsovits
+pip install openai httpx python-dotenv pydantic PyYAML PySide6 soundfile numpy pytest
+pip install -r requirements-screen.txt
 ```
 
-脚本会复制项目代码和配置，排除 `.git`、IDE 配置、缓存、SQLite、生成 wav、原始 `spica_data` 文件和完整 GPT-SoVITS 目录；然后重新创建空的 `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`、空的 `spica_data/` 子目录骨架，并生成 `=` 后为空的 `xiaosan.env`。如果用 Git 推送 release 目录，注意 Git 本身不会记录真正的空目录，需要按 README 重新创建这些目录或自行添加占位文件。
+可选语音输入依赖：
+
+```bash
+pip install SpeechRecognition PyAudio pyusb
+```
+
+如果要运行 GPT-SoVITS，还需要按你的 GPT-SoVITS 版本安装其依赖。发布仓库不会包含 GPT-SoVITS vendor 目录内容。
+
+### 2. 准备环境变量
+
+在仓库根目录创建 `xiaosan.env`：
+
+```env
+OPENAI_API_KEY=你的密钥
+OPENAI_BASE_URL=https://api.openai.com/v1
+MODEL=gpt-4.1-mini
+```
+
+`OPENAI_API_KEY` 由 `spica.config.secrets.load_secrets()` 读取。`OPENAI_BASE_URL`、`MODEL` 和其他可调参数由 `ConfigManager` 映射到 `AppConfig`。
+
+### 3. 准备 GPT-SoVITS
+
+默认 TTS 配置在 `data/config/tts.yaml`，默认 vendor 根目录是：
+
+```text
+agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50
+```
+
+发布仓库里这个目录是空占位。使用前需要把匹配的 GPT-SoVITS v2Pro / nvidia50 版本放进去，并确认配置中的权重路径存在：
+
+```text
+GPT_weights_v2ProPlus/spcia-e25.ckpt
+SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth
+```
+
+如果你的模型文件名或目录不同，修改 `data/config/tts.yaml` 的：
+
+- `gptsovits_root`
+- `gpt_model_path`
+- `sovits_model_path`
+- `emotions.*.prompt_text_path`
+- `emotions.*.ref_audio_path`
+- `emotions.*.inp_refs_path`
+
+### 4. 准备角色数据和素材
+
+默认角色包目录是：
+
+```text
+spica_data/Spica_skill
+```
+
+需要包含：
+
+```text
+spica_data/Spica_skill/
+├── meta.json
+├── SKILL.md
+├── self.md
+└── persona.md
+```
+
+`meta.json` 支持字段：
+
+```json
+{
+  "slug": "spica",
+  "name": "辻倉朱比華",
+  "char_name": "スピカ",
+  "visual_config_path": null,
+  "tts_config_path": null
+}
+```
+
+`slug` 会作为 `character_id`，长期记忆会按角色隔离。`visual_config_path` 和 `tts_config_path` 可指向角色包内的专属配置；为空时使用 `data/config/visual.yaml` 和 `data/config/tts.yaml`。
+
+立绘和语音素材默认从 `spica_data` 读取：
+
+```text
+spica_data/diffs/                         # 立绘差分、规则、UI 贴图
+spica_data/voice/{happy,angry,sad,surprised}/
+spica_data/memory.sqlite3                 # 运行时自动创建或迁移
+```
+
+发布仓库不会包含大体积 `spica_data` 素材，需要在本地补齐。
+
+### 5. 启动 Overlay
+
+```bash
+python webui_qt.py
+```
+
+Linux ibus 环境可以用：
+
+```bash
+./run_ibus.sh
+```
+
+如果 Qt xcb 缺系统库，入口会提示安装 `libxcb-cursor0`。
+
+### 6. 运行测试
+
+只使用下面这条命令：
+
+```bash
+python -m pytest tests -q
+```
+
+不要在仓库根目录运行裸 `pytest`，它可能递归扫到 vendored GPT-SoVITS runtime，导致第三方包测试收集失败。
+
+## 配置
+
+### `data/config/tts.yaml`
+
+控制 TTS provider、GPT-SoVITS 根目录、模型权重、输出目录、预热策略、情绪参考音频和切句参数。
+
+常用字段：
+
+- `provider`: 默认 `gptsovits_current`，测试可改为 `dummy`。
+- `output_dir`: 默认 `../../static/generated_voice`。
+- `warmup_on_startup`: 是否启动后预热。
+- `warmup_emotion` / `warmup_emotions`: 预热情绪。
+- `tts_params.sentence_chunking`: 长文本是否切分后送 TTS。
+- `emotions`: `happy`、`angry`、`sad`、`surprised` 的 prompt 和参考音频。
+
+### `data/config/visual.yaml`
+
+控制本地立绘差分和 UI 演出素材。
+
+常用字段：
+
+- `diff_root`: 立绘差分根目录。
+- `rules_path`: 表情和手势规则。
+- `background_path`: 背景预览图。
+- `costume_mode`: `random` 或 `fixed`。
+- `selected_costume`: 固定服装模式使用的服装。
+- `segments`: 非流式视觉 payload 的切段配置。
+- `selection`: 差分平滑策略。
+- `dialog`: 对白框 speaker、滤镜、颜色和透明度。
+- `character`: 默认表情、默认手势、布局比例。
+
+### `data/config/plugins.yaml`
+
+插件 manifest。每个启用项会加载 `plugins/<name>/__init__.py` 并调用 `register(registry)`。
+
+示例：
+
+```yaml
+plugins:
+  - name: example_tts
+    enabled: true
+```
+
+插件当前阶段只允许注册 adapters/tools，不开放 UI widget。
+
+### `data/config/app.yaml`
+
+这是 `ConfigManager` 的默认 typed config 文件路径。仓库可以没有该文件；没有时使用 `AppConfig` 默认值和环境变量覆盖。
+
+可选示例：
+
+```yaml
+llm:
+  provider: openai_compatible
+  model: gpt-4.1-mini
+  base_url: https://api.openai.com/v1
+memory:
+  provider: sqlite
+  recent_memory_turns: 3
+  recent_context_limit: 3
+  long_term_memory_limit: 5
+  long_term_memory_budget_chars: 1200
+  recent_turn_char_limit: 360
+  max_long_term_memories: 200
+character:
+  interlocutor_name: 麦
+  package_dir: spica_data/Spica_skill
+stream:
+  play_unit_min_chars: 18
+  play_unit_max_chars: 96
+  visual_stream_workers: 2
+max_tool_rounds: 3
+```
+
+### `config/screen_vision_config.json`
+
+控制本地 screen pipeline：
+
+- `provider`: 当前为 `moondream_local`。
+- `device`: 当前设计为 `cuda`。
+- `dtype`: 默认 `bfloat16`。
+- `ocr_enabled`: 是否启用 RapidOCR。
+- `debug_save_images`: 默认 `false`，不落盘调试截图。
+
+### `ui/overlay_config.json`
+
+控制桌面 Overlay 的角色缩放、UI 缩放、打字机速度和窗口初始比例。这是 UI 本地外观配置，不属于平台核心配置。
+
+## 对话运行流程
+
+### 同步路径
+
+`ChatEngine.run_voice()` 构造 `AgentState`，调用 `agent.runtime.run_voice_pipeline()`，依次执行：
+
+```text
+validate_input
+load_recent_context
+retrieve_long_term_memory
+analyze_screen_attachment
+build_prompt
+call_llm
+parse_reply
+save_stream_memory
+build_visual
+synthesize_tts
+build_response
+```
+
+同步路径主要用于一次性得到完整 payload。
+
+### 流式路径
+
+`ChatEngine.stream_voice_runtime()` 调用 `spica.runtime.orchestrator.stream_voice_events()`，输出 typed `RuntimeEvent`。
+
+当前 UI 仍通过 `ChatEngine.stream_voice()` 消费 legacy dict，`ChatEngine` 会把 `RuntimeEvent` 转回旧 dict，保证 UI 兼容。
+
+核心事件：
+
+- `status`
+- `unit_text_ready`
+- `unit_visual_ready`
+- `unit_audio_started`
+- `unit_audio_ready`
+- `unit_ready`
+- `done`
+- `error`
+
+播放顺序由 `unit_ready.index` 保证。Visual job 可以并行，TTS job 串行，最终 `unit_ready` 按 index 有序进入 UI。
+
+## 记忆
+
+短期记忆由 `memory.recent.RecentMemory` 保存最近几轮对话。长期记忆由 `memory.store.SQLiteMemoryStore` 保存到 `spica_data/memory.sqlite3`。
+
+重构后记忆写入通过 `spica.ports.memory.MemoryPort.commit_turn()`，SQLite adapter 内部执行规则抽取、upsert 去重和裁剪。Runtime 不负责抽取细节。
+
+`MemoryScope` 包含：
+
+- `character_id`
+- `user_id`
+- `conversation_id`
+
+SQLite adapter 会把 conversation key 命名空间化为：
+
+```text
+{character_id}::{conversation_id}
+```
+
+因此不同角色不会串长期记忆。
+
+## 插件和能力替换
+
+内置能力注册在 `AppHost._register_builtin_adapters()`：
+
+- LLM: `openai_compatible`
+- TTS: `gptsovits_current`、`gptsovits`、`current`、`dummy`
+- Visual: `spica_diff`
+- Memory: `sqlite`
+
+插件示例：
+
+```python
+# plugins/example_tts/__init__.py
+
+def register(registry):
+    registry.register_tts("example_tts", lambda **kwargs: MyTTSAdapter(**kwargs))
+```
+
+启用后，在配置中把对应 provider 改成插件注册名即可。插件加载失败会被记录在 ManagementSurface，不会阻断启动。
+
+## 屏幕观察
+
+`inspect_screen` 只有在用户明确要求查看屏幕、桌面、显示器、当前画面、网页、报错等可见内容时才会被选中。
+
+自动工具路径：
+
+```text
+capture_full_screen -> RapidOCR -> Moondream local -> screen observation JSON -> prompt 注入
+```
+
+手动截图路径：
+
+```text
+截图按钮 -> 用户框选区域 -> pending_screen_attachment -> 下一条聊天消息 -> analyze_screen_attachment
+```
+
+该链路默认本地运行，不把图片上传到主聊天模型。
+
+## 点歌和翻唱
+
+点歌入口在 `ui.controllers.song_controller.SongController`，意图路由在 `agent_tools.function_tools.song.intent_router.SongIntentRouter`。
+
+完整 pipeline：
+
+```text
+用户点歌意图
+-> SongIntentRouter
+-> SongPipeline
+-> 网易云搜索/下载
+-> separate_vocals
+-> Applio/RVC infer_spica_vocal
+-> mix_vocal_with_instrumental
+-> static/generated_song 输出
+```
+
+配置默认在 `agent_tools/function_tools/song/song_config.json`，缺失字段会用 `agent_tools.function_tools.song.config.DEFAULT_CONFIG` 补齐。
+
+发布仓库不会包含 `agent_tools/function_tools/song/Applio`，使用点歌翻唱前需要本地补齐 Applio、RVC 模型和相关依赖。
+
+## 语音输入
+
+语音输入通过 `hardware/respeaker` 接 ReSpeaker USB 4 Mic Array：
+
+- `audio.py`: 录制 16kHz channel 0 PCM，支持硬件 VAD。
+- `control.py`: 通过 pyusb 和 `tuning.py` 读取硬件 VAD。
+- `speech_worker.py`: Qt 线程，调用 `speech_recognition` 做中文识别。
+
+如果 `RESPEAKER_REQUIRE_HARDWARE_VAD=1`，硬件 VAD 不可用时会直接失败；否则会 fallback 到短时固定录音。
+
+## 开发规则
+
+- 跑测试：`python -m pytest tests -q`。
+- 不要裸跑 `pytest`。
+- 不要让 `spica/` import Qt。
+- 不要在业务层直接读环境变量。
+- 不要继续往 `agent/streaming_pipeline.py` 塞功能；新的流式组件在 `spica/runtime/`。
+- UI 只消费 Host/ChatEngine 事件和状态，不直接知道 OpenAI、GPT-SoVITS、SQLite 或 VisualDiffService 的细节。
+
+## 发布规则
+
+发布仓库当前目标是：提交除大体积本地资产和第三方引擎外的项目代码、配置、测试、文档和插件骨架。
+
+应排除：
+
+- `.git/`
+- `.idea/`
+- `.pytest_cache/`
+- `__pycache__/`
+- `*.pyc`
+- `.env`、`*.env` 的真实值
+- `third_party/`
+- `spica_data/`
+- `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`
+- `agent_tools/function_tools/song/Applio/`
+- `static/generated_voice/*`
+- `static/generated_song/*`
+
+发布包可以保留必要空目录或占位目录，但不要提交模型权重、语音素材、立绘大图、本地 SQLite 记忆库、生成 wav、Applio 工程和 GPT-SoVITS vendor 内容。
+
+## 常见问题
+
+### 启动提示没有 OPENAI_API_KEY
+
+检查 `xiaosan.env` 是否在仓库根目录，且包含：
+
+```env
+OPENAI_API_KEY=...
+```
+
+### 找不到 TTS 权重或参考音频
+
+检查 `data/config/tts.yaml` 中所有相对路径是否相对配置文件目录可解析，并确认 GPT-SoVITS vendor、权重、`spica_data/voice` 已补齐。
+
+### 找不到立绘或差分规则
+
+检查 `data/config/visual.yaml` 的 `diff_root`、`rules_path`、`background_path`，以及 `spica_data/diffs` 是否存在。
+
+### screen pipeline 失败
+
+检查 CUDA、torch、transformers、RapidOCR 依赖，以及 `config/screen_vision_config.json`。当前本地 Moondream 配置默认要求 CUDA。
+
+### GitHub Actions 不是 GitHub-hosted runner
+
+`.github/workflows/ci.yml` 当前写给 self-hosted runner，并假设本机有 conda `gptsovits` 环境。如果要改成 GitHub-hosted runner，需要补充环境重建步骤。

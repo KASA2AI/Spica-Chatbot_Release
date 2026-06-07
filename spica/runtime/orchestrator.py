@@ -6,8 +6,10 @@ fan each unit out to the visual + TTS jobs, emit ordered events, and commit
 memory. It only *coordinates* the runtime components / ports -- no business
 logic (text cleanup, LLM branch, visual/TTS, extraction) lives here.
 
-Tunables (play-unit sizes, visual workers) come from ``services.config`` (Phase
-6C: no ``os.getenv`` in the runtime). Qt-free (CLAUDE.md #1).
+Tunables (model, play-unit sizes, visual workers) and the LLM port come from the
+typed ``deps`` (C3b: ``deps.config`` / ``deps.llm``, never ``services.config``);
+direct dict-config callers are bridged via ``TurnDeps.from_legacy_services``.
+Qt-free (CLAUDE.md #1).
 """
 
 from __future__ import annotations
@@ -29,8 +31,8 @@ from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion,
 from agent.state import AgentServices, AgentState
 from agent.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
 from common.timing import log_timing, now_ms
+from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import ExecStrategy, Threaded
-from spica.runtime.llm_stream import llm_adapter
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
 from spica.runtime.sequencer import Sequencer
@@ -80,14 +82,16 @@ def _produce_stream_events(
     created_units: list[str] = []
     first_unit_event = threading.Event()
 
+    # C3b: run on typed deps. Direct (dict-config) callers bridge here; the
+    # hot path below reads only deps.config / deps.llm, never services.config.
+    deps = deps or TurnDeps.from_legacy_services(services)
+
     # Concurrency is an injected policy (C2). Streaming passes None and gets the
     # default Threaded pools (owning their shutdown); the sync path injects Inline.
     # The three lanes (visual / serial tts / finalize) live in the strategy.
     owns_exec = exec_strategy is None
     if exec_strategy is None:
-        exec_strategy = Threaded(
-            visual_workers=max(1, int(services.config.get("visual_stream_workers") or 2))
-        )
+        exec_strategy = Threaded(visual_workers=max(1, deps.config.stream.visual_stream_workers))
     ready_futures: list[concurrent.futures.Future[Any]] = []
     # C1 ordered release: finalize workers push (index, payload) onto this
     # INTERNAL queue; only the producer thread drains it through the Sequencer
@@ -239,14 +243,14 @@ def _produce_stream_events(
             )
         state.metadata["stream_visual_context"] = visual_context
 
-        model = str(services.config.get("model") or "gpt-4.1-mini")
+        model = deps.config.llm.model
         state.timing["agent_model"] = model
         state.timing["prompt_input_chars"] = len(str(state.prompt_input or ""))
 
         prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(state, services, put_status, deps)
         splitter = PlayUnitSplitter(
-            min_chars=int(services.config.get("play_unit_min_chars") or 18),
-            max_chars=int(services.config.get("play_unit_max_chars") or 96),
+            min_chars=deps.config.stream.play_unit_min_chars,
+            max_chars=deps.config.stream.play_unit_max_chars,
         )
         extractor = JsonAnswerExtractor()
         raw_model_parts: list[str] = []
@@ -274,7 +278,7 @@ def _produce_stream_events(
             drain_ready()
         else:
             request = {"model": model, "input": prompt_for_stream}
-            for delta in llm_adapter(services).iter_response_text(request, state):
+            for delta in deps.llm.iter_response_text(request, state):
                 handle_raw_delta(delta)
                 drain_ready()
 

@@ -21,7 +21,15 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
-from spica.config.schema import AppConfig
+from spica.adapters.llm import OpenAICompatibleAdapter
+from spica.adapters.memory import SqliteMemoryAdapter
+from spica.config.schema import (
+    AppConfig,
+    CharacterConfig,
+    LLMConfig,
+    MemoryConfig,
+    StreamConfig,
+)
 from spica.ports.llm import LLMPort
 from spica.ports.memory import MemoryPort
 from spica.ports.tts import TTSPort
@@ -70,12 +78,45 @@ class TurnDeps:
 
     @classmethod
     def from_services(cls, services: Any, app_config: AppConfig) -> "TurnDeps":
-        """Map host-assembled AgentServices (resolved ports) into typed deps."""
+        """Map host-assembled AgentServices (resolved ports) into typed deps.
+
+        The ``or Adapter(...)`` is the ONE place that resolves a raw client/store
+        into a port -- in production the host already resolved them (the ``or``
+        takes the first branch); for legacy callers passing only a raw client it
+        wraps. This keeps the dual-field fallback out of the runtime hot path.
+        """
         return cls(
             config=app_config,
-            llm=services.llm_adapter,
+            llm=services.llm_adapter or OpenAICompatibleAdapter(services.llm_client),
             tts=services.tts_adapter,
             visual=services.visual_tool,
-            memory=services.memory_adapter,
+            memory=services.memory_adapter
+            or SqliteMemoryAdapter(services.memory_store, services.recent_memory),
             tools=LegacyFunctionToolSet.from_services(services),
         )
+
+    @classmethod
+    def from_legacy_services(cls, services: Any) -> "TurnDeps":
+        """Bridge a legacy dict-config services bundle into typed deps.
+
+        Direct ``stream_voice_events`` callers (tests) and the compat sync path
+        carry config as ``services.config`` (a dict), not an ``AppConfig``. This
+        reverse-maps that dict so the runtime can run on typed deps. It is the one
+        place allowed to read the legacy config dict (C3b); the StreamConfig
+        defaults match the historical ``or N`` fallbacks exactly.
+        """
+        cfg = services.config
+        app_config = AppConfig(
+            llm=LLMConfig(model=cfg.get("model") or "gpt-4.1-mini"),
+            memory=MemoryConfig(max_long_term_memories=int(cfg.get("max_long_term_memories", 200))),
+            character=CharacterConfig(
+                interlocutor_name=cfg.get("interlocutor_name"),
+                character_id=cfg.get("character_id"),
+            ),
+            stream=StreamConfig(
+                play_unit_min_chars=int(cfg.get("play_unit_min_chars") or 18),
+                play_unit_max_chars=int(cfg.get("play_unit_max_chars") or 96),
+                visual_stream_workers=int(cfg.get("visual_stream_workers") or 2),
+            ),
+        )
+        return cls.from_services(services, app_config)

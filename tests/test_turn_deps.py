@@ -98,6 +98,49 @@ class TurnDepsTest(unittest.TestCase):
         self.assertEqual(deps.tools.run("inspect_screen", "{}"), "ok")
         self.assertEqual(calls, [{}])
 
+    def test_from_services_resolves_raw_client_into_a_port(self):
+        services = SimpleNamespace(
+            llm_adapter=None, llm_client=SimpleNamespace(),
+            tts_adapter=None, visual_tool=None,
+            memory_adapter=None, memory_store=object(), recent_memory=object(),
+            tool_schemas=TOOL_SCHEMAS, tool_functions={"inspect_screen": lambda **k: "ok"},
+        )
+        deps = TurnDeps.from_services(services, AppConfig())
+        # raw client / store got wrapped into resolved ports (no dual-field downstream)
+        self.assertIsNotNone(deps.llm)
+        self.assertIsNotNone(deps.memory)
+
+
+class TurnDepsLegacyBridgeTest(unittest.TestCase):
+    def _legacy_services(self, **config):
+        return SimpleNamespace(
+            llm_adapter=None, llm_client=SimpleNamespace(),
+            tts_adapter=None, visual_tool=None,
+            memory_adapter=None, memory_store=object(), recent_memory=object(),
+            tool_schemas=TOOL_SCHEMAS, tool_functions={"inspect_screen": lambda **k: "ok"},
+            config=config,
+        )
+
+    def test_reverse_maps_dict_config(self):
+        deps = TurnDeps.from_legacy_services(self._legacy_services(
+            model="m", max_long_term_memories=7, play_unit_min_chars=20,
+            interlocutor_name="麦", character_id="spica2",
+        ))
+        self.assertEqual(deps.config.llm.model, "m")
+        self.assertEqual(deps.config.memory.max_long_term_memories, 7)
+        self.assertEqual(deps.config.stream.play_unit_min_chars, 20)
+        self.assertEqual(deps.config.character.interlocutor_name, "麦")
+        self.assertEqual(deps.config.character.character_id, "spica2")
+        self.assertIsNotNone(deps.llm)  # raw client wrapped
+        self.assertIsNotNone(deps.memory)
+
+    def test_empty_dict_uses_historical_defaults(self):
+        deps = TurnDeps.from_legacy_services(self._legacy_services())
+        self.assertEqual(deps.config.stream.play_unit_min_chars, 18)
+        self.assertEqual(deps.config.stream.play_unit_max_chars, 96)
+        self.assertEqual(deps.config.stream.visual_stream_workers, 2)
+        self.assertEqual(deps.config.memory.max_long_term_memories, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

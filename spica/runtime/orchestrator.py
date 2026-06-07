@@ -46,6 +46,7 @@ def stream_voice_events(
     state: AgentState,
     services: AgentServices,
     exec_strategy: ExecStrategy | None = None,
+    deps: Any = None,
 ) -> Iterator[dict[str, Any]]:
     request_start_ms = now_ms()
     yield {"event": "status", "data": {"state": "thinking", "message": "thinking"}}
@@ -53,7 +54,7 @@ def stream_voice_events(
     output_queue: queue.Queue[Any] = queue.Queue()
     producer = threading.Thread(
         target=_produce_stream_events,
-        args=(state, services, request_start_ms, output_queue, exec_strategy),
+        args=(state, services, request_start_ms, output_queue, exec_strategy, deps),
         daemon=True,
     )
     producer.start()
@@ -72,6 +73,7 @@ def _produce_stream_events(
     request_start_ms: float,
     output_queue: queue.Queue[Any],
     exec_strategy: ExecStrategy | None = None,
+    deps: Any = None,
 ) -> None:
     timing_lock = threading.Lock()
     unit_timings: list[dict[str, Any]] = []
@@ -241,7 +243,7 @@ def _produce_stream_events(
         state.timing["agent_model"] = model
         state.timing["prompt_input_chars"] = len(str(state.prompt_input or ""))
 
-        prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(state, services, put_status)
+        prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(state, services, put_status, deps)
         splitter = PlayUnitSplitter(
             min_chars=int(services.config.get("play_unit_min_chars") or 18),
             max_chars=int(services.config.get("play_unit_max_chars") or 96),

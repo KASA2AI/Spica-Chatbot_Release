@@ -11,24 +11,28 @@ import json
 from typing import Any
 
 from agent.nodes import _compact_tool_history_for_prompt, record_screen_tool_result
-from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
 from common.timing import elapsed_ms, log_timing, now_ms
 from spica.runtime.llm_stream import get_attr, llm_adapter, record_usage
+from spica.runtime.tools import LegacyFunctionToolSet
 
 
 def prepare_prompt_for_streaming(
     state: Any,
     services: Any,
     put_status: Any,
+    deps: Any = None,
 ) -> tuple[str, str | None]:
     if services.llm_client is None:
         raise RuntimeError("LLM client 未配置。")
 
+    # C3a: tools go through the injected ToolSet (deps.tools). Direct
+    # stream_voice_events callers (tests) get an equivalent Legacy wrapper.
+    tools = deps.tools if deps is not None else LegacyFunctionToolSet.from_services(services)
     model = str(services.config.get("model") or "gpt-4.1-mini")
     active_tool_schemas = (
         []
         if state.screen_attachment or state.screen_observation
-        else tool_schemas_for_user_text(state.user_input, services.tool_schemas)
+        else tools.schemas_for_user_text(state.user_input)
     )
     use_tools = bool(active_tool_schemas)
     state.metadata["use_tools"] = use_tools
@@ -85,7 +89,7 @@ def prepare_prompt_for_streaming(
             put_status("tools", "inspecting_screen")
         else:
             put_status("tools", f"tool:{tool_name}")
-        tool_result = run_local_tool(services.tool_functions, tool_name, arguments)
+        tool_result = tools.run(tool_name, arguments)
         record_screen_tool_result(state, tool_name, tool_result)
         tool_duration = elapsed_ms(tool_start_ms)
         state.timing["agent_tool_local_ms"] = round(

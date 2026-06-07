@@ -12,8 +12,7 @@ from typing import Any
 
 from agent.nodes import _compact_tool_history_for_prompt, record_screen_tool_result
 from common.timing import elapsed_ms, log_timing, now_ms
-from spica.runtime.llm_stream import get_attr, llm_adapter, record_usage
-from spica.runtime.tools import LegacyFunctionToolSet
+from spica.runtime.llm_stream import get_attr, record_usage
 
 
 def prepare_prompt_for_streaming(
@@ -25,10 +24,10 @@ def prepare_prompt_for_streaming(
     if services.llm_client is None:
         raise RuntimeError("LLM client 未配置。")
 
-    # C3a: tools go through the injected ToolSet (deps.tools). Direct
-    # stream_voice_events callers (tests) get an equivalent Legacy wrapper.
-    tools = deps.tools if deps is not None else LegacyFunctionToolSet.from_services(services)
-    model = str(services.config.get("model") or "gpt-4.1-mini")
+    # Tools (C3a) and config / LLM port (C3b) come from the injected deps; the
+    # orchestrator always bridges dict-config callers before reaching here.
+    tools = deps.tools
+    model = deps.config.llm.model
     active_tool_schemas = (
         []
         if state.screen_attachment or state.screen_observation
@@ -45,7 +44,7 @@ def prepare_prompt_for_streaming(
     if not use_tools or not active_tool_schemas:
         return str(state.prompt_input or ""), None
 
-    if llm_adapter(services).prefers_chat_completions():
+    if deps.llm.prefers_chat_completions():
         state.timing["agent_tool_probe_skipped"] = True
         state.timing["agent_tool_probe_skip_reason"] = "chat_completions_compatible_client"
         return str(state.prompt_input or ""), None
@@ -57,7 +56,7 @@ def prepare_prompt_for_streaming(
         "tools": active_tool_schemas,
     }
     response_start_ms = now_ms()
-    response = services.llm_client.responses.create(**request)
+    response = deps.llm.create_responses(**request)
     response_ms = elapsed_ms(response_start_ms)
     state.timing["agent_rounds"] = 1
     state.timing["agent_response_initial_ms"] = response_ms

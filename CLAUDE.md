@@ -80,3 +80,21 @@
   角色文件系统、重要经历归档要作为**后续扩展点预留**（统一可选钩子 + 能力探测），Phase 5 只给最小接口，详见 `docs/REFACTOR_PLAN.md` Phase 5。
 - 不要把竞品（Shinsekai）的实现细节当成事实写进代码注释或文档。它的**方向**值得参考，
   但很多被传述的细节（React 设置中心、YAML DAG workflow 等）**未经核实**，可能不准（见 `docs/REFACTOR_PLAN.md` §0）。
+
+## 配套计划：核心 turn 硬化（进行中）
+
+当前正按 docs/REFACTOR_PLAN_CORE.md 硬化核心 turn（阶段 C0–C8）。做该计划内的任务时，
+先读那份文件的对应阶段。下面的「核心 turn 不变量」会随阶段落地逐条补全——
+**未标「已生效」的条目此刻还不是规则，不要照它改代码。**
+
+### 核心 turn 不变量
+- [已生效] screen 工具必须保留 is_screen_intent_explicit 意图门，且本地分析、绝不上传截图。
+- [已生效] 手动截图是 attachment（用户已决定“看这张”），不是 tool；不得改成由模型决定是否分析用户已附的图。
+- [C1 落地后生效] 有序释放只能走 Sequencer；不许出现手动 index 重排字典。
+- [C2 落地后生效] 只有 run_turn / stream_answer 能产出 RuntimeEvent；其余 stage 是 (ctx, deps)->ctx，不许自己 emit。
+- [C2 落地后生效] 并发只能走注入的 ExecStrategy；业务 stage 内不许 new ThreadPoolExecutor。
+- [C3 落地后生效] 运行时核心不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。
+- [C4 落地后生效] spica 不许 import agent（agent/ 已删）。
+- [C5 落地后生效] 计时/日志只能走注入的 TurnObserver；stage 内不许直接 log_timing。
+- [C6 落地后生效] memory commit 走注入的 JobRunner，不堵 hot path。
+- [C7 落地后生效] inspect_screen 由 CapabilityRegistry 注册、运行时从 registry 解析；不再读静态 TOOL_SCHEMAS。

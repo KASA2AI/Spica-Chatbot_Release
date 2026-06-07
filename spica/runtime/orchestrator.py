@@ -31,6 +31,7 @@ from common.timing import log_timing, now_ms
 from spica.runtime.llm_stream import llm_adapter
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
+from spica.runtime.sequencer import Sequencer
 from spica.runtime.tool_round import prepare_prompt_for_streaming
 from spica.runtime.tts_job import synthesize_unit_audio
 from spica.runtime.visual_job import build_unit_visual_and_emit
@@ -66,9 +67,6 @@ def _produce_stream_events(
     output_queue: queue.Queue[Any],
 ) -> None:
     timing_lock = threading.Lock()
-    ready_lock = threading.Lock()
-    ready_units: dict[int, dict[str, Any]] = {}
-    next_emit = {"index": 0}
     unit_timings: list[dict[str, Any]] = []
     created_units: list[str] = []
     first_unit_event = threading.Event()
@@ -79,6 +77,11 @@ def _produce_stream_events(
     tts_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     ready_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
     ready_futures: list[concurrent.futures.Future[Any]] = []
+    # C1 ordered release: finalize workers push (index, payload) onto this
+    # INTERNAL queue; only the producer thread drains it through the Sequencer
+    # and emits unit_ready in order. completion_queue never leaves this function.
+    completion_queue: queue.Queue[tuple[int, dict[str, Any]]] = queue.Queue()
+    sequencer: Sequencer[dict[str, Any]] = Sequencer()
 
     def relative_ms() -> float:
         return round(now_ms() - request_start_ms, 2)
@@ -112,13 +115,16 @@ def _produce_stream_events(
     def put_unit_event(event_name: str, event_data: dict[str, Any]) -> None:
         output_queue.put({"event": event_name, "data": event_data})
 
-    def put_ready(index: int, event_data: dict[str, Any]) -> None:
-        with ready_lock:
-            ready_units[index] = event_data
-            while next_emit["index"] in ready_units:
-                ready_event = ready_units.pop(next_emit["index"])
+    def drain_ready() -> None:
+        # Single-consumer: only the producer thread feeds the Sequencer and emits
+        # unit_ready, so ordering needs no lock. Finalize workers only enqueue.
+        while True:
+            try:
+                index, event_data = completion_queue.get_nowait()
+            except queue.Empty:
+                break
+            for ready_event in sequencer.complete(index, event_data):
                 output_queue.put({"event": "unit_ready", "data": ready_event})
-                next_emit["index"] += 1
 
     def submit_unit(display_text: str) -> None:
         display_text = normalize_square_brackets_for_speech((display_text or "").strip())
@@ -190,7 +196,7 @@ def _produce_stream_events(
                 tts_future,
                 request_start_ms,
                 set_timing_once,
-                put_ready,
+                completion_queue,
             )
         )
         created_units.append(display_text)
@@ -262,13 +268,16 @@ def _produce_stream_events(
 
         if prefetched_raw is not None:
             handle_raw_delta(prefetched_raw)
+            drain_ready()
         else:
             request = {"model": model, "input": prompt_for_stream}
             for delta in llm_adapter(services).iter_response_text(request, state):
                 handle_raw_delta(delta)
+                drain_ready()
 
         for unit_text in splitter.flush():
             submit_unit(unit_text)
+        drain_ready()
 
         state.raw_model_output = "".join(raw_model_parts)
         state.parsed_reply = parse_model_reply(state.raw_model_output or "")
@@ -287,6 +296,8 @@ def _produce_stream_events(
 
         for future in ready_futures:
             future.result()
+            drain_ready()
+        drain_ready()
 
         state.timing["done_ms"] = relative_ms()
         state.timing["units_count"] = len(created_units)
@@ -337,7 +348,7 @@ def _finalize_unit(
     tts_future: concurrent.futures.Future[dict[str, Any]],
     request_start_ms: float,
     set_timing_once: Any,
-    put_ready: Any,
+    completion_queue: "queue.Queue[tuple[int, dict[str, Any]]]",
 ) -> None:
     visual = visual_future.result()
     audio = tts_future.result()
@@ -370,4 +381,4 @@ def _finalize_unit(
     }
     if audio.get("audio_error"):
         data["audio_error"] = audio["audio_error"]
-    put_ready(int(unit["index"]), data)
+    completion_queue.put((int(unit["index"]), data))

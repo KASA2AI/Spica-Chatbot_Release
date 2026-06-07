@@ -93,7 +93,7 @@
 - [已生效] 有序释放只能走 Sequencer；不许出现手动 index 重排字典。
 - [C2 落地后生效] 只有 run_turn / stream_answer 能产出 RuntimeEvent；其余 stage 是 (ctx, deps)->ctx，不许自己 emit。
 - [已生效] 并发只能走注入的 ExecStrategy；业务 stage 内不许 new ThreadPoolExecutor。
-- [C3 落地后生效] 运行时核心不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。
+- [已生效] 运行时核心（spica/runtime/）不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。唯一例外是 deps.py 桥（legacy services → typed deps）。agent/nodes 的 services.config 读取随 agent/ 在 C4 退场。
 - [C4 落地后生效] spica 不许 import agent（agent/ 已删）。
 - [C5 落地后生效] 计时/日志只能走注入的 TurnObserver；stage 内不许直接 log_timing。
 - [C6 落地后生效] memory commit 走注入的 JobRunner，不堵 hot path。

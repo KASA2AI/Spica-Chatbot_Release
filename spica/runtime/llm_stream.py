@@ -1,20 +1,13 @@
-"""LLM streaming access for the runtime (Phase 6C).
+"""LLM response helpers for the runtime (Phase 6C).
 
-Thin layer over the Phase 5 LLM adapter: resolve the active adapter (or wrap the
-raw client) and provide the small response helpers the runtime needs. The actual
-streaming + DeepSeek/OpenAI branch lives in spica/adapters/llm. Qt-free.
+Small attribute / usage helpers the runtime needs around an LLM response. The
+LLM port itself is resolved in spica.runtime.deps (C3b); the streaming +
+DeepSeek/OpenAI branch lives in spica/adapters/llm. Qt-free.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from spica.adapters.llm import OpenAICompatibleAdapter
-
-
-def llm_adapter(services: Any) -> OpenAICompatibleAdapter:
-    """Resolve the active LLM adapter, falling back to wrapping the raw client."""
-    return services.llm_adapter or OpenAICompatibleAdapter(services.llm_client)
 
 
 def get_attr(value: Any, key: str, default: Any = None) -> Any:

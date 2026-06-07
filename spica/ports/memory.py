@@ -36,6 +36,7 @@ class MemoryItem:
     type: str | None = None
     ts: float | None = None
     importance: float | None = None  # reserved; SQLite may leave None
+    scope: str | None = None  # which bucket the item came from (user/character/...)
 
 
 @runtime_checkable

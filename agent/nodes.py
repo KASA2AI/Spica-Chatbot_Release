@@ -23,6 +23,8 @@ from agent_tools.function_tools.screen.schema import (
 )
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from spica.adapters.llm import OpenAICompatibleAdapter
+from spica.ports.memory import MemoryScope
+from spica.runtime.memory_commit import memory_adapter
 
 
 DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
@@ -127,11 +129,32 @@ def load_recent_context_node(state: AgentState, services: AgentServices) -> Agen
 def retrieve_long_term_memory_node(state: AgentState, services: AgentServices) -> AgentState:
     if _skip_if_error(state):
         return state
-    state.long_term_memories = services.memory_store.search_memories(
-        state.conversation_id,
+    # Read through MemoryPort.retrieve so the read key matches commit_turn's
+    # character-namespaced write key (Phase 5/7). A bare conversation_id here
+    # silently misses every auto-extracted memory. Reuse the same adapter
+    # resolution as the write path -- no second fallback.
+    scope = MemoryScope(
+        character_id=str(services.config.get("character_id") or "spica"),
+        user_id=str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME),
+        conversation_id=state.conversation_id,
+    )
+    items = memory_adapter(services).retrieve(
+        scope,
         state.user_input,
         limit=int(services.config.get("long_term_memory_limit", 5)),
     )
+    # build_spica_prompt / _format_memories consume dicts (scope / content /
+    # memory_type); map MemoryItem back so the prompt's scope label survives.
+    state.long_term_memories = [
+        {
+            "scope": item.scope,
+            "content": item.text,
+            "memory_type": item.type,
+            "importance": item.importance,
+            "score": item.score,
+        }
+        for item in items
+    ]
     state.metadata["long_term_memory_count"] = len(state.long_term_memories)
     return state
 

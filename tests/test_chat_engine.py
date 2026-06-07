@@ -7,6 +7,7 @@ Self-contained fakes; no real LLM/TTS.
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -139,6 +140,28 @@ class ChatEngineDrivingTest(unittest.TestCase):
         self.assertTrue(all(isinstance(e, RuntimeEvent) for e in events))
         self.assertIsInstance(events[-1], DoneEvent)
         self.assertEqual(events[-1].answer, ANSWER)
+
+    def test_tool_round_runs_through_injected_deps_tools(self):
+        # C3a: prove the runtime consults deps.tools (not a services fallback).
+        # The tool round asks the ToolSet which schemas apply on every turn, so a
+        # spy injected into the typed deps must see the user text.
+        class _SpyToolSet:
+            def __init__(self):
+                self.seen = []
+
+            def schemas_for_user_text(self, user_text):
+                self.seen.append(user_text)
+                return []
+
+            def run(self, name, arguments):
+                return "{}"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._engine(tmp)
+            spy = _SpyToolSet()
+            engine.deps = replace(engine.deps, tools=spy)
+            engine.run_voice("説明して", conversation_id="c1")
+        self.assertIn("説明して", spy.seen)
 
 
 class ChatEngineManagementTest(unittest.TestCase):

@@ -23,6 +23,8 @@ from agent.reply_parser import guess_emotion, normalize_emotion, parse_model_rep
 from agent.state import AgentServices, AgentState
 from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
+from spica.runtime.context import TurnRequest
+from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import Inline
 from spica.runtime.fold import fold_events
 from spica.runtime.turn import run_turn
@@ -32,11 +34,14 @@ class ChatEngine:
     def __init__(self, services: AgentServices, config: AppConfig) -> None:
         self.services = services
         self.config = config
+        # Typed deps (C3a): the runtime uses deps.tools; ports/config are wired in
+        # by later stages. Built from the host-assembled (port-resolved) services.
+        self.deps = TurnDeps.from_services(services, config)
         self.interlocutor_name = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
         self.model = services.config.get("model")
 
     # -- driving --------------------------------------------------------------
-    def _build_state(
+    def _request(
         self,
         user_input: str,
         conversation_id: str,
@@ -46,16 +51,31 @@ class ChatEngine:
         include_user_time_context: bool,
         interaction_mode: str,
         screen_attachment: dict[str, Any] | None,
-    ) -> AgentState:
-        return AgentState(
-            conversation_id=conversation_id or "default",
+    ) -> TurnRequest:
+        return TurnRequest(
             user_input=user_input or "",
-            include_user_time_context=include_user_time_context,
-            interaction_mode=interaction_mode,
+            conversation_id=conversation_id or "default",
             emotion_override=emotion_override,
+            interaction_mode=interaction_mode,
+            include_user_time_context=include_user_time_context,
+            screen_attachment=screen_attachment,
             tts_param_overrides=tts_param_overrides,
             visual_overrides=visual_overrides or {},
-            screen_attachment=screen_attachment,
+        )
+
+    @staticmethod
+    def _state_from_request(req: TurnRequest) -> AgentState:
+        # Bridge the typed request to the (still AgentState-based) runtime; C3c
+        # dismantles AgentState and the runtime takes TurnRequest/TurnContext.
+        return AgentState(
+            conversation_id=req.conversation_id,
+            user_input=req.user_input,
+            include_user_time_context=req.include_user_time_context,
+            interaction_mode=req.interaction_mode,
+            emotion_override=req.emotion_override,
+            tts_param_overrides=req.tts_param_overrides,
+            visual_overrides=dict(req.visual_overrides),
+            screen_attachment=req.screen_attachment,
         )
 
     def run_voice(
@@ -69,14 +89,15 @@ class ChatEngine:
         interaction_mode: str = "chat",
         screen_attachment: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        state = self._build_state(
+        req = self._request(
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
         )
         # Sync path (C2) = drive run_turn with Inline (no thread pools), collect
         # the typed events, and fold them into the response payload.
-        events = list(run_turn(state, self.services, exec_strategy=Inline()))
-        return fold_events(events, conversation_id=state.conversation_id)
+        events = list(run_turn(self._state_from_request(req), self.services,
+                               exec_strategy=Inline(), deps=self.deps))
+        return fold_events(events, conversation_id=req.conversation_id)
 
     def run(self, user_input: str, conversation_id: str = "default") -> str:
         return str(self.run_voice(user_input, conversation_id=conversation_id).get("answer") or "")
@@ -93,11 +114,11 @@ class ChatEngine:
         screen_attachment: dict[str, Any] | None = None,
     ):
         """Drive a turn, yielding typed ``RuntimeEvent``s via the run_turn entry."""
-        state = self._build_state(
+        req = self._request(
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
         )
-        yield from run_turn(state, self.services)
+        yield from run_turn(self._state_from_request(req), self.services, deps=self.deps)
 
     def stream_voice(
         self,

@@ -67,6 +67,10 @@ def build_agent_services(
         skill_dir,
         interlocutor_name,
     )
+    # Record the resolved character identity on the typed config so TurnDeps reads
+    # the same normalized values the legacy services.config dict carries (C3b).
+    config.character.interlocutor_name = interlocutor_name
+    config.character.character_id = character_id
     return AgentServices(
         llm_client=client,
         tts_adapter=tts_adapter,

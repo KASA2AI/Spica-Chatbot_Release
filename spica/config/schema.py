@@ -39,6 +39,9 @@ class CharacterConfig(BaseModel):
     profile_override: str | None = None
     skill_dir: str | None = None
     package_dir: str | None = None  # active CharacterPackage dir (Phase 7); None -> Spica
+    # Resolved active character id (from the CharacterPackage); None -> "spica".
+    # Set by the host after package load so the typed deps namespace memory by it.
+    character_id: str | None = None
 
 
 class StreamConfig(BaseModel):

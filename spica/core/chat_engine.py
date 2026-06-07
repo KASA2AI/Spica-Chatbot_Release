@@ -154,6 +154,10 @@ class ChatEngine:
         )
         self.services.config["interlocutor_name"] = self.interlocutor_name
         self.services.config["character_profile"] = profile
+        # Keep the typed config in sync so deps.config.character (and memory
+        # namespacing via deps) reflects the rename (C3b). deps.config is this
+        # same AppConfig object, so the in-place update is visible downstream.
+        self.config.character.interlocutor_name = self.interlocutor_name
         return self.interlocutor_name
 
     def set_visual_tool(self, visual_tool: Any | None) -> None:

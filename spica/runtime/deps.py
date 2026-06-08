@@ -34,18 +34,9 @@ from spica.ports.memory import MemoryPort
 from spica.ports.tts import TTSPort
 from spica.ports.visual import VisualPort
 from spica.runtime.exec_strategy import ExecStrategy, Inline
+from spica.runtime.jobs import InlineJobRunner
 from spica.runtime.observer import NoopTurnObserver
 from spica.runtime.tools import LegacyFunctionToolSet, ToolSet
-
-
-class _InlineJobs:
-    """Placeholder until C6's ``InlineJobRunner`` -- runs jobs synchronously."""
-
-    def submit(self, fn: Any) -> None:
-        fn()
-
-    def drain(self, timeout: float | None = None) -> None:
-        return None
 
 
 @dataclass(frozen=True)
@@ -58,7 +49,7 @@ class TurnDeps:
     tools: ToolSet
     # Non-None by construction (C3a placeholders -> real impls in C5/C6).
     observer: Any = field(default_factory=NoopTurnObserver)
-    jobs: Any = field(default_factory=_InlineJobs)
+    jobs: Any = field(default_factory=InlineJobRunner)
     # Placeholder: per-turn concurrency still flows via run_turn's exec_strategy
     # param in C3a; a later stage makes this the source of truth.
     exec_strategy: ExecStrategy = field(default_factory=Inline)

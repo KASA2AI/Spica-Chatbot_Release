@@ -58,6 +58,14 @@ class CapabilityRegistry:
     def resolve_memory(self, name: str, **kwargs: Any) -> Any:
         return self._resolve(self._memory, "memory", name, **kwargs)
 
+    # -- tool resolution (C7: the registry-backed ToolSet reads tools from here) --
+    def tool_schemas(self) -> list[dict[str, Any]]:
+        return [schema for (schema, _handler) in self._tools.values()]
+
+    def tool_handler(self, name: str) -> Callable[..., Any] | None:
+        entry = self._tools.get(name)
+        return entry[1] if entry else None
+
     # -- introspection (used by ManagementSurface in Phase 8) -----------------
     def list_adapters(self, kind: str) -> list[str]:
         table = {

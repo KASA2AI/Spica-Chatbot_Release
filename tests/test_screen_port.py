@@ -6,10 +6,24 @@ inspect_screen tool and the manual-attachment stage share one analysis adapter.
 """
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from agent_tools.function_tools.screen.schema import ScreenToolError
 from spica.adapters.screen import LocalMoondreamScreenAnalysis
+from spica.adapters.tools import InspectScreenTool
+from spica.plugins.registry import CapabilityRegistry
 from spica.ports.screen import ScreenAnalysisPort
+
+
+class _SpyScreen:
+    def __init__(self, observation):
+        self.observation = observation
+        self.calls = []
+
+    def analyze_image(self, image, mode, prompt=None, **kw):
+        self.calls.append((image, mode, prompt, kw))
+        return self.observation
 
 
 class ScreenAnalysisAdapterTest(unittest.TestCase):
@@ -41,6 +55,48 @@ class ScreenAnalysisAdapterTest(unittest.TestCase):
             performance={"capture_ms": 1.0},
             question_type="general_observation",
         )
+
+
+class InspectScreenToolTest(unittest.TestCase):
+    def test_schema_name_is_inspect_screen(self):
+        self.assertEqual(InspectScreenTool(_SpyScreen({})).schema()["name"], "inspect_screen")
+
+    def test_intent_gate_blocks_and_never_captures(self):
+        screen = _SpyScreen({})
+        with self.assertRaises(ScreenToolError) as cm:
+            InspectScreenTool(screen).run(target="full_screen", question="你好")  # no screen intent
+        self.assertEqual(cm.exception.code, "SCREEN_INTENT_NOT_EXPLICIT")
+        self.assertEqual(screen.calls, [])  # gate fails before any capture/analyze
+
+    def test_non_full_screen_target_is_rejected(self):
+        with self.assertRaises(ScreenToolError) as cm:
+            InspectScreenTool(_SpyScreen({})).run(target="region", question="帮我看看屏幕")
+        self.assertEqual(cm.exception.code, "SCREEN_INTENT_NOT_EXPLICIT")
+
+    def test_explicit_intent_captures_and_delegates_to_port(self):
+        observation = {"schema_version": "screen_observation.v1"}
+        screen = _SpyScreen(observation)
+        capture = SimpleNamespace(image="IMG", metadata={})
+        with patch("spica.adapters.tools.screen.capture_full_screen", return_value=capture), patch(
+            "spica.adapters.tools.screen.load_screen_config",
+            return_value=SimpleNamespace(capture_format="png"),
+        ):
+            out = InspectScreenTool(screen).run(target="full_screen", question="帮我看看屏幕上有没有报错")
+        self.assertIs(out, observation)
+        self.assertEqual(len(screen.calls), 1)
+        image, mode, prompt, _kw = screen.calls[0]
+        self.assertEqual((image, mode, prompt), ("IMG", "full_screen", "帮我看看屏幕上有没有报错"))
+
+
+class RegistryToolAccessorTest(unittest.TestCase):
+    def test_register_then_read_schemas_and_handler(self):
+        registry = CapabilityRegistry()
+        tool = InspectScreenTool(_SpyScreen({}))
+        handler = tool.run
+        registry.register_tool(tool.schema(), handler)
+        self.assertEqual([s["name"] for s in registry.tool_schemas()], ["inspect_screen"])
+        self.assertIs(registry.tool_handler("inspect_screen"), handler)
+        self.assertIsNone(registry.tool_handler("not_a_tool"))
 
 
 if __name__ == "__main__":

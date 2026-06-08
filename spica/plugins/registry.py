@@ -18,6 +18,24 @@ from typing import Any, Callable
 Factory = Callable[..., Any]
 
 
+def _tool_schema_name(schema: dict[str, Any]) -> str:
+    """Resolve a tool name from either a flat schema (top-level ``name``) or an
+    OpenAI-style nested one (``{"type": "function", "function": {"name": ...}}``).
+
+    Inlined here (a few lines) rather than importing ``agent_tools``'s equivalent,
+    so ``spica`` does not depend on ``agent_tools`` just for this.
+    """
+    name = schema.get("name")
+    if isinstance(name, str) and name:
+        return name
+    function = schema.get("function")
+    if isinstance(function, dict):
+        nested = function.get("name")
+        if isinstance(nested, str) and nested:
+            return nested
+    return ""
+
+
 class CapabilityRegistry:
     def __init__(self) -> None:
         self._llm: dict[str, Factory] = {}
@@ -40,9 +58,11 @@ class CapabilityRegistry:
         self._memory[name] = factory
 
     def register_tool(self, schema: dict[str, Any], handler: Callable[..., Any]) -> None:
-        name = str(schema.get("name") or "")
+        # Accept both flat and OpenAI-nested schemas; the schema is stored VERBATIM
+        # (tool_schemas() returns it unchanged), only the lookup name is resolved.
+        name = _tool_schema_name(schema)
         if not name:
-            raise ValueError("tool schema must include a 'name'")
+            raise ValueError("tool schema must include a 'name' (top-level or under 'function')")
         self._tools[name] = (schema, handler)
 
     # -- resolution -----------------------------------------------------------

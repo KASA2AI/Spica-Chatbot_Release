@@ -82,148 +82,156 @@ def _produce_stream_events(
     exec_strategy: ExecStrategy | None = None,
     deps: Any = None,
 ) -> None:
-    unit_timings: list[dict[str, Any]] = []
-    created_units: list[str] = []
-    first_unit_event = threading.Event()
-
-    # C3b: run on typed deps. Direct (dict-config) callers bridge here; the
-    # hot path below reads only deps.config / deps.llm, never services.config.
-    deps = deps or TurnDeps.from_legacy_services(services)
-
-    # Concurrency + background jobs are injected per-turn (C2/C5/C6). Streaming
-    # passes no exec_strategy and owns both the Threaded pools and a ThreadJobRunner
-    # (drained in finally) so `done` is emitted without waiting on the long-term
-    # memory commit; the sync path passes Inline and keeps the InlineJobRunner.
-    # The three lanes (visual / serial tts / finalize) live in the strategy.
+    # Safe defaults so the except / finally below can never NameError if the setup
+    # throws before they are built. A setup failure (deps bridge / Threaded pools /
+    # observer / jobs construction) must still emit an `error` event and ALWAYS put
+    # _SENTINEL, or the consumer (output_queue.get with no timeout) hangs forever.
+    first_unit_timer: threading.Timer | None = None
     owns_exec = exec_strategy is None
-    if exec_strategy is None:
-        exec_strategy = Threaded(visual_workers=max(1, deps.config.stream.visual_stream_workers))
-    # C5: one per-turn observer wrapping ctx.timing (the sink) -- the single
-    # timing/log write path; done.timing stays ctx.timing.
-    observer = DefaultTurnObserver(ctx.timing, logger=services.logger)
-    jobs = ThreadJobRunner() if owns_exec else deps.jobs
-    deps = replace(deps, observer=observer, jobs=jobs)
-    ready_futures: list[concurrent.futures.Future[Any]] = []
-    # C1 ordered release: finalize workers push (index, payload) onto this
-    # INTERNAL queue; only the producer thread drains it through the Sequencer
-    # and emits unit_ready in order. completion_queue never leaves this function.
-    completion_queue: queue.Queue[tuple[int, dict[str, Any]]] = queue.Queue()
-    sequencer: Sequencer[dict[str, Any]] = Sequencer()
+    jobs: Any = None
+    observer: Any = None
 
     def relative_ms() -> float:
         return round(now_ms() - request_start_ms, 2)
 
-    def mark_first_unit_warning(reason: str) -> None:
-        if first_unit_event.is_set():
-            return
-        if observer.snapshot().get("first_unit_warning_ms") is not None:
-            return
-        warning_ms = relative_ms()
-        observer.mark_once("first_unit_warning_ms", warning_ms)
-        observer.mark(
-            "first_unit_warning",
-            f"first playable unit was not created within {int(_FIRST_UNIT_WARNING_MS)}ms",
-        )
-        observer.mark("first_unit_warning_reason", reason)
-        observer.event(
-            "chat_stream_first_unit_warning",
-            warning_ms,
-            conversation_id=ctx.request.conversation_id,
-            reason=reason,
-        )
+    try:
+        unit_timings: list[dict[str, Any]] = []
+        created_units: list[str] = []
+        first_unit_event = threading.Event()
 
-    def put_status(state_name: str, message: str) -> None:
-        output_queue.put({"event": "status", "data": {"state": state_name, "message": message}})
+        # C3b: run on typed deps. Direct (dict-config) callers bridge here; the
+        # hot path below reads only deps.config / deps.llm, never services.config.
+        deps = deps or TurnDeps.from_legacy_services(services)
 
-    def put_unit_event(event_name: str, event_data: dict[str, Any]) -> None:
-        output_queue.put({"event": event_name, "data": event_data})
+        # Concurrency + background jobs are injected per-turn (C2/C5/C6). Streaming
+        # passes no exec_strategy and owns both the Threaded pools and a ThreadJobRunner
+        # (drained in finally) so `done` is emitted without waiting on the long-term
+        # memory commit; the sync path passes Inline and keeps the InlineJobRunner.
+        # The three lanes (visual / serial tts / finalize) live in the strategy.
+        if exec_strategy is None:
+            exec_strategy = Threaded(visual_workers=max(1, deps.config.stream.visual_stream_workers))
+        # C5: one per-turn observer wrapping ctx.timing (the sink) -- the single
+        # timing/log write path; done.timing stays ctx.timing.
+        observer = DefaultTurnObserver(ctx.timing, logger=services.logger)
+        jobs = ThreadJobRunner() if owns_exec else deps.jobs
+        deps = replace(deps, observer=observer, jobs=jobs)
+        ready_futures: list[concurrent.futures.Future[Any]] = []
+        # C1 ordered release: finalize workers push (index, payload) onto this
+        # INTERNAL queue; only the producer thread drains it through the Sequencer
+        # and emits unit_ready in order. completion_queue never leaves this function.
+        completion_queue: queue.Queue[tuple[int, dict[str, Any]]] = queue.Queue()
+        sequencer: Sequencer[dict[str, Any]] = Sequencer()
 
-    def drain_ready() -> None:
-        # Single-consumer: only the producer thread feeds the Sequencer and emits
-        # unit_ready, so ordering needs no lock. Finalize workers only enqueue.
-        while True:
-            try:
-                index, event_data = completion_queue.get_nowait()
-            except queue.Empty:
-                break
-            for ready_event in sequencer.complete(index, event_data):
-                output_queue.put({"event": "unit_ready", "data": ready_event})
+        def mark_first_unit_warning(reason: str) -> None:
+            if first_unit_event.is_set():
+                return
+            if observer.snapshot().get("first_unit_warning_ms") is not None:
+                return
+            warning_ms = relative_ms()
+            observer.mark_once("first_unit_warning_ms", warning_ms)
+            observer.mark(
+                "first_unit_warning",
+                f"first playable unit was not created within {int(_FIRST_UNIT_WARNING_MS)}ms",
+            )
+            observer.mark("first_unit_warning_reason", reason)
+            observer.event(
+                "chat_stream_first_unit_warning",
+                warning_ms,
+                conversation_id=ctx.request.conversation_id,
+                reason=reason,
+            )
 
-    def submit_unit(display_text: str) -> None:
-        display_text = normalize_square_brackets_for_speech((display_text or "").strip())
-        if not display_text:
-            return
+        def put_status(state_name: str, message: str) -> None:
+            output_queue.put({"event": "status", "data": {"state": state_name, "message": message}})
 
-        index = len(created_units)
-        previous_units = list(created_units)
-        full_answer_so_far = "".join(previous_units + [display_text])
-        emotion = normalize_emotion(ctx.request.emotion_override or guess_emotion(full_answer_so_far))
-        unit_timing: dict[str, Any] = {
-            "unit_index": index,
-            "unit_text_chars": len(display_text),
-            "unit_created_ms": relative_ms(),
-        }
-        unit_timings.append(unit_timing)
-        if index == 0:
-            observer.mark_once("first_unit_created_ms", unit_timing["unit_created_ms"])
-            observer.mark_once("first_sentence_ms", unit_timing["unit_created_ms"])
-            if unit_timing["unit_created_ms"] > _FIRST_UNIT_WARNING_MS:
-                mark_first_unit_warning("first_unit_created_after_threshold")
-            first_unit_event.set()
+        def put_unit_event(event_name: str, event_data: dict[str, Any]) -> None:
+            output_queue.put({"event": event_name, "data": event_data})
 
-        tts_text = build_tts_text(display_text)
-        unit = {
-            "index": index,
-            "display_text": display_text,
-            "tts_text": tts_text,
-            "emotion": emotion,
-            "previous_units": previous_units,
-            "full_answer_so_far": full_answer_so_far,
-            "timing": unit_timing,
-        }
-        put_unit_event(
-            "unit_text_ready",
-            {
+        def drain_ready() -> None:
+            # Single-consumer: only the producer thread feeds the Sequencer and emits
+            # unit_ready, so ordering needs no lock. Finalize workers only enqueue.
+            while True:
+                try:
+                    index, event_data = completion_queue.get_nowait()
+                except queue.Empty:
+                    break
+                for ready_event in sequencer.complete(index, event_data):
+                    output_queue.put({"event": "unit_ready", "data": ready_event})
+
+        def submit_unit(display_text: str) -> None:
+            display_text = normalize_square_brackets_for_speech((display_text or "").strip())
+            if not display_text:
+                return
+
+            index = len(created_units)
+            previous_units = list(created_units)
+            full_answer_so_far = "".join(previous_units + [display_text])
+            emotion = normalize_emotion(ctx.request.emotion_override or guess_emotion(full_answer_so_far))
+            unit_timing: dict[str, Any] = {
+                "unit_index": index,
+                "unit_text_chars": len(display_text),
+                "unit_created_ms": relative_ms(),
+            }
+            unit_timings.append(unit_timing)
+            if index == 0:
+                observer.mark_once("first_unit_created_ms", unit_timing["unit_created_ms"])
+                observer.mark_once("first_sentence_ms", unit_timing["unit_created_ms"])
+                if unit_timing["unit_created_ms"] > _FIRST_UNIT_WARNING_MS:
+                    mark_first_unit_warning("first_unit_created_after_threshold")
+                first_unit_event.set()
+
+            tts_text = build_tts_text(display_text)
+            unit = {
                 "index": index,
                 "display_text": display_text,
                 "tts_text": tts_text,
                 "emotion": emotion,
-                "timing": {
-                    "unit_created_ms": unit_timing["unit_created_ms"],
+                "previous_units": previous_units,
+                "full_answer_so_far": full_answer_so_far,
+                "timing": unit_timing,
+            }
+            put_unit_event(
+                "unit_text_ready",
+                {
+                    "index": index,
+                    "display_text": display_text,
+                    "tts_text": tts_text,
+                    "emotion": emotion,
+                    "timing": {
+                        "unit_created_ms": unit_timing["unit_created_ms"],
+                    },
                 },
-            },
-        )
-        visual_future = exec_strategy.submit_visual(
-            functools.partial(
-                build_unit_visual_and_emit,
-                services, ctx, unit, request_start_ms, observer, put_unit_event,
             )
-        )
-        tts_future = exec_strategy.submit_tts(
-            functools.partial(
-                synthesize_unit_audio,
-                services, ctx, unit, request_start_ms, observer, put_unit_event,
-            )
-        )
-        ready_futures.append(
-            exec_strategy.submit_finalize(
+            visual_future = exec_strategy.submit_visual(
                 functools.partial(
-                    _finalize_unit,
-                    unit, visual_future, tts_future, request_start_ms, observer, completion_queue,
+                    build_unit_visual_and_emit,
+                    services, ctx, unit, request_start_ms, observer, put_unit_event,
                 )
             )
+            tts_future = exec_strategy.submit_tts(
+                functools.partial(
+                    synthesize_unit_audio,
+                    services, ctx, unit, request_start_ms, observer, put_unit_event,
+                )
+            )
+            ready_futures.append(
+                exec_strategy.submit_finalize(
+                    functools.partial(
+                        _finalize_unit,
+                        unit, visual_future, tts_future, request_start_ms, observer, completion_queue,
+                    )
+                )
+            )
+            created_units.append(display_text)
+
+        first_unit_timer = threading.Timer(
+            _FIRST_UNIT_WARNING_MS / 1000.0,
+            mark_first_unit_warning,
+            args=("timer_threshold",),
         )
-        created_units.append(display_text)
+        first_unit_timer.daemon = True
+        first_unit_timer.start()
 
-    first_unit_timer = threading.Timer(
-        _FIRST_UNIT_WARNING_MS / 1000.0,
-        mark_first_unit_warning,
-        args=("timer_threshold",),
-    )
-    first_unit_timer.daemon = True
-    first_unit_timer.start()
-
-    try:
         ctx = validate_input_node(ctx, services, deps)
         if ctx.error:
             output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求无效。"}})
@@ -353,15 +361,31 @@ def _produce_stream_events(
         )
     except Exception as exc:
         output_queue.put({"event": "error", "data": {"message": str(exc)}})
-        observer.event("chat_stream_error", relative_ms(), conversation_id=ctx.request.conversation_id, error=str(exc))
+        if observer is not None:
+            try:
+                observer.event(
+                    "chat_stream_error",
+                    relative_ms(),
+                    conversation_id=ctx.request.conversation_id,
+                    error=str(exc),
+                )
+            except Exception:
+                pass
     finally:
-        first_unit_timer.cancel()
-        if owns_exec:
-            # `done` is already queued; drain the backgrounded long-term commit so
-            # no commit thread outlives the turn, then shut the exec pools down.
-            jobs.drain()
-            exec_strategy.shutdown()
-        output_queue.put(_SENTINEL)
+        # Always put _SENTINEL last, even if cleanup raises -- the consumer's
+        # output_queue.get() has no timeout, so a missing sentinel hangs it forever.
+        try:
+            if first_unit_timer is not None:
+                first_unit_timer.cancel()
+            if owns_exec:
+                # `done` is already queued; drain the backgrounded long-term commit so
+                # no commit thread outlives the turn, then shut the exec pools down.
+                if jobs is not None:
+                    jobs.drain()
+                if exec_strategy is not None:
+                    exec_strategy.shutdown()
+        finally:
+            output_queue.put(_SENTINEL)
 
 
 def _finalize_unit(

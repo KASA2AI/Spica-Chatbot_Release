@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -363,6 +364,34 @@ class StreamingMemoryJobTest(unittest.TestCase):
         self.assertEqual(len(jobs.submitted), 1)
         # recent append, by contrast, ran synchronously before `done`
         self.assertTrue(services.recent_memory.get_recent("c1"))
+
+
+class StreamingSetupFailureTest(unittest.TestCase):
+    def test_setup_exception_emits_error_and_does_not_hang(self):
+        # If the producer setup (deps bridge / Threaded pools / observer) throws
+        # before reaching the work, the consumer's output_queue.get() (no timeout)
+        # must NOT hang: the stream finishes with an error event + _SENTINEL.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            services = make_services(tmpdir, "ok")
+            state = TurnContext(TurnRequest(conversation_id="c1", user_input="hi"))
+            result: list = []
+
+            def consume():
+                with patch(
+                    "spica.runtime.orchestrator.TurnDeps.from_legacy_services",
+                    side_effect=RuntimeError("setup boom"),
+                ):
+                    result.extend(stream_voice_events(state, services))
+
+            worker = threading.Thread(target=consume)
+            worker.start()
+            worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive(), "stream_voice_events hung after a setup failure")
+        kinds = [event["event"] for event in result]
+        self.assertIn("error", kinds)
+        self.assertEqual(result[-1]["event"], "error")
+        self.assertIn("setup boom", result[-1]["data"]["message"])
 
 
 if __name__ == "__main__":

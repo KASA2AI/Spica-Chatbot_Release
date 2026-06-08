@@ -42,6 +42,12 @@ class CharacterConfig(BaseModel):
     # Resolved active character id (from the CharacterPackage); None -> "spica".
     # Set by the host after package load so the typed deps namespace memory by it.
     character_id: str | None = None
+    # Resolved at assembly time (C4): the built persona text and display name the
+    # prompt builder uses. Host writes these back so the turn reads them off
+    # deps.config instead of the legacy services.config dict. None -> the prompt
+    # builder's DEFAULT_CHARACTER_PROFILE / DEFAULT_CHARACTER_NAME fallback.
+    character_profile: str | None = None
+    character_name: str | None = None
 
 
 class StreamConfig(BaseModel):

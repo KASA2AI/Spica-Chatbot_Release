@@ -108,15 +108,26 @@ class TurnDeps:
         cfg = services.config
         app_config = AppConfig(
             llm=LLMConfig(model=cfg.get("model") or "gpt-4.1-mini"),
-            memory=MemoryConfig(max_long_term_memories=int(cfg.get("max_long_term_memories", 200))),
+            memory=MemoryConfig(
+                # Defaults match the stages' historical ``get(key, default)`` exactly,
+                # so bridging a dict that omits a key reproduces today's behaviour (C4).
+                recent_context_limit=int(cfg.get("recent_context_limit", 3)),
+                long_term_memory_limit=int(cfg.get("long_term_memory_limit", 5)),
+                long_term_memory_budget_chars=int(cfg.get("long_term_memory_budget_chars", 1200)),
+                recent_turn_char_limit=int(cfg.get("recent_turn_char_limit", 360)),
+                max_long_term_memories=int(cfg.get("max_long_term_memories", 200)),
+            ),
             character=CharacterConfig(
                 interlocutor_name=cfg.get("interlocutor_name"),
                 character_id=cfg.get("character_id"),
+                character_profile=cfg.get("character_profile"),
+                character_name=cfg.get("character_name"),
             ),
             stream=StreamConfig(
                 play_unit_min_chars=int(cfg.get("play_unit_min_chars") or 18),
                 play_unit_max_chars=int(cfg.get("play_unit_max_chars") or 96),
                 visual_stream_workers=int(cfg.get("visual_stream_workers") or 2),
             ),
+            max_tool_rounds=int(cfg.get("max_tool_rounds", 3)),
         )
         return cls.from_services(services, app_config)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from common.timing import elapsed_ms, log_timing, now_ms
+from common.timing import elapsed_ms, now_ms
 
 
 def build_unit_visual_and_emit(
@@ -20,10 +20,10 @@ def build_unit_visual_and_emit(
     ctx: Any,
     unit: dict[str, Any],
     request_start_ms: float,
-    set_timing_once: Any,
+    observer: Any,
     put_unit_event: Any,
 ) -> dict[str, Any]:
-    visual = _build_unit_visual(services, ctx, unit, request_start_ms, set_timing_once)
+    visual = _build_unit_visual(services, ctx, unit, request_start_ms, observer)
     unit_timing = unit["timing"]
     unit_index = int(unit["index"])
     visual_ready_ms = round(now_ms() - request_start_ms, 2)
@@ -49,7 +49,7 @@ def _build_unit_visual(
     ctx: Any,
     unit: dict[str, Any],
     request_start_ms: float,
-    set_timing_once: Any,
+    observer: Any,
 ) -> dict[str, Any]:
     unit_timing = unit["timing"]
     unit_index = int(unit["index"])
@@ -97,7 +97,7 @@ def _build_unit_visual(
         unit_timing["visual_classifier_version"] = visual["classifier_version"]
         unit_timing["visual_selection_source"] = visual["selection_source"]
         unit_timing["visual_selection_error"] = visual["selection_error"]
-        log_timing(
+        observer.event(
             "visual_classifier_unit",
             duration_ms,
             unit_index=unit_index,
@@ -125,7 +125,7 @@ def _build_unit_visual(
         }
     finally:
         if unit_index == 0:
-            set_timing_once("first_visual_ready_ms", round(now_ms() - request_start_ms, 2))
+            observer.mark_once("first_visual_ready_ms", round(now_ms() - request_start_ms, 2))
 
 
 def _cue_from_visual_payload(visual: dict[str, Any]) -> dict[str, Any]:

@@ -12,6 +12,18 @@ from spica.runtime.services import AgentServices
 from spica.runtime.context import TurnContext, TurnRequest
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions, is_screen_intent_explicit, should_use_tools
 from agent_tools.tts.schemas import TTSRequest, TTSResult
+from dataclasses import replace
+from spica.runtime.deps import TurnDeps
+from spica.runtime.observer import DefaultTurnObserver
+
+
+def _observed_deps(ctx, services):
+    """deps with a per-turn observer wrapping ctx.timing -- what the stream / sync
+    entries build -- so a direct single-node test call records timing (C5)."""
+    return replace(
+        TurnDeps.from_legacy_services(services),
+        observer=DefaultTurnObserver(ctx.timing, logger=services.logger),
+    )
 
 
 class FakeResponse:
@@ -286,9 +298,10 @@ class PipelineSmokeTest(unittest.TestCase):
             llm = FakeDeepSeekClient()
             services = make_services(tmpdir, llm=llm)
             state = TurnContext(TurnRequest(conversation_id="c1", user_input="你好"))
-            state = validate_input_node(state, services)
-            state = build_prompt_node(state, services)
-            state = call_llm_node(state, services)
+            deps = _observed_deps(state, services)
+            state = validate_input_node(state, services, deps)
+            state = build_prompt_node(state, services, deps)
+            state = call_llm_node(state, services, deps)
 
             self.assertEqual(state.answer.parsed_reply, None)
             self.assertIn("こんにちは", state.answer.raw_model_output)

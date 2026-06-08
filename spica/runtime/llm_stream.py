@@ -16,11 +16,13 @@ def get_attr(value: Any, key: str, default: Any = None) -> Any:
     return getattr(value, key, default)
 
 
-def record_usage(state: Any, response: Any) -> None:
+def record_usage(observer: Any, response: Any) -> None:
+    # C5: writes the token counts through the injected TurnObserver (used by the
+    # streaming tool round). The LLM adapter has its own internal _record_usage.
     usage = get_attr(response, "usage")
     if not usage:
         return
     for key in ("input_tokens", "output_tokens", "total_tokens"):
         value = get_attr(usage, key)
         if value is not None:
-            state.timing[key] = value
+            observer.mark(key, value)

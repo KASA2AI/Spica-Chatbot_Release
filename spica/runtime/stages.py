@@ -1,12 +1,17 @@
-"""Turn stages (C4: moved from agent/nodes.py).
+"""Turn stages (C4: moved from agent/nodes.py; C5: timing via TurnObserver).
 
 Each stage is ``(ctx, services, deps) -> ctx``: it reads/writes its own TurnContext
 sub-object (C3c) and never emits events. Tunables + the LLM/memory ports come from
 the typed ``deps`` (config/llm/memory); ``services`` is a *transitional* dependency
-carrier for the bits not yet on deps -- recent_memory, the logger, and the tool
-schema/function registry. N3-config only bans ``services.config`` /
-``services.llm_adapter`` / ``services.memory_adapter`` here, which this module no
-longer touches; the remaining ``services.*`` reads are flagged TODO(C5/C6/C7).
+carrier for the bits not yet on deps -- recent_memory and the tool schema/function
+registry (TODO C6/C7).
+
+Timing + structured logging go through ``deps.observer`` (C5): ``span`` for a timed
+node, ``mark`` / ``mark_once`` / ``bump`` for stored values, ``event`` for a
+diagnostic log line. No stage calls ``log_timing`` or touches ``ctx.timing``
+directly (N4-observe). The observer's sink IS ``ctx.timing``, so ``done.timing`` is
+unchanged. N3-config only bans ``services.config`` / ``services.llm_adapter`` /
+``services.memory_adapter`` here, which this module no longer touches.
 
 Qt-free (CLAUDE.md #1).
 """
@@ -23,7 +28,7 @@ from spica.conversation.reply_parser import EMOTION_LABELS, normalize_emotion, p
 from spica.conversation.text_normalizer import normalize_square_brackets_for_speech
 from spica.conversation.time_context import build_local_time_context
 from spica.runtime.services import AgentServices
-from common.timing import elapsed_ms, log_timing, now_ms
+from common.timing import elapsed_ms, now_ms
 from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
 from agent_tools.function_tools.screen.analyzer import (
     analyze_screen_attachment,
@@ -45,6 +50,7 @@ from spica.runtime.context import (
     turn_error_to_legacy_dict,
 )
 from spica.runtime.deps import TurnDeps
+from spica.runtime.observer import NoopTurnObserver
 
 
 DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
@@ -53,30 +59,20 @@ DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
 # Stages take (ctx, services, deps). deps may be None for direct (dict-config)
 # callers (the compat sync chain / tests); stages that need config or a port
 # bridge it here -- the same N3-clean pattern memory_commit uses. node_timer
-# threads deps through so every stage has a uniform signature.
+# threads deps through and times the node via the injected observer (C5).
 def node_timer(func: Callable[..., TurnContext]):
     @wraps(func)
     def wrapper(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
-        start_ms = now_ms()
-        try:
-            return func(ctx, services, deps)
-        except Exception as exc:
-            if ctx.error is None:
-                ctx.error = TurnError("NODE_FAILED", f"{func.__name__}: {exc}")
-            return ctx
-        finally:
-            duration = elapsed_ms(start_ms)
-            ctx.timing[f"{func.__name__}_ms"] = duration
-            _log_timing(services, func.__name__, duration, conversation_id=ctx.request.conversation_id)
+        observer = deps.observer if deps is not None else NoopTurnObserver()
+        with observer.span(func.__name__, conversation_id=ctx.request.conversation_id):
+            try:
+                return func(ctx, services, deps)
+            except Exception as exc:
+                if ctx.error is None:
+                    ctx.error = TurnError("NODE_FAILED", f"{func.__name__}: {exc}")
+                return ctx
 
     return wrapper
-
-
-def _log_timing(services: AgentServices, step: str, duration_ms: float, **fields: Any) -> None:
-    # TODO(C5): turn-level timing/logging moves to the injected TurnObserver;
-    # services.logger is a transitional carrier (N3 allows it -- it is not config).
-    logger = services.logger or log_timing
-    logger(step, duration_ms, **fields)
 
 
 def _skip_if_error(ctx: TurnContext) -> bool:
@@ -140,7 +136,7 @@ def load_recent_context_node(ctx: TurnContext, services: AgentServices, deps: An
     if _skip_if_error(ctx):
         return ctx
     deps = deps or TurnDeps.from_legacy_services(services)
-    # TODO(C5/C6): the recent-turn buffer becomes a deps-resolved capability;
+    # TODO(C6): the recent-turn buffer becomes a deps-resolved capability;
     # services.recent_memory is a transitional carrier (N3 allows it).
     recent = services.recent_memory.get_recent(
         ctx.request.conversation_id,
@@ -196,6 +192,8 @@ def analyze_screen_attachment_node(ctx: TurnContext, services: AgentServices, de
         return ctx
     if not ctx.request.screen_attachment:
         return ctx
+    deps = deps or TurnDeps.from_legacy_services(services)
+    obs = deps.observer
 
     started_ms = now_ms()
     clear_last_screen_analysis_metadata()
@@ -206,11 +204,11 @@ def analyze_screen_attachment_node(ctx: TurnContext, services: AgentServices, de
         )
         ctx.screen_observation = observation
         duration = elapsed_ms(started_ms)
-        ctx.timing["screen_analysis_ms"] = duration
+        obs.mark("screen_analysis_ms", duration)
         ctx.metadata["screen_observation_used"] = True
         ctx.metadata["screen_observation_schema"] = observation.get("schema_version")
         ctx.metadata["screen_observation_target"] = (observation.get("request") or {}).get("target")
-        _record_screen_analysis_metadata(ctx)
+        _record_screen_analysis_metadata(ctx, obs)
         ctx.tools.append(
             {
                 "name": "screen_analyzer",
@@ -220,20 +218,19 @@ def analyze_screen_attachment_node(ctx: TurnContext, services: AgentServices, de
                 "source": (observation.get("capture") or {}).get("source"),
             }
         )
-        _log_timing(
-            services,
+        obs.event(
             "screen_attachment_analysis",
             duration,
             target=(observation.get("request") or {}).get("target"),
             source=(observation.get("capture") or {}).get("source"),
-            stream_enabled=ctx.timing.get("screen_analysis_stream_enabled"),
-            stream_fallback_used=ctx.timing.get("screen_analysis_stream_fallback_used"),
-            first_delta_ms=ctx.timing.get("screen_analysis_first_delta_ms"),
+            stream_enabled=obs.snapshot().get("screen_analysis_stream_enabled"),
+            stream_fallback_used=obs.snapshot().get("screen_analysis_stream_fallback_used"),
+            first_delta_ms=obs.snapshot().get("screen_analysis_first_delta_ms"),
         )
     except ScreenToolError as exc:
         duration = elapsed_ms(started_ms)
-        ctx.timing["screen_analysis_ms"] = duration
-        _record_screen_analysis_metadata(ctx)
+        obs.mark("screen_analysis_ms", duration)
+        _record_screen_analysis_metadata(ctx, obs)
         # Tool-audit record (its own shape), not a TurnError serialization.
         ctx.tools.append(
             {
@@ -246,8 +243,8 @@ def analyze_screen_attachment_node(ctx: TurnContext, services: AgentServices, de
         ctx.error = TurnError(exc.code, exc.message)
     except Exception as exc:
         duration = elapsed_ms(started_ms)
-        ctx.timing["screen_analysis_ms"] = duration
-        _record_screen_analysis_metadata(ctx)
+        obs.mark("screen_analysis_ms", duration)
+        _record_screen_analysis_metadata(ctx, obs)
         ctx.tools.append(
             {
                 "name": "screen_analyzer",
@@ -294,6 +291,7 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
         ctx.error = TurnError("LLM_CLIENT_NOT_CONFIGURED", "LLM client 未配置。")
         return ctx
     deps = deps or TurnDeps.from_legacy_services(services)
+    obs = deps.observer
 
     model = deps.config.llm.model
     max_rounds = max(1, int(deps.config.max_tool_rounds))
@@ -309,14 +307,14 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
     ctx.metadata["use_tools"] = use_tools
     ctx.metadata["available_tool_schema_count"] = len(services.tool_schemas)
     ctx.metadata["selected_tool_schema_count"] = len(active_tool_schemas)
-    ctx.timing["agent_tool_local_ms"] = 0.0
-    ctx.timing["agent_followup_response_ms"] = 0.0
-    ctx.timing["agent_function_calls"] = 0
-    ctx.timing["agent_rounds"] = 0
-    ctx.timing["agent_model"] = model
-    ctx.timing["prompt_input_chars"] = len(str(prompt_input or ""))
+    obs.mark("agent_tool_local_ms", 0.0)
+    obs.mark("agent_followup_response_ms", 0.0)
+    obs.mark("agent_function_calls", 0)
+    obs.mark("agent_rounds", 0)
+    obs.mark("agent_model", model)
+    obs.mark("prompt_input_chars", len(str(prompt_input or "")))
 
-    _log_timing(services, "tool_schema_gate", 0.0, use_tools=use_tools, user_chars=len(ctx.user_input))
+    obs.event("tool_schema_gate", 0.0, use_tools=use_tools, user_chars=len(ctx.user_input))
 
     prompt_for_round = str(prompt_input or "")
     tool_history: list[dict[str, Any]] = []
@@ -327,17 +325,16 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
 
     adapter = deps.llm
     if adapter.prefers_chat_completions():
-        ctx.timing["agent_rounds"] = 1
+        obs.mark("agent_rounds", 1)
         if use_tools and active_tool_schemas:
-            ctx.timing["agent_tool_probe_skipped"] = True
-            ctx.timing["agent_tool_probe_skip_reason"] = "chat_completions_compatible_client"
+            obs.mark("agent_tool_probe_skipped", True)
+            obs.mark("agent_tool_probe_skip_reason", "chat_completions_compatible_client")
         response_start_ms = now_ms()
         answer.raw_model_output = adapter.complete_chat(model, prompt_for_round, ctx)
         response_duration = elapsed_ms(response_start_ms)
-        ctx.timing["agent_response_initial_ms"] = response_duration
-        ctx.timing["raw_answer_chars"] = len(answer.raw_model_output or "")
-        _log_timing(
-            services,
+        obs.mark("agent_response_initial_ms", response_duration)
+        obs.mark("raw_answer_chars", len(answer.raw_model_output or ""))
+        obs.event(
             "agent_chat_completion",
             response_duration,
             phase="initial",
@@ -347,7 +344,7 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
         return ctx
 
     for round_index in range(max_rounds):
-        ctx.timing["agent_rounds"] = round_index + 1
+        obs.mark("agent_rounds", round_index + 1)
         request = {
             "model": model,
             "input": prompt_for_round,
@@ -359,18 +356,14 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
         response = adapter.create_responses(**request)
         response_duration = elapsed_ms(response_start_ms)
         if round_index == 0:
-            ctx.timing["agent_response_initial_ms"] = response_duration
+            obs.mark("agent_response_initial_ms", response_duration)
             phase = "initial"
         else:
-            ctx.timing["agent_followup_response_ms"] = round(
-                float(ctx.timing.get("agent_followup_response_ms") or 0) + response_duration,
-                2,
-            )
+            obs.bump("agent_followup_response_ms", response_duration)
             phase = "followup"
 
-        _record_usage(ctx, response)
-        _log_timing(
-            services,
+        _record_usage(obs, response)
+        obs.event(
             "agent_response",
             response_duration,
             phase=phase,
@@ -386,22 +379,19 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
         if not function_calls:
             answer.raw_model_output = str(_get_attr(response, "output_text", "") or "")
             ctx.response_id = str(_get_attr(response, "id", "") or "") or None
-            ctx.timing["raw_answer_chars"] = len(answer.raw_model_output or "")
+            obs.mark("raw_answer_chars", len(answer.raw_model_output or ""))
             return ctx
 
         for item in function_calls:
-            ctx.timing["agent_function_calls"] += 1
+            obs.bump("agent_function_calls", 1)
             tool_start_ms = now_ms()
             tool_name = str(_get_attr(item, "name", ""))
             arguments = str(_get_attr(item, "arguments", "") or "{}")
             # TODO(C7): run via deps.tools.run (registry-backed); services.tool_functions transitional.
             tool_result = run_local_tool(services.tool_functions, tool_name, arguments)
-            record_screen_tool_result(ctx, tool_name, tool_result)
+            record_screen_tool_result(ctx, obs, tool_name, tool_result)
             tool_duration = elapsed_ms(tool_start_ms)
-            ctx.timing["agent_tool_local_ms"] = round(
-                float(ctx.timing.get("agent_tool_local_ms") or 0) + tool_duration,
-                2,
-            )
+            obs.bump("agent_tool_local_ms", tool_duration)
             tool_history.append(
                 {
                     "name": tool_name,
@@ -409,8 +399,7 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
                     "output": tool_result,
                 }
             )
-            _log_timing(
-                services,
+            obs.event(
                 "agent_tool_local",
                 tool_duration,
                 name=tool_name,
@@ -448,9 +437,11 @@ def parse_reply_node(ctx: TurnContext, services: AgentServices, deps: Any = None
 def build_visual_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
     if _skip_if_error(ctx):
         return ctx
-    # TODO(C5/C7): visual is a resolved port (deps.visual); services.visual_tool transitional.
+    # TODO(C7): visual is a resolved port (deps.visual); services.visual_tool transitional.
     if services.visual_tool is None:
         return ctx
+    deps = deps or TurnDeps.from_legacy_services(services)
+    obs = deps.observer
     answer = ctx.answer if ctx.answer is not None else StreamedAnswer()
     ctx.answer = answer
     try:
@@ -463,9 +454,9 @@ def build_visual_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
         answer.visual = visual
         classifier_meta = visual.get("classifier") if isinstance(visual.get("classifier"), dict) else {}
         if isinstance(classifier_meta.get("duration_ms"), (int, float)):
-            ctx.timing["visual_classifier_ms"] = classifier_meta["duration_ms"]
+            obs.mark("visual_classifier_ms", classifier_meta["duration_ms"])
         if isinstance(classifier_meta.get("segments"), int):
-            ctx.timing["visual_segments"] = classifier_meta["segments"]
+            obs.mark("visual_segments", classifier_meta["segments"])
         ctx.tools.append(
             {
                 "name": "spica_visual_diff",
@@ -493,8 +484,10 @@ def build_visual_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
 def synthesize_tts_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
     if _skip_if_error(ctx):
         return ctx
-    # TODO(C5/C7): TTS is a resolved port (deps.tts); services.tts_adapter transitional.
+    # TODO(C7): TTS is a resolved port (deps.tts); services.tts_adapter transitional.
     provider = _tts_adapter_name(services)
+    deps = deps or TurnDeps.from_legacy_services(services)
+    obs = deps.observer
     answer = ctx.answer if ctx.answer is not None else StreamedAnswer()
     ctx.answer = answer
     if services.tts_adapter is None:
@@ -517,8 +510,8 @@ def synthesize_tts_node(ctx: TurnContext, services: AgentServices, deps: Any = N
             )
         )
         answer.tts_result = result
-        if result.timing:
-            ctx.timing.update(result.timing)
+        for key, value in (result.timing or {}).items():
+            obs.mark(key, value)
         if not result.ok:
             ctx.tools.append(
                 {
@@ -578,6 +571,7 @@ def build_response_node(ctx: TurnContext, services: AgentServices, deps: Any = N
         "tts_params": None,
         "visual": answer.visual if answer else None,
         "tools": ctx.tools,
+        # ctx.timing is the observer's sink -- the accumulated turn timing.
         "timing": ctx.timing,
     }
 
@@ -609,7 +603,7 @@ def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, 
     )
 
 
-def record_screen_tool_result(ctx: TurnContext, tool_name: str, tool_result: str) -> None:
+def record_screen_tool_result(ctx: TurnContext, observer: Any, tool_name: str, tool_result: str) -> None:
     if tool_name != "inspect_screen":
         return
     try:
@@ -626,23 +620,23 @@ def record_screen_tool_result(ctx: TurnContext, tool_name: str, tool_result: str
     ctx.metadata["screen_observation_schema"] = data.get("schema_version")
     ctx.metadata["screen_observation_target"] = (data.get("request") or {}).get("target")
     ctx.metadata["screen_observation_source"] = (data.get("capture") or {}).get("source")
-    _record_screen_analysis_metadata(ctx)
+    _record_screen_analysis_metadata(ctx, observer)
 
 
-def _record_screen_analysis_metadata(ctx: TurnContext) -> None:
+def _record_screen_analysis_metadata(ctx: TurnContext, observer: Any) -> None:
     metadata = get_last_screen_analysis_metadata()
     for key in ("screen_analysis_stream_enabled", "screen_analysis_stream_fallback_used"):
         if key in metadata:
-            ctx.timing[key] = metadata[key]
+            observer.mark(key, metadata[key])
             ctx.metadata[key] = metadata[key]
     if metadata.get("screen_analysis_first_delta_ms") is not None:
-        ctx.timing["screen_analysis_first_delta_ms"] = metadata["screen_analysis_first_delta_ms"]
+        observer.mark("screen_analysis_first_delta_ms", metadata["screen_analysis_first_delta_ms"])
     for key in ("screen_analysis_engine", "screen_analysis_model", "screen_analysis_revision", "screen_analysis_local"):
         if key in metadata:
             ctx.metadata[key] = metadata[key]
     for key in ("screen_analysis_moondream_ms", "screen_analysis_total_ms"):
         if key in metadata:
-            ctx.timing[key] = metadata[key]
+            observer.mark(key, metadata[key])
 
 
 def _compact_tool_history_for_prompt(tool_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -685,14 +679,14 @@ def _inject_screen_observation(prompt_input: Any, observation: dict[str, Any]) -
     )
 
 
-def _record_usage(ctx: TurnContext, response: Any) -> None:
+def _record_usage(observer: Any, response: Any) -> None:
     usage = _get_attr(response, "usage")
     if not usage:
         return
     for key in ("input_tokens", "output_tokens", "total_tokens"):
         value = _get_attr(usage, key)
         if value is not None:
-            ctx.timing[key] = value
+            observer.mark(key, value)
 
 
 _DEEPSEEK_BRANCH_MOVED = "spica.runtime.stages DeepSeek/OpenAI branch moved to spica.adapters.llm (Phase 5)"

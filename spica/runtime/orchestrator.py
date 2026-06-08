@@ -19,6 +19,7 @@ import concurrent.futures
 import functools
 import queue
 import threading
+from dataclasses import replace
 from typing import Any, Iterator
 
 from spica.runtime.stages import (
@@ -31,10 +32,11 @@ from spica.runtime.stages import (
 from spica.conversation.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from spica.runtime.services import AgentServices
 from spica.conversation.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
-from common.timing import log_timing, now_ms
+from common.timing import now_ms
 from spica.runtime.context import StreamedAnswer, TurnContext
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import ExecStrategy, Threaded
+from spica.runtime.observer import DefaultTurnObserver
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
 from spica.runtime.sequencer import Sequencer
@@ -79,7 +81,6 @@ def _produce_stream_events(
     exec_strategy: ExecStrategy | None = None,
     deps: Any = None,
 ) -> None:
-    timing_lock = threading.Lock()
     unit_timings: list[dict[str, Any]] = []
     created_units: list[str] = []
     first_unit_event = threading.Event()
@@ -87,6 +88,10 @@ def _produce_stream_events(
     # C3b: run on typed deps. Direct (dict-config) callers bridge here; the
     # hot path below reads only deps.config / deps.llm, never services.config.
     deps = deps or TurnDeps.from_legacy_services(services)
+    # C5: a per-turn observer wrapping ctx.timing (the sink), injected for every
+    # stage -- the single timing/log write path. done.timing stays ctx.timing.
+    observer = DefaultTurnObserver(ctx.timing, logger=services.logger)
+    deps = replace(deps, observer=observer)
 
     # Concurrency is an injected policy (C2). Streaming passes None and gets the
     # default Threaded pools (owning their shutdown); the sync path injects Inline.
@@ -104,23 +109,19 @@ def _produce_stream_events(
     def relative_ms() -> float:
         return round(now_ms() - request_start_ms, 2)
 
-    def set_timing_once(key: str, value: float) -> None:
-        with timing_lock:
-            ctx.timing.setdefault(key, value)
-
     def mark_first_unit_warning(reason: str) -> None:
         if first_unit_event.is_set():
             return
+        if observer.snapshot().get("first_unit_warning_ms") is not None:
+            return
         warning_ms = relative_ms()
-        with timing_lock:
-            if ctx.timing.get("first_unit_warning_ms") is not None:
-                return
-            ctx.timing["first_unit_warning_ms"] = warning_ms
-            ctx.timing["first_unit_warning"] = (
-                f"first playable unit was not created within {int(_FIRST_UNIT_WARNING_MS)}ms"
-            )
-            ctx.timing["first_unit_warning_reason"] = reason
-        log_timing(
+        observer.mark_once("first_unit_warning_ms", warning_ms)
+        observer.mark(
+            "first_unit_warning",
+            f"first playable unit was not created within {int(_FIRST_UNIT_WARNING_MS)}ms",
+        )
+        observer.mark("first_unit_warning_reason", reason)
+        observer.event(
             "chat_stream_first_unit_warning",
             warning_ms,
             conversation_id=ctx.request.conversation_id,
@@ -160,8 +161,8 @@ def _produce_stream_events(
         }
         unit_timings.append(unit_timing)
         if index == 0:
-            set_timing_once("first_unit_created_ms", unit_timing["unit_created_ms"])
-            set_timing_once("first_sentence_ms", unit_timing["unit_created_ms"])
+            observer.mark_once("first_unit_created_ms", unit_timing["unit_created_ms"])
+            observer.mark_once("first_sentence_ms", unit_timing["unit_created_ms"])
             if unit_timing["unit_created_ms"] > _FIRST_UNIT_WARNING_MS:
                 mark_first_unit_warning("first_unit_created_after_threshold")
             first_unit_event.set()
@@ -191,20 +192,20 @@ def _produce_stream_events(
         visual_future = exec_strategy.submit_visual(
             functools.partial(
                 build_unit_visual_and_emit,
-                services, ctx, unit, request_start_ms, set_timing_once, put_unit_event,
+                services, ctx, unit, request_start_ms, observer, put_unit_event,
             )
         )
         tts_future = exec_strategy.submit_tts(
             functools.partial(
                 synthesize_unit_audio,
-                services, ctx, unit, request_start_ms, set_timing_once, put_unit_event,
+                services, ctx, unit, request_start_ms, observer, put_unit_event,
             )
         )
         ready_futures.append(
             exec_strategy.submit_finalize(
                 functools.partial(
                     _finalize_unit,
-                    unit, visual_future, tts_future, request_start_ms, set_timing_once, completion_queue,
+                    unit, visual_future, tts_future, request_start_ms, observer, completion_queue,
                 )
             )
         )
@@ -247,8 +248,8 @@ def _produce_stream_events(
 
         model = deps.config.llm.model
         prompt_input = ctx.prompt.prompt_input if ctx.prompt else None
-        ctx.timing["agent_model"] = model
-        ctx.timing["prompt_input_chars"] = len(str(prompt_input or ""))
+        observer.mark("agent_model", model)
+        observer.mark("prompt_input_chars", len(str(prompt_input or "")))
 
         prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(ctx, services, put_status, deps)
         splitter = PlayUnitSplitter(
@@ -265,9 +266,8 @@ def _produce_stream_events(
         def handle_raw_delta(delta: str) -> None:
             if not delta:
                 return
-            set_timing_once("first_llm_delta_ms", relative_ms())
-            with timing_lock:
-                ctx.timing["llm_delta_events"] = int(ctx.timing.get("llm_delta_events") or 0) + 1
+            observer.mark_once("first_llm_delta_ms", relative_ms())
+            observer.bump("llm_delta_events", 1)
             raw_model_parts.append(delta)
             answer.raw_model_output = "".join(raw_model_parts)
             answer_delta = extractor.feed(answer.raw_model_output)
@@ -276,7 +276,7 @@ def _produce_stream_events(
             previous_sentence_count = splitter.completed_sentence_count
             units = splitter.feed(answer_delta)
             if splitter.completed_sentence_count > previous_sentence_count:
-                set_timing_once("first_sentence_ms", relative_ms())
+                observer.mark_once("first_sentence_ms", relative_ms())
             for unit_text in units:
                 submit_unit(unit_text)
 
@@ -313,24 +313,26 @@ def _produce_stream_events(
             drain_ready()
         drain_ready()
 
-        ctx.timing["done_ms"] = relative_ms()
-        ctx.timing["units_count"] = len(created_units)
-        ctx.timing["units"] = unit_timings
-        log_timing(
+        done_ms = relative_ms()
+        observer.mark("done_ms", done_ms)
+        observer.mark("units_count", len(created_units))
+        observer.mark("units", unit_timings)
+        snap = observer.snapshot()
+        observer.event(
             "chat_stream_done",
-            ctx.timing["done_ms"],
+            done_ms,
             conversation_id=ctx.request.conversation_id,
             units_count=len(created_units),
-            first_llm_delta_ms=ctx.timing.get("first_llm_delta_ms"),
-            first_sentence_ms=ctx.timing.get("first_sentence_ms"),
-            first_unit_created_ms=ctx.timing.get("first_unit_created_ms"),
-            first_tts_start_ms=ctx.timing.get("first_tts_start_ms"),
-            first_tts_done_ms=ctx.timing.get("first_tts_done_ms"),
-            first_unit_ready_ms=ctx.timing.get("first_unit_ready_ms"),
-            first_visual_ready_ms=ctx.timing.get("first_visual_ready_ms"),
-            first_audio_ready_ms=ctx.timing.get("first_audio_ready_ms"),
-            llm_stream_create_ms=ctx.timing.get("llm_stream_create_ms"),
-            llm_stream_fallback_used=ctx.timing.get("llm_stream_fallback_used"),
+            first_llm_delta_ms=snap.get("first_llm_delta_ms"),
+            first_sentence_ms=snap.get("first_sentence_ms"),
+            first_unit_created_ms=snap.get("first_unit_created_ms"),
+            first_tts_start_ms=snap.get("first_tts_start_ms"),
+            first_tts_done_ms=snap.get("first_tts_done_ms"),
+            first_unit_ready_ms=snap.get("first_unit_ready_ms"),
+            first_visual_ready_ms=snap.get("first_visual_ready_ms"),
+            first_audio_ready_ms=snap.get("first_audio_ready_ms"),
+            llm_stream_create_ms=snap.get("llm_stream_create_ms"),
+            llm_stream_fallback_used=snap.get("llm_stream_fallback_used"),
         )
         output_queue.put(
             {
@@ -347,7 +349,7 @@ def _produce_stream_events(
         )
     except Exception as exc:
         output_queue.put({"event": "error", "data": {"message": str(exc)}})
-        log_timing("chat_stream_error", relative_ms(), conversation_id=ctx.request.conversation_id, error=str(exc))
+        observer.event("chat_stream_error", relative_ms(), conversation_id=ctx.request.conversation_id, error=str(exc))
     finally:
         first_unit_timer.cancel()
         if owns_exec:
@@ -360,7 +362,7 @@ def _finalize_unit(
     visual_future: concurrent.futures.Future[dict[str, Any]],
     tts_future: concurrent.futures.Future[dict[str, Any]],
     request_start_ms: float,
-    set_timing_once: Any,
+    observer: Any,
     completion_queue: "queue.Queue[tuple[int, dict[str, Any]]]",
 ) -> None:
     visual = visual_future.result()
@@ -369,8 +371,8 @@ def _finalize_unit(
     unit_ready_ms = round(now_ms() - request_start_ms, 2)
     unit_timing["unit_ready_ms"] = unit_ready_ms
     if int(unit["index"]) == 0:
-        set_timing_once("first_unit_ready_ms", unit_ready_ms)
-    log_timing(
+        observer.mark_once("first_unit_ready_ms", unit_ready_ms)
+    observer.event(
         "chat_stream_unit_ready",
         unit_ready_ms,
         unit_index=unit["index"],

@@ -80,6 +80,17 @@ class DefaultTurnObserverTest(unittest.TestCase):
         self.assertEqual(sink, {})  # log-only: never enters the timing snapshot
         self.assertEqual(logger.calls, [("tool_schema_gate", 0.0, {"use_tools": False, "user_chars": 2})])
 
+    def test_event_forwards_a_name_field_without_collision(self):
+        # agent_tool_local / visual_classifier_unit log a `name` field; the step
+        # argument must not collide with it (regression for C5-2).
+        logger = _SpyLogger()
+        obs = DefaultTurnObserver({}, logger=logger)
+        obs.event("agent_tool_local", 5.0, name="inspect_screen", output_chars=12)
+        self.assertEqual(
+            logger.calls,
+            [("agent_tool_local", 5.0, {"name": "inspect_screen", "output_chars": 12})],
+        )
+
     def test_snapshot_is_a_copy(self):
         sink = {"a": 1}
         obs = DefaultTurnObserver(sink, logger=_SpyLogger())

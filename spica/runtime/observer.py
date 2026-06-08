@@ -40,11 +40,11 @@ class TurnObserver(Protocol):
     returns the accumulated timing for ``done.timing``.
     """
 
-    def span(self, name: str, **fields: Any) -> Any: ...  # AbstractContextManager[None]
+    def span(self, step: str, **fields: Any) -> Any: ...  # AbstractContextManager[None]
     def mark(self, name: str, value: Any) -> None: ...
     def mark_once(self, name: str, value: Any) -> None: ...
     def bump(self, name: str, delta: float) -> None: ...
-    def event(self, name: str, value: float = 0.0, **fields: Any) -> None: ...
+    def event(self, step: str, value: float = 0.0, **fields: Any) -> None: ...
     def snapshot(self) -> dict[str, Any]: ...
 
 
@@ -63,15 +63,17 @@ class DefaultTurnObserver:
         self._lock = threading.Lock()
 
     @contextmanager
-    def span(self, name: str, **fields: Any) -> Iterator[None]:
+    def span(self, step: str, **fields: Any) -> Iterator[None]:
+        # ``step`` (not ``name``) so a **fields key called ``name`` -- e.g. a tool
+        # name on agent_tool_local -- never collides with the positional argument.
         start = now_ms()
         try:
             yield
         finally:
             duration = elapsed_ms(start)
             with self._lock:
-                self._sink[f"{name}_ms"] = duration
-            self._log(name, duration, **fields)
+                self._sink[f"{step}_ms"] = duration
+            self._log(step, duration, **fields)
 
     def mark(self, name: str, value: Any) -> None:
         with self._lock:
@@ -85,8 +87,8 @@ class DefaultTurnObserver:
         with self._lock:
             self._sink[name] = self._sink.get(name, 0) + delta
 
-    def event(self, name: str, value: float = 0.0, **fields: Any) -> None:
-        self._log(name, value, **fields)
+    def event(self, step: str, value: float = 0.0, **fields: Any) -> None:
+        self._log(step, value, **fields)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -97,7 +99,7 @@ class NoopTurnObserver:
     """Records nothing. The ``TurnDeps`` default until a turn injects a real one."""
 
     @contextmanager
-    def span(self, name: str, **fields: Any) -> Iterator[None]:
+    def span(self, step: str, **fields: Any) -> Iterator[None]:
         yield
 
     def mark(self, name: str, value: Any) -> None:
@@ -109,7 +111,7 @@ class NoopTurnObserver:
     def bump(self, name: str, delta: float) -> None:
         return None
 
-    def event(self, name: str, value: float = 0.0, **fields: Any) -> None:
+    def event(self, step: str, value: float = 0.0, **fields: Any) -> None:
         return None
 
     def snapshot(self) -> dict[str, Any]:

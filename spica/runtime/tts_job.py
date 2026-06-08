@@ -21,7 +21,7 @@ def synthesize_unit_audio(
     ctx: Any,
     unit: dict[str, Any],
     request_start_ms: float,
-    set_timing_once: Any,
+    observer: Any,
     put_unit_event: Any,
 ) -> dict[str, Any]:
     unit_timing = unit["timing"]
@@ -30,7 +30,7 @@ def synthesize_unit_audio(
     tts_start_relative_ms = round(tts_start_ms - request_start_ms, 2)
     unit_timing["tts_start_ms"] = tts_start_relative_ms
     if unit_index == 0:
-        set_timing_once("first_tts_start_ms", tts_start_relative_ms)
+        observer.mark_once("first_tts_start_ms", tts_start_relative_ms)
     put_unit_event(
         "unit_audio_started",
         {
@@ -89,8 +89,8 @@ def synthesize_unit_audio(
         tts_done_relative_ms = round(now_ms() - request_start_ms, 2)
         unit_timing["tts_done_ms"] = tts_done_relative_ms
         if unit_index == 0:
-            set_timing_once("first_tts_done_ms", tts_done_relative_ms)
-            set_timing_once("first_audio_ready_ms", tts_done_relative_ms)
+            observer.mark_once("first_tts_done_ms", tts_done_relative_ms)
+            observer.mark_once("first_audio_ready_ms", tts_done_relative_ms)
         put_unit_event(
             "unit_audio_ready",
             {

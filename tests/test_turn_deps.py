@@ -2,8 +2,8 @@
 
 Locks the new typed surface introduced in C3a:
 - TurnRequest defaults;
-- LegacyFunctionToolSet keeps the intent gate and dispatches runs (no new
-  behaviour over the legacy TOOL_SCHEMAS / run_local_tool pair);
+- RegistryToolSet keeps the intent gate and dispatches runs (registry-backed; for
+  the legacy table it behaves exactly like the old TOOL_SCHEMAS / run_local_tool);
 - TurnDeps.from_services maps the resolved ports and guarantees the
   observer / jobs / exec_strategy placeholders are non-None and usable.
 """
@@ -15,7 +15,7 @@ from agent_tools.function_tools import TOOL_SCHEMAS
 from spica.config.schema import AppConfig
 from spica.runtime.context import TurnRequest
 from spica.runtime.deps import TurnDeps
-from spica.runtime.tools import LegacyFunctionToolSet, ToolSet
+from spica.runtime.tools import RegistryToolSet, ToolSet
 
 
 def _services(tool_fn=None):
@@ -43,25 +43,26 @@ class TurnRequestTest(unittest.TestCase):
         self.assertIsNot(a.visual_overrides, b.visual_overrides)
 
 
-class LegacyFunctionToolSetTest(unittest.TestCase):
+class RegistryToolSetTest(unittest.TestCase):
+    @staticmethod
+    def _toolset(tool_fn=None):
+        s = _services(tool_fn=tool_fn)
+        return RegistryToolSet.from_function_table(s.tool_schemas, s.tool_functions)
+
     def test_is_a_toolset(self):
-        self.assertIsInstance(LegacyFunctionToolSet.from_services(_services()), ToolSet)
+        self.assertIsInstance(self._toolset(), ToolSet)
 
     def test_intent_gate_selects_screen_tool(self):
-        tools = LegacyFunctionToolSet.from_services(_services())
-        self.assertEqual(len(tools.schemas_for_user_text("帮我看看屏幕上有没有报错")), 1)
+        self.assertEqual(len(self._toolset().schemas_for_user_text("帮我看看屏幕上有没有报错")), 1)
 
     def test_intent_gate_blocks_non_screen_text(self):
-        tools = LegacyFunctionToolSet.from_services(_services())
-        self.assertEqual(tools.schemas_for_user_text("你好"), [])
+        self.assertEqual(self._toolset().schemas_for_user_text("你好"), [])
 
-    def test_run_dispatches_to_function(self):
+    def test_run_dispatches_to_function_and_passes_string_through(self):
         calls = []
-        tools = LegacyFunctionToolSet.from_services(
-            _services(tool_fn=lambda **kw: calls.append(kw) or "result")
-        )
+        tools = self._toolset(tool_fn=lambda **kw: calls.append(kw) or "result")
         out = tools.run("inspect_screen", '{"target": "full_screen", "question": "q"}')
-        self.assertEqual(out, "result")
+        self.assertEqual(out, "result")  # legacy str handler -> passed through, not re-wrapped
         self.assertEqual(calls, [{"target": "full_screen", "question": "q"}])
 
 

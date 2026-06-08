@@ -26,3 +26,7 @@ class AgentServices:
     # keep working unchanged.
     llm_adapter: Any | None = None
     memory_adapter: Any | None = None
+    # C7: the host's CapabilityRegistry (set after built-in tools register). When
+    # present the turn resolves tools from it (registry-backed ToolSet); tests leave
+    # it None and the ToolSet adapts tool_schemas / tool_functions instead.
+    tool_registry: Any = None

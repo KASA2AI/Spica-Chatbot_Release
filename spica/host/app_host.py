@@ -35,6 +35,8 @@ from spica.plugins.host import PluginHost
 from spica.plugins.registry import CapabilityRegistry
 from spica.adapters.llm import OpenAICompatibleAdapter
 from spica.adapters.memory import SqliteMemoryAdapter
+from spica.adapters.screen import LocalMoondreamScreenAnalysis
+from spica.adapters.tools import InspectScreenTool
 from spica.adapters.tts import build_tts
 from spica.adapters.visual import build_spica_visual
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, load_tts_config
@@ -81,6 +83,11 @@ class AppHost:
         self.registry.register_memory(
             "sqlite", lambda store=None, recent=None: SqliteMemoryAdapter(store, recent)
         )
+        # C7: inspect_screen is the first real tool -- a ToolPort over the local
+        # screen-analysis adapter, registered so the runtime resolves it via the
+        # registry (not a static TOOL_SCHEMAS list). N0 gate + local-only preserved.
+        screen_tool = InspectScreenTool(LocalMoondreamScreenAnalysis())
+        self.registry.register_tool(screen_tool.schema(), screen_tool.run)
 
     def initialize(self) -> None:
         """Construct the backend services (moved verbatim from the UI).
@@ -138,6 +145,8 @@ class AppHost:
                 store=self.services.memory_store,
                 recent=self.services.recent_memory,
             )
+            # C7: the turn resolves tools from the registry (inspect_screen ToolPort).
+            self.services.tool_registry = self.registry
             # ChatEngine is the conversation core (Phase 6D: SimpleAgent dissolved
             # into ChatEngine + spica/host/agent_assembly).
             self.chat_engine = ChatEngine(self.services, self.config)

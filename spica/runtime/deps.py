@@ -36,7 +36,7 @@ from spica.ports.visual import VisualPort
 from spica.runtime.exec_strategy import ExecStrategy, Inline
 from spica.runtime.jobs import InlineJobRunner
 from spica.runtime.observer import NoopTurnObserver
-from spica.runtime.tools import LegacyFunctionToolSet, ToolSet
+from spica.runtime.tools import RegistryToolSet, ToolSet
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,14 @@ class TurnDeps:
             visual=services.visual_tool,
             memory=services.memory_adapter
             or SqliteMemoryAdapter(services.memory_store, services.recent_memory),
-            tools=LegacyFunctionToolSet.from_services(services),
+            # C7: registry-backed ToolSet. Host sets services.tool_registry (ToolPort
+            # tools incl. inspect_screen); tests leave it None -> adapt the legacy
+            # services tool table so injected fakes still work, golden unchanged.
+            tools=(
+                RegistryToolSet(services.tool_registry)
+                if getattr(services, "tool_registry", None) is not None
+                else RegistryToolSet.from_function_table(services.tool_schemas, services.tool_functions)
+            ),
         )
 
     @classmethod

@@ -95,6 +95,6 @@
 - [已生效] 并发只能走注入的 ExecStrategy；业务 stage 内不许 new ThreadPoolExecutor。
 - [已生效] 运行时核心（spica/runtime/）不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。唯一例外是 deps.py 桥（legacy services → typed deps）。（C4 已落地：stages 读 deps.config / deps.llm / deps.memory，agent/ 已删。）
 - [已生效] spica 不许 import agent（agent/ 已删；agent_tools 是独立包，允许）。守卫：tests/test_layering.py（N3-layer）。
-- [C5 落地后生效] 计时/日志只能走注入的 TurnObserver；stage 内不许直接 log_timing。
+- [已生效] turn/stage 编排层的计时/日志只能走注入的 TurnObserver（span/mark/event）；stage 内不许直接 log_timing。observer 的 sink 就是 ctx.timing（done.timing 不变）。唯一包 log_timing 的是 spica/runtime/observer.py；adapter（LLM/TTS/screen）内部低层诊断日志不在此限。守卫：tests/test_no_log_timing.py（N4-observe）。
 - [C6 落地后生效] memory commit 走注入的 JobRunner，不堵 hot path。
 - [C7 落地后生效] inspect_screen 由 CapabilityRegistry 注册、运行时从 registry 解析；不再读静态 TOOL_SCHEMAS。

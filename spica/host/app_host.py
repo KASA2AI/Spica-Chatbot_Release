@@ -32,6 +32,7 @@ from spica.core.character import load_character_package
 from spica.host.agent_assembly import build_agent_services
 from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
+from spica.host.warmup import run_warmup
 from spica.plugins.host import PluginHost
 from spica.plugins.registry import CapabilityRegistry
 from spica.adapters.visual import build_spica_visual
@@ -140,46 +141,11 @@ class AppHost:
         ``on_progress(stage, message)`` where stage is
         ``"initializing" | "ready" | "error"``.
 
-        Qt-free: the warmup logic (LLM ready + TTS model warmup), formerly in the
-        UI's StartupWarmupWorker, now lives here so the host orchestrates startup.
-        The UI runs this on a background thread and maps stages to its loading UI.
+        Forwards to ``spica.host.warmup.run_warmup`` over the surfaces it uses.
+        The UI runs this on a background thread and maps stages to its loading UI;
+        keeping this method preserves that call site (``host.warmup(...)``).
         """
-        surface = self.conversation_surface
-        tts = self.tts_adapter
-        try:
-            model = str(getattr(surface, "model", "") or "unknown")
-            on_progress("initializing", f"LLM API 初始化完成：{model}")
-            public_config = getattr(tts, "public_config", None)
-            warmup = getattr(tts, "warmup", None)
-            provider_name = str(getattr(tts, "name", None) or "TTS")
-            if public_config is None or warmup is None:
-                on_progress("ready", f"LLM API 已初始化，{provider_name} 无需启动预热。")
-                return
-
-            config = public_config()
-            if not bool(config.get("warmup_on_startup", True)):
-                on_progress("ready", f"LLM API 已初始化，{provider_name} 启动预热已关闭。")
-                return
-
-            configured_emotions = config.get("warmup_emotions")
-            if isinstance(configured_emotions, list) and configured_emotions:
-                emotions = [str(item) for item in configured_emotions if str(item).strip()]
-            else:
-                emotions = [str(config.get("warmup_emotion") or "happy")]
-            if not emotions:
-                emotions = [str(config.get("warmup_emotion") or "happy")]
-
-            on_progress("initializing", f"正在预热 {provider_name} 模型...")
-            results = [warmup(emotion=item, synthesize=True) for item in emotions]
-            failed_results = [item for item in results if not item.get("ok")]
-            total_duration_ms = sum(float(item.get("duration_ms") or 0) for item in results)
-            if failed_results:
-                messages = ", ".join(str(item.get("error") or "unknown") for item in failed_results)
-                on_progress("error", f"{provider_name} warmup failed：{messages}")
-                return
-            on_progress("ready", f"{provider_name} 模型已就绪（{total_duration_ms:.0f}ms）。")
-        except Exception as exc:
-            on_progress("error", f"启动预热失败：{exc}")
+        run_warmup(self.conversation_surface, self.tts_adapter, on_progress)
 
     @property
     def management_surface(self) -> Any:

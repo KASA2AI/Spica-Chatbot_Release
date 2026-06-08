@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, scaled_px
 
 

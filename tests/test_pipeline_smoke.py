@@ -5,10 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from memory.store import SQLiteMemoryStore
-from agent.nodes import build_prompt_node, call_llm_node, parse_reply_node, validate_input_node
+from spica.runtime.stages import build_prompt_node, call_llm_node, parse_reply_node, validate_input_node
 from memory.recent import RecentMemory
-from agent.runtime import run_voice_pipeline
-from agent.state import AgentServices
+from spica.runtime.sync_chain import run_voice_pipeline
+from spica.runtime.services import AgentServices
 from spica.runtime.context import TurnContext, TurnRequest
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions, is_screen_intent_explicit, should_use_tools
 from agent_tools.tts.schemas import TTSRequest, TTSResult

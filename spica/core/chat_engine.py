@@ -14,13 +14,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.character_loader import (
+from spica.conversation.character_loader import (
     DEFAULT_INTERLOCUTOR_NAME,
     build_character_profile,
     normalize_interlocutor_name,
 )
-from agent.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
-from agent.state import AgentServices
+from spica.conversation.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
+from spica.runtime.services import AgentServices
 from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
 from spica.runtime.context import TurnContext, TurnRequest

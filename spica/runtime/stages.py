@@ -22,7 +22,7 @@ from spica.conversation.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_s
 from spica.conversation.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from spica.conversation.text_normalizer import normalize_square_brackets_for_speech
 from spica.conversation.time_context import build_local_time_context
-from agent.state import AgentServices
+from spica.runtime.services import AgentServices
 from common.timing import elapsed_ms, log_timing, now_ms
 from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
 from agent_tools.function_tools.screen.analyzer import (

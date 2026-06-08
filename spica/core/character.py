@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from agent.character_compat import DEFAULT_CHARACTER_NAME
+from spica.conversation.character_compat import DEFAULT_CHARACTER_NAME
 
 
 class CharacterPackage(BaseModel):

@@ -7,9 +7,11 @@ from unittest.mock import patch
 
 from memory.store import SQLiteMemoryStore
 from memory.recent import RecentMemory
-from agent.state import AgentServices
+from spica.runtime.services import AgentServices
 from spica.runtime.context import TurnContext, TurnRequest
-from agent.streaming_pipeline import PlayUnitSplitter, build_tts_text, stream_voice_events
+from spica.runtime.orchestrator import stream_voice_events
+from spica.runtime.play_unit_splitter import PlayUnitSplitter
+from spica.conversation.text_normalizer import build_tts_text
 from agent_tools.tts import GPTSoVITSTool
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult

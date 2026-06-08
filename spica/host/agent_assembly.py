@@ -15,13 +15,13 @@ from pathlib import Path
 import httpx
 from openai import OpenAI
 
-from agent.character_loader import (
+from spica.conversation.character_loader import (
     DEFAULT_CHARACTER_NAME,
     DEFAULT_INTERLOCUTOR_NAME,
     build_character_profile,
     normalize_interlocutor_name,
 )
-from agent.state import AgentServices
+from spica.runtime.services import AgentServices
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from common.timing import log_timing
 from memory.recent import RecentMemory

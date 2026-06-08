@@ -7,12 +7,12 @@ yields that character -- with no Spica/麦 literals in the generic code path.
 
 import unittest
 
-from agent.character_loader import (
+from spica.conversation.character_loader import (
     DEFAULT_CHARACTER_NAME,
     DEFAULT_INTERLOCUTOR_NAME,
     render_character_template,
 )
-from agent.prompt_builder import build_spica_prompt, build_system_prompt
+from spica.conversation.prompt_builder import build_spica_prompt, build_system_prompt
 
 
 class CharacterTemplateTest(unittest.TestCase):

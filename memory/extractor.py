@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME, normalize_interlocutor_name
+from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME, normalize_interlocutor_name
 
 
 @dataclass

@@ -20,8 +20,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent.runtime import run_voice_pipeline
-from agent.state import AgentServices
+from spica.runtime.sync_chain import run_voice_pipeline
+from spica.runtime.services import AgentServices
 from spica.runtime.context import TurnContext, TurnRequest
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult

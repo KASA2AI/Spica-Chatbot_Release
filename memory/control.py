@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from memory.extractor import MemoryCandidate, extract_candidate_memories
 
 

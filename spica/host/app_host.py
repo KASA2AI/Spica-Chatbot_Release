@@ -27,7 +27,7 @@ from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
 from spica.core.chat_engine import ChatEngine
-from agent.character_loader import DEFAULT_SPICA_SKILL_DIR
+from spica.conversation.character_loader import DEFAULT_SPICA_SKILL_DIR
 from spica.core.character import load_character_package
 from spica.host.agent_assembly import build_agent_services
 from spica.host.management import ManagementSurface

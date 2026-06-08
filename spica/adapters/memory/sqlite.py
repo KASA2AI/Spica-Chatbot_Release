@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.character_compat import DEFAULT_INTERLOCUTOR_NAME
+from spica.conversation.character_compat import DEFAULT_INTERLOCUTOR_NAME
 from memory.control import save_extracted_memories
 from spica.ports.memory import MemoryItem, MemoryScope
 

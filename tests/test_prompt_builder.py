@@ -1,8 +1,8 @@
 import unittest
 
-from agent.character_loader import replace_mugi_references
+from spica.conversation.character_loader import replace_mugi_references
 from memory.extractor import extract_candidate_memories
-from agent.prompt_builder import build_spica_prompt
+from spica.conversation.prompt_builder import build_spica_prompt
 
 
 class PromptBuilderTest(unittest.TestCase):

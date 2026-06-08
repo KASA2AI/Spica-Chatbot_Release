@@ -11,8 +11,8 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent.character_loader import replace_mugi_references
-from agent.state import AgentServices
+from spica.conversation.character_loader import replace_mugi_references
+from spica.runtime.services import AgentServices
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory

@@ -25,9 +25,9 @@ from types import SimpleNamespace
 
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
-from agent.state import AgentServices
+from spica.runtime.services import AgentServices
 from spica.runtime.context import TurnContext, TurnRequest
-from agent.streaming_pipeline import stream_voice_events
+from spica.runtime.orchestrator import stream_voice_events
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from spica.core.events import event_from_legacy

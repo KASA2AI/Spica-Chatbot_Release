@@ -28,9 +28,9 @@ from spica.runtime.stages import (
     retrieve_long_term_memory_node,
     validate_input_node,
 )
-from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
-from agent.state import AgentServices
-from agent.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
+from spica.conversation.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
+from spica.runtime.services import AgentServices
+from spica.conversation.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
 from common.timing import log_timing, now_ms
 from spica.runtime.context import StreamedAnswer, TurnContext
 from spica.runtime.deps import TurnDeps

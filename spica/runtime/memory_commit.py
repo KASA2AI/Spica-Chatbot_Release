@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from agent.time_context import format_local_time_for_prompt
+from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from spica.conversation.time_context import format_local_time_for_prompt
 from agent_tools.function_tools.screen.schema import screen_observation_context_for_next_turn
 from spica.ports.memory import MemoryScope
 from spica.runtime.context import TurnContext

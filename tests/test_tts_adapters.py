@@ -1,7 +1,7 @@
 import unittest
 
-from agent.runtime import run_voice_pipeline
-from agent.state import AgentServices
+from spica.runtime.sync_chain import run_voice_pipeline
+from spica.runtime.services import AgentServices
 from spica.runtime.context import TurnContext, TurnRequest
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore

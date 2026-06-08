@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agent.text_normalizer import normalize_square_brackets_for_speech
+from spica.conversation.text_normalizer import normalize_square_brackets_for_speech
 from agent_tools.config_io import read_config_file
 from common.timing import elapsed_ms, log_timing, now_ms
 

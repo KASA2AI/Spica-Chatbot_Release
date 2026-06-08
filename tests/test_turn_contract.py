@@ -40,9 +40,9 @@ from support.event_asserts import (  # noqa: E402
 
 from memory.recent import RecentMemory  # noqa: E402
 from memory.store import SQLiteMemoryStore  # noqa: E402
-from agent.state import AgentServices  # noqa: E402
+from spica.runtime.services import AgentServices  # noqa: E402
 from spica.runtime.context import TurnContext, TurnRequest  # noqa: E402
-from agent.streaming_pipeline import stream_voice_events  # noqa: E402
+from spica.runtime.orchestrator import stream_voice_events  # noqa: E402
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions  # noqa: E402
 from agent_tools.tts.schemas import TTSRequest, TTSResult  # noqa: E402
 from spica.core.events import event_from_legacy  # noqa: E402

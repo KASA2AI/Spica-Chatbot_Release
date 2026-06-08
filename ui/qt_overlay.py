@@ -11,7 +11,7 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QWidget
 
-from agent.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from spica.host.app_host import AppHost
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.chat_stream_controller import ChatStreamController

@@ -12,23 +12,24 @@ from agent.nodes import (
     synthesize_tts_node,
     validate_input_node,
 )
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
+from spica.runtime.context import TurnContext
 from spica.runtime.memory_commit import save_stream_memory
 
 
-def run_voice_pipeline(state: AgentState, services: AgentServices) -> AgentState:
-    state = validate_input_node(state, services)
-    state = load_recent_context_node(state, services)
-    state = retrieve_long_term_memory_node(state, services)
-    state = analyze_screen_attachment_node(state, services)
-    state = build_prompt_node(state, services)
-    state = call_llm_node(state, services)
-    state = parse_reply_node(state, services)
+def run_voice_pipeline(ctx: TurnContext, services: AgentServices) -> TurnContext:
+    ctx = validate_input_node(ctx, services)
+    ctx = load_recent_context_node(ctx, services)
+    ctx = retrieve_long_term_memory_node(ctx, services)
+    ctx = analyze_screen_attachment_node(ctx, services)
+    ctx = build_prompt_node(ctx, services)
+    ctx = call_llm_node(ctx, services)
+    ctx = parse_reply_node(ctx, services)
     # Unified with the streaming path (Phase 6D): one memory-commit component,
     # not a separate save_recent + extract pair. Skipped on error (e.g. empty input).
-    if not state.error:
-        save_stream_memory(state, services)
-    state = build_visual_node(state, services)
-    state = synthesize_tts_node(state, services)
-    state = build_response_node(state, services)
-    return state
+    if not ctx.error:
+        save_stream_memory(ctx, services)
+    ctx = build_visual_node(ctx, services)
+    ctx = synthesize_tts_node(ctx, services)
+    ctx = build_response_node(ctx, services)
+    return ctx

@@ -40,7 +40,8 @@ from support.event_asserts import (  # noqa: E402
 
 from memory.recent import RecentMemory  # noqa: E402
 from memory.store import SQLiteMemoryStore  # noqa: E402
-from agent.state import AgentServices, AgentState  # noqa: E402
+from agent.state import AgentServices  # noqa: E402
+from spica.runtime.context import TurnContext, TurnRequest  # noqa: E402
 from agent.streaming_pipeline import stream_voice_events  # noqa: E402
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions  # noqa: E402
 from agent_tools.tts.schemas import TTSRequest, TTSResult  # noqa: E402
@@ -308,7 +309,7 @@ class TurnContractTest(unittest.TestCase):
     def test_empty_input_errors_with_no_units_or_done(self):
         with tempfile.TemporaryDirectory() as tmp:
             services = _make_services(tmp, _StreamingLLMClient(_json_reply("x")))
-            events = self._run(AgentState(conversation_id="c1", user_input=""), services)
+            events = self._run(TurnContext(TurnRequest(conversation_id="c1", user_input="")), services)
 
         # A leading status is allowed; the axis must end in error with no units.
         assert_ordered_axis(events, expected_units=0, terminal="error")
@@ -320,7 +321,7 @@ class TurnContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             services = _make_services(tmp, _StreamingLLMClient(_json_reply(GOLDEN_ANSWER)))
             events = self._run(
-                AgentState(conversation_id="c1", user_input="説明して"), services
+                TurnContext(TurnRequest(conversation_id="c1", user_input="説明して")), services
             )
 
         assert_ordered_axis(events, expected_units=2, terminal="done")
@@ -346,7 +347,7 @@ class TurnContractTest(unittest.TestCase):
             services.tool_functions = {"inspect_screen": fake_inspect_screen}
             # "看看" (action) + "屏幕" (target) -> is_screen_intent_explicit True.
             events = self._run(
-                AgentState(conversation_id="c1", user_input="帮我看看屏幕上有没有报错"),
+                TurnContext(TurnRequest(conversation_id="c1", user_input="帮我看看屏幕上有没有报错")),
                 services,
             )
 
@@ -366,11 +367,11 @@ class TurnContractTest(unittest.TestCase):
             services.tool_functions = {
                 "inspect_screen": lambda **kw: tool_calls.append(kw) or "{}"
             }
-            state = AgentState(
+            state = TurnContext(TurnRequest(
                 conversation_id="c1",
                 user_input="これは何？",
                 screen_attachment=_make_screen_attachment(),
-            )
+            ))
             with patch(
                 "agent.nodes.analyze_screen_attachment",
                 lambda *, attachment, user_question: _fake_screen_observation(user_question),
@@ -394,7 +395,7 @@ class TurnContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             services = _make_services(tmp, _StreamingLLMClient(plain))
             events = self._run(
-                AgentState(conversation_id="c1", user_input="雑談しよう"), services
+                TurnContext(TurnRequest(conversation_id="c1", user_input="雑談しよう")), services
             )
 
         assert_ordered_axis(events, terminal="done")
@@ -407,7 +408,7 @@ class TurnContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             services = _make_services(tmp, _StreamingLLMClient(_json_reply("")))
             events = self._run(
-                AgentState(conversation_id="c1", user_input="……"), services
+                TurnContext(TurnRequest(conversation_id="c1", user_input="……")), services
             )
 
         # No streamed units (empty answer), but the fallback still yields one.
@@ -420,7 +421,7 @@ class TurnContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             services = _make_services(tmp, _RaisingLLMClient())
             events = self._run(
-                AgentState(conversation_id="c1", user_input="説明して"), services
+                TurnContext(TurnRequest(conversation_id="c1", user_input="説明して")), services
             )
 
         assert_ordered_axis(events, expected_units=0, terminal="error")
@@ -432,7 +433,7 @@ class TurnContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             services = _make_services(tmp, _StreamingLLMClient(_json_reply(GOLDEN_ANSWER)))
             dict_events = self._run(
-                AgentState(conversation_id="c1", user_input="説明して"), services
+                TurnContext(TurnRequest(conversation_id="c1", user_input="説明して")), services
             )
         runtime_events = [event_from_legacy(d) for d in dict_events]
 

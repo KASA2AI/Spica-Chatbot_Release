@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 from memory.store import SQLiteMemoryStore
 from memory.recent import RecentMemory
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
+from spica.runtime.context import TurnContext, TurnRequest
 from agent.streaming_pipeline import PlayUnitSplitter, build_tts_text, stream_voice_events
 from agent_tools.tts import GPTSoVITSTool
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
@@ -255,7 +256,7 @@ class StreamingPipelineTests(unittest.TestCase):
         answer = "もちろん。フーリエ変換は信号を分解します。必要なら具体例も出しますよ。"
         with tempfile.TemporaryDirectory() as tmpdir:
             services = make_services(tmpdir, answer)
-            events = list(stream_voice_events(AgentState(conversation_id="c1", user_input="説明して"), services))
+            events = list(stream_voice_events(TurnContext(TurnRequest(conversation_id="c1", user_input="説明して")), services))
 
         event_names = [event["event"] for event in events]
         unit_events = [event for event in events if event["event"] == "unit_ready"]
@@ -294,7 +295,7 @@ class StreamingPipelineTests(unittest.TestCase):
             services = make_services(tmpdir, answer)
             client = FakeDeepSeekClient(raw)
             services.llm_client = client
-            events = list(stream_voice_events(AgentState(conversation_id="c1", user_input="説明して"), services))
+            events = list(stream_voice_events(TurnContext(TurnRequest(conversation_id="c1", user_input="説明して")), services))
 
         done = [event for event in events if event["event"] == "done"][-1]["data"]
         self.assertEqual(done["answer"], answer)
@@ -306,11 +307,11 @@ class StreamingPipelineTests(unittest.TestCase):
         answer = "スクリーンショットにはブラウザが見えます。"
         with tempfile.TemporaryDirectory() as tmpdir:
             services = make_services(tmpdir, answer)
-            state = AgentState(
+            state = TurnContext(TurnRequest(
                 conversation_id="c1",
                 user_input="これは何？",
                 screen_attachment=make_screen_attachment(),
-            )
+            ))
             with patch(
                 "agent.nodes.analyze_screen_attachment",
                 lambda *, attachment, user_question: fake_screen_observation(user_question),

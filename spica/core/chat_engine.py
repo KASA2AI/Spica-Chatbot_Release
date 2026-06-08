@@ -20,10 +20,10 @@ from agent.character_loader import (
     normalize_interlocutor_name,
 )
 from agent.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
 from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
-from spica.runtime.context import TurnRequest
+from spica.runtime.context import TurnContext, TurnRequest
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import Inline
 from spica.runtime.fold import fold_events
@@ -64,19 +64,10 @@ class ChatEngine:
         )
 
     @staticmethod
-    def _state_from_request(req: TurnRequest) -> AgentState:
-        # Bridge the typed request to the (still AgentState-based) runtime; C3c
-        # dismantles AgentState and the runtime takes TurnRequest/TurnContext.
-        return AgentState(
-            conversation_id=req.conversation_id,
-            user_input=req.user_input,
-            include_user_time_context=req.include_user_time_context,
-            interaction_mode=req.interaction_mode,
-            emotion_override=req.emotion_override,
-            tts_param_overrides=req.tts_param_overrides,
-            visual_overrides=dict(req.visual_overrides),
-            screen_attachment=req.screen_attachment,
-        )
+    def _context_from_request(req: TurnRequest) -> TurnContext:
+        # The runtime drives a TurnContext (C3c): it just wraps the frozen
+        # request; validate_input derives the normalized working fields from it.
+        return TurnContext(request=req)
 
     def run_voice(
         self,
@@ -95,7 +86,7 @@ class ChatEngine:
         )
         # Sync path (C2) = drive run_turn with Inline (no thread pools), collect
         # the typed events, and fold them into the response payload.
-        events = list(run_turn(self._state_from_request(req), self.services,
+        events = list(run_turn(self._context_from_request(req), self.services,
                                exec_strategy=Inline(), deps=self.deps))
         return fold_events(events, conversation_id=req.conversation_id)
 
@@ -118,7 +109,7 @@ class ChatEngine:
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
         )
-        yield from run_turn(self._state_from_request(req), self.services, deps=self.deps)
+        yield from run_turn(self._context_from_request(req), self.services, deps=self.deps)
 
     def stream_voice(
         self,

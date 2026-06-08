@@ -8,7 +8,8 @@ from memory.store import SQLiteMemoryStore
 from agent.nodes import build_prompt_node, call_llm_node, parse_reply_node, validate_input_node
 from memory.recent import RecentMemory
 from agent.runtime import run_voice_pipeline
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
+from spica.runtime.context import TurnContext, TurnRequest
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions, is_screen_intent_explicit, should_use_tools
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 
@@ -154,7 +155,7 @@ class PipelineSmokeTest(unittest.TestCase):
     def test_empty_input_returns_compatible_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             services = make_services(tmpdir)
-            state = run_voice_pipeline(AgentState(conversation_id="c1", user_input=""), services)
+            state = run_voice_pipeline(TurnContext(TurnRequest(conversation_id="c1", user_input="")), services)
             self.assertEqual(state.response_payload["error"]["code"], "EMPTY_MESSAGE")
             self.assertEqual(state.response_payload["audio_url"], None)
 
@@ -162,7 +163,7 @@ class PipelineSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             llm = FakeLLMClient()
             services = make_services(tmpdir, llm=llm)
-            state = AgentState(conversation_id="c1", user_input="你好")
+            state = TurnContext(TurnRequest(conversation_id="c1", user_input="你好"))
             state = validate_input_node(state, services)
             state = build_prompt_node(state, services)
             state = call_llm_node(state, services)
@@ -173,7 +174,7 @@ class PipelineSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             llm = FakeLLMClient()
             services = make_services(tmpdir, llm=llm)
-            state = AgentState(conversation_id="c1", user_input="现在几点")
+            state = TurnContext(TurnRequest(conversation_id="c1", user_input="现在几点"))
             state = validate_input_node(state, services)
             state = build_prompt_node(state, services)
             state = call_llm_node(state, services)
@@ -185,7 +186,7 @@ class PipelineSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             llm = FakeLLMClient()
             services = make_services(tmpdir, llm=llm)
-            state = AgentState(conversation_id="c1", user_input="看一下我屏幕")
+            state = TurnContext(TurnRequest(conversation_id="c1", user_input="看一下我屏幕"))
             state = validate_input_node(state, services)
             state = build_prompt_node(state, services)
             state = call_llm_node(state, services)
@@ -255,7 +256,7 @@ class PipelineSmokeTest(unittest.TestCase):
                 )
 
             services.tool_functions = {"inspect_screen": fake_inspect_screen}
-            state = AgentState(conversation_id="c1", user_input="看一下我屏幕")
+            state = TurnContext(TurnRequest(conversation_id="c1", user_input="看一下我屏幕"))
             state = validate_input_node(state, services)
             state = build_prompt_node(state, services)
             state = call_llm_node(state, services)
@@ -264,13 +265,13 @@ class PipelineSmokeTest(unittest.TestCase):
             self.assertEqual(calls, [{"target": "full_screen", "question": "看一下我屏幕"}])
             self.assertEqual(len(llm.responses.calls), 2)
             self.assertIn("[TOOL_RESULTS]", llm.responses.calls[1]["input"])
-            self.assertEqual(state.answer, "画面にはエラーは見えません。")
+            self.assertEqual(state.answer.answer, "画面にはエラーは見えません。")
 
     def test_pipeline_returns_compatible_payload(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tts = FakeTTS()
             services = make_services(tmpdir, tts=tts, visual=FakeVisual())
-            state = run_voice_pipeline(AgentState(conversation_id="c1", user_input="你好"), services)
+            state = run_voice_pipeline(TurnContext(TurnRequest(conversation_id="c1", user_input="你好")), services)
             payload = state.response_payload
             for key in ("answer", "conversation_id", "emotion", "audio_url", "visual", "tools", "timing"):
                 self.assertIn(key, payload)
@@ -284,13 +285,13 @@ class PipelineSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             llm = FakeDeepSeekClient()
             services = make_services(tmpdir, llm=llm)
-            state = AgentState(conversation_id="c1", user_input="你好")
+            state = TurnContext(TurnRequest(conversation_id="c1", user_input="你好"))
             state = validate_input_node(state, services)
             state = build_prompt_node(state, services)
             state = call_llm_node(state, services)
 
-            self.assertEqual(state.parsed_reply, None)
-            self.assertIn("こんにちは", state.raw_model_output)
+            self.assertEqual(state.answer.parsed_reply, None)
+            self.assertIn("こんにちは", state.answer.raw_model_output)
             self.assertEqual(llm.chat.completions.calls[0]["messages"][0]["role"], "user")
             self.assertEqual(state.timing["agent_rounds"], 1)
 

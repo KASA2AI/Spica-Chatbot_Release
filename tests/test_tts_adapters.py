@@ -1,7 +1,8 @@
 import unittest
 
 from agent.runtime import run_voice_pipeline
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
+from spica.runtime.context import TurnContext, TurnRequest
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
 from agent_tools.tts.adapters.dummy import DummyTTSAdapter
@@ -160,7 +161,7 @@ class TTSAdaptersTest(unittest.TestCase):
                 tool_functions={},
                 tool_schemas=[],
             )
-            state = run_voice_pipeline(AgentState(conversation_id="c1", user_input="你好"), services)
+            state = run_voice_pipeline(TurnContext(TurnRequest(conversation_id="c1", user_input="你好")), services)
 
         payload = state.response_payload
         self.assertEqual(payload["audio_path"], "/tmp/fake.wav")

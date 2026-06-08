@@ -4,8 +4,8 @@ Moved verbatim from agent/streaming_pipeline.py. Runs on the streaming visual
 executor: builds the visual payload for one play unit via the visual port and
 emits a ``unit_visual_ready`` event. Selection stays fully local to the port.
 
-``state`` / ``services`` are typed ``Any`` to avoid a spica -> agent import.
-Qt-free (CLAUDE.md #1).
+``ctx`` (TurnContext) / ``services`` are typed ``Any`` to avoid a spica -> agent
+import. Qt-free (CLAUDE.md #1).
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ from common.timing import elapsed_ms, log_timing, now_ms
 
 def build_unit_visual_and_emit(
     services: Any,
-    state: Any,
+    ctx: Any,
     unit: dict[str, Any],
     request_start_ms: float,
     set_timing_once: Any,
     put_unit_event: Any,
 ) -> dict[str, Any]:
-    visual = _build_unit_visual(services, state, unit, request_start_ms, set_timing_once)
+    visual = _build_unit_visual(services, ctx, unit, request_start_ms, set_timing_once)
     unit_timing = unit["timing"]
     unit_index = int(unit["index"])
     visual_ready_ms = round(now_ms() - request_start_ms, 2)
@@ -46,7 +46,7 @@ def build_unit_visual_and_emit(
 
 def _build_unit_visual(
     services: Any,
-    state: Any,
+    ctx: Any,
     unit: dict[str, Any],
     request_start_ms: float,
     set_timing_once: Any,
@@ -64,9 +64,9 @@ def _build_unit_visual(
             unit_index=unit_index,
             previous_units=unit["previous_units"],
             full_answer_so_far=unit["full_answer_so_far"],
-            runtime_context=state.metadata.get("stream_visual_context"),
-            requested_costume=state.visual_overrides.get("costume_set"),
-            requested_mode=state.visual_overrides.get("costume_mode"),
+            runtime_context=ctx.metadata.get("stream_visual_context"),
+            requested_costume=ctx.request.visual_overrides.get("costume_set"),
+            requested_mode=ctx.request.visual_overrides.get("costume_mode"),
         )
         classifier = payload.get("classifier") if isinstance(payload.get("classifier"), dict) else {}
         duration_ms = classifier.get("duration_ms")

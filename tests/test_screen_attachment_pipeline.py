@@ -5,7 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent.runtime import run_voice_pipeline
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
+from spica.runtime.context import TurnContext, TurnRequest
 from agent_tools.function_tools import TOOL_SCHEMAS
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory
@@ -125,7 +126,7 @@ def test_empty_input_with_pending_screenshot_uses_default_question_and_injects_o
 
         with patch("agent.nodes.analyze_screen_attachment", fake_analyzer):
             state = run_voice_pipeline(
-                AgentState(conversation_id="c1", user_input="", screen_attachment=make_attachment()),
+                TurnContext(TurnRequest(conversation_id="c1", user_input="", screen_attachment=make_attachment())),
                 services,
             )
 
@@ -147,7 +148,7 @@ def test_pending_screenshot_disables_repeat_automatic_inspect_screen_even_for_sc
 
         with patch("agent.nodes.analyze_screen_attachment", lambda *, attachment, user_question: fake_observation(user_question)):
             state = run_voice_pipeline(
-                AgentState(conversation_id="c1", user_input="看一下我屏幕", screen_attachment=make_attachment()),
+                TurnContext(TurnRequest(conversation_id="c1", user_input="看一下我屏幕", screen_attachment=make_attachment())),
                 services,
             )
 
@@ -164,11 +165,11 @@ def test_screen_followup_context_enters_next_turn_prompt_without_raw_image_or_oc
 
         with patch("agent.nodes.analyze_screen_attachment", lambda *, attachment, user_question: fake_observation(user_question)):
             run_voice_pipeline(
-                AgentState(conversation_id="c1", user_input="这是什么", screen_attachment=make_attachment()),
+                TurnContext(TurnRequest(conversation_id="c1", user_input="这是什么", screen_attachment=make_attachment())),
                 services,
             )
 
-        run_voice_pipeline(AgentState(conversation_id="c1", user_input="那怎么解决？"), services)
+        run_voice_pipeline(TurnContext(TurnRequest(conversation_id="c1", user_input="那怎么解决？")), services)
         followup_prompt = llm.responses.calls[-1]["input"]
 
         assert "[前回の画面観察]" in followup_prompt

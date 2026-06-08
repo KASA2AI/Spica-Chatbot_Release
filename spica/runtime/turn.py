@@ -13,8 +13,8 @@ identical to before, only typed. Later stages evolve this seam:
 - C2 folds the synchronous path onto ``run_turn`` + ``fold_events``;
 - C3a retypes the signature to ``run_turn(req: TurnRequest, deps: TurnDeps)``.
 
-Until then it takes the current ``AgentState`` + ``AgentServices`` (typed ``Any``
-here to avoid adding a new spica -> agent import edge ahead of the C4 relayer).
+It drives a ``TurnContext`` (C3c) + ``AgentServices`` (typed ``Any`` here to avoid
+adding a new spica -> agent import edge ahead of the C4 relayer).
 
 INVARIANT (CLAUDE.md #1 + #7): Qt-free; cross-boundary events are dataclasses.
 """
@@ -28,7 +28,7 @@ from spica.runtime.orchestrator import stream_voice_events
 
 
 def run_turn(
-    state: Any, services: Any, exec_strategy: Any = None, deps: Any = None
+    ctx: Any, services: Any, exec_strategy: Any = None, deps: Any = None
 ) -> Iterator[RuntimeEvent]:
     """Drive one streaming turn, yielding typed ``RuntimeEvent``s in order.
 
@@ -40,5 +40,5 @@ def run_turn(
     tool round. ``None`` -> the orchestrator falls back to an equivalent Legacy
     ToolSet built from ``services`` (so direct callers keep working).
     """
-    for legacy in stream_voice_events(state, services, exec_strategy, deps):
+    for legacy in stream_voice_events(ctx, services, exec_strategy, deps):
         yield event_from_legacy(legacy)

@@ -21,7 +21,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from agent.runtime import run_voice_pipeline
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
+from spica.runtime.context import TurnContext, TurnRequest
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory
@@ -90,7 +91,7 @@ def _services(store, character_id, interlocutor="麦"):
 
 def _turn(services, user_input, conversation_id="c1"):
     return run_voice_pipeline(
-        AgentState(conversation_id=conversation_id, user_input=user_input), services
+        TurnContext(TurnRequest(conversation_id=conversation_id, user_input=user_input)), services
     )
 
 
@@ -101,11 +102,11 @@ class MemoryReadWriteKeyTest(unittest.TestCase):
             _turn(services, "记住我喜欢简短回答")
             state = _turn(services, "简短回答可以吗")
         self.assertTrue(
-            state.long_term_memories,
+            state.recent.long_term_memories,
             "memory written last turn must be retrievable this turn (read key must match write key)",
         )
-        self.assertTrue(any("简短" in str(m.get("content", "")) for m in state.long_term_memories))
-        self.assertIn("简短", str(state.prompt_input))  # and it actually reaches the prompt
+        self.assertTrue(any("简短" in str(m.get("content", "")) for m in state.recent.long_term_memories))
+        self.assertIn("简短", str(state.prompt.prompt_input))  # and it actually reaches the prompt
 
     def test_long_term_memory_isolated_across_characters(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,8 +116,8 @@ class MemoryReadWriteKeyTest(unittest.TestCase):
             _turn(alpha, "记住我喜欢简短回答")
             beta_state = _turn(beta, "简短回答可以吗")
             alpha_state = _turn(alpha, "简短回答可以吗")
-        self.assertEqual(beta_state.long_term_memories, [], "characters must not read each other's memory")
-        self.assertTrue(alpha_state.long_term_memories, "the owning character must still see its own memory")
+        self.assertEqual(beta_state.recent.long_term_memories, [], "characters must not read each other's memory")
+        self.assertTrue(alpha_state.recent.long_term_memories, "the owning character must still see its own memory")
 
     def test_chat_engine_manual_memory_uses_character_namespace(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -132,7 +133,7 @@ class MemoryReadWriteKeyTest(unittest.TestCase):
             self.assertTrue(engine.list_memory("c1"))
             # ... and the auto pipeline retrieves the manually-remembered item
             state = _turn(services, "简短回答可以吗")
-            self.assertTrue(any("简短" in str(m.get("content", "")) for m in state.long_term_memories))
+            self.assertTrue(any("简短" in str(m.get("content", "")) for m in state.recent.long_term_memories))
             # clearing long-term also targets the namespace
             engine.clear_memory("c1", clear_long_term=True)
             self.assertEqual(store.list_memories(scoped_conversation_id("spica", "c1")), [])

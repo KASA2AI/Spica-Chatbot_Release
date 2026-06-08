@@ -8,8 +8,9 @@ logic (text cleanup, LLM branch, visual/TTS, extraction) lives here.
 
 Tunables (model, play-unit sizes, visual workers) and the LLM port come from the
 typed ``deps`` (C3b: ``deps.config`` / ``deps.llm``, never ``services.config``);
-direct dict-config callers are bridged via ``TurnDeps.from_legacy_services``.
-Qt-free (CLAUDE.md #1).
+direct dict-config callers are bridged via ``TurnDeps.from_legacy_services``. The
+turn runs on a typed ``TurnContext`` (C3c) rather than the ``AgentState``
+blackboard. Qt-free (CLAUDE.md #1).
 """
 
 from __future__ import annotations
@@ -28,9 +29,10 @@ from agent.nodes import (
     validate_input_node,
 )
 from agent.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
-from agent.state import AgentServices, AgentState
+from agent.state import AgentServices
 from agent.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
 from common.timing import log_timing, now_ms
+from spica.runtime.context import StreamedAnswer, TurnContext
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import ExecStrategy, Threaded
 from spica.runtime.memory_commit import save_stream_memory
@@ -45,7 +47,7 @@ _FIRST_UNIT_WARNING_MS = 3000.0
 
 
 def stream_voice_events(
-    state: AgentState,
+    ctx: TurnContext,
     services: AgentServices,
     exec_strategy: ExecStrategy | None = None,
     deps: Any = None,
@@ -56,7 +58,7 @@ def stream_voice_events(
     output_queue: queue.Queue[Any] = queue.Queue()
     producer = threading.Thread(
         target=_produce_stream_events,
-        args=(state, services, request_start_ms, output_queue, exec_strategy, deps),
+        args=(ctx, services, request_start_ms, output_queue, exec_strategy, deps),
         daemon=True,
     )
     producer.start()
@@ -70,7 +72,7 @@ def stream_voice_events(
 
 
 def _produce_stream_events(
-    state: AgentState,
+    ctx: TurnContext,
     services: AgentServices,
     request_start_ms: float,
     output_queue: queue.Queue[Any],
@@ -104,24 +106,24 @@ def _produce_stream_events(
 
     def set_timing_once(key: str, value: float) -> None:
         with timing_lock:
-            state.timing.setdefault(key, value)
+            ctx.timing.setdefault(key, value)
 
     def mark_first_unit_warning(reason: str) -> None:
         if first_unit_event.is_set():
             return
         warning_ms = relative_ms()
         with timing_lock:
-            if state.timing.get("first_unit_warning_ms") is not None:
+            if ctx.timing.get("first_unit_warning_ms") is not None:
                 return
-            state.timing["first_unit_warning_ms"] = warning_ms
-            state.timing["first_unit_warning"] = (
+            ctx.timing["first_unit_warning_ms"] = warning_ms
+            ctx.timing["first_unit_warning"] = (
                 f"first playable unit was not created within {int(_FIRST_UNIT_WARNING_MS)}ms"
             )
-            state.timing["first_unit_warning_reason"] = reason
+            ctx.timing["first_unit_warning_reason"] = reason
         log_timing(
             "chat_stream_first_unit_warning",
             warning_ms,
-            conversation_id=state.conversation_id,
+            conversation_id=ctx.request.conversation_id,
             reason=reason,
         )
 
@@ -150,7 +152,7 @@ def _produce_stream_events(
         index = len(created_units)
         previous_units = list(created_units)
         full_answer_so_far = "".join(previous_units + [display_text])
-        emotion = normalize_emotion(state.emotion_override or guess_emotion(full_answer_so_far))
+        emotion = normalize_emotion(ctx.request.emotion_override or guess_emotion(full_answer_so_far))
         unit_timing: dict[str, Any] = {
             "unit_index": index,
             "unit_text_chars": len(display_text),
@@ -189,13 +191,13 @@ def _produce_stream_events(
         visual_future = exec_strategy.submit_visual(
             functools.partial(
                 build_unit_visual_and_emit,
-                services, state, unit, request_start_ms, set_timing_once, put_unit_event,
+                services, ctx, unit, request_start_ms, set_timing_once, put_unit_event,
             )
         )
         tts_future = exec_strategy.submit_tts(
             functools.partial(
                 synthesize_unit_audio,
-                services, state, unit, request_start_ms, set_timing_once, put_unit_event,
+                services, ctx, unit, request_start_ms, set_timing_once, put_unit_event,
             )
         )
         ready_futures.append(
@@ -217,53 +219,58 @@ def _produce_stream_events(
     first_unit_timer.start()
 
     try:
-        state = validate_input_node(state, services)
-        if state.error:
-            output_queue.put({"event": "error", "data": {"message": state.error.get("message") or "请求无效。"}})
+        ctx = validate_input_node(ctx, services)
+        if ctx.error:
+            output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求无效。"}})
             return
 
-        state = load_recent_context_node(state, services)
-        state = retrieve_long_term_memory_node(state, services)
-        if state.screen_attachment:
+        ctx = load_recent_context_node(ctx, services)
+        ctx = retrieve_long_term_memory_node(ctx, services)
+        if ctx.request.screen_attachment:
             put_status("tools", "inspecting_screen")
-        state = analyze_screen_attachment_node(state, services)
-        if state.error:
-            output_queue.put({"event": "error", "data": {"message": state.error.get("message") or "截图分析失败。"}})
+        ctx = analyze_screen_attachment_node(ctx, services)
+        if ctx.error:
+            output_queue.put({"event": "error", "data": {"message": ctx.error.message or "截图分析失败。"}})
             return
-        state = build_prompt_node(state, services)
-        if state.error:
-            output_queue.put({"event": "error", "data": {"message": state.error.get("message") or "请求失败。"}})
+        ctx = build_prompt_node(ctx, services)
+        if ctx.error:
+            output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求失败。"}})
             return
 
         visual_context = None
         if services.visual_tool is not None and hasattr(services.visual_tool, "prepare_stream_context"):
             visual_context = services.visual_tool.prepare_stream_context(
-                requested_costume=state.visual_overrides.get("costume_set"),
-                requested_mode=state.visual_overrides.get("costume_mode"),
+                requested_costume=ctx.request.visual_overrides.get("costume_set"),
+                requested_mode=ctx.request.visual_overrides.get("costume_mode"),
             )
-        state.metadata["stream_visual_context"] = visual_context
+        ctx.metadata["stream_visual_context"] = visual_context
 
         model = deps.config.llm.model
-        state.timing["agent_model"] = model
-        state.timing["prompt_input_chars"] = len(str(state.prompt_input or ""))
+        prompt_input = ctx.prompt.prompt_input if ctx.prompt else None
+        ctx.timing["agent_model"] = model
+        ctx.timing["prompt_input_chars"] = len(str(prompt_input or ""))
 
-        prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(state, services, put_status, deps)
+        prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(ctx, services, put_status, deps)
         splitter = PlayUnitSplitter(
             min_chars=deps.config.stream.play_unit_min_chars,
             max_chars=deps.config.stream.play_unit_max_chars,
         )
         extractor = JsonAnswerExtractor()
         raw_model_parts: list[str] = []
+        # The generate phase begins: ctx.answer exists from here on (None during
+        # the prep stages above, so they cannot read a not-yet-streamed answer).
+        answer = StreamedAnswer()
+        ctx.answer = answer
 
         def handle_raw_delta(delta: str) -> None:
             if not delta:
                 return
             set_timing_once("first_llm_delta_ms", relative_ms())
             with timing_lock:
-                state.timing["llm_delta_events"] = int(state.timing.get("llm_delta_events") or 0) + 1
+                ctx.timing["llm_delta_events"] = int(ctx.timing.get("llm_delta_events") or 0) + 1
             raw_model_parts.append(delta)
-            state.raw_model_output = "".join(raw_model_parts)
-            answer_delta = extractor.feed(state.raw_model_output)
+            answer.raw_model_output = "".join(raw_model_parts)
+            answer_delta = extractor.feed(answer.raw_model_output)
             if not answer_delta:
                 return
             previous_sentence_count = splitter.completed_sentence_count
@@ -278,7 +285,7 @@ def _produce_stream_events(
             drain_ready()
         else:
             request = {"model": model, "input": prompt_for_stream}
-            for delta in deps.llm.iter_response_text(request, state):
+            for delta in deps.llm.iter_response_text(request, ctx):
                 handle_raw_delta(delta)
                 drain_ready()
 
@@ -286,61 +293,61 @@ def _produce_stream_events(
             submit_unit(unit_text)
         drain_ready()
 
-        state.raw_model_output = "".join(raw_model_parts)
-        state.parsed_reply = parse_model_reply(state.raw_model_output or "")
-        state.answer = normalize_square_brackets_for_speech(state.parsed_reply["answer"])
-        state.parsed_reply["answer"] = state.answer
-        state.emotion = normalize_emotion(state.emotion_override or state.parsed_reply["emotion"])
-        if not created_units and state.answer:
+        answer.raw_model_output = "".join(raw_model_parts)
+        answer.parsed_reply = parse_model_reply(answer.raw_model_output or "")
+        answer.answer = normalize_square_brackets_for_speech(answer.parsed_reply["answer"])
+        answer.parsed_reply["answer"] = answer.answer
+        answer.emotion = normalize_emotion(ctx.request.emotion_override or answer.parsed_reply["emotion"])
+        if not created_units and answer.answer:
             fallback_splitter = PlayUnitSplitter(
                 min_chars=splitter.min_chars,
                 max_chars=splitter.max_chars,
             )
-            for unit_text in fallback_splitter.feed(state.answer) + fallback_splitter.flush():
+            for unit_text in fallback_splitter.feed(answer.answer) + fallback_splitter.flush():
                 submit_unit(unit_text)
 
-        save_stream_memory(state, services, deps)
+        save_stream_memory(ctx, services, deps)
 
         for future in ready_futures:
             future.result()
             drain_ready()
         drain_ready()
 
-        state.timing["done_ms"] = relative_ms()
-        state.timing["units_count"] = len(created_units)
-        state.timing["units"] = unit_timings
+        ctx.timing["done_ms"] = relative_ms()
+        ctx.timing["units_count"] = len(created_units)
+        ctx.timing["units"] = unit_timings
         log_timing(
             "chat_stream_done",
-            state.timing["done_ms"],
-            conversation_id=state.conversation_id,
+            ctx.timing["done_ms"],
+            conversation_id=ctx.request.conversation_id,
             units_count=len(created_units),
-            first_llm_delta_ms=state.timing.get("first_llm_delta_ms"),
-            first_sentence_ms=state.timing.get("first_sentence_ms"),
-            first_unit_created_ms=state.timing.get("first_unit_created_ms"),
-            first_tts_start_ms=state.timing.get("first_tts_start_ms"),
-            first_tts_done_ms=state.timing.get("first_tts_done_ms"),
-            first_unit_ready_ms=state.timing.get("first_unit_ready_ms"),
-            first_visual_ready_ms=state.timing.get("first_visual_ready_ms"),
-            first_audio_ready_ms=state.timing.get("first_audio_ready_ms"),
-            llm_stream_create_ms=state.timing.get("llm_stream_create_ms"),
-            llm_stream_fallback_used=state.timing.get("llm_stream_fallback_used"),
+            first_llm_delta_ms=ctx.timing.get("first_llm_delta_ms"),
+            first_sentence_ms=ctx.timing.get("first_sentence_ms"),
+            first_unit_created_ms=ctx.timing.get("first_unit_created_ms"),
+            first_tts_start_ms=ctx.timing.get("first_tts_start_ms"),
+            first_tts_done_ms=ctx.timing.get("first_tts_done_ms"),
+            first_unit_ready_ms=ctx.timing.get("first_unit_ready_ms"),
+            first_visual_ready_ms=ctx.timing.get("first_visual_ready_ms"),
+            first_audio_ready_ms=ctx.timing.get("first_audio_ready_ms"),
+            llm_stream_create_ms=ctx.timing.get("llm_stream_create_ms"),
+            llm_stream_fallback_used=ctx.timing.get("llm_stream_fallback_used"),
         )
         output_queue.put(
             {
                 "event": "done",
                 "data": {
-                    "answer": state.answer or "",
-                    "emotion": state.emotion or "happy",
-                    "emotion_label": EMOTION_LABELS[normalize_emotion(state.emotion or "happy")],
-                    "emotion_reason": state.parsed_reply.get("emotion_reason") if state.parsed_reply else "",
+                    "answer": answer.answer or "",
+                    "emotion": answer.emotion or "happy",
+                    "emotion_label": EMOTION_LABELS[normalize_emotion(answer.emotion or "happy")],
+                    "emotion_reason": answer.parsed_reply.get("emotion_reason") if answer.parsed_reply else "",
                     "units_count": len(created_units),
-                    "timing": state.timing,
+                    "timing": ctx.timing,
                 },
             }
         )
     except Exception as exc:
         output_queue.put({"event": "error", "data": {"message": str(exc)}})
-        log_timing("chat_stream_error", relative_ms(), conversation_id=state.conversation_id, error=str(exc))
+        log_timing("chat_stream_error", relative_ms(), conversation_id=ctx.request.conversation_id, error=str(exc))
     finally:
         first_unit_timer.cancel()
         if owns_exec:

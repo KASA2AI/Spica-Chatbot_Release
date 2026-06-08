@@ -4,8 +4,8 @@ Moved verbatim from agent/streaming_pipeline.py. Runs on the streaming TTS
 executor: synthesizes audio for one play unit via the TTS port, emitting
 ``unit_audio_started`` / ``unit_audio_ready`` events.
 
-``state`` / ``services`` are typed ``Any`` to avoid a spica -> agent import.
-Qt-free (CLAUDE.md #1).
+``ctx`` (TurnContext) / ``services`` are typed ``Any`` to avoid a spica -> agent
+import. Qt-free (CLAUDE.md #1).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from agent_tools.tts.schemas import TTSRequest
 
 def synthesize_unit_audio(
     services: Any,
-    state: Any,
+    ctx: Any,
     unit: dict[str, Any],
     request_start_ms: float,
     set_timing_once: Any,
@@ -56,7 +56,7 @@ def synthesize_unit_audio(
             TTSRequest(
                 text=unit["tts_text"],
                 emotion=unit["emotion"],
-                extra={"tts_param_overrides": state.tts_param_overrides or {}},
+                extra={"tts_param_overrides": ctx.request.tts_param_overrides or {}},
             )
         )
         if not result.ok:

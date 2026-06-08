@@ -1,14 +1,20 @@
-"""Phase 2 layering guard: the platform core must never import Qt.
+"""Layering guards for the platform core.
 
-INVARIANT (CLAUDE.md #1): nothing under ``spica/`` may import PySide / Qt / any
-GUI binding. This keeps the host framework-agnostic, so a future Web/React front
-end is just another subscriber to the host -- the core stays untouched.
+Three AST-based invariants over ``spica/``:
 
-If this test goes red, a real Qt leak has been introduced into ``spica/``. Fix
-the leak. Do NOT delete this test or add an exemption.
+- **Qt isolation** (CLAUDE.md #1): nothing under ``spica/`` may import PySide / Qt /
+  any GUI binding, so the host stays framework-agnostic.
+- **N3-layer** (C4): ``spica`` must not import the ``agent`` package -- it was
+  deleted in C4; the conversation domain lives in ``spica/conversation`` and the
+  turn runtime in ``spica/runtime``. (``agent_tools`` is a separate package and is
+  fine.)
+- **N1-final** (C4): RuntimeEvent production is confined to the turn facade. The
+  pure transform layers -- the conversation domain and the turn stages -- must not
+  import ``spica.core.events``; they return ``ctx`` and never emit.
 
-The scan is AST-based, so it also catches Qt imports hidden behind
-``if TYPE_CHECKING:`` guards.
+If any goes red, a real leak/cycle was introduced. Fix it; do NOT delete a guard
+or add an exemption. The scans are AST-based, so they also catch imports hidden
+behind ``if TYPE_CHECKING:`` guards.
 """
 
 import ast
@@ -58,6 +64,43 @@ def _qt_imports_in(path: Path) -> list[str]:
     return violations
 
 
+def _agent_imports_in(path: Path) -> list[str]:
+    """Return any imports of the ``agent`` package (N3-layer). ``agent_tools`` is a
+    separate top-level package and is intentionally allowed."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "agent":
+                    violations.append(f"line {node.lineno}: import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module.split(".")[0] == "agent":
+                violations.append(f"line {node.lineno}: from {node.module} import ...")
+    return violations
+
+
+# Pure transform layers: they return ``ctx`` and must never produce RuntimeEvent.
+TRANSFORM_LAYER_FILES = [
+    SPICA_ROOT / "runtime" / "stages.py",
+    *sorted((SPICA_ROOT / "conversation").rglob("*.py")),
+]
+
+
+def _imports_runtime_events_in(path: Path) -> list[str]:
+    """Return any import of ``spica.core.events`` (where RuntimeEvent lives)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "spica.core.events":
+            violations.append(f"line {node.lineno}: from spica.core.events import ...")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "spica.core.events":
+                    violations.append(f"line {node.lineno}: import {alias.name}")
+    return violations
+
+
 class LayeringGuardTest(unittest.TestCase):
     def test_no_qt_imports_under_spica(self):
         offenders: dict[str, list[str]] = {}
@@ -79,6 +122,44 @@ class LayeringGuardTest(unittest.TestCase):
         for name in SPICA_PACKAGES:
             with self.subTest(package=name):
                 importlib.import_module(name)
+
+    def test_no_agent_imports_under_spica(self):
+        # N3-layer (C4): spica is self-contained; the agent package is deleted.
+        offenders: dict[str, list[str]] = {}
+        for path in sorted(SPICA_ROOT.rglob("*.py")):
+            found = _agent_imports_in(path)
+            if found:
+                offenders[str(path.relative_to(SPICA_ROOT.parent))] = found
+
+        self.assertEqual(
+            offenders,
+            {},
+            msg=(
+                "N3-layer: spica/ must not import the agent package (deleted in C4 -- "
+                "domain is spica.conversation, runtime is spica.runtime). agent_tools "
+                f"is a separate package and is fine. Offending imports: {offenders}"
+            ),
+        )
+
+    def test_transform_layers_do_not_produce_runtime_events(self):
+        # N1-final (C4): only the turn facade (run_turn) produces RuntimeEvent. The
+        # conversation domain and the turn stages are pure (ctx, ...) -> ctx
+        # transforms; importing the event type would be the first step to emitting.
+        offenders: dict[str, list[str]] = {}
+        for path in TRANSFORM_LAYER_FILES:
+            found = _imports_runtime_events_in(path)
+            if found:
+                offenders[str(path.relative_to(SPICA_ROOT.parent))] = found
+
+        self.assertEqual(
+            offenders,
+            {},
+            msg=(
+                "N1-final: the conversation domain + turn stages must not import "
+                "spica.core.events (RuntimeEvent). Stages return ctx; only run_turn / "
+                f"the orchestrator emit. Offending imports: {offenders}"
+            ),
+        )
 
 
 if __name__ == "__main__":

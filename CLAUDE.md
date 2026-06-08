@@ -91,10 +91,10 @@
 - [已生效] screen 工具必须保留 is_screen_intent_explicit 意图门，且本地分析、绝不上传截图。
 - [已生效] 手动截图是 attachment（用户已决定“看这张”），不是 tool；不得改成由模型决定是否分析用户已附的图。
 - [已生效] 有序释放只能走 Sequencer；不许出现手动 index 重排字典。
-- [C2 落地后生效] 只有 run_turn / stream_answer 能产出 RuntimeEvent；其余 stage 是 (ctx, deps)->ctx，不许自己 emit。
+- [已生效] 只有 run_turn / stream_answer 能产出 RuntimeEvent；其余 stage 是 (ctx, services, deps)->ctx 的纯转换（services 是过渡载体，C5/C6 退场），返回 ctx、不许自己 emit。守卫：转换层（spica/conversation/ + spica/runtime/stages.py）不许 import spica.core.events（N1-final，tests/test_layering.py）。
 - [已生效] 并发只能走注入的 ExecStrategy；业务 stage 内不许 new ThreadPoolExecutor。
-- [已生效] 运行时核心（spica/runtime/）不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。唯一例外是 deps.py 桥（legacy services → typed deps）。agent/nodes 的 services.config 读取随 agent/ 在 C4 退场。
-- [C4 落地后生效] spica 不许 import agent（agent/ 已删）。
+- [已生效] 运行时核心（spica/runtime/）不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。唯一例外是 deps.py 桥（legacy services → typed deps）。（C4 已落地：stages 读 deps.config / deps.llm / deps.memory，agent/ 已删。）
+- [已生效] spica 不许 import agent（agent/ 已删；agent_tools 是独立包，允许）。守卫：tests/test_layering.py（N3-layer）。
 - [C5 落地后生效] 计时/日志只能走注入的 TurnObserver；stage 内不许直接 log_timing。
 - [C6 落地后生效] memory commit 走注入的 JobRunner，不堵 hot path。
 - [C7 落地后生效] inspect_screen 由 CapabilityRegistry 注册、运行时从 registry 解析；不再读静态 TOOL_SCHEMAS。

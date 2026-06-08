@@ -1,10 +1,19 @@
-"""Commit one conversation turn to memory (Phase 6C).
+"""Commit one conversation turn to memory (Phase 6C; C6: long-term backgrounded).
 
-Moved from agent/streaming_pipeline.py. This layer is deliberately ignorant of
-HOW memory is extracted or stored: it appends the recent-context turn and calls
-``MemoryPort.commit_turn`` -- extraction/dedup live entirely inside the memory
-adapter (Phase 5). There is NO extraction logic here (CLAUDE.md Phase 6C
-acceptance). Qt-free.
+This layer is deliberately ignorant of HOW memory is extracted or stored: it
+appends the recent-context turn and calls ``MemoryPort.commit_turn`` --
+extraction/dedup live entirely inside the memory adapter (Phase 5).
+
+C6 splits the two writes by latency requirement:
+- recent_memory append stays SYNCHRONOUS -- the next turn's recent context needs
+  it before this turn's ``done`` (N4-memory).
+- the long-term ``commit_turn`` is fire-and-forget via the injected ``JobRunner``
+  (``deps.jobs``) so it never blocks the hot path. Inline in tests + the sync path
+  (so cross-turn retrieval sees it); threaded in streaming (the orchestrator drains
+  it before the stream closes). A failure only lands in metadata -- it must never
+  touch the event stream.
+
+Qt-free.
 """
 
 from __future__ import annotations
@@ -20,11 +29,11 @@ from spica.runtime.deps import TurnDeps
 
 
 def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> None:
+    deps = deps or TurnDeps.from_legacy_services(services)
+    answer_text = (ctx.answer.answer if ctx.answer else None) or ""
+
+    # recent_memory append is SYNCHRONOUS and must complete before `done` (N4-memory).
     try:
-        # C3b: identity + the memory port come from typed deps; dict-config
-        # callers (compat sync path / tests) bridge here.
-        deps = deps or TurnDeps.from_legacy_services(services)
-        answer_text = (ctx.answer.answer if ctx.answer else None) or ""
         services.recent_memory.append_turn(
             ctx.request.conversation_id,
             ctx.user_input,
@@ -37,20 +46,26 @@ def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> Non
             interaction_mode=ctx.request.interaction_mode,
             screen_observation_context=screen_observation_context_for_next_turn(ctx.screen_observation),
         )
-        interlocutor = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
-        result = deps.memory.commit_turn(
-            MemoryScope(
-                character_id=str(deps.config.character.character_id or "spica"),
-                user_id=interlocutor,
-                conversation_id=ctx.request.conversation_id,
-            ),
-            ctx.user_input,
-            answer_text,
-            meta={
-                "interlocutor_name": interlocutor,
-                "max_active_memories": deps.config.memory.max_long_term_memories,
-            },
-        )
-        ctx.metadata.update(result)
     except Exception as exc:
         ctx.metadata["memory_error"] = str(exc)
+
+    # Long-term commit is fire-and-forget via the injected JobRunner (C6).
+    interlocutor = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
+    scope = MemoryScope(
+        character_id=str(deps.config.character.character_id or "spica"),
+        user_id=interlocutor,
+        conversation_id=ctx.request.conversation_id,
+    )
+    meta = {
+        "interlocutor_name": interlocutor,
+        "max_active_memories": deps.config.memory.max_long_term_memories,
+    }
+
+    def _commit_long_term() -> None:
+        try:
+            result = deps.memory.commit_turn(scope, ctx.user_input, answer_text, meta=meta)
+            ctx.metadata.update(result)
+        except Exception as exc:
+            ctx.metadata["memory_error"] = str(exc)
+
+    deps.jobs.submit(_commit_long_term)

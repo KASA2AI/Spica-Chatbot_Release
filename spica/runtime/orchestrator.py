@@ -36,6 +36,7 @@ from common.timing import now_ms
 from spica.runtime.context import StreamedAnswer, TurnContext
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import ExecStrategy, Threaded
+from spica.runtime.jobs import ThreadJobRunner
 from spica.runtime.observer import DefaultTurnObserver
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
@@ -88,17 +89,20 @@ def _produce_stream_events(
     # C3b: run on typed deps. Direct (dict-config) callers bridge here; the
     # hot path below reads only deps.config / deps.llm, never services.config.
     deps = deps or TurnDeps.from_legacy_services(services)
-    # C5: a per-turn observer wrapping ctx.timing (the sink), injected for every
-    # stage -- the single timing/log write path. done.timing stays ctx.timing.
-    observer = DefaultTurnObserver(ctx.timing, logger=services.logger)
-    deps = replace(deps, observer=observer)
 
-    # Concurrency is an injected policy (C2). Streaming passes None and gets the
-    # default Threaded pools (owning their shutdown); the sync path injects Inline.
+    # Concurrency + background jobs are injected per-turn (C2/C5/C6). Streaming
+    # passes no exec_strategy and owns both the Threaded pools and a ThreadJobRunner
+    # (drained in finally) so `done` is emitted without waiting on the long-term
+    # memory commit; the sync path passes Inline and keeps the InlineJobRunner.
     # The three lanes (visual / serial tts / finalize) live in the strategy.
     owns_exec = exec_strategy is None
     if exec_strategy is None:
         exec_strategy = Threaded(visual_workers=max(1, deps.config.stream.visual_stream_workers))
+    # C5: one per-turn observer wrapping ctx.timing (the sink) -- the single
+    # timing/log write path; done.timing stays ctx.timing.
+    observer = DefaultTurnObserver(ctx.timing, logger=services.logger)
+    jobs = ThreadJobRunner() if owns_exec else deps.jobs
+    deps = replace(deps, observer=observer, jobs=jobs)
     ready_futures: list[concurrent.futures.Future[Any]] = []
     # C1 ordered release: finalize workers push (index, payload) onto this
     # INTERNAL queue; only the producer thread drains it through the Sequencer
@@ -353,6 +357,9 @@ def _produce_stream_events(
     finally:
         first_unit_timer.cancel()
         if owns_exec:
+            # `done` is already queued; drain the backgrounded long-term commit so
+            # no commit thread outlives the turn, then shut the exec pools down.
+            jobs.drain()
             exec_strategy.shutdown()
         output_queue.put(_SENTINEL)
 

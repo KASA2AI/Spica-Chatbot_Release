@@ -29,7 +29,6 @@ from spica.conversation.text_normalizer import normalize_square_brackets_for_spe
 from spica.conversation.time_context import build_local_time_context
 from spica.runtime.services import AgentServices
 from common.timing import elapsed_ms, now_ms
-from agent_tools.function_tools import run_local_tool, tool_schemas_for_user_text
 from agent_tools.function_tools.screen.analyzer import (
     analyze_screen_attachment,
     clear_last_screen_analysis_metadata,
@@ -296,12 +295,13 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
     model = deps.config.llm.model
     max_rounds = max(1, int(deps.config.max_tool_rounds))
     prompt_input = ctx.prompt.prompt_input if ctx.prompt else None
-    # TODO(C7): tool schemas/functions move to a registry-backed ToolSet
-    # (deps.tools); kept on services here per C4's minimal-flip scope.
+    # C7: tools resolve through the registry-backed ToolSet (deps.tools); the intent
+    # gate lives inside schemas_for_user_text. available_tool_schema_count stays the
+    # injected legacy count (telemetry; equals the registry's built-in tool set).
     active_tool_schemas = (
         []
         if ctx.request.screen_attachment or ctx.screen_observation
-        else tool_schemas_for_user_text(ctx.user_input, services.tool_schemas)
+        else deps.tools.schemas_for_user_text(ctx.user_input)
     )
     use_tools = bool(active_tool_schemas)
     ctx.metadata["use_tools"] = use_tools
@@ -387,8 +387,7 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
             tool_start_ms = now_ms()
             tool_name = str(_get_attr(item, "name", ""))
             arguments = str(_get_attr(item, "arguments", "") or "{}")
-            # TODO(C7): run via deps.tools.run (registry-backed); services.tool_functions transitional.
-            tool_result = run_local_tool(services.tool_functions, tool_name, arguments)
+            tool_result = deps.tools.run(tool_name, arguments)
             record_screen_tool_result(ctx, obs, tool_name, tool_result)
             tool_duration = elapsed_ms(tool_start_ms)
             obs.bump("agent_tool_local_ms", tool_duration)

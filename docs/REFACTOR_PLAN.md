@@ -8,6 +8,10 @@
 >
 > **本修订版的原则**：Phase 1 / 2 / 6 在初版里「过载」，会诱导 Claude Code 越改越大。本版把
 > Phase 1 缩到「只搬组装根」、Phase 2 缩到「只立边界守卫」、Phase 6 拆成 6A–6E。每个阶段都小到一个 session 能稳稳吃下。
+>
+> **状态 — 核心 turn 硬化已完成**：`docs/REFACTOR_PLAN_CORE.md` 的 C0–C8 已全部落地（绞杀式重构，main 全程可运行、测试全绿）。
+> turn 已是承重抽象——类型化 `TurnContext`、唯一 emit 的 `run_turn`、同步=流式 fold，注入的并发/观测/长期记忆/工具，旧 `agent/` 已删。
+> `CLAUDE.md` 的核心 turn 不变量全部「已生效」且有 AST/行为守卫测试。后续加功能（唱歌平台化、T2I、插件 UI）基本不再碰主轴。
 
 ---
 

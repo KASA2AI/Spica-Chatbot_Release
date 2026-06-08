@@ -4,12 +4,15 @@ Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 Py
 
 当前代码已经完成平台化重构的主要骨架：UI 不再直接组装 LLM/TTS/Visual/Memory 服务，后端由 `AppHost` 统一装配，核心对话由 `ChatEngine` 驱动，能力通过 ports/adapters 和 `CapabilityRegistry` 注册，跨 Host 到 UI 的运行事件用 `RuntimeEvent` dataclass 表达。
 
+核心对话 turn 也已完成绞杀式硬化（C0–C8）：一次对话跑在类型化的 `TurnContext` 上，唯一 emit 路径是 `run_turn`，同步路径是把流式事件 `fold` 成响应；并发（`ExecStrategy`）、可观测（`TurnObserver`）、长期记忆后台化（`JobRunner`，recent memory 仍同步）、工具（registry-backed `ToolSet`，`inspect_screen` 是首个 `ToolPort`）都是注入的能力；旧的 `agent/` 包已删除，纯 domain 在 `spica/conversation/`、运行时在 `spica/runtime/`，边界由 AST 守卫测试钉死。
+
 ## 当前状态
 
 - 桌面入口：`webui_qt.py` -> `ui/qt_overlay.py`。
 - 组装根：`spica.host.app_host.AppHost.initialize()`。
 - 对话核心：`spica.core.chat_engine.ChatEngine`。
 - 流式运行时：`spica.runtime.orchestrator.stream_voice_events()`。
+- 对话 turn：`spica.runtime.turn.run_turn`（唯一事件路径）、`spica.runtime.context.TurnContext`（类型化子上下文）、`spica.runtime.deps.TurnDeps`（注入 config/ports/observer/jobs/tools）。
 - 配置入口：`spica.config.manager.ConfigManager` + `data/config/*.yaml` + `xiaosan.env`。
 - 能力注册：`spica.plugins.registry.CapabilityRegistry`。
 - 角色包：`spica.core.character.CharacterPackage`，默认使用 `spica_data/Spica_skill`。

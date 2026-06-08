@@ -81,11 +81,10 @@
 - 不要把竞品（Shinsekai）的实现细节当成事实写进代码注释或文档。它的**方向**值得参考，
   但很多被传述的细节（React 设置中心、YAML DAG workflow 等）**未经核实**，可能不准（见 `docs/REFACTOR_PLAN.md` §0）。
 
-## 配套计划：核心 turn 硬化（进行中）
+## 配套计划：核心 turn 硬化（完成）
 
-当前正按 docs/REFACTOR_PLAN_CORE.md 硬化核心 turn（阶段 C0–C8）。做该计划内的任务时，
-先读那份文件的对应阶段。下面的「核心 turn 不变量」会随阶段落地逐条补全——
-**未标「已生效」的条目此刻还不是规则，不要照它改代码。**
+docs/REFACTOR_PLAN_CORE.md 的 C0–C8 已全部落地——turn 是承重抽象，下面的「核心 turn 不变量」
+**全部「已生效」且有守卫测试**。改这些不变量前先确认对应守卫测试；新增功能基本不再碰主轴。
 
 ### 核心 turn 不变量
 - [已生效] screen 工具必须保留 is_screen_intent_explicit 意图门，且本地分析、绝不上传截图。

@@ -96,5 +96,5 @@
 - [已生效] 运行时核心（spica/runtime/）不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。唯一例外是 deps.py 桥（legacy services → typed deps）。（C4 已落地：stages 读 deps.config / deps.llm / deps.memory，agent/ 已删。）
 - [已生效] spica 不许 import agent（agent/ 已删；agent_tools 是独立包，允许）。守卫：tests/test_layering.py（N3-layer）。
 - [已生效] turn/stage 编排层的计时/日志只能走注入的 TurnObserver（span/mark/event）；stage 内不许直接 log_timing。observer 的 sink 就是 ctx.timing（done.timing 不变）。唯一包 log_timing 的是 spica/runtime/observer.py；adapter（LLM/TTS/screen）内部低层诊断日志不在此限。守卫：tests/test_no_log_timing.py（N4-observe）。
-- [C6 落地后生效] memory commit 走注入的 JobRunner，不堵 hot path。
+- [已生效] 长期记忆 commit 走注入的 JobRunner（deps.jobs.submit），不堵 hot path；**recent_memory append 仍同步、在 done 前完成**（下一轮 recent context 要用，绝不后台化）。commit 失败只进 ctx.metadata，不碰事件流。流式注 ThreadJobRunner（done 后 drain），同步路径用 InlineJobRunner。守卫：tests/test_memory_commit.py + test_streaming_pipeline.py::StreamingMemoryJobTest（N4-memory）。
 - [C7 落地后生效] inspect_screen 由 CapabilityRegistry 注册、运行时从 registry 解析；不再读静态 TOOL_SCHEMAS。

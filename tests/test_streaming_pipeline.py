@@ -15,6 +15,9 @@ from spica.conversation.text_normalizer import build_tts_text
 from agent_tools.tts import GPTSoVITSTool
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
+from dataclasses import replace
+from spica.runtime.deps import TurnDeps
+from spica.runtime.exec_strategy import Inline
 
 
 class FakeResponse:
@@ -324,6 +327,42 @@ class StreamingPipelineTests(unittest.TestCase):
         done = [event for event in events if event["event"] == "done"][-1]["data"]
         self.assertIn({"state": "tools", "message": "inspecting_screen"}, statuses)
         self.assertEqual(done["answer"], answer)
+
+
+class _DeferredJobs:
+    """Records submitted jobs without running them, so the test can assert the
+    long-term commit is deferred -- the orchestrator does not wait on it (C6)."""
+
+    def __init__(self):
+        self.submitted = []
+
+    def submit(self, fn):
+        self.submitted.append(fn)
+
+    def drain(self, timeout=None):
+        return None
+
+
+class StreamingMemoryJobTest(unittest.TestCase):
+    def test_done_does_not_wait_for_the_long_term_commit(self):
+        answer = "フーリエ変換は信号を分解します。"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            services = make_services(tmpdir, answer)
+            jobs = _DeferredJobs()
+            # Inline exec -> owns_exec is False, so the orchestrator uses these
+            # injected jobs (a real streaming turn would own a ThreadJobRunner).
+            deps = replace(TurnDeps.from_legacy_services(services), jobs=jobs)
+            state = TurnContext(TurnRequest(conversation_id="c1", user_input="説明して"))
+            events = list(stream_voice_events(state, services, exec_strategy=Inline(), deps=deps))
+
+        done = [e for e in events if e["event"] == "done"]
+        # the answer was delivered ...
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["data"]["answer"], answer)
+        # ... while the long-term commit is merely SUBMITTED, never run on the hot path
+        self.assertEqual(len(jobs.submitted), 1)
+        # recent append, by contrast, ran synchronously before `done`
+        self.assertTrue(services.recent_memory.get_recent("c1"))
 
 
 if __name__ == "__main__":

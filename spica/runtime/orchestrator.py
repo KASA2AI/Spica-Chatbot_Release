@@ -21,7 +21,7 @@ import queue
 import threading
 from typing import Any, Iterator
 
-from agent.nodes import (
+from spica.runtime.stages import (
     analyze_screen_attachment_node,
     build_prompt_node,
     load_recent_context_node,
@@ -219,20 +219,20 @@ def _produce_stream_events(
     first_unit_timer.start()
 
     try:
-        ctx = validate_input_node(ctx, services)
+        ctx = validate_input_node(ctx, services, deps)
         if ctx.error:
             output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求无效。"}})
             return
 
-        ctx = load_recent_context_node(ctx, services)
-        ctx = retrieve_long_term_memory_node(ctx, services)
+        ctx = load_recent_context_node(ctx, services, deps)
+        ctx = retrieve_long_term_memory_node(ctx, services, deps)
         if ctx.request.screen_attachment:
             put_status("tools", "inspecting_screen")
-        ctx = analyze_screen_attachment_node(ctx, services)
+        ctx = analyze_screen_attachment_node(ctx, services, deps)
         if ctx.error:
             output_queue.put({"event": "error", "data": {"message": ctx.error.message or "截图分析失败。"}})
             return
-        ctx = build_prompt_node(ctx, services)
+        ctx = build_prompt_node(ctx, services, deps)
         if ctx.error:
             output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求失败。"}})
             return

@@ -313,7 +313,7 @@ class StreamingPipelineTests(unittest.TestCase):
                 screen_attachment=make_screen_attachment(),
             ))
             with patch(
-                "agent.nodes.analyze_screen_attachment",
+                "spica.runtime.stages.analyze_screen_attachment",
                 lambda *, attachment, user_question: fake_screen_observation(user_question),
             ):
                 events = list(stream_voice_events(state, services))

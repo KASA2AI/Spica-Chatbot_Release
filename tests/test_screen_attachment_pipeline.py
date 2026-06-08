@@ -124,7 +124,7 @@ def test_empty_input_with_pending_screenshot_uses_default_question_and_injects_o
             calls.append({"attachment": attachment, "question": user_question})
             return fake_observation(user_question)
 
-        with patch("agent.nodes.analyze_screen_attachment", fake_analyzer):
+        with patch("spica.runtime.stages.analyze_screen_attachment", fake_analyzer):
             state = run_voice_pipeline(
                 TurnContext(TurnRequest(conversation_id="c1", user_input="", screen_attachment=make_attachment())),
                 services,
@@ -146,7 +146,7 @@ def test_pending_screenshot_disables_repeat_automatic_inspect_screen_even_for_sc
         llm = FakeLLMClient()
         services = make_services(tmpdir, llm)
 
-        with patch("agent.nodes.analyze_screen_attachment", lambda *, attachment, user_question: fake_observation(user_question)):
+        with patch("spica.runtime.stages.analyze_screen_attachment", lambda *, attachment, user_question: fake_observation(user_question)):
             state = run_voice_pipeline(
                 TurnContext(TurnRequest(conversation_id="c1", user_input="看一下我屏幕", screen_attachment=make_attachment())),
                 services,
@@ -163,7 +163,7 @@ def test_screen_followup_context_enters_next_turn_prompt_without_raw_image_or_oc
         llm = FakeLLMClient()
         services = make_services(tmpdir, llm)
 
-        with patch("agent.nodes.analyze_screen_attachment", lambda *, attachment, user_question: fake_observation(user_question)):
+        with patch("spica.runtime.stages.analyze_screen_attachment", lambda *, attachment, user_question: fake_observation(user_question)):
             run_voice_pipeline(
                 TurnContext(TurnRequest(conversation_id="c1", user_input="这是什么", screen_attachment=make_attachment())),
                 services,

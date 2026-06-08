@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent.nodes import _compact_tool_history_for_prompt, record_screen_tool_result
+from spica.runtime.stages import _compact_tool_history_for_prompt, record_screen_tool_result
 from common.timing import elapsed_ms, log_timing, now_ms
 from spica.runtime.context import TurnContext
 from spica.runtime.llm_stream import get_attr, record_usage

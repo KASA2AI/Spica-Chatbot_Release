@@ -373,7 +373,7 @@ class TurnContractTest(unittest.TestCase):
                 screen_attachment=_make_screen_attachment(),
             ))
             with patch(
-                "agent.nodes.analyze_screen_attachment",
+                "spica.runtime.stages.analyze_screen_attachment",
                 lambda *, attachment, user_question: _fake_screen_observation(user_question),
             ):
                 events = self._run(state, services)

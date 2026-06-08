@@ -1,10 +1,10 @@
 """Application host: the composition root for the Spica platform.
 
-Phase 1 of the platform refactor moves backend construction out of the PySide
-``OverlayWindow`` and into ``AppHost.initialize()``. This is a *mechanical* move:
-``initialize()`` still constructs exactly today's ``SimpleAgent`` / TTS adapter /
-``VisualDiffService`` with identical behaviour. The UI no longer ``new``s any
-service -- it calls ``AppHost().initialize()`` and reads the services back.
+``AppHost.initialize()`` constructs the backend services (LLM / TTS / Visual /
+Memory adapters resolved by configured name from the ``CapabilityRegistry``, the
+active character package, the built-in tools) and wires them into the conversation
+core. The UI no longer ``new``s any service -- it calls ``AppHost().initialize()``
+and reads the services back.
 
 INVARIANT (CLAUDE.md #1): this module -- and everything under ``spica/`` -- must
 never import PySide / Qt / any GUI library. The services constructed here are
@@ -13,10 +13,10 @@ Web/React front-end subscribe to the host without the core changing.
 
 The host exposes two narrow surfaces rather than one fat object:
 
-- ``conversation_surface`` (for the chat window) -- Phase 1: a thin alias to the
-  current ``SimpleAgent``; its full protocol shape lands in Phase 6.
-- ``management_surface`` (for the settings centre) -- a ``NotImplementedError``
-  placeholder until Phase 8, so we do not design that interface prematurely.
+- ``conversation_surface`` (for the chat window) -- the ``ChatEngine`` that drives
+  a turn (run / stream) and owns character / memory management.
+- ``management_surface`` (for the settings centre) -- the ``ManagementSurface``
+  that lists adapters / characters / plugins and reads / writes typed config.
 """
 
 from __future__ import annotations

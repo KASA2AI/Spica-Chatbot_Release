@@ -158,8 +158,14 @@ class ChatEngine:
 
     def _ltm_conversation_id(self, conversation_id: str) -> str:
         # Long-term store is namespaced by character (Phase 7) so it matches
-        # commit_turn / retrieve; short-term recent_memory stays on the bare
-        # conversation_id. "::" is defined once, in scoped_conversation_id.
+        # commit_turn / retrieve. "::" is defined once, in scoped_conversation_id.
+        #
+        # TODO(Phase 7 多角色): short-term recent_memory still uses the BARE
+        # conversation_id -- it is NOT namespaced by character_id. Switching
+        # characters within one conversation would cross-contaminate the short-term
+        # context (recent turns of character A leaking into character B). When Phase 7
+        # wires runtime character switching, recent_memory must key on the same
+        # character namespace as the long-term store (scoped_conversation_id).
         return scoped_conversation_id(
             str(self.services.config.get("character_id") or "spica"),
             conversation_id,

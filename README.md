@@ -70,12 +70,12 @@ Host 只做组装和窄接口转发，业务逻辑在 `ChatEngine`、runtime 组
 ├── spica/
 │   ├── host/                           # AppHost 组装根、backend assembly、ManagementSurface
 │   ├── core/                           # ChatEngine、RuntimeEvent、ChatStateMachine、CharacterPackage
-│   ├── runtime/                        # 流式编排、LLM stream、工具轮、播放单元、TTS/Visual job、memory commit
+│   ├── conversation/                   # 纯 domain：prompt builder、reply parser、text normalizer、time context、character loader
+│   ├── runtime/                        # 对话 turn：run_turn、TurnContext/TurnDeps、stages、流式编排、observer/jobs、TTS/Visual job、memory commit
 │   ├── ports/                          # LLM/TTS/Visual/Memory/Tool 协议
 │   ├── adapters/                       # OpenAI 兼容 LLM、SQLite memory、GPT-SoVITS TTS、Spica visual adapter
 │   ├── config/                         # Pydantic AppConfig、ConfigManager、Secrets
 │   └── plugins/                        # CapabilityRegistry、PluginHost、plugin manifest
-├── agent/                              # prompt、reply parser、同步节点、AgentState/AgentServices 兼容层
 ├── agent_tools/
 │   ├── function_tools/screen/           # 本地截图、RapidOCR、Moondream screen pipeline
 │   ├── function_tools/song/             # 点歌意图、网易云、分离、RVC、混音 pipeline
@@ -309,7 +309,9 @@ max_tool_rounds: 3
 
 ### 同步路径
 
-`ChatEngine.run_voice()` 构造 `AgentState`，调用 `agent.runtime.run_voice_pipeline()`，依次执行：
+`ChatEngine.run_voice()` 用 `Inline` 执行策略驱动 `run_turn`，再用 `fold_events` 把产出的事件流折叠成一个完整响应 payload（见 `spica/core/chat_engine.py`）。主要用于一次性得到完整 payload。
+
+非流式的 stage 链（测试/兼容入口 `spica/runtime/sync_chain.py::run_voice_pipeline`）依次执行：
 
 ```text
 validate_input
@@ -324,8 +326,6 @@ build_visual
 synthesize_tts
 build_response
 ```
-
-同步路径主要用于一次性得到完整 payload。
 
 ### 流式路径
 

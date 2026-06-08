@@ -1,0 +1,46 @@
+"""Built-in capability adapters (Phase 5).
+
+The host registers these into the ``CapabilityRegistry`` at construction time;
+``AppHost`` then resolves the active instance by the name in config (e.g.
+``config.llm.provider``). Pulling the registration out of ``AppHost`` keeps the
+host thin (CLAUDE.md #6) -- it stays pure wiring + forwarding while the catalogue
+of what ships built-in lives here.
+
+INVARIANT (CLAUDE.md #1): Qt-free -- only adapters / agent_tools, never any GUI.
+"""
+
+from __future__ import annotations
+
+from spica.plugins.registry import CapabilityRegistry
+from spica.adapters.llm import OpenAICompatibleAdapter
+from spica.adapters.memory import SqliteMemoryAdapter
+from spica.adapters.screen import LocalMoondreamScreenAnalysis
+from spica.adapters.tools import InspectScreenTool
+from spica.adapters.tts import build_tts
+from spica.adapters.visual import build_spica_visual
+from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS
+
+
+def register_builtin_adapters(registry: CapabilityRegistry) -> None:
+    """Register the built-in capability adapters by name (Phase 5).
+
+    Resolving by the name in config (e.g. ``config.llm.provider``) is what makes
+    "swap the engine by changing a config name" work; this is also the seam
+    Phase 8 plugins register into.
+    """
+    registry.register_llm(
+        "openai_compatible", lambda client=None: OpenAICompatibleAdapter(client)
+    )
+    for provider in (*CURRENT_GPTSOVITS_PROVIDERS, "dummy"):
+        registry.register_tts(
+            provider, lambda config=None, service=None: build_tts(config, service)
+        )
+    registry.register_visual("spica_diff", build_spica_visual)
+    registry.register_memory(
+        "sqlite", lambda store=None, recent=None: SqliteMemoryAdapter(store, recent)
+    )
+    # C7: inspect_screen is the first real tool -- a ToolPort over the local
+    # screen-analysis adapter, registered so the runtime resolves it via the
+    # registry (not a static TOOL_SCHEMAS list). N0 gate + local-only preserved.
+    screen_tool = InspectScreenTool(LocalMoondreamScreenAnalysis())
+    registry.register_tool(screen_tool.schema(), screen_tool.run)

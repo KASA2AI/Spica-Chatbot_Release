@@ -30,14 +30,10 @@ from spica.core.chat_engine import ChatEngine
 from spica.conversation.character_loader import DEFAULT_SPICA_SKILL_DIR
 from spica.core.character import load_character_package
 from spica.host.agent_assembly import build_agent_services
+from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
 from spica.plugins.host import PluginHost
 from spica.plugins.registry import CapabilityRegistry
-from spica.adapters.llm import OpenAICompatibleAdapter
-from spica.adapters.memory import SqliteMemoryAdapter
-from spica.adapters.screen import LocalMoondreamScreenAnalysis
-from spica.adapters.tools import InspectScreenTool
-from spica.adapters.tts import build_tts
 from spica.adapters.visual import build_spica_visual
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, load_tts_config
 
@@ -56,7 +52,7 @@ class AppHost:
         self.chat_engine: Any | None = None
         self.tts_provider: str = "gptsovits_current"
         self.registry = CapabilityRegistry()
-        self._register_builtin_adapters()
+        register_builtin_adapters(self.registry)
         self.plugin_host = PluginHost(self.registry)
         self._management = ManagementSurface(
             registry=self.registry,
@@ -64,30 +60,6 @@ class AppHost:
             plugin_host=self.plugin_host,
             characters_root=DEFAULT_SPICA_SKILL_DIR.parent,
         )
-
-    def _register_builtin_adapters(self) -> None:
-        """Register the built-in capability adapters by name (Phase 5).
-
-        Resolving by the name in config (e.g. ``config.llm.provider``) is what
-        makes "swap the engine by changing a config name" work; this is also the
-        seam Phase 8 plugins register into.
-        """
-        self.registry.register_llm(
-            "openai_compatible", lambda client=None: OpenAICompatibleAdapter(client)
-        )
-        for provider in (*CURRENT_GPTSOVITS_PROVIDERS, "dummy"):
-            self.registry.register_tts(
-                provider, lambda config=None, service=None: build_tts(config, service)
-            )
-        self.registry.register_visual("spica_diff", build_spica_visual)
-        self.registry.register_memory(
-            "sqlite", lambda store=None, recent=None: SqliteMemoryAdapter(store, recent)
-        )
-        # C7: inspect_screen is the first real tool -- a ToolPort over the local
-        # screen-analysis adapter, registered so the runtime resolves it via the
-        # registry (not a static TOOL_SCHEMAS list). N0 gate + local-only preserved.
-        screen_tool = InspectScreenTool(LocalMoondreamScreenAnalysis())
-        self.registry.register_tool(screen_tool.schema(), screen_tool.run)
 
     def initialize(self) -> None:
         """Construct the backend services (moved verbatim from the UI).

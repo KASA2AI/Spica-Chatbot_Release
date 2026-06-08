@@ -97,4 +97,4 @@
 - [已生效] spica 不许 import agent（agent/ 已删；agent_tools 是独立包，允许）。守卫：tests/test_layering.py（N3-layer）。
 - [已生效] turn/stage 编排层的计时/日志只能走注入的 TurnObserver（span/mark/event）；stage 内不许直接 log_timing。observer 的 sink 就是 ctx.timing（done.timing 不变）。唯一包 log_timing 的是 spica/runtime/observer.py；adapter（LLM/TTS/screen）内部低层诊断日志不在此限。守卫：tests/test_no_log_timing.py（N4-observe）。
 - [已生效] 长期记忆 commit 走注入的 JobRunner（deps.jobs.submit），不堵 hot path；**recent_memory append 仍同步、在 done 前完成**（下一轮 recent context 要用，绝不后台化）。commit 失败只进 ctx.metadata，不碰事件流。流式注 ThreadJobRunner（done 后 drain），同步路径用 InlineJobRunner。守卫：tests/test_memory_commit.py + test_streaming_pipeline.py::StreamingMemoryJobTest（N4-memory）。
-- [C7 落地后生效] inspect_screen 由 CapabilityRegistry 注册、运行时从 registry 解析；不再读静态 TOOL_SCHEMAS。
+- [已生效] inspect_screen 是 ToolPort，由 CapabilityRegistry 注册；运行时经 registry-backed ToolSet（deps.tools）解析，不再读静态 TOOL_SCHEMAS（生产用 host registry；测试适配 services 注入的 tool 表）。意图门 is_screen_intent_explicit + 本地隐私保留（N0，tool 层仍做防御性二次校验）；手动截图仍是 attachment、不走 tool（N0b）；tool 与 attachment 共享同一 analyze 引擎（ScreenAnalysisPort 包 analyze_screen_image_local）。守卫：tests/test_no_static_tool_schemas.py（N5）+ test_screen_port.py。

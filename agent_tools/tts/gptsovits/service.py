@@ -5,11 +5,15 @@ import re
 import sys
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from spica.config.runtime_env import (
+    prime_vendored_runtime_cache_env,
+    strip_proxy_env_for_vendored_runtime,
+)
 from spica.conversation.text_normalizer import normalize_square_brackets_for_speech
 from agent_tools.config_io import read_config_file
 from common.timing import elapsed_ms, log_timing, now_ms
@@ -18,11 +22,32 @@ from common.timing import elapsed_ms, log_timing, now_ms
 BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = BASE_DIR / "data" / "config" / "tts.yaml"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "static" / "generated_voice"
-PROXY_ENV_KEYS = ("all_proxy", "ALL_PROXY", "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
 UNSAFE_TTS_CHUNK_ENDINGS = ("、", "，", ",")
 SHORT_TTS_OPENERS = {"もちろん。", "はい。", "ええ。", "そうですね。"}
-DEFAULT_RUNTIME_CACHE_ROOT = Path("/tmp/spica_chatbot_cache")
 logger = logging.getLogger(__name__)
+
+
+class _VendorLogBridge:
+    """File-like sink: vendored GPT-SoVITS prints / tqdm bars -> one DEBUG log
+    line each (quiet by default, recoverable at DEBUG level). Splits on both \\n
+    and \\r (tqdm redraws with \\r)."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def write(self, text: str) -> int:
+        self._buffer += str(text)
+        parts = re.split(r"[\r\n]", self._buffer)
+        self._buffer = parts.pop()
+        for line in parts:
+            if line.strip():
+                logger.debug("gptsovits| %s", line.strip())
+        return len(text)
+
+    def flush(self) -> None:
+        if self._buffer.strip():
+            logger.debug("gptsovits| %s", self._buffer.strip())
+        self._buffer = ""
 
 
 @contextmanager
@@ -107,8 +132,9 @@ class GPTSoVITSTool:
                     self.config.get("warmup_synthesize", False) if synthesize is None else synthesize
                 )
 
-                self._lazy_import()
-                with pushd(self.gptsovits_root):
+                with self._vendor_output():
+                    self._lazy_import()
+                with self._vendor_output(), pushd(self.gptsovits_root):
                     self._ensure_models(gpt_model_path, sovits_model_path, ref_language, target_language)
                     if should_synthesize:
                         warmup_text = str(self.config.get("warmup_text") or "はい。")
@@ -156,6 +182,25 @@ class GPTSoVITSTool:
                 "duration_ms": duration_ms,
             }
 
+    @contextmanager
+    def _vendor_output(self):
+        """Silence the vendored runtime's stdout/stderr chatter (实际输入的目标文本 /
+        切句后 / 前端处理后 / tqdm bars...) unless the TTS config sets
+        ``tts_verbose: true`` -- bridged line-by-line to DEBUG, never deleted.
+        logging handlers bound their stream at basicConfig time, so logger output
+        is unaffected; only bare prints inside this window are captured (process-
+        wide stdout swap: another thread's bare print during synthesis would land
+        in the DEBUG bridge too -- acceptable, ours all go through logging)."""
+        if bool(self.config.get("tts_verbose", False)):
+            yield
+            return
+        bridge = _VendorLogBridge()
+        with redirect_stdout(bridge), redirect_stderr(bridge):
+            try:
+                yield
+            finally:
+                bridge.flush()
+
     def synthesize(
         self,
         text: str,
@@ -181,10 +226,11 @@ class GPTSoVITSTool:
             text_chunks = self._split_tts_text(text, params)
             chunk_audio_items = []
 
-            self._lazy_import()
+            with self._vendor_output():
+                self._lazy_import()
             import soundfile as sf
 
-            with pushd(self.gptsovits_root):
+            with self._vendor_output(), pushd(self.gptsovits_root):
                 model_start_ms = now_ms()
                 self._ensure_models(gpt_model_path, sovits_model_path, ref_language, target_language)
                 log_timing("tts_models", elapsed_ms(model_start_ms), emotion=emotion_key)
@@ -260,6 +306,8 @@ class GPTSoVITSTool:
                 combine_ms=combine_ms,
                 write_ms=write_ms,
             )
+            # The ONE user-visible line per synthesis (detail lives at DEBUG).
+            logger.info("tts done: %s… chunks=%d %.0fms", text[:20], len(text_chunks), total_ms)
             return {
                 "ok": True,
                 "tool": "gptsovits_tts",
@@ -312,9 +360,7 @@ class GPTSoVITSTool:
             return
 
         self._configure_runtime_cache_dirs()
-
-        for key in PROXY_ENV_KEYS:
-            os.environ.pop(key, None)
+        strip_proxy_env_for_vendored_runtime()
 
         package_dir = self.gptsovits_root / "GPT_SoVITS"
         import_paths = [
@@ -341,17 +387,10 @@ class GPTSoVITSTool:
         self._module_ready = True
 
     def _configure_runtime_cache_dirs(self) -> None:
-        cache_root = Path(os.getenv("SPICA_RUNTIME_CACHE_DIR") or DEFAULT_RUNTIME_CACHE_ROOT).resolve()
-        for env_key, dirname in (
-            ("NUMBA_CACHE_DIR", "numba"),
-            ("MPLCONFIGDIR", "matplotlib"),
-            ("XDG_CACHE_HOME", "xdg"),
-        ):
-            if os.environ.get(env_key):
-                continue
-            cache_dir = cache_root / dirname
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            os.environ[env_key] = str(cache_dir)
+        # P0b step 1: the shim body lives in spica/config/runtime_env.py (env
+        # mutation is a config-layer privilege); the CALL SITE and timing here
+        # are unchanged -- see the FINDINGS #19 constraint in that module.
+        prime_vendored_runtime_cache_env()
 
     def _drop_conflicting_module(self, module_name: str, allowed_roots: list[Path]) -> None:
         module = sys.modules.get(module_name)

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from collections import deque
 from typing import Callable
+
+from spica.config.manager import respeaker_env_overrides
 
 from .control import ReSpeakerControl, ReSpeakerControlError
 
@@ -185,7 +186,7 @@ def _create_hardware_vad() -> ReSpeakerControl:
 
 
 def _fallback_or_raise(max_seconds: float, reason: str) -> bytes:
-    if os.environ.get("RESPEAKER_REQUIRE_HARDWARE_VAD") == "1":
+    if respeaker_env_overrides()["require_hardware_vad"] == "1":
         raise ReSpeakerAudioError(f"ReSpeaker 硬件 VAD 不可用：{reason}")
 
     fallback_seconds = min(max_seconds, 3.0)
@@ -226,7 +227,7 @@ def _open_respeaker_stream(pyaudio, audio, frames_per_buffer: int):
 
 
 def _find_respeaker_device_index(audio) -> int | None:
-    env_index = os.environ.get("RESPEAKER_INPUT_DEVICE_INDEX")
+    env_index = respeaker_env_overrides()["input_device_index"]
     if env_index:
         try:
             return int(env_index)

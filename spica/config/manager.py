@@ -20,10 +20,33 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from spica.config.env_roster import RESPEAKER_ENV_MAP, SCREEN_ENV_MAP
 from spica.config.schema import AppConfig
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = _REPO_ROOT / "data" / "config" / "app.yaml"
+
+
+def screen_env_overrides() -> dict[str, str | None]:
+    """Raw env strings for the screen tool chain (P0b step 1, F6 收编).
+
+    The env NAMES live in ``env_roster.SCREEN_ENV_MAP``; the domain loader
+    (``agent_tools/function_tools/screen/config.py``) keeps every coercion
+    (_env_bool/_bounded_int/_clean_env) unchanged and no longer knows any env
+    name. Values are returned RAW (None when unset) and read at CALL time --
+    no dotenv priming here, exactly matching the loader's old direct
+    ``os.getenv`` behaviour (the entry point primes env first, CLAUDE.md #10).
+    """
+    return {field: os.getenv(name) for field, name in SCREEN_ENV_MAP.items()}
+
+
+def respeaker_env_overrides() -> dict[str, str | None]:
+    """Raw env strings for the ReSpeaker hardware layer (P0b step 1, D2).
+
+    Same contract as ``screen_env_overrides``: raw values, call-time reads,
+    coercion stays at the consumer (``hardware/respeaker``).
+    """
+    return {field: os.getenv(name) for field, name in RESPEAKER_ENV_MAP.items()}
 
 
 class ConfigManager:

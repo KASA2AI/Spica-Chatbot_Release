@@ -31,3 +31,6 @@ spica_data/output_wav_test/
 agent_tools/function_tools/song/Applio/
 agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/*
 !agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/.gitkeep
+
+# P0b resolved-config baselines (machine-local paths + hashed secrets)
+data/config_migration/

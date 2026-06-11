@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+# P0b step 1: env reads live in the config layer (CLAUDE.md #4). This loader
+# gets RAW strings keyed by field name and keeps every coercion below
+# unchanged; it no longer knows any env variable name.
+from spica.config.manager import screen_env_overrides
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -58,46 +62,47 @@ def load_screen_config(path: str | Path | None = None) -> ScreenPipelineConfig:
             loaded = json.load(file)
         if isinstance(loaded, dict):
             raw.update(_local_config_items(loaded))
-    revision = _clean_env(os.getenv("SPICA_SCREEN_REVISION")) or str(raw.get("revision") or _DEFAULTS["revision"])
+    env = screen_env_overrides()
+    revision = _clean_env(env["revision"]) or str(raw.get("revision") or _DEFAULTS["revision"])
 
     return ScreenPipelineConfig(
-        enabled=_env_bool(os.getenv("SPICA_SCREEN_ENABLED"), default=bool(raw.get("enabled", True))),
-        provider=_clean_env(os.getenv("SPICA_SCREEN_PROVIDER"))
+        enabled=_env_bool(env["enabled"], default=bool(raw.get("enabled", True))),
+        provider=_clean_env(env["provider"])
         or str(raw.get("provider") or _DEFAULTS["provider"]),
-        model_id=_clean_env(os.getenv("SPICA_SCREEN_MODEL_ID"))
+        model_id=_clean_env(env["model_id"])
         or str(raw.get("model_id") or _DEFAULTS["model_id"]),
         revision=revision,
-        device=_clean_env(os.getenv("SPICA_SCREEN_DEVICE"))
+        device=_clean_env(env["device"])
         or str(raw.get("device") or _DEFAULTS["device"]),
         dtype=_normalize_dtype(
-            _clean_env(os.getenv("SPICA_SCREEN_DTYPE")) or str(raw.get("dtype") or _DEFAULTS["dtype"])
+            _clean_env(env["dtype"]) or str(raw.get("dtype") or _DEFAULTS["dtype"])
         ),
         max_side=_bounded_int(
-            os.getenv("SPICA_SCREEN_MAX_SIDE"),
+            env["max_side"],
             raw.get("max_side"),
             default=768,
             minimum=128,
             maximum=4096,
         ),
-        reasoning=_env_bool(os.getenv("SPICA_SCREEN_REASONING"), default=bool(raw.get("reasoning", False))),
-        preload=_env_bool(os.getenv("SPICA_SCREEN_PRELOAD"), default=bool(raw.get("preload", False))),
+        reasoning=_env_bool(env["reasoning"], default=bool(raw.get("reasoning", False))),
+        preload=_env_bool(env["preload"], default=bool(raw.get("preload", False))),
         ocr_enabled=_env_bool(
-            os.getenv("SPICA_SCREEN_OCR_ENABLED"),
+            env["ocr_enabled"],
             default=bool(raw.get("ocr_enabled", True)),
         ),
-        ocr_engine=_clean_env(os.getenv("SPICA_SCREEN_OCR_ENGINE"))
+        ocr_engine=_clean_env(env["ocr_engine"])
         or str(raw.get("ocr_engine") or _DEFAULTS["ocr_engine"]),
         capture_format=_normalize_capture_format(
-            _clean_env(os.getenv("SPICA_SCREEN_CAPTURE_FORMAT"))
+            _clean_env(env["capture_format"])
             or str(raw.get("capture_format") or _DEFAULTS["capture_format"])
         ),
         infer_timeout_sec=_positive_float(
-            _clean_env(os.getenv("SPICA_SCREEN_INFER_TIMEOUT_SEC")) or raw.get("infer_timeout_sec"),
+            _clean_env(env["infer_timeout_sec"]) or raw.get("infer_timeout_sec"),
             default=30.0,
         ),
-        log_timing=_env_bool(os.getenv("SPICA_SCREEN_LOG_TIMING"), default=bool(raw.get("log_timing", True))),
+        log_timing=_env_bool(env["log_timing"], default=bool(raw.get("log_timing", True))),
         debug_save_images=_env_bool(
-            os.getenv("SPICA_SCREEN_DEBUG_SAVE"),
+            env["debug_save_images"],
             default=bool(raw.get("debug_save_images", False)),
         ),
     )

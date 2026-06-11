@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import os
 import sys
 from pathlib import Path
 from types import ModuleType
+
+from spica.config.manager import respeaker_env_overrides
 
 
 VID = 0x2886
@@ -111,7 +112,7 @@ class ReSpeakerControl:
 
 
 def _find_tuning_py() -> Path | None:
-    env_path = os.environ.get("RESPEAKER_TUNING_PATH")
+    env_path = respeaker_env_overrides()["tuning_path"]
     candidates: list[Path] = []
     if env_path:
         env_candidate = Path(env_path).expanduser()

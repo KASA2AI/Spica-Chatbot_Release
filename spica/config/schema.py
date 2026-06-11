@@ -13,7 +13,9 @@ character-agnostic and there is no ``agent -> spica.config -> agent`` cycle.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class LLMConfig(BaseModel):
@@ -68,10 +70,110 @@ class GalgameConfig(BaseModel):
     ocr_interval_seconds: float = 0.3
 
 
+# -- screen section coercion helpers (P0b step 2a) -----------------------------
+# Moved VERBATIM from agent_tools/function_tools/screen/config.py so the typed
+# section below is the ONE coercion implementation (the screen loader routes
+# through ScreenConfig.model_validate; Layer B pins every branch).
+
+
+def _normalize_dtype(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in {"bfloat16", "float16", "float32", "auto"} else "auto"
+
+
+def _normalize_capture_format(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in {"png"} else "png"
+
+
+def _positive_float(value: Any, *, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+_SCREEN_STRING_FIELDS = ("provider", "model_id", "revision", "device", "ocr_engine")
+_SCREEN_BOOL_FIELDS = (
+    "enabled", "reasoning", "preload", "ocr_enabled", "log_timing", "debug_save_images",
+)
+
+
+class ScreenConfig(BaseModel):
+    """Typed screen-pipeline section (P0b step 2a).
+
+    Defaults match the pre-2a ``_DEFAULTS`` dict verbatim. The before-validator
+    replicates the legacy loader's FILE-side coercion exactly (env-side coercion
+    -- the bool wordlist, the unparseable-int fallthrough -- happens in
+    ``manager.screen_env_config_overrides`` BEFORE values reach this model, so
+    the env/file asymmetries pinned by test_resolved_config_equivalence hold):
+
+    - falsy strings -> field default (``raw.get(k) or DEFAULT`` semantics);
+      values are NOT whitespace-stripped here (only env values were stripped);
+    - bools -> plain ``bool()`` truthiness (json ``"no"`` -> True, as before --
+      the 1/true/yes wordlist applied ONLY to env strings);
+    - max_side -> ``int()`` then clamp to [128, 4096]; unparseable -> default;
+    - infer_timeout_sec -> ``_positive_float`` (invalid/non-positive -> 30.0);
+    - dtype / capture_format normalized through their whitelists.
+    """
+
+    enabled: bool = True
+    provider: str = "moondream_local"
+    model_id: str = "vikhyatk/moondream2"
+    revision: str = "2025-06-21"
+    device: str = "cuda"
+    dtype: str = "bfloat16"
+    max_side: int = 768
+    reasoning: bool = False
+    preload: bool = False
+    ocr_enabled: bool = True
+    ocr_engine: str = "rapidocr"
+    capture_format: str = "png"
+    infer_timeout_sec: float = 30.0
+    log_timing: bool = True
+    debug_save_images: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_semantics(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        for key in _SCREEN_STRING_FIELDS:
+            if key in out:
+                if not out[key]:
+                    out.pop(key)  # falsy file value -> default (`or` semantics)
+                else:
+                    out[key] = str(out[key])
+        if "dtype" in out:
+            if not out["dtype"]:
+                out.pop("dtype")
+            else:
+                out["dtype"] = _normalize_dtype(str(out["dtype"]))
+        if "capture_format" in out:
+            if not out["capture_format"]:
+                out.pop("capture_format")
+            else:
+                out["capture_format"] = _normalize_capture_format(str(out["capture_format"]))
+        for key in _SCREEN_BOOL_FIELDS:
+            if key in out:
+                out[key] = bool(out[key])
+        if "max_side" in out:
+            try:
+                out["max_side"] = max(128, min(4096, int(out["max_side"])))
+            except (TypeError, ValueError):
+                out.pop("max_side")  # unparseable file value -> default
+        if "infer_timeout_sec" in out:
+            out["infer_timeout_sec"] = _positive_float(out["infer_timeout_sec"], default=30.0)
+        return out
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     character: CharacterConfig = Field(default_factory=CharacterConfig)
     stream: StreamConfig = Field(default_factory=StreamConfig)
     galgame: GalgameConfig = Field(default_factory=GalgameConfig)
+    screen: ScreenConfig = Field(default_factory=ScreenConfig)
     max_tool_rounds: int = 3

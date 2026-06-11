@@ -54,6 +54,7 @@ from spica.adapters.tools.sing_song import SingSongTool
 from spica.adapters.tools.watch_game_screen import WatchGameScreenTool
 from spica.core.song_events import SongRequestEvent
 from spica.galgame.models import CompanionBeat, utc_now_iso
+from agent_tools.function_tools.screen.config import load_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
 from agent_tools.function_tools.song.models import SongRequest
 from agent_tools.function_tools.song.netease import search_best_song
@@ -84,15 +85,24 @@ class AppHost:
         # B2: the sing_song closure's search seam (tests inject a fake).
         self._song_search = search_best_song
         self.tts_provider: str = "gptsovits_current"
+        # P0b 2a: resolve the screen pipeline config ONCE (env > json > defaults
+        # via load_screen_config -- the json file stays authoritative until P0b
+        # step 3 folds it into app.yaml) and inject the instance into every
+        # production consumer (builtins inspect tool, watch tool, UI worker).
+        self.screen_config = load_screen_config()
         self.registry = CapabilityRegistry()
-        register_builtin_adapters(self.registry)
+        register_builtin_adapters(self.registry, screen_config=self.screen_config)
         # Phase 9: the companion watch tool. Registered HERE (not in builtins)
         # because it closes over this host -- the LAZY provider resolves the
         # companion controller + adapters at RUN time (adapters only exist after
         # initialize(); not playing -> None -> NO_ACTIVE_COMPANION tool error).
         # Trigger layer: offered by STATE (companion play active), not by wordlist
         # -- intent_gated=False, and the LLM decides the call via the description.
-        watch_tool = WatchGameScreenTool(LocalMoondreamScreenAnalysis(), self._companion_watch_context)
+        watch_tool = WatchGameScreenTool(
+            LocalMoondreamScreenAnalysis(),
+            self._companion_watch_context,
+            config=self.screen_config,
+        )
         self.registry.register_tool(
             watch_tool.schema(),
             watch_tool.run,

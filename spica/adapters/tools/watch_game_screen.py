@@ -93,9 +93,17 @@ class WatchGameScreenTool:
 
     name = "watch_game_screen"
 
-    def __init__(self, screen: ScreenAnalysisPort, watch_context: WatchContextProvider) -> None:
+    def __init__(
+        self,
+        screen: ScreenAnalysisPort,
+        watch_context: WatchContextProvider,
+        config: Any | None = None,
+    ) -> None:
         self._screen = screen
         self._watch_context = watch_context
+        # P0b 2a: production injects the host-resolved ScreenPipelineConfig;
+        # None (bare/demo construction) falls back to load_screen_config().
+        self._config = config
 
     def schema(self) -> dict[str, Any]:
         return WATCH_GAME_SCREEN_SCHEMA
@@ -113,7 +121,7 @@ class WatchGameScreenTool:
         # ran this turn -- absent => the LLM reused a previous observation instead.
         logger.info("watch_game_screen: capturing window_id=%s game_id=%s", window_id, game_id)
         try:
-            config = load_screen_config()
+            config = self._config or load_screen_config()
             started = perf_counter()
             image, window_metadata = capture_window_image(locator, capture, window_id)
             capture_ms = round((perf_counter() - started) * 1000.0, 3)

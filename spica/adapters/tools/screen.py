@@ -39,8 +39,11 @@ class InspectScreenTool:
 
     name = "inspect_screen"
 
-    def __init__(self, screen: ScreenAnalysisPort) -> None:
+    def __init__(self, screen: ScreenAnalysisPort, config: Any | None = None) -> None:
         self._screen = screen
+        # P0b 2a: production injects the host-resolved ScreenPipelineConfig;
+        # None (bare/demo construction) falls back to load_screen_config().
+        self._config = config
 
     def schema(self) -> dict[str, Any]:
         return INSPECT_SCREEN_SCHEMA
@@ -58,7 +61,7 @@ class InspectScreenTool:
                 "inspect_screen 只能在用户明确要求查看屏幕、桌面、显示器或当前画面时调用。",
             )
         try:
-            config = load_screen_config()
+            config = self._config or load_screen_config()
             started = perf_counter()
             capture = capture_full_screen()  # local capture, never uploaded (N0)
             capture_ms = round((perf_counter() - started) * 1000.0, 3)

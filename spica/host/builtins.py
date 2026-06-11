@@ -22,7 +22,7 @@ from spica.runtime.stages import _compact_screen_tool_output
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS
 
 
-def register_builtin_adapters(registry: CapabilityRegistry) -> None:
+def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) -> None:
     """Register the built-in capability adapters by name (Phase 5).
 
     Resolving by the name in config (e.g. ``config.llm.provider``) is what makes
@@ -46,7 +46,9 @@ def register_builtin_adapters(registry: CapabilityRegistry) -> None:
     # P1: it declares its HISTORICAL followup compactor (the same function the
     # frozen sync chain applies by name), so the streaming chain's generic
     # two-layer compaction reproduces the old special case byte for byte.
-    screen_tool = InspectScreenTool(LocalMoondreamScreenAnalysis())
+    # P0b 2a: the host resolves ScreenPipelineConfig ONCE and injects it; the
+    # tool's config=None fallback stays for bare/demo construction only.
+    screen_tool = InspectScreenTool(LocalMoondreamScreenAnalysis(), config=screen_config)
     registry.register_tool(
         screen_tool.schema(), screen_tool.run, compact_output=_compact_screen_tool_output
     )

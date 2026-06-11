@@ -17,20 +17,27 @@ class ScreenshotWorker(QThread):
     finished_ok = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, payload: dict[str, Any], parent: Any | None = None) -> None:
+    def __init__(
+        self, payload: dict[str, Any], parent: Any | None = None, config: Any | None = None
+    ) -> None:
         super().__init__(parent)
         self.payload = dict(payload)
+        # P0b 2a: the overlay passes the host-resolved ScreenPipelineConfig;
+        # None falls back to load_screen_config() (standalone use).
+        self.config = config
 
     def run(self) -> None:
         try:
-            self.finished_ok.emit(build_selected_region_attachment(self.payload))
+            self.finished_ok.emit(build_selected_region_attachment(self.payload, self.config))
         except ScreenToolError as exc:
             self.failed.emit(exc.message)
         except Exception as exc:
             self.failed.emit(str(exc))
 
 
-def build_selected_region_attachment(payload: dict[str, Any]) -> dict[str, Any]:
+def build_selected_region_attachment(
+    payload: dict[str, Any], config: Any | None = None
+) -> dict[str, Any]:
     screen = payload.get("screen") or QGuiApplication.primaryScreen()
     if screen is None:
         raise ScreenToolError("SCREEN_CAPTURE_FAILED", "没有可用显示器，无法截图。")
@@ -49,7 +56,7 @@ def build_selected_region_attachment(payload: dict[str, Any]) -> dict[str, Any]:
         raise ScreenToolError("SCREEN_CAPTURE_FAILED", "系统没有返回截图内容。")
 
     pil_image = _pixmap_to_pil_image(pixmap)
-    config = load_screen_config()
+    config = config or load_screen_config()
     image_bytes, image_metadata = encode_screen_image_png(pil_image, config)
     dpr = float(payload.get("device_pixel_ratio") or screen.devicePixelRatio() or 1.0)
     physical_rect = _physical_rect_for_selection(logical_rect, screen.geometry(), dpr, pixmap)

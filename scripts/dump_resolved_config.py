@@ -219,6 +219,9 @@ def _env_attribution() -> tuple[dict, frozenset]:
     attribution: dict[str, str] = {}
     for domain, mapping in (
         ("app", APP_ENV_MAP),
+        # P0b 2a: AppConfig grew the typed screen section; its leaves fold the
+        # same SPICA_SCREEN_* env as the loader's screen.* domain.
+        ("app.screen", SCREEN_ENV_MAP),
         ("secrets", SECRETS_ENV_MAP),
         ("screen", SCREEN_ENV_MAP),
         ("runtime_cache", RUNTIME_CACHE_ENV_MAP),

@@ -28,16 +28,57 @@ DEFAULT_CONFIG_PATH = _REPO_ROOT / "data" / "config" / "app.yaml"
 
 
 def screen_env_overrides() -> dict[str, str | None]:
-    """Raw env strings for the screen tool chain (P0b step 1, F6 收编).
+    """Raw env strings for the screen domain (P0b step 1, F6 收编).
 
-    The env NAMES live in ``env_roster.SCREEN_ENV_MAP``; the domain loader
-    (``agent_tools/function_tools/screen/config.py``) keeps every coercion
-    (_env_bool/_bounded_int/_clean_env) unchanged and no longer knows any env
-    name. Values are returned RAW (None when unset) and read at CALL time --
-    no dotenv priming here, exactly matching the loader's old direct
-    ``os.getenv`` behaviour (the entry point primes env first, CLAUDE.md #10).
+    The env NAMES live in ``env_roster.SCREEN_ENV_MAP``. Values are returned
+    RAW (None when unset) and read at CALL time -- no dotenv priming here,
+    exactly matching the loader's old direct ``os.getenv`` behaviour (the
+    entry point primes env first, CLAUDE.md #10). Step 2a layers the env-side
+    coercion on top in ``screen_env_config_overrides``.
     """
     return {field: os.getenv(name) for field, name in SCREEN_ENV_MAP.items()}
+
+
+_SCREEN_ENV_BOOL_FIELDS = (
+    "enabled", "reasoning", "preload", "ocr_enabled", "log_timing", "debug_save_images",
+)
+_SCREEN_ENV_TRUE_WORDS = {"1", "true", "yes", "y", "on"}
+
+
+def screen_env_config_overrides() -> dict[str, Any]:
+    """Coerced, set-keys-only env overrides for the screen section (P0b 2a).
+
+    Replicates the pre-2a loader's ENV-side semantics exactly (Layer B pins):
+    - empty/whitespace-only env -> key OMITTED (falls through to file/default);
+    - bools -> the 1/true/yes/y/on wordlist, case-insensitive; any other
+      non-empty string coerces to False AND overrides the file value;
+    - max_side -> included only when int()-parseable (an unparseable env int
+      falls through to the file value -- unlike infer_timeout_sec, whose
+      invalid env value IS included and coerces to the default downstream,
+      skipping the file value: the pinned asymmetry);
+    - strings -> whitespace-stripped (env values were always stripped; file
+      values never are).
+
+    The returned dict feeds both ``ScreenConfig`` resolution paths: the screen
+    loader's merge (env > json > defaults) and ``_env_overrides`` below
+    (env > app.yaml > defaults).
+    """
+    overrides: dict[str, Any] = {}
+    for field, value in screen_env_overrides().items():
+        cleaned = (value or "").strip()
+        if not cleaned:
+            continue
+        if field in _SCREEN_ENV_BOOL_FIELDS:
+            overrides[field] = cleaned.lower() in _SCREEN_ENV_TRUE_WORDS
+        elif field == "max_side":
+            try:
+                int(cleaned)
+            except ValueError:
+                continue  # unparseable env int falls through to file (pinned)
+            overrides[field] = cleaned
+        else:
+            overrides[field] = cleaned
+    return overrides
 
 
 def respeaker_env_overrides() -> dict[str, str | None]:
@@ -130,6 +171,11 @@ class ConfigManager:
             overrides["character"] = character
         if stream:
             overrides["stream"] = stream
+        # P0b 2a: the screen section folds env with the SCREEN coercion rules
+        # (wordlist bools, clamp ints) -- NOT the loud int() the knobs above use.
+        screen = screen_env_config_overrides()
+        if screen:
+            overrides["screen"] = screen
         if os.getenv("MAX_TOOL_ROUNDS"):
             overrides["max_tool_rounds"] = int(os.getenv("MAX_TOOL_ROUNDS"))
         return overrides

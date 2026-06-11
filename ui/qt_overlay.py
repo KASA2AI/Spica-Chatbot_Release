@@ -803,7 +803,9 @@ class OverlayWindow(QWidget):
         self.input_panel.screenshot_button.setEnabled(False)
         self.dialogue.set_dialogue_text("正在处理截图...")
 
-        worker = ScreenshotWorker(payload)
+        worker = ScreenshotWorker(
+            payload, config=self.host.screen_config if self.host else None
+        )
         self.screenshot_worker = worker
         worker.finished_ok.connect(self._handle_screenshot_worker_done)
         worker.failed.connect(self._handle_screenshot_worker_failed)

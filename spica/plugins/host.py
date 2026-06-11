@@ -13,7 +13,11 @@ import importlib.util
 from pathlib import Path
 from typing import Any
 
-from spica.plugins.manifest import PluginEntry, load_plugin_manifest
+from spica.plugins.manifest import (
+    PluginEntry,
+    load_plugin_manifest,
+    resolve_effective_plugin_entries,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PLUGINS_ROOT = _REPO_ROOT / "plugins"
@@ -41,7 +45,15 @@ class PluginHost:
         """
         self._loaded = []
         self._errors = {}
-        for entry in load_plugin_manifest(self.manifest_path):
+        # P0b step 3 (D6): an explicit manifest_path (tests/tools) keeps the old
+        # loader; the production default (None) goes through the carrier switch
+        # (legacy plugins.yaml entirely, or app.yaml's plugins section).
+        entries = (
+            load_plugin_manifest(self.manifest_path)
+            if self.manifest_path
+            else resolve_effective_plugin_entries()
+        )
+        for entry in entries:
             if not entry.enabled:
                 continue
             try:

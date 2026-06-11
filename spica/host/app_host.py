@@ -54,9 +54,9 @@ from spica.adapters.tools.sing_song import SingSongTool
 from spica.adapters.tools.watch_game_screen import WatchGameScreenTool
 from spica.core.song_events import SongRequestEvent
 from spica.galgame.models import CompanionBeat, utc_now_iso
-from agent_tools.function_tools.screen.config import load_screen_config
+from agent_tools.function_tools.screen.config import resolve_effective_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
-from agent_tools.function_tools.song.config import load_song_config
+from agent_tools.function_tools.song.config import resolve_effective_song_config
 from agent_tools.function_tools.song.models import SongRequest
 from agent_tools.function_tools.song.netease import search_best_song
 from spica.adapters.visual import build_spica_visual
@@ -86,15 +86,14 @@ class AppHost:
         # B2: the sing_song closure's search seam (tests inject a fake).
         self._song_search = search_best_song
         self.tts_provider: str = "gptsovits_current"
-        # P0b 2a: resolve the screen pipeline config ONCE (env > json > defaults
-        # via load_screen_config -- the json file stays authoritative until P0b
-        # step 3 folds it into app.yaml) and inject the instance into every
-        # production consumer (builtins inspect tool, watch tool, UI worker).
-        self.screen_config = load_screen_config()
-        # P0b 2b: same resolve-once pattern for the song config (zero env reads
-        # post-B2; json > defaults). Injected into the UI SongWorker chain and
-        # read by _request_song for the search limit (single source).
-        self.song_config = load_song_config()
+        # P0b 2a/3: resolve the screen pipeline config ONCE through the carrier
+        # switch (legacy json present -> whole old chain + WARNING; absent ->
+        # app.yaml chain) and inject the instance into every production
+        # consumer (builtins inspect tool, watch tool, UI worker).
+        self.screen_config = resolve_effective_screen_config()
+        # P0b 2b/3: same resolve-once + carrier-switch pattern for song.
+        # Injected into the UI SongWorker chain and read by _request_song.
+        self.song_config = resolve_effective_song_config()
         self.registry = CapabilityRegistry()
         register_builtin_adapters(self.registry, screen_config=self.screen_config)
         # Phase 9: the companion watch tool. Registered HERE (not in builtins)

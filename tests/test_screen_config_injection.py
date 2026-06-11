@@ -62,7 +62,9 @@ def test_injected_adapter_never_calls_the_fallback_loader():
         "spica.adapters.tools.screen.capture_full_screen",
         return_value=SimpleNamespace(image="IMG", metadata={}),
     ), patch(
-        "spica.adapters.tools.screen.load_screen_config",
+        # P0b 3 (D-3c): the fallback is the carrier switch now -- same pin,
+        # patch point moved with it.
+        "spica.adapters.tools.screen.resolve_effective_screen_config",
         side_effect=AssertionError("injected path must not re-load config"),
     ):
         out = tool.run(target="full_screen", question="帮我看看屏幕上有没有报错")

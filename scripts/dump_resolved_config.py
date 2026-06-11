@@ -90,15 +90,25 @@ def _resolve_pass(mode: str) -> dict:
     domains: dict = {"app": app_config.model_dump()}
     domains["secrets"] = {"openai_api_key": secrets.openai_api_key}
 
-    from agent_tools.function_tools.screen.config import load_screen_config
+    # P0b step 3: screen/song/plugins go through the SAME carrier switch
+    # production uses (legacy file present -> whole old chain; absent ->
+    # app.yaml chain). The pass's app_config already reflects masked env /
+    # missing app.yaml, and legacy_path is pointed at nowhere in NO_FILE.
+    from agent_tools.function_tools.screen.config import resolve_effective_screen_config
 
     domains["screen"] = dataclasses.asdict(
-        load_screen_config(f"{_MISSING_DIR}/screen.json" if no_file else None)
+        resolve_effective_screen_config(
+            config=app_config,
+            legacy_path=f"{_MISSING_DIR}/screen.json" if no_file else None,
+        )
     )
 
-    from agent_tools.function_tools.song.config import load_song_config
+    from agent_tools.function_tools.song.config import resolve_effective_song_config
 
-    domains["song"] = load_song_config(f"{_MISSING_DIR}/song.json" if no_file else None)
+    domains["song"] = resolve_effective_song_config(
+        config=app_config,
+        legacy_path=f"{_MISSING_DIR}/song.json" if no_file else None,
+    )
 
     if not no_file:
         # Effective tts/visual files resolved the way app_host.initialize() does
@@ -122,11 +132,14 @@ def _resolve_pass(mode: str) -> dict:
         visual_path = package.visual_config_path or _VISUAL_DEFAULT
         domains["visual"] = read_config_file(visual_path)
 
-    from spica.plugins.manifest import load_plugin_manifest
+    from spica.plugins.manifest import resolve_effective_plugin_entries
 
     domains["plugins"] = [
         dataclasses.asdict(entry)
-        for entry in load_plugin_manifest(f"{_MISSING_DIR}/plugins.yaml" if no_file else None)
+        for entry in resolve_effective_plugin_entries(
+            config=app_config,
+            legacy_path=f"{_MISSING_DIR}/plugins.yaml" if no_file else None,
+        )
     ]
 
     from ui.overlay_config import load_overlay_config

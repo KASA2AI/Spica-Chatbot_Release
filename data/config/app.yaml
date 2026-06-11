@@ -1,0 +1,131 @@
+# Spica typed app config (P0b step 3) -- the single app-level config carrier.
+#
+# Resolution order per value: env override > this file > built-in default
+# (see spica/config/manager.py + spica/config/schema.py). Every key below is
+# COMMENTED OUT and annotated with its built-in default: an all-comment file
+# parses to {} and resolves exactly like no file at all, so creating this
+# template changed nothing (Layer A snapshot gate: zero diff).
+#
+# Uncomment a key only to change it. Secrets NEVER go here (xiaosan.env only).
+# NOTE: the settings centre's update_config() rewrites this file via a full
+# model dump (comments are lost) -- a known Phase 3 mechanism, registered in
+# the P0b step-3 review.
+
+# llm:
+#   provider: openai_compatible
+#   model: gpt-4.1-mini          # env MODEL
+#   base_url: null               # env OPENAI_BASE_URL
+
+# memory:
+#   provider: sqlite
+#   recent_memory_turns: 3       # env RECENT_MEMORY_TURNS
+#   recent_context_limit: 3      # env RECENT_CONTEXT_LIMIT
+#   long_term_memory_limit: 5    # env LONG_TERM_MEMORY_LIMIT
+#   long_term_memory_budget_chars: 1200  # env LONG_TERM_MEMORY_BUDGET_CHARS
+#   recent_turn_char_limit: 360  # env RECENT_TURN_CHAR_LIMIT
+#   max_long_term_memories: 200  # env MAX_LONG_TERM_MEMORIES
+
+# character:
+#   interlocutor_name: null      # env SPICA_USER_NAME
+#   profile_override: null       # env SPICA_CHARACTER_PROFILE
+#   skill_dir: null              # env SPICA_SKILL_DIR
+#   package_dir: null
+
+# stream:
+#   play_unit_min_chars: 18      # env PLAY_UNIT_MIN_CHARS
+#   play_unit_max_chars: 96      # env PLAY_UNIT_MAX_CHARS
+#   visual_stream_workers: 2     # env VISUAL_STREAM_WORKERS
+
+# galgame:
+#   summary_model: null
+#   summary_trigger_chars: 2000
+#   ocr_interval_seconds: 0.3
+
+# screen:                        # legacy carrier: config/screen_vision_config.json
+#   enabled: true                # env SPICA_SCREEN_ENABLED
+#   provider: moondream_local    # env SPICA_SCREEN_PROVIDER
+#   model_id: vikhyatk/moondream2  # env SPICA_SCREEN_MODEL_ID
+#   revision: "2025-06-21"       # env SPICA_SCREEN_REVISION
+#   device: cuda                 # env SPICA_SCREEN_DEVICE
+#   dtype: bfloat16              # env SPICA_SCREEN_DTYPE
+#   max_side: 768                # env SPICA_SCREEN_MAX_SIDE (clamped 128..4096)
+#   reasoning: false             # env SPICA_SCREEN_REASONING
+#   preload: false               # env SPICA_SCREEN_PRELOAD
+#   ocr_enabled: true            # env SPICA_SCREEN_OCR_ENABLED
+#   ocr_engine: rapidocr         # env SPICA_SCREEN_OCR_ENGINE
+#   capture_format: png          # env SPICA_SCREEN_CAPTURE_FORMAT
+#   infer_timeout_sec: 30        # env SPICA_SCREEN_INFER_TIMEOUT_SEC
+#   log_timing: true             # env SPICA_SCREEN_LOG_TIMING
+#   debug_save_images: false     # env SPICA_SCREEN_DEBUG_SAVE
+
+# song:                          # legacy carrier: agent_tools/.../song/song_config.json
+#   # UNTYPED override dict, deep-merged over song/config.py DEFAULT_CONFIG
+#   # (search/download/separator/rvc.voices/mix -- see that file for defaults).
+#   search:
+#     limit: 20
+#     bitrate: 320000
+
+# plugins: []                    # legacy carrier: data/config/plugins.yaml
+#   # entries: "name" shorthand or {name: ..., enabled: true}
+
+# max_tool_rounds: 3             # env MAX_TOOL_ROUNDS
+
+# --- migrated by migrate_config_p0b ---
+screen:
+  enabled: true
+  provider: moondream_local
+  model_id: vikhyatk/moondream2
+  revision: '2025-06-21'
+  device: cuda
+  dtype: bfloat16
+  max_side: 768
+  reasoning: false
+  preload: false
+  ocr_enabled: true
+  ocr_engine: rapidocr
+  capture_format: png
+  infer_timeout_sec: 30
+  log_timing: true
+  debug_save_images: false
+song:
+  enabled: true
+  generated_root: static/generated_song
+  applio_root: agent_tools/function_tools/song/Applio
+  search:
+    limit: 20
+    bitrate: 320000
+  separator:
+    model_filename: UVR-MDX-NET-Inst_HQ_3.onnx
+    output_format: WAV
+    swap_stems: true
+    extra_kwargs: {}
+  rvc:
+    voice_model: spica
+    voices:
+      spica:
+        model_path: agent_tools/function_tools/song/Applio/logs/spica/spica_200e_57000s.pth
+        index_path: agent_tools/function_tools/song/Applio/logs/spica/spica.index
+        f0_method: rmvpe
+        transpose: 0
+        index_rate: 0.75
+        protect: 0.33
+        device: cuda
+        volume_envelope: 1.0
+        split_audio: false
+        f0_autotune: false
+        f0_autotune_strength: 1.0
+        proposed_pitch: false
+        proposed_pitch_threshold: 155.0
+        clean_audio: false
+        clean_strength: 0.5
+        export_format: WAV
+        embedder_model: contentvec
+        embedder_model_custom: null
+        reference_audio_dir: spica_data/voice/happy/refs
+        sid: 0
+  mix:
+    instrumental_gain: 0.88
+    vocal_gain: 1.0
+    normalize_peak: 0.95
+    output_subtype: PCM_16
+plugins: []

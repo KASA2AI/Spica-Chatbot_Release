@@ -6,7 +6,11 @@ from time import perf_counter
 from typing import Any
 
 from agent_tools.function_tools.screen.backends.rapidocr import ocr_image
-from agent_tools.function_tools.screen.config import ScreenPipelineConfig, load_screen_config
+from agent_tools.function_tools.screen.config import (
+    ScreenPipelineConfig,
+    load_screen_config,
+    resolve_effective_screen_config,
+)
 from agent_tools.function_tools.screen.model_manager import get_moondream_manager
 from agent_tools.function_tools.screen.schema import ScreenToolError, build_screen_observation
 
@@ -159,8 +163,18 @@ def analyze_screen_png_local(
     )
 
 
-def analyze_screen_attachment(*, attachment: dict[str, Any], user_question: str) -> dict[str, Any]:
-    config = load_screen_config()
+def analyze_screen_attachment(
+    *,
+    attachment: dict[str, Any],
+    user_question: str,
+    config: ScreenPipelineConfig | None = None,
+) -> dict[str, Any]:
+    # P0b 3 (③-B, 域内开关路线): optional injection; the fallback follows the
+    # carrier switch so the attachment turn tracks the same effective chain as
+    # production after the json carrier retires. No runtime/deps file changes
+    # (the frozen sync_chain and the stages node are untouched; contract tests
+    # patch this whole function, so the golden trio stays byte-identical).
+    config = config or resolve_effective_screen_config()
     image_bytes = attachment.get("image_bytes")
     if not isinstance(image_bytes, (bytes, bytearray)):
         raise ScreenToolError("SCREEN_ANALYSIS_FAILED", "pending screenshot 缺少图片数据。")

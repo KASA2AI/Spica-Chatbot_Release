@@ -25,7 +25,7 @@ import logging
 from time import perf_counter
 from typing import Any, Callable
 
-from agent_tools.function_tools.screen.config import load_screen_config
+from agent_tools.function_tools.screen.config import resolve_effective_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
 from agent_tools.function_tools.screen.tool import (
     _capture_metadata_for_observation,
@@ -121,7 +121,8 @@ class WatchGameScreenTool:
         # ran this turn -- absent => the LLM reused a previous observation instead.
         logger.info("watch_game_screen: capturing window_id=%s game_id=%s", window_id, game_id)
         try:
-            config = self._config or load_screen_config()
+            # P0b 3 (D-3c): fallback follows the carrier switch (see screen.py).
+            config = self._config or resolve_effective_screen_config()
             started = perf_counter()
             image, window_metadata = capture_window_image(locator, capture, window_id)
             capture_ms = round((perf_counter() - started) * 1000.0, 3)

@@ -80,7 +80,9 @@ class InspectScreenToolTest(unittest.TestCase):
         screen = _SpyScreen(observation)
         capture = SimpleNamespace(image="IMG", metadata={})
         with patch("spica.adapters.tools.screen.capture_full_screen", return_value=capture), patch(
-            "spica.adapters.tools.screen.load_screen_config",
+            # P0b 3 (D-3c): the bare-construction fallback now goes through the
+            # carrier switch -- patch point moved accordingly.
+            "spica.adapters.tools.screen.resolve_effective_screen_config",
             return_value=SimpleNamespace(capture_format="png"),
         ):
             out = InspectScreenTool(screen).run(target="full_screen", question="帮我看看屏幕上有没有报错")
@@ -125,7 +127,9 @@ class RegistryToolSetInspectScreenTest(unittest.TestCase):
             "spica.adapters.tools.screen.capture_full_screen",
             return_value=SimpleNamespace(image="IMG", metadata={}),
         ), patch(
-            "spica.adapters.tools.screen.load_screen_config",
+            # P0b 3 (D-3c): the bare-construction fallback now goes through the
+            # carrier switch -- patch point moved accordingly.
+            "spica.adapters.tools.screen.resolve_effective_screen_config",
             return_value=SimpleNamespace(capture_format="png"),
         ):
             out = toolset.run(

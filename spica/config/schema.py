@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LLMConfig(BaseModel):
@@ -169,6 +169,15 @@ class ScreenConfig(BaseModel):
         return out
 
 
+class PluginEntryConfig(BaseModel):
+    """One plugin manifest entry (P0b step 3). Mirrors plugins/manifest.py's
+    PluginEntry semantics; the str shorthand ("name" == enabled entry) is
+    normalized by AppConfig's plugins validator below."""
+
+    name: str
+    enabled: bool = True
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
@@ -176,4 +185,28 @@ class AppConfig(BaseModel):
     stream: StreamConfig = Field(default_factory=StreamConfig)
     galgame: GalgameConfig = Field(default_factory=GalgameConfig)
     screen: ScreenConfig = Field(default_factory=ScreenConfig)
+    # P0b step 3 (D-3a): the song section is intentionally UNTYPED -- it is the
+    # override dict layered over song/config.py's DEFAULT_CONFIG by the same
+    # deep-merge engine the legacy json used (voices are an open name->config
+    # map; pydantic-izing that engine in the highest-risk step was rejected).
+    # Typed-ization is tracked as debt in GALGAME_FINDINGS.
+    song: dict[str, Any] = Field(default_factory=dict)
+    plugins: list[PluginEntryConfig] = Field(default_factory=list)
     max_tool_rounds: int = 3
+
+    @field_validator("plugins", mode="before")
+    @classmethod
+    def _normalize_plugin_entries(cls, value: Any) -> Any:
+        # Same tolerant semantics as plugins/manifest.py: str shorthand becomes
+        # an enabled entry; blank/invalid items are dropped, not errors.
+        if not isinstance(value, list):
+            return []
+        normalized: list[Any] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                normalized.append({"name": item.strip()})
+            elif isinstance(item, dict) and item.get("name"):
+                normalized.append(item)
+            elif isinstance(item, PluginEntryConfig):
+                normalized.append(item)
+        return normalized

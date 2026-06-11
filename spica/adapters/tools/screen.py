@@ -24,7 +24,7 @@ from typing import Any
 
 from agent_tools.function_tools import is_screen_intent_explicit
 from agent_tools.function_tools.screen.capture import capture_full_screen
-from agent_tools.function_tools.screen.config import load_screen_config
+from agent_tools.function_tools.screen.config import resolve_effective_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
 from agent_tools.function_tools.screen.tool import (
     INSPECT_SCREEN_SCHEMA,
@@ -61,7 +61,9 @@ class InspectScreenTool:
                 "inspect_screen 只能在用户明确要求查看屏幕、桌面、显示器或当前画面时调用。",
             )
         try:
-            config = self._config or load_screen_config()
+            # P0b 3 (D-3c): the bare-construction fallback follows the carrier
+            # switch too, so every path tracks the same effective chain.
+            config = self._config or resolve_effective_screen_config()
             started = perf_counter()
             capture = capture_full_screen()  # local capture, never uploaded (N0)
             capture_ms = round((perf_counter() - started) * 1000.0, 3)

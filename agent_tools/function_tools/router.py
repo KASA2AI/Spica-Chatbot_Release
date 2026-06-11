@@ -70,6 +70,13 @@ _SCREEN_ACTION_TERMS = (
 )
 
 
+# watch_game_screen deliberately has NO wordlist here (trigger-layer refactor):
+# its offer gate is the DETERMINISTIC companion-play state (the registry's
+# ``available`` predicate, wired by the host), and "call or not" is the LLM's
+# structured tool-call decision via the description. A wordlist guessing intent
+# was both leaky (natural phrasings missed) and noisy.
+
+
 def default_tool_functions() -> dict[str, Callable[..., str]]:
     return {"inspect_screen": inspect_screen}
 
@@ -114,10 +121,29 @@ def is_screen_intent_explicit(user_text: str) -> bool:
     return has_target and has_action
 
 
+# B2 (P2): sing_song SUPPLY pre-filter terms. Deliberately GENEROUS -- this list
+# only gates whether the tool schema is offered to the probe (a false hit costs
+# one probe round trip; a miss just means rephrasing); it never hijacks or
+# swallows the message (the B1 lesson, applied as supply instead of verdict).
+_SONG_SUPPLY_TERMS = (
+    "唱", "歌", "曲", "音乐", "听", "来一首", "来首", "播放",
+    "cover", "翻唱", "sing", "song", "music",
+)
+
+
+def is_song_intent_possible(user_text: str) -> bool:
+    text = _normalize_text(user_text)
+    if not text:
+        return False
+    return any(term in text for term in _SONG_SUPPLY_TERMS)
+
+
 def _tool_names_for_text(user_text: str) -> set[str]:
     names: set[str] = set()
     if is_screen_intent_explicit(user_text):
         names.add("inspect_screen")
+    if is_song_intent_possible(user_text):
+        names.add("sing_song")
     return names
 
 

@@ -17,8 +17,11 @@ Qt-free (CLAUDE.md #1).
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Callable, Protocol
+
+logger = logging.getLogger(__name__)
 
 
 class JobRunner(Protocol):
@@ -48,7 +51,14 @@ class ThreadJobRunner:
         self._threads: list[threading.Thread] = []
 
     def submit(self, fn: Callable[[], None]) -> None:
-        thread = threading.Thread(target=fn, daemon=True)
+        def _run() -> None:
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 -- a fire-and-forget job (the memory
+                # commit) must never die with only a bare-thread stderr traceback.
+                logger.exception("background job failed")
+
+        thread = threading.Thread(target=_run, daemon=True)
         self._threads.append(thread)
         thread.start()
 

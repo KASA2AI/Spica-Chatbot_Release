@@ -56,9 +56,22 @@ class StreamConfig(BaseModel):
     visual_stream_workers: int = 2
 
 
+class GalgameConfig(BaseModel):
+    # Phase 8: galgame story summarization. ``summary_model`` is a dedicated config
+    # slot for the summary LLM; None -> fall back to the dialogue model (config.llm),
+    # so a future split onto a different model needs no code change. The same
+    # endpoint/client is reused either way.
+    summary_model: str | None = None
+    summary_trigger_chars: int = 2000  # background summary fires ~every this many unsummarized chars
+    # OCR sampling interval (seconds) the companion controller hands the OCR loop.
+    # 0.3 (not 1.0) so fast page-turns are still sampled often enough to settle a line.
+    ocr_interval_seconds: float = 0.3
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     character: CharacterConfig = Field(default_factory=CharacterConfig)
     stream: StreamConfig = Field(default_factory=StreamConfig)
+    galgame: GalgameConfig = Field(default_factory=GalgameConfig)
     max_tool_rounds: int = 3

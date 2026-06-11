@@ -29,6 +29,7 @@ from spica.config.schema import (
     MemoryConfig,
     StreamConfig,
 )
+from spica.ports.game_memory import GameMemoryPort
 from spica.ports.llm import LLMPort
 from spica.ports.memory import MemoryPort
 from spica.ports.tts import TTSPort
@@ -47,6 +48,10 @@ class TurnDeps:
     visual: VisualPort | None
     memory: MemoryPort | None
     tools: ToolSet
+    # galgame committed-data read/write port (Phase 3). Defaults None: legacy/test
+    # callers and every plain chat turn never touch it (the gated stage's `none`
+    # branch returns before reading it).
+    game_memory: GameMemoryPort | None = None
     # Non-None by construction (C3a placeholders -> real impls in C5/C6).
     observer: Any = field(default_factory=NoopTurnObserver)
     jobs: Any = field(default_factory=InlineJobRunner)
@@ -78,6 +83,9 @@ class TurnDeps:
                 if getattr(services, "tool_registry", None) is not None
                 else RegistryToolSet.from_function_table(services.tool_schemas, services.tool_functions)
             ),
+            # Host sets services.game_memory_adapter (Phase 3); legacy/test services
+            # without it map to None (the gated stage then injects nothing).
+            game_memory=getattr(services, "game_memory_adapter", None),
         )
 
     @classmethod

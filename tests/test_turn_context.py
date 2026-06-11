@@ -8,6 +8,7 @@ are ``None`` until their stage runs, mutable accumulators are per-instance, and 
 import unittest
 
 from spica.runtime.context import (
+    GameContextRequest,
     PromptBundle,
     RetrievedContext,
     StreamedAnswer,
@@ -67,6 +68,87 @@ class TurnContextTest(unittest.TestCase):
         req = TurnRequest(user_input="hi")
         with self.assertRaises(Exception):
             req.user_input = "changed"  # type: ignore[misc]
+
+
+class TurnRequestGalgameFieldsTest(unittest.TestCase):
+    """Phase 1: typed galgame turn-input fields + the §27① fallback. These are
+    fields-and-defaults only; no stage consumes them until Phase 3."""
+
+    def test_new_fields_default_to_none(self):
+        req = TurnRequest(user_input="hi")
+        self.assertIsNone(req.memory_conversation_id)
+        self.assertIsNone(req.command_intent)
+        self.assertIsNone(req.game_context_request)
+
+    def test_existing_defaults_unchanged(self):
+        # A plain chat turn must look exactly like before (zero behaviour change).
+        req = TurnRequest(user_input="hi")
+        self.assertEqual(req.conversation_id, "default")
+        self.assertEqual(req.interaction_mode, "chat")
+
+    def test_memory_conversation_id_falls_back_to_conversation_id(self):
+        req = TurnRequest(user_input="hi", conversation_id="default")
+        self.assertEqual(req.effective_memory_conversation_id, "default")
+
+        # A galgame turn keeps recent-memory continuity on the galgame id while
+        # reading long-term character memory from the "default" namespace.
+        galgame = TurnRequest(
+            user_input="刚才发生什么了",
+            conversation_id="galgame::ABC::playthrough::default",
+            memory_conversation_id="default",
+        )
+        self.assertEqual(
+            galgame.conversation_id, "galgame::ABC::playthrough::default"
+        )
+        self.assertEqual(galgame.effective_memory_conversation_id, "default")
+
+    def test_explicit_memory_conversation_id_is_used(self):
+        req = TurnRequest(
+            user_input="hi", conversation_id="c1", memory_conversation_id="m1"
+        )
+        self.assertEqual(req.effective_memory_conversation_id, "m1")
+
+    def test_game_context_request_is_typed_and_frozen(self):
+        gcr = GameContextRequest(mode="active", game_id="ABC")
+        self.assertEqual(gcr.mode, "active")
+        self.assertEqual(gcr.game_id, "ABC")
+        self.assertEqual(gcr.playthrough_id, "default")
+        with self.assertRaises(Exception):
+            gcr.mode = "offline"  # type: ignore[misc]
+
+    def test_game_context_request_default_mode_is_none(self):
+        self.assertEqual(GameContextRequest().mode, "none")
+
+
+class GameTurnBindingTest(unittest.TestCase):
+    """Stage 2: the frozen binding a companion controller publishes for turn
+    auto-fill. Two fields only -- memory_conversation_id is deliberately absent
+    (derived at _request time from the caller's conversation, manifest ①)."""
+
+    def test_frozen_with_two_fields(self):
+        import dataclasses
+
+        from spica.runtime.context import GameTurnBinding
+
+        binding = GameTurnBinding(
+            conversation_id="galgame::g::playthrough::default",
+            game_context_request=GameContextRequest(mode="active", game_id="g"),
+        )
+        self.assertEqual(
+            {f.name for f in dataclasses.fields(GameTurnBinding)},
+            {"conversation_id", "game_context_request"},
+        )
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            binding.conversation_id = "x"  # type: ignore[misc]
+
+    def test_prefix_constant_matches_conversation_id_helper(self):
+        # The value anchor across the three deliberate literals (context.py /
+        # stages.py / models.game_conversation_id) -- see GALGAME_FINDINGS.md #9.
+        from spica.galgame.models import game_conversation_id
+        from spica.runtime.context import GALGAME_CONVERSATION_PREFIX
+
+        self.assertEqual(GALGAME_CONVERSATION_PREFIX, "galgame::")
+        self.assertTrue(game_conversation_id("g").startswith(GALGAME_CONVERSATION_PREFIX))
 
 
 class SubObjectDefaultsTest(unittest.TestCase):

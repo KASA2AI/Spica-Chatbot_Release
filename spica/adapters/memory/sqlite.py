@@ -10,11 +10,14 @@ generative-memory adapter is a drop-in, per the Phase 5 design note).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from spica.conversation.character_compat import DEFAULT_INTERLOCUTOR_NAME
 from memory.control import save_extracted_memories
 from spica.ports.memory import MemoryItem, MemoryScope
+
+logger = logging.getLogger(__name__)
 
 _SUPPORTED = {"commit_turn", "retrieve"}
 
@@ -56,7 +59,19 @@ class SqliteMemoryAdapter:
         )
 
     def retrieve(self, scope: MemoryScope, query: str, limit: int) -> list[MemoryItem]:
-        rows = self.store.search_memories(self._scoped_conversation_id(scope), query, limit=limit)
+        scoped = self._scoped_conversation_id(scope)
+        rows = self.store.search_memories(scoped, query, limit=limit)
+        # Retrieval diagnostic (FINDINGS #15 follow-up): WHICH silo was scanned and
+        # what came back -- the (memory_key, importance) pairs make a silo mismatch
+        # ("card exists but never scanned") visible. DEBUG level; needs a logging
+        # config to show (the main app configures none).
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "ltm retrieve conversation_id=%r query=%r -> %s",
+                scoped,
+                (query or "")[:40],
+                [(row.get("memory_key"), row.get("importance")) for row in rows],
+            )
         items: list[MemoryItem] = []
         for row in rows:
             importance = row.get("importance")

@@ -3,23 +3,28 @@ from __future__ import annotations
 import logging
 import sys
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
-from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QMessageBox, QWidget
 
+from spica.config.secrets import load_secrets
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
+from spica.core.proactive import ProactiveTurnArbiter
 from spica.host.app_host import AppHost
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.chat_stream_controller import ChatStreamController
+from ui.controllers.companion_event_bridge import CompanionEventBridge
+from ui.controllers.galgame_controller import GalgameController, selection_to_physical_rect
 from ui.controllers.interaction_controller import InteractionController
 from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.controllers.voice_input_controller import VoiceInputController
 from ui.overlay_config import OverlayConfig, load_overlay_config
+from ui.widgets.window_picker_dialog import WindowPickerDialog
+from ui.workers.companion_action_worker import CompanionActionWorker
 from ui.workers.screenshot_worker import ScreenshotWorker
 from ui.workers.startup_warmup_worker import StartupWarmupWorker
 from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, scaled_px
@@ -73,7 +78,11 @@ class OverlayWindow(QWidget):
         self.interaction_controller: InteractionController | None = None
         self.startup_warmup_worker: StartupWarmupWorker | None = None
         self.screenshot_worker: ScreenshotWorker | None = None
-        self.conversation_id = str(uuid.uuid4())
+        # STABLE conversation id (FINDINGS #16): the Initial-release uuid4 here
+        # siloed every long-term memory under spica::<per-launch-uuid>, making
+        # character memory amnesiac across restarts. "default" aligns with
+        # run_voice/remember/§27①/the play-history card -- the persistent silo.
+        self.conversation_id = "default"
         self.drag_offset: QPoint | None = None
         self.resize_origin_geometry: QRect | None = None
         self.resize_origin_pos: QPoint | None = None
@@ -94,6 +103,12 @@ class OverlayWindow(QWidget):
         self.settings_panel: SettingsPanel | None = None
         self.screenshot_selector: ScreenshotSelectionOverlay | None = None
         self.pending_screen_attachment: dict[str, Any] | None = None
+        # galgame companion (stage 3): bridge + UI coordinator + status chip.
+        self.companion_bridge: CompanionEventBridge | None = None
+        self.galgame_controller: GalgameController | None = None
+        self.companion_region_selector: ScreenshotSelectionOverlay | None = None
+        self.dangling_recovery_worker: CompanionActionWorker | None = None
+        self._dangling_recovery_started = False
 
         self.character_label = QLabel(self)
         self.character_label.setObjectName("character")
@@ -134,17 +149,23 @@ class OverlayWindow(QWidget):
             on_recognized_text=lambda text: None,
             backend_ready=lambda: self.agent is not None,
         )
+        # P3: the mode-agnostic proactive-turn arbiter. busy = conversation
+        # (chat/song) OR a user recording in flight (never talk over the user).
+        self.proactive_arbiter = ProactiveTurnArbiter(
+            is_busy=self._is_proactive_busy,
+            start_turn=self._start_system_turn,
+        )
         self.song_controller = SongController(
             parent=self,
             chat_stream_controller=None,
             audio_controller=self.audio_controller,
-            typewriter_controller=self.typewriter_controller,
-            visual_overrides_provider=self._visual_overrides,
+            set_song_status=self._set_song_status,
             set_busy=self.set_busy,
             focus_input=self._focus_input,
             stop_conversation_for_song=lambda: None,
             voice_mode_active_provider=self._is_voice_mode_active,
             schedule_voice_recording=self._schedule_next_voice_recording,
+            request_proactive_turn=self.proactive_arbiter.try_speak,
         )
         self.interaction_controller = InteractionController(
             parent=self,
@@ -164,7 +185,32 @@ class OverlayWindow(QWidget):
         self.window_controls.settings_requested.connect(self.open_settings_panel)
         self.window_controls.minimize_requested.connect(self.minimize_overlay)
         self.window_controls.close_requested.connect(self.close)
+        self.window_controls.companion_requested.connect(self._on_companion_requested)
         self.window_controls.installEventFilter(self)
+
+        # Minimal companion status chip (stage 3): a text label left of the window
+        # controls; hidden when idle. Text written ONLY via _set_companion_status.
+        self.companion_status_label = QLabel(self)
+        self.companion_status_label.setObjectName("companionStatus")
+        self.companion_status_label.setStyleSheet(
+            "QLabel#companionStatus { background-color: rgba(38, 45, 52, 138);"
+            " border: 1px solid rgba(255, 255, 255, 34); border-radius: 12px;"
+            " color: #EAF8FF; font-size: 13px; padding: 4px 10px; }"
+        )
+        self.companion_status_label.hide()
+
+        # B2: song status chip -- the control-feedback surface that replaced the
+        # canned typewriter lines (F14: conversational speech only from run_turn;
+        # control feedback is UI state). Same styling family as the companion chip,
+        # placed to its left in _layout_overlay.
+        self.song_status_label = QLabel(self)
+        self.song_status_label.setObjectName("songStatus")
+        self.song_status_label.setStyleSheet(
+            "QLabel#songStatus { background-color: rgba(52, 38, 52, 138);"
+            " border: 1px solid rgba(255, 255, 255, 34); border-radius: 12px;"
+            " color: #FFEAF8; font-size: 13px; padding: 4px 10px; }"
+        )
+        self.song_status_label.hide()
 
         self.resize_handle = CornerResizeHandle(self)
 
@@ -186,6 +232,7 @@ class OverlayWindow(QWidget):
             self.tts_adapter = self.host.tts_adapter
             self.agent = self.host.conversation_surface
             self._init_chat_stream_controller()
+            self._init_companion_ui()
             self.interlocutor_name = self.agent.interlocutor_name
             provider_name = str(getattr(self.tts_adapter, "name", None) or self.host.tts_provider)
             self.dialogue.set_dialogue_text(f"LLM API 初始化完成，准备预热 {provider_name}...")
@@ -217,6 +264,128 @@ class OverlayWindow(QWidget):
         if self.interaction_controller is not None:
             self.interaction_controller.set_chat_stream_controller(self.chat_stream_controller)
 
+    def _init_companion_ui(self) -> None:
+        """Wire the galgame companion UI (stage 3). MUST run inside __init__ (UI
+        events -- the only path that builds the companion controller singleton --
+        cannot fire before app.exec(), so the sink is attached strictly BEFORE the
+        first companion_controller() construction: structural ordering)."""
+        self.companion_bridge = CompanionEventBridge()
+        self.host.attach_companion_sink(self.companion_bridge.sink)
+        # B2: song events ride the SAME RuntimeEvent bridge (it is a generic
+        # event channel despite the name); this slot only reacts to song kinds.
+        self.companion_bridge.companion_event.connect(self._on_song_runtime_event)
+        self.galgame_controller = GalgameController(
+            self.companion_bridge,
+            parent=self,
+            host=self.host,
+            set_status=self._set_companion_status,
+            set_companion_active=self.window_controls.set_companion_active,
+            toast=self.dialogue.set_dialogue_text,
+            pick_window=lambda candidates: WindowPickerDialog.pick(candidates, self),
+            select_region=self._select_companion_region,
+            ask_active_action=self._ask_companion_active_action,
+        )
+
+    def _on_companion_requested(self) -> None:
+        if self.galgame_controller is None:
+            self.dialogue.set_dialogue_text("后端未初始化，无法开始陪玩。")
+            return
+        self.galgame_controller.on_companion_clicked()
+
+    def _set_companion_status(self, text: str) -> None:
+        self.companion_status_label.setText(text)
+        self.companion_status_label.setVisible(bool(text))
+        self._layout_overlay()  # re-place the chip + refresh the click-through mask
+
+    def _set_song_status(self, text: str) -> None:
+        self.song_status_label.setText(text)
+        self.song_status_label.setVisible(bool(text))
+        self._layout_overlay()
+
+    def _on_song_runtime_event(self, event: Any) -> None:
+        """Bridge dispatch for song events (B2): the host's sing_song closure
+        emitted a SongRequestEvent; start the worker on the UI thread."""
+        if getattr(event, "kind", "") != "song_request" or self.song_controller is None:
+            return
+        self.song_controller.handle_song_request_event(
+            query=getattr(event, "query", ""),
+            title=getattr(event, "title", ""),
+            artist=getattr(event, "artist", ""),
+        )
+
+    def _ask_companion_active_action(self) -> str | None:
+        box = QMessageBox(self)
+        box.setWindowTitle("陪玩")
+        box.setText("正在陪玩中，要做什么？")
+        stop_button = box.addButton("停止陪玩", QMessageBox.ButtonRole.DestructiveRole)
+        switch_button = box.addButton("换个游戏陪玩", QMessageBox.ButtonRole.ActionRole)
+        recalibrate_button = box.addButton("重新校准对白区域", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is stop_button:
+            return "stop"
+        if clicked is switch_button:
+            return "switch"
+        if clicked is recalibrate_button:
+            return "recalibrate"
+        return None
+
+    def _select_companion_region(self, window_id: str, on_done) -> None:
+        """Calibration region selection: the generic rect selector over the screen
+        the GAME window is on; the result is converted to physical coords and
+        handed back (None = cancelled)."""
+        if self.companion_region_selector is not None:
+            try:
+                self.companion_region_selector.close()
+            except Exception:
+                pass
+            self.companion_region_selector = None
+        selector = ScreenshotSelectionOverlay(screen=self._screen_for_window(window_id))
+        self.companion_region_selector = selector
+
+        def _finished(payload: dict) -> None:
+            self.companion_region_selector = None
+            rect = payload.get("logical_rect")
+            dpr = float(payload.get("device_pixel_ratio") or 1.0)
+            on_done(selection_to_physical_rect((rect.x(), rect.y(), rect.width(), rect.height()), dpr))
+
+        def _cancelled(_reason: str) -> None:
+            self.companion_region_selector = None
+            on_done(None)
+
+        selector.selection_finished.connect(_finished)
+        selector.selection_cancelled.connect(_cancelled)
+        selector.begin()
+
+    def _screen_for_window(self, window_id: str):
+        try:
+            geom = self.host.services.window_locator_adapter.get_window_geometry(window_id)
+            if geom is not None:
+                screen = QGuiApplication.screenAt(QPoint(geom.x + geom.width // 2, geom.y + geom.height // 2))
+                if screen is not None:
+                    return screen
+        except Exception:  # noqa: BLE001 -- fall back to the primary screen
+            pass
+        return QGuiApplication.primaryScreen()
+
+    def _start_dangling_recovery(self, _message: str = "") -> None:
+        """Startup crash recovery (§12, stage 3): silently 補總結 dangling play
+        sessions on a background worker AFTER warmup (serialized startup load).
+        Log-only by design -- the ask-user UI stays deferred."""
+        if self._dangling_recovery_started or self.host is None or self.host.services is None:
+            return
+        self._dangling_recovery_started = True
+        worker = CompanionActionWorker(self.host.recover_dangling_companion_sessions, self)
+        self.dangling_recovery_worker = worker
+        worker.finished_ok.connect(
+            lambda ids: logger.info("galgame dangling sessions recovered: %s", ids)
+        )
+        worker.failed.connect(
+            lambda message: logger.warning("galgame dangling recovery failed: %s", message)
+        )
+        worker.start()
+
     def _start_startup_warmup(self) -> None:
         if self.agent is None or self.tts_adapter is None:
             return
@@ -225,6 +394,9 @@ class OverlayWindow(QWidget):
         self.startup_warmup_worker.status_changed.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.finished_ok.connect(self.dialogue.set_dialogue_text)
         self.startup_warmup_worker.failed.connect(self.dialogue.set_dialogue_text)
+        # Dangling-session recovery runs after warmup either way (success or not).
+        self.startup_warmup_worker.finished_ok.connect(self._start_dangling_recovery)
+        self.startup_warmup_worker.failed.connect(self._start_dangling_recovery)
         self.startup_warmup_worker.start()
 
     def _size_to_screen(self) -> None:
@@ -295,6 +467,21 @@ class OverlayWindow(QWidget):
         top_margin = scaled_px(14, scale)
         self.window_controls.setGeometry(width - controls_width - top_margin, top_margin, controls_width, controls_height)
 
+        chip_right_edge = width - controls_width - top_margin - scaled_px(8, scale)
+        if self.companion_status_label.isVisible():
+            chip_hint = self.companion_status_label.sizeHint()
+            chip_width = min(chip_hint.width(), max(120, int(width * 0.5)))
+            chip_x = max(0, chip_right_edge - chip_width)
+            self.companion_status_label.setGeometry(chip_x, top_margin, chip_width, controls_height)
+            self.companion_status_label.raise_()
+            chip_right_edge = chip_x - scaled_px(8, scale)
+        if self.song_status_label.isVisible():
+            song_hint = self.song_status_label.sizeHint()
+            song_width = min(song_hint.width(), max(120, int(width * 0.4)))
+            song_x = max(0, chip_right_edge - song_width)
+            self.song_status_label.setGeometry(song_x, top_margin, song_width, controls_height)
+            self.song_status_label.raise_()
+
         horizontal_margin = max(scaled_px(18, scale), int(width * 0.055))
         input_height = scaled_px(58, scale)
         input_width = min(width - horizontal_margin * 2, scaled_px(760, scale))
@@ -358,7 +545,7 @@ class OverlayWindow(QWidget):
         if state == self._last_layout_log_state:
             return
         self._last_layout_log_state = state
-        logger.info(
+        logger.debug(  # layout tracing is profiling material, not user-facing
             "event=overlay_layout_config default_character_scale=%s default_ui_scale=%s "
             "default_typewriter_speed=%s character_label_height_scale=%s "
             "overlay_initial_height_scale=%s character_max_height_ratio=%s "
@@ -702,6 +889,28 @@ class OverlayWindow(QWidget):
             or self._is_song_busy()
         )
 
+    def _is_proactive_busy(self) -> bool:
+        """P3 arbiter busy truth: conversation busy OR a user recording in
+        flight -- she must never start talking over the user's half-spoken
+        sentence."""
+        worker = (
+            self.voice_input_controller.speech_worker
+            if self.voice_input_controller is not None
+            else None
+        )
+        recording = bool(worker is not None and worker.isRunning())
+        return self._is_conversation_busy() or recording
+
+    def _start_system_turn(self, request: Any) -> None:
+        """P3 arbiter start callback: launch the system turn and park the
+        full-duplex restore point on the stream's completion."""
+        if self.chat_stream_controller is None:
+            return
+        self.chat_stream_controller.start_system_turn(request)
+        self.chat_stream_controller.notify_on_current_stream_done(
+            self.proactive_arbiter.system_speech_finished
+        )
+
     def set_busy(self, busy: bool) -> None:
         if self._is_song_busy():
             self.input_panel.set_busy(False, voice_enabled=True)
@@ -837,6 +1046,7 @@ class OverlayWindow(QWidget):
             (self.dialogue, 1),
             (self.input_panel, 1),
             (self.window_controls, 2),
+            (self.companion_status_label, 1),  # setMask clips RENDERING too -- must be in
             (self.settings_panel, 1),
             (self.resize_handle, 2),
         ):
@@ -986,6 +1196,18 @@ class OverlayWindow(QWidget):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         self.typewriter_controller.stop()
         self.audio_controller.stop_all()
+        if self.galgame_controller is not None:
+            # Close-during-play: try a background stop for up to 3s, then abandon
+            # -- the dangling session is 補總結'd by recovery on next startup.
+            self.galgame_controller.shutdown(3000)
+        if self.companion_region_selector is not None:
+            try:
+                self.companion_region_selector.close()
+            except Exception:
+                pass
+            self.companion_region_selector = None
+        if self.dangling_recovery_worker is not None and self.dangling_recovery_worker.isRunning():
+            self.dangling_recovery_worker.wait(1500)
         if self.song_controller is not None:
             self.song_controller.shutdown(1500)
         if self.chat_stream_controller is not None:
@@ -1009,6 +1231,19 @@ class OverlayWindow(QWidget):
 
 
 def main() -> int:
+    # FIRST: prime the environment from xiaosan.env BEFORE constructing anything
+    # (CLAUDE.md #10, F19). Construction-time env readers (the song intent
+    # classifier in SongController) used to run before AppHost.initialize()'s
+    # load_secrets(), read an un-primed environment, and stay disabled forever.
+    load_secrets()
+    # INFO baseline (log-cleanup pass): user-visible events (tool runs, companion
+    # state, warmup/recover, WARN/ERROR) show by default; the verification
+    # scaffolding ([TIMING], stream state machine, vendored TTS chatter) now sits
+    # at DEBUG -- flip the level here when profiling.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # httpx logs one INFO "HTTP Request: ... 200 OK" per LLM call (a companion turn
+    # is probe + streamed followup, >=2 lines) -- pure noise at INFO; reversible.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     window = OverlayWindow()

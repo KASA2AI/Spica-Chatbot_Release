@@ -9,6 +9,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QTimer
 
 from spica.core.events import event_from_legacy
+from spica.core.proactive import compose_system_directive_message
 from spica.core.state_machine import ChatStateMachine
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.typewriter_controller import TypewriterController
@@ -56,7 +57,11 @@ class ChatStreamController(QObject):
         self.stream_session_id = 0
         self.active_stream_token: StreamToken | None = None
         self.current_stream_kind: StreamKind | None = None
-        self.current_prelude_on_done: Callable[[], None] | None = None
+        # B2/P3: one-shot observers for "the CURRENT stream's playback ended".
+        # SongController parks the prelude gate here; the proactive arbiter parks
+        # its full-duplex restore point here. A LIST -- two waiters may coexist
+        # (a sing_song event during a system turn), a single slot would drop one.
+        self._on_current_stream_done: list[Callable[[], None]] = []
         self.audio_session_id = 0
 
         # Phase 6E: ChatState is the single source of truth for UI busy-ness.
@@ -89,28 +94,41 @@ class ChatStreamController(QObject):
             message=message,
             visual_overrides=visual_overrides,
             screen_attachment=screen_attachment,
-            on_done=None,
         )
 
-    def start_song_prelude(
-        self,
-        prompt: str,
-        visual_overrides: dict[str, Any] | None = None,
-        on_done: Callable[[], None] | None = None,
-    ) -> StreamToken:
+    def start_system_turn(self, request: Any) -> StreamToken:
+        """P3: launch a SYSTEM-initiated turn (a ProactiveTurnRequest). The framed
+        directive rides the normal stream machinery -- ChatWorker / playback /
+        typewriter / TTS / busy all behave exactly like a user turn, and a user
+        message preempts it via the usual stop_current."""
         return self._start_stream(
-            kind=StreamKind.SONG_PRELUDE,
-            message=prompt,
-            visual_overrides=visual_overrides,
+            kind=StreamKind.SYSTEM,
+            message=compose_system_directive_message(request.directive),
+            visual_overrides=None,
             screen_attachment=None,
-            on_done=on_done,
+            conversation_id=request.conversation_id,
         )
+
+    def notify_on_current_stream_done(self, callback: Callable[[], None]) -> None:
+        """One-shot: run ``callback`` when the current stream's playback ends
+        (or immediately when nothing is playing; a stopped/aborted stream also
+        counts as done so a waiter can never deadlock)."""
+        if not self.is_busy() and not self.playback_active:
+            callback()
+            return
+        self._on_current_stream_done.append(callback)
+
+    def _fire_current_stream_done(self) -> None:
+        callbacks = self._on_current_stream_done
+        self._on_current_stream_done = []
+        for callback in callbacks:
+            callback()
 
     def stop_current(self) -> None:
         self._retire_chat_worker(interrupt=True)
         self._invalidate_stream_token()
         self.current_stream_kind = None
-        self.current_prelude_on_done = None
+        self._fire_current_stream_done()
         self._reset_playback_state(streaming=False)
         self.typewriter_controller.stop()
         self.audio_controller.release_chat_audio()
@@ -141,13 +159,12 @@ class ChatStreamController(QObject):
         message: str,
         visual_overrides: dict[str, Any] | None,
         screen_attachment: dict[str, Any] | None,
-        on_done: Callable[[], None] | None,
+        conversation_id: str | None = None,
     ) -> StreamToken:
         self.stop_current()
         self._prune_retired_chat_workers()
         token = self._next_stream_token(kind)
         self.current_stream_kind = kind
-        self.current_prelude_on_done = on_done if kind == StreamKind.SONG_PRELUDE else None
         logger.debug(
             "event=stream_start stream_id=%s kind=%s message_len=%s next_stream_index=%s "
             "playback_active=%s pending_indexes=%s monotonic_ms=%s",
@@ -169,7 +186,7 @@ class ChatStreamController(QObject):
         worker = ChatWorker(
             self.agent,
             message,
-            self.conversation_id_provider(),
+            conversation_id or self.conversation_id_provider(),
             visual_overrides if visual_overrides is not None else self.visual_overrides_provider(),
             include_user_time_context,
             interaction_mode,
@@ -336,6 +353,9 @@ class ChatStreamController(QObject):
             if message == "inspecting_screen":
                 self.typewriter_controller.start("正在查看屏幕...", interval_ms=55)
                 return
+            if message == "tool:watch_game_screen":
+                self.typewriter_controller.start("Spica正在尸检屏幕...", interval_ms=55)
+                return
             self.typewriter_controller.start("正在处理工具...", interval_ms=55)
 
     def _handle_stream_unit_text_ready(self, data: dict[str, Any]) -> None:
@@ -490,13 +510,11 @@ class ChatStreamController(QObject):
         self._handle_stream_error(message, token.kind)
 
     def _handle_stream_error(self, message: str, kind: StreamKind) -> None:
+        del kind
         self._reset_playback_state(streaming=False)
         self.typewriter_controller.stop()
         self.set_busy(False)
-        if kind == StreamKind.SONG_PRELUDE:
-            logger.warning("Song prelude chat failed: %s", message)
-            self._call_prelude_done()
-            return
+        self._fire_current_stream_done()  # an errored stream counts as done (B2 gate)
         self.current_stream_kind = None
         self.on_error(message)
 
@@ -545,7 +563,13 @@ class ChatStreamController(QObject):
         *,
         unit: StreamUnitState | None = None,
         index: Any | None = None,
-        level: int = logging.INFO,
+        # Playback state-machine tracing is profiling material -> DEBUG by default.
+        # BOTH wrapper layers must default to DEBUG: this one AND
+        # _log_play_item_event, whose own INFO default kept re-imposing INFO on
+        # every per-item event after this default was demoted (the second source
+        # of the "chat_stream still spams INFO" mismatch). The WARNING callers
+        # (slow alerts) pass their level explicitly.
+        level: int = logging.DEBUG,
         **fields: Any,
     ) -> None:
         if index is None:
@@ -649,7 +673,9 @@ class ChatStreamController(QObject):
         unit: StreamUnitState,
         image_path: Any,
         *,
-        level: int = logging.INFO,
+        # DEBUG like _log_ui_playback_event -- an INFO default here silently
+        # overrode the demotion there for every per-item playback event.
+        level: int = logging.DEBUG,
         **fields: Any,
     ) -> None:
         self._log_ui_playback_event(
@@ -828,18 +854,10 @@ class ChatStreamController(QObject):
         self.audio_controller.release_preloaded()
         self.set_busy(False)
         self.state_machine.stop()
-        if completed_kind == StreamKind.SONG_PRELUDE:
-            self._call_prelude_done()
-            return
+        del completed_kind
+        self._fire_current_stream_done()
         self.current_stream_kind = None
         self.on_chat_done()
-
-    def _call_prelude_done(self) -> None:
-        on_done = self.current_prelude_on_done
-        self.current_prelude_on_done = None
-        self.current_stream_kind = None
-        if on_done is not None:
-            on_done()
 
     def _play_next_tts_item(self) -> None:
         if not self.playback_active:
@@ -1114,8 +1132,6 @@ class ChatStreamController(QObject):
         self.audio_controller.release_preloaded()
         self.set_busy(False)
         self.state_machine.stop()
-        if self.current_stream_kind == StreamKind.SONG_PRELUDE:
-            self._call_prelude_done()
-            return
+        self._fire_current_stream_done()
         self.current_stream_kind = None
         self.on_chat_done()

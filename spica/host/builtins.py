@@ -18,6 +18,7 @@ from spica.adapters.screen import LocalMoondreamScreenAnalysis
 from spica.adapters.tools import InspectScreenTool
 from spica.adapters.tts import build_tts
 from spica.adapters.visual import build_spica_visual
+from spica.runtime.stages import _compact_screen_tool_output
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS
 
 
@@ -42,5 +43,10 @@ def register_builtin_adapters(registry: CapabilityRegistry) -> None:
     # C7: inspect_screen is the first real tool -- a ToolPort over the local
     # screen-analysis adapter, registered so the runtime resolves it via the
     # registry (not a static TOOL_SCHEMAS list). N0 gate + local-only preserved.
+    # P1: it declares its HISTORICAL followup compactor (the same function the
+    # frozen sync chain applies by name), so the streaming chain's generic
+    # two-layer compaction reproduces the old special case byte for byte.
     screen_tool = InspectScreenTool(LocalMoondreamScreenAnalysis())
-    registry.register_tool(screen_tool.schema(), screen_tool.run)
+    registry.register_tool(
+        screen_tool.schema(), screen_tool.run, compact_output=_compact_screen_tool_output
+    )

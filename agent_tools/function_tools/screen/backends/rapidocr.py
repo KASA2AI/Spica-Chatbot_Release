@@ -10,7 +10,13 @@ from agent_tools.function_tools.screen.schema import ScreenToolError
 
 _LOGGER = logging.getLogger(__name__)
 _ENGINE: Any | None = None
-_ENGINE_LOCK = RLock()
+_ENGINE_LOCK = RLock()  # guards engine *creation* (the singleton)
+# Phase 7: serializes RapidOCR *inference*. EVERY OCR path -- inspect_screen
+# (analyzer.analyze_screen_image_local) and the galgame OCR loop (RapidOcrAdapter)
+# -- calls ocr_image(), so wrapping the inference here covers BOTH paths with one
+# lock; two inferences never run concurrently on the shared _ENGINE (Phase 0 ⑤).
+_INFER_LOCK = RLock()
+_CUDA_PRELOADED = False
 
 
 def ocr_image(image: Any) -> dict[str, Any]:
@@ -24,7 +30,8 @@ def ocr_image(image: Any) -> dict[str, Any]:
     try:
         prepared = _prepare_image(image)
         engine = _get_engine()
-        raw_result = engine(prepared)
+        with _INFER_LOCK:  # serialize inference across all OCR paths (Phase 7)
+            raw_result = engine(prepared)
         blocks = _parse_blocks(raw_result)
         return {
             "engine": "rapidocr",
@@ -52,14 +59,60 @@ def clear_rapidocr_engine() -> None:
         _ENGINE = None
 
 
+def _preload_cuda_libraries() -> None:
+    """Pull the pip ``nvidia-*`` CUDA shared libs into the process's GLOBAL symbol
+    table BEFORE RapidOCR/onnxruntime builds its CUDA provider, so the provider
+    resolves cublas/cudnn/cuda_runtime/... without LD_LIBRARY_PATH.
+
+    Pure in-process ctypes preload -- NO env reads (CLAUDE.md #4), NO LD_LIBRARY_PATH.
+    Best-effort: if the nvidia packages / libs are absent (no-GPU env), skip silently
+    so RapidOCR falls back to CPU. Runs at most once per process. MUST run before the
+    RapidOCR(...) instantiation in _get_engine."""
+    global _CUDA_PRELOADED
+    if _CUDA_PRELOADED:
+        return
+    _CUDA_PRELOADED = True  # mark first: a partial/failed scan must not retry every call
+    try:
+        import ctypes
+        from pathlib import Path
+
+        import nvidia  # the pip nvidia-cu* namespace package
+    except Exception:  # noqa: BLE001 -- no nvidia packages -> CPU path, silent
+        return
+    search_paths = [Path(p) for p in (getattr(nvidia, "__path__", None) or [])]
+    if not search_paths and getattr(nvidia, "__file__", None):
+        search_paths = [Path(nvidia.__file__).parent]
+    loaded = 0
+    for base in search_paths:
+        try:
+            libs = sorted(base.glob("*/lib/*.so*"))
+        except OSError:
+            continue
+        for lib in libs:
+            try:
+                ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
+                loaded += 1
+            except OSError:
+                continue  # a lib that won't load is skipped; the rest still help
+    if loaded:
+        _LOGGER.info("preloaded %d nvidia CUDA libraries for RapidOCR GPU", loaded)
+
+
 def _get_engine() -> Any:
     global _ENGINE
     with _ENGINE_LOCK:
         if _ENGINE is not None:
             return _ENGINE
         try:
+            _preload_cuda_libraries()  # MUST precede RapidOCR(): CUDA libs into global symbols
             rapidocr_class = _load_rapidocr_class()
-            _ENGINE = rapidocr_class()
+            try:
+                # GPU on det/cls/rec. RapidOCR/onnxruntime auto-falls back to CPU when
+                # CUDA is unavailable, so this never crashes a no-GPU box (Change 3).
+                _ENGINE = rapidocr_class(det_use_cuda=True, cls_use_cuda=True, rec_use_cuda=True)
+            except TypeError:
+                # a RapidOCR build without these kwargs -> default construction.
+                _ENGINE = rapidocr_class()
             return _ENGINE
         except ScreenToolError:
             raise

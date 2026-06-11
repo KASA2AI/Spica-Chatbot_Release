@@ -13,9 +13,31 @@ dict / ``response_id`` attributes are touched.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Iterator
 
 from common.timing import elapsed_ms, log_timing, now_ms
+
+
+def to_chat_completions_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert tool schemas to the Chat Completions nested format.
+
+    The registry stores Responses-flat schemas (top-level ``name`` /
+    ``description`` / ``parameters``); Chat Completions (DeepSeek etc.) requires
+    ``{"type": "function", "function": {...}}``. Already-nested schemas pass
+    through unchanged. Pure function -- no client, no I/O."""
+    converted: list[dict[str, Any]] = []
+    for schema in schemas:
+        if isinstance(schema.get("function"), dict):
+            converted.append(schema)
+            continue
+        function = {
+            key: schema[key]
+            for key in ("name", "description", "parameters", "strict")
+            if key in schema
+        }
+        converted.append({"type": "function", "function": function})
+    return converted
 
 
 class OpenAICompatibleAdapter:
@@ -49,9 +71,56 @@ class OpenAICompatibleAdapter:
             return str(_get_attr(message, "content", "") or "")
         return ""
 
+    def create_chat_with_tools(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        tools: list[dict[str, Any]],
+        state: Any,
+    ) -> tuple[list[dict[str, str]], str]:
+        """One-shot Chat Completions tool probe (the chat-path counterpart of the
+        Responses probe). Sends ``tools`` in the nested chat format and returns
+        ``(tool_calls, text)`` where each tool_call is ``{"name", "arguments"}``
+        (arguments = raw JSON string) and ``text`` is the assistant content."""
+        probe_start_ms = now_ms()
+        response = self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            tools=to_chat_completions_tools(tools),
+        )
+        log_timing("llm_chat_tool_probe", elapsed_ms(probe_start_ms), model=model)
+        _record_usage(state, response)
+        choices = list(_get_attr(response, "choices", []) or [])
+        message = _get_attr(choices[0], "message") if choices else None
+        text = str(_get_attr(message, "content", "") or "")
+        calls: list[dict[str, str]] = []
+        for item in list(_get_attr(message, "tool_calls", []) or []):
+            function = _get_attr(item, "function")
+            name = str(_get_attr(function, "name", "") or "")
+            if name:
+                calls.append(
+                    {
+                        "name": name,
+                        "arguments": str(_get_attr(function, "arguments", "") or "{}"),
+                    }
+                )
+        return calls, text
+
     def iter_response_text(self, request: dict[str, Any], state: Any) -> Iterator[str]:
         """Stream assistant text deltas, with all fallbacks handled internally."""
         return _iter_response_text(self.client, request, state)
+
+    def complete_text(self, prompt: str, *, model: str) -> str:
+        """One-shot, turn-independent completion (Phase 8 summarization). Reuses the
+        same endpoint/branch logic as the dialogue path but non-streaming and without
+        a TurnContext -- a throwaway state stub only carries usage. NOT run_turn."""
+        state = SimpleNamespace(timing={}, response_id=None)
+        if self.prefers_chat_completions():
+            return self.complete_chat(model, prompt, state)
+        response = self.create_responses(model=model, input=prompt)
+        _record_usage(state, response)
+        return str(_get_attr(response, "output_text", "") or "")
 
 
 # --------------------------------------------------------------------------- #

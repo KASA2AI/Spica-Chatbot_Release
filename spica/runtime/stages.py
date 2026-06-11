@@ -19,6 +19,7 @@ Qt-free (CLAUDE.md #1).
 from __future__ import annotations
 
 import json
+import logging
 from functools import wraps
 from typing import Any, Callable
 
@@ -52,7 +53,23 @@ from spica.runtime.deps import TurnDeps
 from spica.runtime.observer import NoopTurnObserver
 
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
+
+# -- galgame gated context injection (Phase 3) -------------------------------
+_GALGAME_CONVERSATION_PREFIX = "galgame::"
+_OFFLINE_COMMAND_INTENTS = frozenset(
+    {"ask_last_progress", "ask_game_progress", "ask_character_relation"}
+)
+_COMPANION_INTENT = "ask_companion_memory"
+_GAME_CONTEXT_RECENT_LIMIT = 5
+# Stage 2 (Path B): active mode also injects the most recent summaries -- a smaller
+# limit than offline's 5 because EVERY companion turn pays the prompt cost. This
+# bridges "summary fired -> buffer emptied -> details of 20 minutes ago vanish":
+# progress.current_scene_summary is never written and major_events is titles only,
+# so without summaries an active turn loses all summarized narrative.
+_GAME_CONTEXT_ACTIVE_SUMMARY_LIMIT = 2
 
 
 # Stages take (ctx, services, deps). deps may be None for direct (dict-config)
@@ -156,10 +173,16 @@ def retrieve_long_term_memory_node(ctx: TurnContext, services: AgentServices, de
     # Read through MemoryPort.retrieve so the read key matches commit_turn's
     # character-namespaced write key (Phase 5/7). A bare conversation_id here
     # silently misses every auto-extracted memory.
+    #
+    # §27①: use effective_memory_conversation_id, NOT the raw conversation_id, so a
+    # galgame turn (conversation_id = galgame::<game>::...) can keep
+    # memory_conversation_id = "default" and still read Spica's long-term character
+    # memory. For a plain chat turn memory_conversation_id is unset -> this falls
+    # back to conversation_id -> byte-identical behaviour (golden unchanged).
     scope = MemoryScope(
         character_id=str(deps.config.character.character_id or "spica"),
         user_id=str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME),
-        conversation_id=ctx.request.conversation_id,
+        conversation_id=ctx.request.effective_memory_conversation_id,
     )
     items = deps.memory.retrieve(
         scope,
@@ -282,6 +305,235 @@ def build_prompt_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
     return ctx
 
 
+# B3: gated stage inserted AFTER build_prompt, BEFORE the LLM call. The gate is
+# pure request-field logic (NEVER an LLM call -- CLAUDE.md #1.3). The `none` branch
+# is a byte-level no-op (it never opens an observer span, so it does not even touch
+# ctx.timing) -- that is what keeps a plain chat turn's prompt + ctx identical.
+# Injection mirrors _inject_screen_observation: append sections to the already-built
+# prompt string; build_prompt_node / prompt_builder are untouched.
+
+
+def _game_context_mode(request: Any) -> str:
+    gcr = getattr(request, "game_context_request", None)
+    conversation_id = getattr(request, "conversation_id", "") or ""
+    if (
+        getattr(request, "interaction_mode", "chat") == "galgame"
+        or conversation_id.startswith(_GALGAME_CONVERSATION_PREFIX)
+        or (gcr is not None and getattr(gcr, "mode", None) == "active")
+    ):
+        return "active"
+    if getattr(request, "command_intent", None) in _OFFLINE_COMMAND_INTENTS or (
+        gcr is not None and getattr(gcr, "mode", None) == "offline"
+    ):
+        return "offline"
+    return "none"
+
+
+def _parse_game_id_from_conversation(conversation_id: str) -> str | None:
+    if not conversation_id.startswith(_GALGAME_CONVERSATION_PREFIX):
+        return None
+    parts = conversation_id.split("::")
+    return parts[1] if len(parts) >= 2 and parts[1] else None
+
+
+def _parse_playthrough_from_conversation(conversation_id: str) -> str | None:
+    parts = conversation_id.split("::")
+    if len(parts) >= 4 and parts[2] == "playthrough" and parts[3]:
+        return parts[3]
+    return None
+
+
+def _resolve_game_target(request: Any, game_memory: Any, mode: str) -> tuple[str | None, str]:
+    gcr = getattr(request, "game_context_request", None)
+    conversation_id = getattr(request, "conversation_id", "") or ""
+    game_id = getattr(gcr, "game_id", None) if gcr is not None else None
+    if not game_id:
+        game_id = _parse_game_id_from_conversation(conversation_id)
+    playthrough_id = getattr(gcr, "playthrough_id", None) if gcr is not None else None
+    if not playthrough_id:
+        playthrough_id = _parse_playthrough_from_conversation(conversation_id) or "default"
+    if not game_id and mode == "offline":
+        last = game_memory.last_played_game()
+        if last is not None:
+            game_id = last.game_id
+            playthrough_id = last.active_playthrough_id or "default"
+    return game_id, playthrough_id
+
+
+def _should_inject_companion(mode: str, request: Any) -> bool:
+    if mode == "active":
+        return True
+    return getattr(request, "command_intent", None) == _COMPANION_INTENT
+
+
+def _section(header: str, body: str) -> str:
+    return f"{header}\n{body}"
+
+
+def _format_progress(progress: Any) -> str:
+    return json.dumps(
+        {
+            "chapter": progress.chapter,
+            "route": progress.route,
+            "location": progress.location,
+            "current_scene_summary": progress.current_scene_summary,
+            "major_events": progress.major_events,
+            "unresolved_threads": progress.unresolved_threads,
+            "last_played_at": progress.last_played_at,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _format_summaries(summaries: list[Any]) -> str:
+    return json.dumps(
+        [
+            {
+                "summary_zh": s.summary_zh,
+                "characters": s.characters,
+                "major_events": s.major_events,
+                "unresolved_threads": s.unresolved_threads,
+                "created_at": s.created_at,
+            }
+            for s in summaries
+        ],
+        ensure_ascii=False,
+    )
+
+
+def _format_buffer(lines: list[Any]) -> str:
+    return json.dumps(
+        [{"speaker": line.speaker, "text": line.text} for line in lines],
+        ensure_ascii=False,
+    )
+
+
+def _format_relations(relations: list[Any]) -> str:
+    return json.dumps(
+        [
+            {
+                "character_a": r.character_a,
+                "character_b": r.character_b,
+                "relation_summary": r.relation_summary,
+                "confidence": r.confidence,
+            }
+            for r in relations
+        ],
+        ensure_ascii=False,
+    )
+
+
+def _format_choices(choices: list[Any]) -> str:
+    return json.dumps(
+        [
+            {
+                "options": ev.options,
+                "selected_option_index": ev.selected_option_index,
+                "selected_option_text": ev.selected_option_text,
+                "selection_source": ev.selection_source,
+            }
+            for ev in choices
+        ],
+        ensure_ascii=False,
+    )
+
+
+def _format_beats(beats: list[Any]) -> str:
+    return json.dumps(
+        [{"type": b.type, "content": b.content, "source": b.source} for b in beats],
+        ensure_ascii=False,
+    )
+
+
+def _build_game_context_sections(
+    mode: str, game_memory: Any, request: Any, deps: Any, game_id: str, playthrough_id: str
+) -> list[str]:
+    sections: list[str] = []
+
+    progress = game_memory.get_progress_state(game_id, playthrough_id)
+    if progress is not None:
+        sections.append(_section("[GAME_PROGRESS]", _format_progress(progress)))
+
+    if mode == "offline":
+        summaries = game_memory.recent_summaries(game_id, playthrough_id, limit=_GAME_CONTEXT_RECENT_LIMIT)
+        if summaries:
+            sections.append(_section("[RECENT_GAME_SUMMARIES]", _format_summaries(summaries)))
+    else:
+        # Stage 2: recent summaries BEFORE the live buffer (past -> present reading
+        # order, same section position as offline). Without this, anything already
+        # summarized OUT of the buffer is invisible to an active companion turn.
+        summaries = game_memory.recent_summaries(
+            game_id, playthrough_id, limit=_GAME_CONTEXT_ACTIVE_SUMMARY_LIMIT
+        )
+        if summaries:
+            sections.append(_section("[RECENT_GAME_SUMMARIES]", _format_summaries(summaries)))
+        buffer_lines = game_memory.unsummarized_committed_story_lines(game_id, playthrough_id)
+        if buffer_lines:
+            sections.append(_section("[CURRENT_GAME_BUFFER]", _format_buffer(buffer_lines)))
+
+    relations = game_memory.character_relations(game_id, playthrough_id)
+    if relations:
+        sections.append(_section("[GAME_RELATIONS]", _format_relations(relations)))
+
+    choices = game_memory.recent_choice_events(game_id, playthrough_id, limit=_GAME_CONTEXT_RECENT_LIMIT)
+    if choices:
+        sections.append(_section("[GAME_CHOICES]", _format_choices(choices)))
+
+    if _should_inject_companion(mode, request):
+        character_id = str(deps.config.character.character_id or "spica")
+        user_id = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
+        beats = game_memory.companion_beats(game_id, user_id, character_id, limit=_GAME_CONTEXT_RECENT_LIMIT)
+        if beats:
+            sections.append(_section("[COMPANION_CONTEXT]", _format_beats(beats)))
+
+    return sections
+
+
+def retrieve_game_context_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
+    """Gated galgame context injection (B3).
+
+    NOT decorated with @node_timer on purpose: the ``none`` branch must be a
+    byte-level no-op, and opening an observer span would write ``ctx.timing`` --
+    so the gate is checked BEFORE any span. The gate is pure request-field logic;
+    it never runs an LLM (CLAUDE.md #1.3). Injection is best-effort: a game_memory
+    read failure logs a warning and injects nothing, never failing the turn.
+    """
+    mode = _game_context_mode(ctx.request)
+    if mode == "none" or ctx.error is not None:
+        # Byte-level no-op: no span opened, no ctx mutation, prompt untouched.
+        return ctx
+    deps = deps or TurnDeps.from_legacy_services(services)
+    observer = deps.observer if deps is not None else NoopTurnObserver()
+    with observer.span("retrieve_game_context_node", conversation_id=ctx.request.conversation_id):
+        game_memory = getattr(deps, "game_memory", None)
+        if game_memory is None or ctx.prompt is None:
+            return ctx
+        try:
+            game_id, playthrough_id = _resolve_game_target(ctx.request, game_memory, mode)
+            if not game_id:
+                return ctx
+            sections = _build_game_context_sections(
+                mode, game_memory, ctx.request, deps, game_id, playthrough_id
+            )
+        except Exception as exc:  # noqa: BLE001 -- best-effort: never fail the turn
+            # Hard rule (Phase 3): do NOT silently swallow. Surface the failure on
+            # the logging layer so a broken game_memory is diagnosable, not just
+            # "Spica can't answer progress" with no trace.
+            logger.warning(
+                "retrieve_game_context_node: game context read failed "
+                "(mode=%s, conversation_id=%s): %s",
+                mode,
+                ctx.request.conversation_id,
+                exc,
+                exc_info=True,
+            )
+            return ctx
+        if sections:
+            base = str(ctx.prompt.prompt_input or "")
+            ctx.prompt = PromptBundle(prompt_input="\n\n".join([base] + sections))
+    return ctx
+
+
 @node_timer
 def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
     if _skip_if_error(ctx):
@@ -298,9 +550,16 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
     # C7: tools resolve through the registry-backed ToolSet (deps.tools); the intent
     # gate lives inside schemas_for_user_text. available_tool_schema_count stays the
     # injected legacy count (telemetry; equals the registry's built-in tool set).
+    # P3 safety gate mirrored from tool_round (system turns get no tools); the
+    # frozen sync chain never carries production system turns, but the two
+    # branches must agree on the rule.
     active_tool_schemas = (
         []
-        if ctx.request.screen_attachment or ctx.screen_observation
+        if (
+            ctx.request.screen_attachment
+            or ctx.screen_observation
+            or ctx.request.interaction_mode == "system"
+        )
         else deps.tools.schemas_for_user_text(ctx.user_input)
     )
     use_tools = bool(active_tool_schemas)
@@ -315,6 +574,12 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
     obs.mark("prompt_input_chars", len(str(prompt_input or "")))
 
     obs.event("tool_schema_gate", 0.0, use_tools=use_tools, user_chars=len(ctx.user_input))
+    # Supply-chain diagnostic: the EXACT tool names this turn's request will
+    # carry. DEBUG (sync-chain twin of the tool_round line; no production callers).
+    logger.debug(
+        "turn tools offered: %s",
+        [s.get("name") or (s.get("function") or {}).get("name") for s in active_tool_schemas] or "[]",
+    )
 
     prompt_for_round = str(prompt_input or "")
     tool_history: list[dict[str, Any]] = []
@@ -325,10 +590,69 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
 
     adapter = deps.llm
     if adapter.prefers_chat_completions():
-        obs.mark("agent_rounds", 1)
+        logger.debug("llm path: chat_completions (tools this turn: %s)", use_tools)
         if use_tools and active_tool_schemas:
-            obs.mark("agent_tool_probe_skipped", True)
-            obs.mark("agent_tool_probe_skip_reason", "chat_completions_compatible_client")
+            # Chat Completions tool loop -- mirrors the Responses loop below
+            # (probe with tools each round; no calls -> the probe text IS the
+            # answer). Same fix vintage as the streaming branch (FINDINGS #18).
+            probe_text = ""
+            for round_index in range(max_rounds):
+                obs.mark("agent_rounds", round_index + 1)
+                response_start_ms = now_ms()
+                tool_calls, probe_text = adapter.create_chat_with_tools(
+                    model=model,
+                    prompt=prompt_for_round,
+                    tools=active_tool_schemas,
+                    state=ctx,
+                )
+                response_duration = elapsed_ms(response_start_ms)
+                if round_index == 0:
+                    obs.mark("agent_response_initial_ms", response_duration)
+                    phase = "initial"
+                else:
+                    obs.bump("agent_followup_response_ms", response_duration)
+                    phase = "followup"
+                obs.event(
+                    "agent_chat_completion",
+                    response_duration,
+                    phase=phase,
+                    model=model,
+                    use_tools=True,
+                    round=round_index + 1,
+                )
+                if not tool_calls:
+                    answer.raw_model_output = probe_text
+                    obs.mark("raw_answer_chars", len(answer.raw_model_output or ""))
+                    return ctx
+                for call in tool_calls:
+                    obs.bump("agent_function_calls", 1)
+                    tool_start_ms = now_ms()
+                    tool_result = deps.tools.run(call["name"], call["arguments"])
+                    record_screen_tool_result(ctx, obs, call["name"], tool_result)
+                    tool_duration = elapsed_ms(tool_start_ms)
+                    obs.bump("agent_tool_local_ms", tool_duration)
+                    tool_history.append(
+                        {
+                            "name": call["name"],
+                            "arguments": call["arguments"],
+                            "output": tool_result,
+                        }
+                    )
+                    obs.event(
+                        "agent_tool_local",
+                        tool_duration,
+                        name=call["name"],
+                        arguments_chars=len(call["arguments"]),
+                        output_chars=len(tool_result),
+                    )
+                prompt_for_round = _build_tool_followup_prompt(prompt_input, tool_history)
+            # FROZEN divergence (P1): the sync chain keeps the historical error on
+            # overflow (golden-pinned); the streaming chain forces a graceful
+            # final answer instead (tool_round._run_chain_rounds).
+            ctx.error = TurnError("LLM_TOOL_LOOP_EXCEEDED", "工具调用轮数超过限制。")
+            answer.raw_model_output = probe_text
+            return ctx
+        obs.mark("agent_rounds", 1)
         response_start_ms = now_ms()
         answer.raw_model_output = adapter.complete_chat(model, prompt_for_round, ctx)
         response_duration = elapsed_ms(response_start_ms)
@@ -408,6 +732,8 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
 
         prompt_for_round = _build_tool_followup_prompt(prompt_input, tool_history)
 
+    # FROZEN divergence (P1): see the chat branch note above -- error here,
+    # graceful forced final on the streaming chain.
     ctx.error = TurnError("LLM_TOOL_LOOP_EXCEEDED", "工具调用轮数超过限制。")
     if response is not None:
         answer.raw_model_output = str(_get_attr(response, "output_text", "") or "")
@@ -602,8 +928,15 @@ def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, 
     )
 
 
+# Tools whose result is a screen_observation.v1 the turn should LIFT into ctx
+# (-> next-turn "刚看过屏" context via memory_commit). Phase 9 adds the companion
+# watch tool to the ROSTER only -- the record logic below is byte-identical for
+# inspect_screen.
+_SCREEN_OBSERVATION_TOOLS = frozenset({"inspect_screen", "watch_game_screen"})
+
+
 def record_screen_tool_result(ctx: TurnContext, observer: Any, tool_name: str, tool_result: str) -> None:
-    if tool_name != "inspect_screen":
+    if tool_name not in _SCREEN_OBSERVATION_TOOLS:
         return
     try:
         parsed = json.loads(tool_result or "{}")
@@ -638,12 +971,40 @@ def _record_screen_analysis_metadata(ctx: TurnContext, observer: Any) -> None:
             observer.mark(key, metadata[key])
 
 
-def _compact_tool_history_for_prompt(tool_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+# P1 (F4): hard backstop for tool outputs entering a followup prompt. Chosen well
+# above today's real outputs (a watch observation is ~1-2KB) so the existing tools
+# NEVER hit it -- the target customer is a future chainable tool dumping a page.
+_TOOL_OUTPUT_PROMPT_CAP = 8000
+
+
+def _cap_tool_output(output: str) -> str:
+    if len(output) <= _TOOL_OUTPUT_PROMPT_CAP:
+        return output
+    keep = _TOOL_OUTPUT_PROMPT_CAP // 2
+    omitted = len(output) - 2 * keep
+    return output[:keep] + f"...[truncated {omitted} chars]..." + output[-keep:]
+
+
+def _compact_tool_history_for_prompt(
+    tool_history: list[dict[str, Any]],
+    compact_lookup: Any = None,
+) -> list[dict[str, Any]]:
+    """Two layers (P1, F4): a tool-declared compactor (``compact_lookup`` resolves
+    the registry's ``compact_output``; the streaming chain passes it), then the
+    global hard cap. The FROZEN sync chain passes no lookup and keeps the
+    historical inspect_screen special case -- inspect registers the SAME function
+    via the registry, so both paths compact identically byte for byte."""
     compact_history: list[dict[str, Any]] = []
     for item in tool_history:
         compact_item = dict(item)
-        if compact_item.get("name") == "inspect_screen":
-            compact_item["output"] = _compact_screen_tool_output(str(compact_item.get("output") or ""))
+        name = compact_item.get("name")
+        output = str(compact_item.get("output") or "")
+        compactor = compact_lookup(name) if callable(compact_lookup) else None
+        if compactor is not None:
+            output = compactor(output)
+        elif name == "inspect_screen":
+            output = _compact_screen_tool_output(output)
+        compact_item["output"] = _cap_tool_output(output)
         compact_history.append(compact_item)
     return compact_history
 

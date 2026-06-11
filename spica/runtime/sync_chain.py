@@ -1,10 +1,17 @@
 """Synchronous stage chain (C4: moved from agent/runtime.py).
 
+FROZEN -- pure golden anchor (P1 / FINDINGS F8). This chain has ZERO production
+callers: ChatEngine.run_voice drives the orchestrator (run_turn + fold), and
+ChatEngine.stream_voice streams it. It exists so the golden/smoke/memory tests
+keep their historical baseline. Do NOT grow new capabilities here -- new turn
+behaviour goes into the streaming chain (spica/runtime/tool_round.py /
+orchestrator). Known frozen divergence: on tool-loop overflow this chain keeps
+the historical LLM_TOOL_LOOP_EXCEEDED error (golden-pinned), while the streaming
+chain forces a graceful final answer (tool_round._run_chain_rounds).
+
 Drives the stages in order for the non-streaming path. C5: builds the typed deps
 once -- with a per-turn observer wrapping ctx.timing -- and threads it through
-every stage so they share one timing sink (done.timing / response_payload). Used
-by the golden/smoke/memory tests; the production sync path is ChatEngine.run_voice
-(run_turn + fold). Qt-free.
+every stage so they share one timing sink (done.timing / response_payload). Qt-free.
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ from spica.runtime.stages import (
     call_llm_node,
     load_recent_context_node,
     parse_reply_node,
+    retrieve_game_context_node,
     retrieve_long_term_memory_node,
     synthesize_tts_node,
     validate_input_node,
@@ -38,6 +46,9 @@ def run_voice_pipeline(ctx: TurnContext, services: AgentServices) -> TurnContext
     ctx = retrieve_long_term_memory_node(ctx, services, deps)
     ctx = analyze_screen_attachment_node(ctx, services, deps)
     ctx = build_prompt_node(ctx, services, deps)
+    # B3: gated galgame context injection (same insertion point as the streaming
+    # orchestrator). `none` is a byte-level no-op; keeps the two chains isomorphic.
+    ctx = retrieve_game_context_node(ctx, services, deps)
     ctx = call_llm_node(ctx, services, deps)
     ctx = parse_reply_node(ctx, services, deps)
     # Unified with the streaming path (Phase 6D): one memory-commit component,

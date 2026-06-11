@@ -32,6 +32,47 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class GameContextRequest:
+    """Typed gate input for galgame context injection (PLAN §5.4).
+
+    Phase 1 only defines the shape; the gated ``retrieve_game_context_node`` that
+    consumes it lands in Phase 3. ``mode`` selects which sections (if any) the
+    stage injects; ``"none"`` (or a ``None`` request) means inject nothing.
+    """
+
+    mode: str = "none"  # active | offline | none
+    game_id: str | None = None
+    playthrough_id: str = "default"
+
+
+# The galgame conversation-id namespace prefix. Defined HERE (typed-request layer)
+# so ChatEngine's double-wrap guard can read it without importing spica.galgame.
+# stages._GALGAME_CONVERSATION_PREFIX and models.game_conversation_id carry the
+# same literal -- deliberately NOT deduped: the gate code is untouchable (stage-2
+# guardrail), see GALGAME_FINDINGS.md #9.
+GALGAME_CONVERSATION_PREFIX = "galgame::"
+
+
+@dataclass(frozen=True)
+class GameTurnBinding:
+    """The per-play binding a companion controller publishes for turn auto-fill
+    (Path B stage 2). When companion play is active, ``ChatEngine._request``
+    applies it while building the ``TurnRequest``: ``conversation_id`` moves the
+    turn into the galgame namespace (recent-memory isolation + the active gate
+    trigger), ``game_context_request`` is the explicit gate input (double
+    insurance -- no string parsing needed).
+
+    Deliberately NO ``memory_conversation_id`` field: that value is "the caller's
+    original conversation" (§27①), which only exists at ``_request`` time -- the
+    controller cannot know it at ``start()`` time, so ``_request`` derives it from
+    its own ``conversation_id`` parameter.
+    """
+
+    conversation_id: str
+    game_context_request: GameContextRequest
+
+
+@dataclass(frozen=True)
 class TurnRequest:
     """Everything a caller specifies to drive one turn."""
 
@@ -43,6 +84,29 @@ class TurnRequest:
     screen_attachment: dict[str, Any] | None = None
     tts_param_overrides: dict[str, Any] | None = None
     visual_overrides: dict[str, Any] = field(default_factory=dict)
+    # -- galgame turn inputs (Phase 1: typed fields + defaults only; no consumer
+    # logic until the Phase 3 gated stage). Appended at the end so positional
+    # construction of the existing fields is unaffected.
+    #
+    # memory_conversation_id decouples long-term character-memory retrieval from
+    # the turn's conversation_id (§27①): it falls back to conversation_id, so a
+    # plain chat turn (leaving it None) is byte-identical to today. A galgame turn
+    # sets conversation_id = galgame::<game_id>::playthrough::<id> (for recent
+    # memory continuity) while keeping memory_conversation_id = "default" (so
+    # Spica still reads her existing long-term memory about the user).
+    memory_conversation_id: str | None = None
+    command_intent: str | None = None  # canonical CommandIntent enum lands with Phase 4 commands.py
+    game_context_request: GameContextRequest | None = None
+
+    @property
+    def effective_memory_conversation_id(self) -> str:
+        """The conversation_id to namespace long-term *character* memory by.
+
+        The single source of truth for the §27① fallback. No production caller
+        reads this in Phase 1 (the Phase 3 gated stage / retrieve node will);
+        defined now so the fallback semantics are typed and unit-tested.
+        """
+        return self.memory_conversation_id or self.conversation_id
 
 
 @dataclass

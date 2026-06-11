@@ -1,6 +1,6 @@
 # Spica Chatbot
 
-Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 PySide6 提供透明置顶 Overlay，用 OpenAI 兼容接口生成角色回复，并把回复拆成可播放单元，驱动本地立绘差分、GPT-SoVITS 语音合成、短期/长期记忆、屏幕观察、点歌翻唱和可选语音输入。
+Spica Chatbot 是一个本地桌面语音角色扮演陪伴应用。它用 PySide6 提供透明置顶 Overlay，用 OpenAI 兼容接口生成角色回复，并把回复拆成可播放单元，驱动本地立绘差分、GPT-SoVITS 语音合成、短期/长期记忆、屏幕观察、点歌翻唱和可选语音输入。**项目核心是 galgame 陪玩**：Spica 可以绑定游戏窗口、实时 OCR 剧情、看画面回答问题、把共同经历写进记忆、后台总结剧情并在游玩结束后留下履历；唱完歌还会主动开口收尾（turn 发起器）。
 
 当前代码已经完成平台化重构的主要骨架：UI 不再直接组装 LLM/TTS/Visual/Memory 服务，后端由 `AppHost` 统一装配，核心对话由 `ChatEngine` 驱动，能力通过 ports/adapters 和 `CapabilityRegistry` 注册，跨 Host 到 UI 的运行事件用 `RuntimeEvent` dataclass 表达。
 
@@ -17,6 +17,8 @@ Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 Py
 - 能力注册：`spica.plugins.registry.CapabilityRegistry`。
 - 角色包：`spica.core.character.CharacterPackage`，默认使用 `spica_data/Spica_skill`。
 - UI 状态：`spica.core.state_machine.ChatStateMachine` 驱动忙碌、生成、播放、暂停和错误状态。
+- galgame 陪玩：`spica.galgame.companion_controller.GalgameCompanionController`（start/stop 编排）+ `session.py`（FSM 唯一状态 owner）+ `ocr_loop.py`（串行观察泵）；事件经 `CompanionEventBridge` 跨线程进 UI。
+- 主动开口：`spica.core.proactive`（请求/仲裁/全双工钩子位）+ `ChatEngine.stream_system_turn`（`interaction_mode="system"`）。
 
 ## 功能
 
@@ -26,10 +28,12 @@ Spica Chatbot 是一个本地桌面 Galgame 风格语音聊天应用。它用 Py
 - GPT-SoVITS 本地日语 TTS，按情绪选择参考音频，支持启动预热。
 - 本地立绘差分选择，基于回复文本和情绪投票选择表情、手势、服装、对白样式。
 - RecentMemory 短期上下文和 SQLite 长期记忆，长期记忆通过 `MemoryPort` 按 `character_id::conversation_id` 隔离。
-- 本地屏幕观察工具 `inspect_screen`，只有用户明确要求查看屏幕时触发，走本地截图、RapidOCR 和 Moondream，不上传图片。
-- 手动截图附件，用户框选区域后随下一条消息进入本地 screen pipeline。
-- 点歌/翻唱链路：意图识别 -> 网易云搜索和下载 -> 人声分离 -> Applio/RVC 变声 -> 混音输出。
-- 可选 ReSpeaker USB 4 Mic Array 语音输入，使用硬件 VAD 和 `speech_recognition` 中文识别。
+- **galgame 陪玩**：🎮 入口选窗绑定游戏 → 框选校准对白区 → OCR 剧情流（稳定行去重 + 说话人解析）→ 剧情后台总结 → 游玩履历写入角色记忆；崩溃残留 session 下次启动自动补总结。游戏记忆走独立库（`spica_data/galgame.sqlite3`），不污染角色长期记忆。
+- **工具调用（多轮工具轮）**：LLM 经 probe → 本地执行 → followup 的工具轮决策调用工具；`chainable` 工具可多轮链式（上限 `max_tool_rounds`，超限优雅收尾）。内置四工具：`inspect_screen`(read，看整个屏幕) / `watch_game_screen`(read，陪玩时看绑定的游戏窗口) / `note_game_observation`(write，把对话确认的观察写进游戏记忆) / `sing_song`(act，点歌)。工具按 `effect`（read/write/act）分级，操作类工具一律「专用 port 白名单动作 + host 闭包持权限」。
+- 本地屏幕观察全部走本地截图、RapidOCR 和 Moondream，不上传图片；手动截图附件可框选区域随下一条消息发送。
+- **点歌/翻唱（B2 工具化后）**：主 LLM 通过 `sing_song` function call 点歌（自然对话，无前置劫持）→ 网易云搜索下载 → 人声分离 → Applio/RVC 变声 → 混音 → 自动播放；播放中「暂停/继续/停止/重唱」走零延迟控制快路径；唱完她会**主动开口**收尾。
+- **主动开口（turn 发起器）**：系统事件可触发她主动说话（`ProactiveTurnRequest` → busy 仲裁 → 同一条 run_turn 对话路径生成角色化台词）；v1 策略 drop_if_busy，首个用例是唱完播报。
+- 可选 ReSpeaker USB 4 Mic Array 语音输入，使用硬件 VAD 和 `speech_recognition` 中文识别。**当前为半双工**：她说话/唱歌期间语音输入暂停，播放结束自动恢复（全双工在档未做）。
 - 插件入口：插件可注册 adapters/tools，当前阶段不开放 UI widget 插件。
 
 ## 架构
@@ -46,7 +50,7 @@ flowchart TD
     Registry --> Memory[MemoryPort: SQLite]
     Host --> Engine[ChatEngine]
     Engine --> Runtime[stream_voice_events]
-    Runtime --> Tools[inspect_screen / local tools]
+    Runtime --> Tools[tool_round 多轮工具轮: inspect/watch/note/sing_song]
     Runtime --> Splitter[JsonAnswerExtractor + PlayUnitSplitter]
     Splitter --> Jobs[Visual job + TTS job]
     Jobs --> Events[RuntimeEvent / legacy dict bridge]
@@ -72,8 +76,9 @@ Host 只做组装和窄接口转发，业务逻辑在 `ChatEngine`、runtime 组
 │   ├── core/                           # ChatEngine、RuntimeEvent、ChatStateMachine、CharacterPackage
 │   ├── conversation/                   # 纯 domain：prompt builder、reply parser、text normalizer、time context、character loader
 │   ├── runtime/                        # 对话 turn：run_turn、TurnContext/TurnDeps、stages、流式编排、observer/jobs、TTS/Visual job、memory commit
-│   ├── ports/                          # LLM/TTS/Visual/Memory/Tool 协议
-│   ├── adapters/                       # OpenAI 兼容 LLM、SQLite memory、GPT-SoVITS TTS、Spica visual adapter
+│   ├── ports/                          # LLM/TTS/Visual/Memory/Tool + galgame 五端口（launcher/locator/capture/ocr/game_memory）
+│   ├── adapters/                       # OpenAI 兼容 LLM、SQLite memory、GPT-SoVITS TTS、Spica visual、galgame 各 adapter、tools/（watch/note/sing_song 工具垫片）
+│   ├── galgame/                        # 陪玩 domain：session FSM、OCR 泵、controller、总结、履历、绑定、校准（Qt-free）
 │   ├── config/                         # Pydantic AppConfig、ConfigManager、Secrets
 │   └── plugins/                        # CapabilityRegistry、PluginHost、plugin manifest
 ├── agent_tools/
@@ -84,6 +89,7 @@ Host 只做组装和窄接口转发，业务逻辑在 `ChatEngine`、runtime 组
 ├── memory/                             # RecentMemory、SQLiteMemoryStore、规则记忆抽取和去重
 ├── hardware/respeaker/                 # ReSpeaker 录音、USB control、Qt speech worker
 ├── ui/                                 # PySide6 UI、controllers、workers、models、widgets
+├── scripts/                            # 活体诊断器：verify_watch_chain.py（工具不触发先跑）、diag_ocr_providers.py（疑 OCR 回落先跑）
 ├── data/config/                        # TTS、visual、plugin YAML 配置
 ├── config/screen_vision_config.json     # 本地屏幕观察配置
 ├── spica_data/                         # 角色卡、立绘、参考音频、本地记忆数据，发布仓库不带大素材
@@ -219,6 +225,8 @@ python -m pytest tests -q
 
 ## 配置
 
+> 现状：配置载体多套并存（typed config + `xiaosan.env` + 各 yaml/json，见下）。**P0b「配置统一」已立项未实施**（目标：收敛为 `app.yaml` + `xiaosan.env` + `ui/overlay_config.json` 三载体，env 读取全部归 `manager.py`/`secrets.py`）。本节描述的是当前真实状态。
+
 ### `data/config/tts.yaml`
 
 控制 TTS provider、GPT-SoVITS 根目录、模型权重、输出目录、预热策略、情绪参考音频和切句参数。
@@ -311,7 +319,7 @@ max_tool_rounds: 3
 
 `ChatEngine.run_voice()` 用 `Inline` 执行策略驱动 `run_turn`，再用 `fold_events` 把产出的事件流折叠成一个完整响应 payload（见 `spica/core/chat_engine.py`）。主要用于一次性得到完整 payload。
 
-非流式的 stage 链（测试/兼容入口 `spica/runtime/sync_chain.py::run_voice_pipeline`）依次执行：
+非流式的 stage 链（`spica/runtime/sync_chain.py::run_voice_pipeline`，**已冻结：纯 golden 兼容锚，生产零调用方，不再长新能力**——生产同步入口是上面的 `run_voice`）依次执行：
 
 ```text
 validate_input
@@ -368,12 +376,13 @@ SQLite adapter 会把 conversation key 命名空间化为：
 
 ## 插件和能力替换
 
-内置能力注册在 `AppHost._register_builtin_adapters()`：
+内置能力注册在 `spica/host/builtins.py::register_builtin_adapters()`（早期文档写的 `AppHost._register_builtin_adapters()` 已重构搬出）：
 
 - LLM: `openai_compatible`
 - TTS: `gptsovits_current`、`gptsovits`、`current`、`dummy`
 - Visual: `spica_diff`
 - Memory: `sqlite`
+- Tools: `inspect_screen`（builtins 注册）；`watch_game_screen` / `note_game_observation` / `sing_song` 在 `AppHost.__init__` 注册（它们的执行权限是 host 闭包）。注册元数据四维：`available` / `intent_gated` / `chainable` / `effect`。
 
 插件示例：
 

@@ -12,7 +12,7 @@ INVARIANT (CLAUDE.md #1): Qt-free.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from spica.conversation.character_loader import (
     DEFAULT_INTERLOCUTOR_NAME,
@@ -20,10 +20,16 @@ from spica.conversation.character_loader import (
     normalize_interlocutor_name,
 )
 from spica.conversation.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
+from spica.core.proactive import compose_system_directive_message
 from spica.runtime.services import AgentServices
 from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
-from spica.runtime.context import TurnContext, TurnRequest
+from spica.runtime.context import (
+    GALGAME_CONVERSATION_PREFIX,
+    GameTurnBinding,
+    TurnContext,
+    TurnRequest,
+)
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import Inline
 from spica.runtime.fold import fold_events
@@ -39,8 +45,24 @@ class ChatEngine:
         self.deps = TurnDeps.from_services(services, config)
         self.interlocutor_name = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
         self.model = services.config.get("model")
+        # Path B stage 2: when companion play is active, the host-injected provider
+        # returns a GameTurnBinding and _request auto-fills the galgame turn fields.
+        # None (never set / not playing) -> _request builds the exact same
+        # TurnRequest as before, byte for byte.
+        self._game_binding_provider: Callable[[], GameTurnBinding | None] | None = None
 
     # -- driving --------------------------------------------------------------
+    def set_game_binding_provider(
+        self, provider: Callable[[], GameTurnBinding | None] | None
+    ) -> None:
+        """Inject the companion-play binding provider (Path B stage 2).
+
+        The host wires this to its companion controller's published snapshot.
+        ``None`` (or a provider returning ``None``) keeps every turn a plain chat
+        turn -- the construction path is then identical to before.
+        """
+        self._game_binding_provider = provider
+
     def _request(
         self,
         user_input: str,
@@ -52,6 +74,26 @@ class ChatEngine:
         interaction_mode: str,
         screen_attachment: dict[str, Any] | None,
     ) -> TurnRequest:
+        binding = self._game_binding_provider() if self._game_binding_provider else None
+        # Double-wrap guard: a caller already addressing a galgame conversation
+        # (manual/debug path) is taken as-is, never rewritten.
+        if binding is not None and not (conversation_id or "").startswith(GALGAME_CONVERSATION_PREFIX):
+            # Companion play is active: the turn moves into the galgame conversation
+            # (recent-memory isolation + the active gate) while memory_conversation_id
+            # keeps the caller's ORIGINAL conversation, so long-term character memory
+            # stays continuous (§27①).
+            return TurnRequest(
+                user_input=user_input or "",
+                conversation_id=binding.conversation_id,
+                emotion_override=emotion_override,
+                interaction_mode=interaction_mode,
+                include_user_time_context=include_user_time_context,
+                screen_attachment=screen_attachment,
+                tts_param_overrides=tts_param_overrides,
+                visual_overrides=visual_overrides or {},
+                memory_conversation_id=conversation_id or "default",
+                game_context_request=binding.game_context_request,
+            )
         return TurnRequest(
             user_input=user_input or "",
             conversation_id=conversation_id or "default",
@@ -110,6 +152,26 @@ class ChatEngine:
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
         )
         yield from run_turn(self._context_from_request(req), self.services, deps=self.deps)
+
+    def stream_system_turn(
+        self,
+        directive: str,
+        *,
+        conversation_id: str | None = None,
+        source: str = "",
+    ):
+        """P3: a SYSTEM-initiated turn (proactive speech). Mode-agnostic: the
+        caller (song report today, galgame tease / video commentary later) only
+        authors the directive text. Rides the ONE dialogue path -- the framed
+        directive goes through stream_voice with interaction_mode="system"
+        (typed marker; tool supply is hard-off on that mode, see tool_round) --
+        run_turn / orchestrator / stages never fork."""
+        del source  # telemetry label for callers/logs; no behavioural branch
+        yield from self.stream_voice(
+            compose_system_directive_message(directive),
+            conversation_id=conversation_id or "default",
+            interaction_mode="system",
+        )
 
     def stream_voice(
         self,

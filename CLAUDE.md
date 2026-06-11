@@ -1,99 +1,150 @@
-# CLAUDE.md — Spica 平台化重构 · 工作纪律
+# CLAUDE.md
 
-> 这份文件给 Claude Code 每个 session 自动加载。完整的分阶段路线在 `docs/REFACTOR_PLAN.md`。
-> 本文件只放**不可破坏的约束**和**怎么干活**。开工前先读它，再读 `docs/REFACTOR_PLAN.md` 里当前阶段那一节。
-
----
-
-## 这个工程在做什么
-
-把 Spica 从「PySide Overlay 直接组装并驱动 Agent/TTS/Visual/Memory/Streaming 的桌面原型」，
-重构成「**UI 框架无关的 AppHost 平台核心**」：核心稳定、adapter 可换、UI 不碰业务、配置有 schema、
-运行时走 dataclass 事件、插件有边界。最终目标是**可换引擎、可换角色、可接插件、可换前端**的角色演出平台。
-
-当前正在执行的是一次**绞杀式（strangler-fig）重构**，不是推倒重写。仓库一直是可运行的软件。
+> 这是 Spica 仓库的常驻操作手册。Claude / Claude Code 每次进入本仓库都先读它。
+> 详细的 galgame 陪玩系统规格在 `GALGAME_COMPANION_PLAN.md`，本文件只放**每次都要遵守的铁律、架构地图和工作方式**，不重复完整规格。
 
 ---
 
-## 仓库命令（务必照用）
+## 0. 这个项目是什么
 
-- Python 解释器：`/home/san/anaconda3/envs/gptsovits/bin/python`（conda 环境 `gptsovits`）
-- **跑测试只用：`python -m pytest tests`**
-- **绝不在仓库根目录跑裸 `pytest`** —— 它会递归扫描 `agent_tools/tts/vendors/GPT-SoVITS-.../runtime/` 里的第三方包，必崩。
-- 启动桌面 Overlay：`python webui_qt.py`（Linux ibus 环境用 `./run_ibus.sh`）
+Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6 透明 overlay + 语音对话）。角色是 Spica（辻倉朱比華），默认对话者是「麦」。
 
----
+**项目的核心是 galgame 陪玩系统。** LLM、TTS、记忆、屏幕识别这些子系统，本质上都是为「Spica 能陪你一起玩 galgame、记得剧情和你们一起玩的经历」这个目标搭桥。涉及取舍时，优先服务这个核心目标。
 
-## 不可破坏的约束（INVARIANTS）
-
-违反下面任何一条，都视为本次任务失败，必须回退。
-
-1. **Qt 隔离**：`spica/host/`、`spica/runtime/`、`spica/config/`、`spica/adapters/`、`spica/ports/`、
-   `spica/core/`、`spica/memory/` 这些层**绝对不许 import PySide / Qt / 任何 GUI 库**。
-   有一个守卫测试盯着；它变红就是真漏了，必须修，不许删测试或加豁免。
-
-2. **main 永远能跑**：每个阶段做完，`python webui_qt.py` 能正常启动，`python -m pytest tests` 全绿。
-   一个阶段 = 一个 feature 分支 = 一个（或一串）commit；分支合回 main 之前必须绿。
-
-3. **机械搬迁步骤零行为变化**：标注「mechanical / move」的步骤，**不许改任何运行时行为**。
-   只搬代码、改 import、改装配位置。如果某个改动会改变行为，它就属于另一个步骤，单独做。
-
-4. **配置只走 ConfigManager**：业务代码里**禁止 `os.getenv()`**。
-   只有 `spica/config/manager.py` 和 `spica/config/secrets.py` 允许读环境变量。
-   API Key 等机密只进 env / secrets，不进普通 config 文件。
-
-5. **不为单一实现造抽象（YAGNI）**：只有当某能力**确实有 ≥2 个实现、或本路线图里明确即将有第二个**时，
-   才建 `ports/` 协议 + `adapters/` 实现对。本项目里 LLM / TTS / Visual / Memory / Tool 在 Phase 5 即将被 Host 按名解析
-   或马上要用，正当；**ASR 先延后**到真要接第二个 ASR 引擎时再定。其余拿不准就先不抽。
-
-6. **Host 必须薄**：`AppHost` 只能有 `initialize()` 的接线逻辑 + 几个转发方法。
-   真正的业务在 `ChatEngine` / `ConfigManager` / `CapabilityRegistry` / 各 adapter 里。
-   一旦发现 Host 里开始写业务逻辑，就是它正在变成新神类的信号，立刻把逻辑往下沉。
-
-7. **跨 Host→UI 边界的事件是 dataclass**：用 `RuntimeEvent`（及其子类型），
-   **不许再传裸 `{"event": ..., "data": ...}`**。
+平台重构 + 核心 turn 硬化（C0–C8）+ galgame 陪玩（Phase 0–9 / 路 B：看屏 watch、记忆写回 note、后台总结、履历桥、崩溃恢复、UI 接线）+ 架构硬化 P0–P3（守门墙扩域、生产链多轮工具轮、song 工具化 sing_song、主动开口 turn 发起器）已全部完成。当前确定的下一步：**P0b 配置统一**（见 §2「配置体系现状」，尚未实施）。
 
 ---
 
-## 每个任务的「完成定义」（Definition of Done）
+## 1. 绝对铁律（违反任何一条都算破坏架构）
 
-每次 session 收尾前，逐条自检：
+1. **`spica/` 不准 import Qt / PySide / shiboken。** 核心层必须 UI 无关。所有 Qt 代码只能待在 `ui/`。截图预览、框选、确认窗口等也只能在 `ui/`。
+2. **跨 Host → UI 只能走 `RuntimeEvent` dataclass。** 后端线程**不准**直接调用 Qt widget。后端只 emit dataclass / event，UI 主线程消费后更新界面。galgame 的新事件同样遵守（见 §4）。
+3. **唯一对话路径是 `run_turn`。不准另起第二套 LLM prompt / 回答链路。** galgame 的所有问答仍然走 `ChatEngine → run_turn`，通过 gated stage 注入游戏上下文（见 §4）。**主动开口（系统 turn）同样：`ChatEngine.stream_system_turn` → run_turn（`interaction_mode="system"`，该模式下工具供给硬关断防自激）。不准为「她主动说话」另起播报通道或第二套 prompt。**
+4. **业务代码不准 `os.getenv`。** 只有 `config/manager.py` 和 `secrets.py` 能读环境变量，其他地方一律通过注入的 config 拿配置。
+5. **Host 必须薄。** `AppHost` 只做组装与生命周期，不放业务逻辑。
+6. **测试命令固定为 `python -m pytest tests -q`。** 不准用裸 `pytest`——它会递归扫到 vendored 的 GPT-SoVITS runtime 直接崩。
+7. **新能力走现有 ports / adapters / registry 风格。** 不准另起 `spica/platform/` 这种和现仓库冲突的平行目录树。平台差异藏在 adapter 后面。
+8. **galgame 记忆用独立 scope，不污染现有 `MemoryScope`。** 角色长期记忆沿用现有 `MemoryPort` / `MemoryScope`，galgame 只读取，不重造一套（见 §4）。
+9. **操作类（有副作用的）工具不准让 LLM 直接 exec / eval——动作必须经专用 port 的白名单动作面，执行权限在 host 闭包。** 启动游戏走 `GameLauncherPort`，唱歌走 sing_song 的 host 闭包，皆是此例。
+10. **进程入口（`qt_overlay.main()` / 任何新 main）必须在构造任何对象之前先灌注环境（`load_secrets()`）。** 构造期读 env 而灌注在后，会静默拿到空值并永久定格——song 意图分类器曾因此从未启用过（F19，启动时的 "DEEPSEEK fallback disabled" 警告就是它）。
 
-- [ ] 本阶段「Acceptance」里列的点全部满足
-- [ ] `python -m pytest tests` 全绿（含本阶段新增/已有的 golden 测试）
-- [ ] `python webui_qt.py` 能启动（必要时人工确认，或留 smoke test）
-- [ ] Qt 隔离守卫测试绿（Phase 2 之后存在）
-- [ ] 没有引入新的 `os.getenv()` 到业务代码（Phase 3 之后有 grep 测试盯着）
-- [ ] 改动范围没越出本阶段「In scope」声明的文件；越界的话停下来报告，不要自作主张扩大
-- [ ] 写了 commit message，说明这是哪个 Phase 的哪一步
+> 这些规则带「为什么」是为了防止被合理化绕过：看起来更省事的捷径（比如让 OCR 线程直接刷 UI、或让 galgame 自己拼 prompt 调 LLM）正是这些铁律要拦的东西。
 
 ---
 
-## 不要做的事
+## 2. 架构地图
 
-- 不要一上来重写成 React / Tauri / Web。现在是 PySide，先把 Python 内部边界拆清楚。换前端是最后一层。
-- 不要先做大插件系统。先做 adapter registry。插件是开放能力的最后一层，不是用来救内部混乱的。
-- 不要继续往 `agent/streaming_pipeline.py` 里加功能。它是核心高危区，只能拆、不能塞。
-- 不要让 UI 直接知道 GPT-SoVITS / OpenAI / SQLite / VisualDiffService 的细节。
-  UI 只应该知道：「开始聊天」「停止」「切角色」「播放状态变了」「立绘变了」。
-- 不要把 `MemoryPort` 设计成普通 RAG/KV 接口（只有同步 `retrieve()`/`upsert()`）。长期记忆、睡眠整理、
-  角色文件系统、重要经历归档要作为**后续扩展点预留**（统一可选钩子 + 能力探测），Phase 5 只给最小接口，详见 `docs/REFACTOR_PLAN.md` Phase 5。
-- 不要把竞品（Shinsekai）的实现细节当成事实写进代码注释或文档。它的**方向**值得参考，
-  但很多被传述的细节（React 设置中心、YAML DAG workflow 等）**未经核实**，可能不准（见 `docs/REFACTOR_PLAN.md` §0）。
+### 现有平台（不要重写，要在其上扩展）
 
-## 配套计划：核心 turn 硬化（完成）
+| 关注点 | 位置 |
+| --- | --- |
+| 组装根 / 生命周期 | `spica/host/app_host.py` → `AppHost.initialize()` |
+| 对话核心 | `spica/core/chat_engine.py` |
+| 流式编排 | `spica/runtime/orchestrator.py` |
+| **唯一 turn emit 路径** | `spica/runtime/turn.py::run_turn` |
+| 类型化上下文 | `spica/runtime/context.py::TurnContext` |
+| 注入依赖 | `spica/runtime/deps.py::TurnDeps` |
+| turn stages | `spica/runtime/stages.py` |
+| prompt 组装 | `spica/conversation/prompt_builder.py::build_spica_prompt`（`[LONG_TERM_MEMORY]` 段在此） |
+| 记忆端口 | `spica/ports/memory.py` → `MemoryScope(character_id, user_id, conversation_id)` + `MemoryPort` |
+| 记忆 adapter | `spica/adapters/memory/sqlite.py`（按 `character_id::conversation_id` 命名空间隔离） |
+| recent memory | `memory/recent.py`（内存 deque，按裸 conversation_id） |
+| 能力注册表 | `spica/plugins/registry.py::CapabilityRegistry` |
+| 工具轮（流式生产链） | `spica/runtime/tool_round.py`（probe → 执行 → followup；`chainable` 工具进 round 2..max_tool_rounds 多轮循环，超限优雅强制收尾不报错） |
+| 主动开口（turn 发起器） | `spica/core/proactive.py`（`ProactiveTurnRequest` / `ProactiveTurnArbiter`，模式无关）+ `ChatEngine.stream_system_turn`；UI 消费 `StreamKind.SYSTEM` |
+| 内置工具（registry 注册） | `inspect_screen`(read) / `watch_game_screen`(read) / `note_game_observation`(write) / `sing_song`(act)，全部「工具垫片 + host 闭包持权限」形制 |
+| song 事件 | `spica/core/song_events.py::SongRequestEvent`（host 闭包 emit → RuntimeEvent 桥 → UI 起 SongWorker） |
+| 兼容同步链（冻结） | `spica/runtime/sync_chain.py`：**纯 golden 锚，生产零调用方，不准长新能力**（生产同步入口是 `run_voice` = run_turn + fold） |
+| 屏幕识别工具链 | `agent_tools/function_tools/screen/`（`inspect_screen` ToolPort：本地截图 + RapidOCR + Moondream，**绝不上传**） |
+| 手动框选截图 UI | `ui/widgets/screenshot_selector.py::ScreenshotSelectionOverlay` + `ui/workers/screenshot_worker.py` |
+| 活体诊断器 | `scripts/verify_watch_chain.py`（工具不触发先跑它）、`scripts/diag_ocr_providers.py`（疑 OCR 回落 CPU 先跑它） |
 
-docs/REFACTOR_PLAN_CORE.md 的 C0–C8 已全部落地——turn 是承重抽象，下面的「核心 turn 不变量」
-**全部「已生效」且有守卫测试**。改这些不变量前先确认对应守卫测试；新增功能基本不再碰主轴。
+### galgame 子系统（已落地的实际布局）
 
-### 核心 turn 不变量
-- [已生效] screen 工具必须保留 is_screen_intent_explicit 意图门，且本地分析、绝不上传截图。
-- [已生效] 手动截图是 attachment（用户已决定“看这张”），不是 tool；不得改成由模型决定是否分析用户已附的图。
-- [已生效] 有序释放只能走 Sequencer；不许出现手动 index 重排字典。
-- [已生效] 只有 run_turn / stream_answer 能产出 RuntimeEvent；其余 stage 是 (ctx, services, deps)->ctx 的纯转换（services 是过渡载体，C5/C6 退场），返回 ctx、不许自己 emit。守卫：转换层（spica/conversation/ + spica/runtime/stages.py）不许 import spica.core.events（N1-final，tests/test_layering.py）。
-- [已生效] 并发只能走注入的 ExecStrategy；业务 stage 内不许 new ThreadPoolExecutor。
-- [已生效] 运行时核心（spica/runtime/）不许出现 dict 配置或 client+adapter 双字段兜底；只用 AppConfig + 已解析 port。唯一例外是 deps.py 桥（legacy services → typed deps）。（C4 已落地：stages 读 deps.config / deps.llm / deps.memory，agent/ 已删。）
-- [已生效] spica 不许 import agent（agent/ 已删；agent_tools 是独立包，允许）。守卫：tests/test_layering.py（N3-layer）。
-- [已生效] turn/stage 编排层的计时/日志只能走注入的 TurnObserver（span/mark/event）；stage 内不许直接 log_timing。observer 的 sink 就是 ctx.timing（done.timing 不变）。唯一包 log_timing 的是 spica/runtime/observer.py；adapter（LLM/TTS/screen）内部低层诊断日志不在此限。守卫：tests/test_no_log_timing.py（N4-observe）。
-- [已生效] 长期记忆 commit 走注入的 JobRunner（deps.jobs.submit），不堵 hot path；**recent_memory append 仍同步、在 done 前完成**（下一轮 recent context 要用，绝不后台化）。commit 失败只进 ctx.metadata，不碰事件流。流式注 ThreadJobRunner（done 后 drain），同步路径用 InlineJobRunner。守卫：tests/test_memory_commit.py + test_streaming_pipeline.py::StreamingMemoryJobTest（N4-memory）。
-- [已生效] inspect_screen 是 ToolPort，由 CapabilityRegistry 注册；运行时经 registry-backed ToolSet（deps.tools）解析，不再读静态 TOOL_SCHEMAS（生产用 host registry；测试适配 services 注入的 tool 表）。意图门 is_screen_intent_explicit + 本地隐私保留（N0，tool 层仍做防御性二次校验）；手动截图仍是 attachment、不走 tool（N0b）；tool 与 attachment 共享同一 analyze 引擎（ScreenAnalysisPort 包 analyze_screen_image_local）。守卫：tests/test_no_static_tool_schemas.py（N5）+ test_screen_port.py。
+```
+spica/ports/
+  game_launcher.py / window_locator.py / screen_capture.py / ocr.py / game_memory.py
+
+spica/adapters/
+  game_launcher/ window_locator/ screen_capture/ ocr/ game_memory/
+  tools/watch_game_screen.py     # 看屏工具（绑定窗口截图 + Moondream）
+  tools/note_game_observation.py # 记忆写回工具（对话确认的观察 → CompanionBeat）
+  tools/sing_song.py             # 点歌工具（B2，第一个操作类工具）
+
+spica/galgame/                   # domain / session 层（Qt-free）
+  models.py session.py text_stream.py summarizer.py ocr_loop.py
+  companion_controller.py binding.py history.py ocr_calibration.py
+  ocr_region.py window_match.py manual.py
+  # 注：早期规划的 choices.py / commands.py 从未单独落地——choice 逻辑长在
+  # session.py 内，command intent 已随 B2（song 工具化）一并消亡。
+
+ui/                              # galgame 框选 / 校准 / 状态 chip / CompanionActionWorker
+```
+
+### 工具系统现状（已实现的真实状态）
+
+- registry `register_tool` 四维元数据：`available`（状态供给谓词，如 watch/note 仅陪玩态供给）、`intent_gated`（词表**供给预筛**——B1 教训：词表只决定「这轮是否把工具给 LLM 看」，绝不劫持/吞消息）、`chainable`（P1：True 才进多轮循环，现有工具全 False 单发）、`effect`（"read"|"write"|"act" 三值足迹分类，`tools.run` 执行日志带标签）。
+- 操作类工具纪律（铁律 #9）：动作经专用 port 白名单动作面、执行权限在 host 闭包、工具是纯转发垫片、失败以 ToolError 信封返回不抛崩 turn——`GameLauncherPort`/note/sing_song 为实例，细则见 `sing_song.py` / `registry.py` 注释。
+- 系统 turn（`interaction_mode="system"`）工具供给硬关断（防自激，见铁律 #3）。
+- followup 压缩两层：工具自声明 `compact_output`（inspect 注册了历史压缩器）+ 8000 字符头尾截断兜底。
+
+### 配置体系现状（P0b 待做，**尚未实施**）
+
+现状是多套载体并存：typed config（`AppConfig`，名义权威，`data/config/app.yaml` 文件目前不存在 = 纯默认值 + env 覆盖）、`xiaosan.env`（事实中心，由 `load_secrets()` 在 main 入口灌注——铁律 #10）、`config/screen_vision_config.json` + `SPICA_SCREEN_*` env（screen 工具平行配置，在 `test_no_getenv` 临时白名单记账）、`data/config/{tts,visual,plugins}.yaml`（各自私有 loader）、`song_config.json`（包内）、`ui/overlay_config.json`（UI 偏好）。**P0b 计划**：收敛为三载体（app.yaml + xiaosan.env + overlay_config.json），env 读取全部归 `manager.py`/`secrets.py`，临时白名单清零。在 P0b 完成前，**不要在文档或代码注释里把「配置已统一」写成既成事实**；新增配置一律走 typed config，不准再开新的 env 直读。
+
+---
+
+## 3. 唯一对话路径（最常被破坏，单列）
+
+任何需要 Spica 开口回复的地方，都必须走：
+
+```
+用户发起:  ChatEngine.stream_voice / run_voice → run_turn → runtime stages → build_prompt → LLM → RuntimeEvent → UI
+系统发起:  域事件 → ProactiveTurnArbiter(drop_if_busy) → ChatEngine.stream_system_turn
+           → 同一条 run_turn（interaction_mode="system"，工具供给硬关断）→ 同一条播放管线
+```
+
+song（B2 后）的正确形态：点歌经主 LLM 的 `sing_song` function call（前置劫持/意图路由/第二 LLM 分类器已全部删除）；唯一残余的前置规则是**播放态控制词快路径**（暂停/继续/停止/重唱，仅 song 流程活跃时生效）；唱完播报走上面的系统发起路径。
+
+galgame 的正确做法：
+
+- `GalgameCompanionSession` 负责 session 状态、OCR loop、stable line、buffer、进度状态、游戏记忆读写、选项事件。
+- 需要回复时，**仍然调用 `ChatEngine`、仍然走 `run_turn`**，通过新增的 gated stage `retrieve_game_context_node` 把游戏上下文注入 prompt。
+- **禁止**：galgame 自己拼 prompt、自己调 LLM、为判断「是否注入游戏上下文」单独跑一次 LLM 分类（那等于第二条 LLM 路径）。gate 只能用显式 `interaction_mode` / `conversation_id` 命名空间 / active session / command intent / 关键词启发式。
+
+---
+
+## 4. galgame 子系统核心规则（详见 PLAN，这里是必记要点）
+
+- **唯一状态 owner = `GalgameCompanionSession`。** session 活状态（FSM state、stable_current_line、未总结行 id、窗口绑定等）只有它能改。外部只能通过 `start/pause/resume/end/on_ocr_result/on_window_lost/on_choice_detected/on_user_reported_choice/on_summary_finished` 这些方法提交事件。
+- **OCR loop 串行，不准重叠。** 用「完成后等 1 秒」模型，不是固定 tick 叠加。RapidOCR 推理可能 >1 秒且未必线程安全；同一 adapter 实例用锁或单 worker 队列。
+- **总结 / 问答读不可变 snapshot，不碰可变 buffer。** 后台总结启动时切出 `source_line_ids` 快照；问答读 committed 历史快照 + 由 owner 原子读一次当前 `pending_current`。禁止总结任务持有可变 buffer 引用、禁止 `run_turn` 直接读写 session 内部 list。
+- **截图边界（隐私）：** v1 **不承诺**离屏窗口捕获。只在「游戏窗口可见 + 未被非 Spica 窗口遮挡 + Spica overlay 没盖住 OCR 区域 + 窗口可可靠识别」时才 OCR；任一条件破坏立即暂停并提示，绝不误截其他应用。v1 建议游戏用**窗口化 / 无边框窗口化**，不承诺独占全屏体验。
+- **四类记忆分清：** ① 角色关系记忆 = 现有 `MemoryScope`（只读/复用，不重造）；② 游戏档案 `GameProfile`（启动/窗口/OCR 配置，按 `game_id`）；③ 剧情进度（`GameProgressState` / `StorySummary` / `StoryLine` 等，客观事实）；④ 陪玩共同记忆 `CompanionBeat`（你和 Spica 一起玩形成的主观经历，绑 `character_id + user_id + game_id`）。
+- **OCR / screen 模型不双加载。** `OCRPort` 复用现有 RapidOCR 初始化；选项识别用现有 VLM 定位 + RapidOCR 抽字，**不让描述型 VLM 直接生成精确选项文字**，不把整帧 OCR 当主路径。
+- **语音输入 vs OCR 输入分流：** 用户语音/文字 → `run_turn` 或 command intent；OCR 文本 → `GalgameCompanionSession` 的 text stream，**绝不**直接变成用户消息。
+- **OCR 剧情文本不写进 ChatEngine recent memory**，否则 recent memory 会爆并污染普通聊天。只有「用户 ↔ Spica 的问答 turn」写入对应 conversation_id 的 recent memory。
+
+---
+
+## 5. 怎么干活
+
+1. **先出计划，不要先改代码。** 进入实现前先按 `GALGAME_COMPANION_PLAN.md` §「Phase 0」输出：ports/adapters 列表、session 边界、并发模型、`run_turn` 注入点、UI 事件通道、状态机、FSM↔PlaySession 映射、数据模型、测试计划。
+2. **先手喂文本验证读路，再接 OCR。** 顺序是先把「游戏记忆 → prompt 注入 → `run_turn` 回复」这条链路用手动喂文本跑通（Phase 2/3），最后才接最脏最飘的 OCR（Phase 7）。不要倒过来。
+3. **改任何代码前，先说清楚将修改哪些文件、不会碰哪些边界。** 尤其不要在没说明的情况下动 `run_turn` / `ChatEngine` / `prompt_builder` / 现有 `MemoryPort`。
+4. **每个改动后跑 `python -m pytest tests -q`。** 非确定性部分（OCR 去重、gated stage）用 golden frames / mock / 手喂数据测，不依赖真游戏。
+5. **Phase 0 必须先回答 PLAN 里列出的开放问题**——特别是「进入 galgame 专属 conversation_id 后，现有 long-term retrieve 是否还能取到 Spica 平时关于麦的长期记忆」这个耦合点。**这要靠读 `adapters/memory/sqlite.py` 的真实 scope 逻辑回答，不准凭猜。**
+
+---
+
+## 6. 测试
+
+- 命令：`python -m pytest tests -q`（永远不要裸 `pytest`）。
+- 必测（不接真游戏）：模型序列化、conversation_id 生成、stable line 去重、`pending_current → committed` 转换、buffer = 未总结 committed 行、summary snapshot 不含 pending_current 也不含快照后新行、ChoiceEvent 两条路径、CompanionBeat 注入与隔离、FSM↔PlaySession 映射、choice_checking drain OCR、总结失败折叠。
+- 手动验收（不强制自动化）：真实 Bottles 启动、真实 Wayland 截图、真实 VLM 选项定位质量、真实 R18 剧情总结质量。
+
+---
+
+## 7. 详细规格
+
+完整数据模型、状态机、并发细节、phase 拆解、成功标准、开放问题 → **见 `GALGAME_COMPANION_PLAN.md`**。本文件与该规格冲突时，以 PLAN 中明确写出的细节为准；但本文件 §1 的铁律不可被覆盖。

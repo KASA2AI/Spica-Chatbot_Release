@@ -242,9 +242,15 @@ def screen_observation_context_for_next_turn(observation: dict[str, Any] | None)
     target = str(request.get("target") or capture.get("captured_scope") or "").strip()
     source = str(capture.get("source") or "").strip()
     prefix = " / ".join(part for part in (target, source) if part)
+    # Staleness self-identification (stale-frame fix, plan d-a): by the time this
+    # reaches the NEXT turn it is by definition a previous-turn snapshot -- say so,
+    # so the LLM answers follow-ups about THAT view from it, but re-captures when
+    # asked about the CURRENT screen. The observation itself stays in context
+    # (特判一 "follow-ups don't forget" intact -- it only self-identifies as old).
+    stale_note = "[上一轮查看的画面，非当前画面] "
     if prefix:
-        return _compact_text(f"{prefix}: {context}", 520)
-    return _compact_text(context, 520)
+        return _compact_text(f"{stale_note}{prefix}: {context}", 520)
+    return _compact_text(f"{stale_note}{context}", 520)
 
 
 def _deep_update(base: dict[str, Any], updates: dict[str, Any]) -> None:

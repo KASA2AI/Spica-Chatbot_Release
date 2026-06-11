@@ -62,30 +62,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "normalize_peak": 0.95,
         "output_subtype": "PCM_16",
     },
-    "intent": {
-        "enabled": True,
-        "thresholds": {
-            "direct_execute": 0.9,
-            "confirm": 0.7,
-            "llm_fallback_min": 0.45,
-            "llm_fallback_max": 0.75,
-        },
-        "llm_fallback": {
-            "enabled": True,
-            "provider": "openai_compatible",
-            "model": "gpt-4.1-nano",
-            "api_key_env": "SONG_INTENT_OPENAI_API_KEY",
-            "base_url_env": "SONG_INTENT_OPENAI_BASE_URL",
-            "timeout_sec": 3,
-            "max_tokens": 180,
-            "temperature": 0,
-        },
-        "safety": {
-            "never_execute_without_song_object": True,
-            "llm_can_only_classify": True,
-            "llm_can_start_pipeline": False,
-        },
-    },
+    # B2 (P2): the "intent" section (thresholds / llm_fallback / decorative
+    # safety switches) died with the pre-chat hijack stack -- singing is now the
+    # main LLM's sing_song function call; only the control fast path remains.
 }
 
 

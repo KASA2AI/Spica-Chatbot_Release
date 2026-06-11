@@ -22,11 +22,14 @@ Pure: no ``agent`` import (``agent_tools`` is the tools package), Qt-free (CLAUD
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from agent_tools.function_tools import tool_error, tool_schemas_for_user_text, tool_success
 from agent_tools.function_tools.screen.analyzer import clear_last_screen_analysis_metadata
 from agent_tools.function_tools.screen.schema import ScreenToolError
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -40,6 +43,18 @@ class ToolSet(Protocol):
     def run(self, name: str, arguments: str) -> str:
         """Run tool ``name`` with JSON ``arguments``, returning the tool result."""
         ...
+
+
+def _schema_tool_name(schema: dict[str, Any]) -> str:
+    """Tool name from a flat or OpenAI-nested schema (mirrors the registry's
+    resolution; kept local so the runtime does not import a private helper)."""
+    name = schema.get("name")
+    if isinstance(name, str):
+        return name
+    function = schema.get("function")
+    if isinstance(function, dict) and isinstance(function.get("name"), str):
+        return function["name"]
+    return ""
 
 
 class _FunctionTableRegistry:
@@ -73,13 +88,46 @@ class RegistryToolSet:
     ) -> "RegistryToolSet":
         return cls(_FunctionTableRegistry(schemas, functions))
 
+    def chainable(self, name: str) -> bool:
+        """P1: whether the streaming tool round may loop after this tool runs.
+        Registries without the query (legacy/function-table) -> False, which keeps
+        every pre-P1 tool on the byte-identical single-round path."""
+        query = getattr(self._registry, "tool_chainable", None)
+        return bool(query(name)) if callable(query) else False
+
+    def effect(self, name: str) -> str:
+        """P2: the tool's declared footprint tier (read | write | act)."""
+        query = getattr(self._registry, "tool_effect", None)
+        return str(query(name)) if callable(query) else "read"
+
+    def compact_output(self, name: str) -> Callable[[str], str] | None:
+        """P1: the tool's declared followup-prompt compactor (None for most)."""
+        query = getattr(self._registry, "tool_compact_output", None)
+        return query(name) if callable(query) else None
+
     def schemas_for_user_text(self, user_text: str) -> list[dict[str, Any]]:
-        return tool_schemas_for_user_text(user_text, self._registry.tool_schemas())
+        # Trigger-layer split: the registry already state-filters (``available``
+        # predicates); HERE intent-gated tools additionally pass the router
+        # wordlist pre-filter, while ungated tools are offered as-is -- "call or
+        # not" is the LLM's structured decision. Registries without the
+        # ``tool_intent_gated`` query (legacy _FunctionTableRegistry / test fakes)
+        # default to gated -> byte-identical pre-refactor behaviour.
+        gated_query = getattr(self._registry, "tool_intent_gated", None)
+        gated: list[dict[str, Any]] = []
+        ungated: list[dict[str, Any]] = []
+        for schema in self._registry.tool_schemas():
+            if gated_query is not None and not gated_query(_schema_tool_name(schema)):
+                ungated.append(schema)
+            else:
+                gated.append(schema)
+        return tool_schemas_for_user_text(user_text, gated) + ungated
 
     def run(self, name: str, arguments: str) -> str:
         handler = self._registry.tool_handler(name)
         if handler is None:
             return tool_error("UNKNOWN_TOOL", f"未知工具：{name}")
+        # P2 audit line: every execution is visible with its footprint tier.
+        logger.info("tool run: %s (effect=%s)", name, self.effect(name))
         try:
             parsed_args: dict[str, Any] = json.loads(arguments or "{}")
         except json.JSONDecodeError as exc:

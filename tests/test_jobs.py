@@ -54,6 +54,16 @@ class ThreadJobRunnerTest(unittest.TestCase):
         runner.drain()
         self.assertEqual(runner._threads, [])
 
+    def test_failed_job_is_logged_not_silent(self):
+        # F7 (P0a): a failing fire-and-forget job (the long-term memory commit)
+        # must reach the logging system, not just a bare-thread stderr traceback.
+        runner = ThreadJobRunner()
+        with self.assertLogs("spica.runtime.jobs", level="ERROR") as logs:
+            runner.submit(lambda: 1 / 0)
+            runner.drain(timeout=2.0)
+        self.assertTrue(any("background job failed" in line for line in logs.output))
+        self.assertTrue(any("ZeroDivisionError" in line for line in logs.output))
+
 
 if __name__ == "__main__":
     unittest.main()

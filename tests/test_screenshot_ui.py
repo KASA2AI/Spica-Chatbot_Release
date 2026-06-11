@@ -83,3 +83,46 @@ def test_chat_stream_status_inspecting_screen_text(qapp):
     )
 
     assert controller.typewriter_controller.calls[-1]["text"] == "正在查看屏幕..."
+
+
+def test_main_primes_env_before_any_construction():
+    """F19 (CLAUDE.md #10): main() must prime the environment (load_secrets ->
+    dotenv) BEFORE constructing anything. SongController's intent classifier is
+    built inside OverlayWindow.__init__ and reads env at construction -- when
+    priming happened later (inside AppHost.initialize), it read an un-primed
+    environment and stayed disabled forever."""
+    import inspect
+
+    import ui.qt_overlay as qt_overlay_module
+
+    source = inspect.getsource(qt_overlay_module.main)
+    prime = source.index("load_secrets()")
+    qapp_pos = source.index("QApplication(")
+    window_pos = source.index("OverlayWindow(")
+    assert prime < qapp_pos < window_pos
+
+
+def test_chat_stream_status_watch_game_screen_text(qapp):
+    class FakeTypewriter:
+        def __init__(self):
+            self.calls = []
+
+        def start(self, text, interval_ms=0, **kwargs):
+            self.calls.append({"text": text, "interval_ms": interval_ms, **kwargs})
+
+    controller = ChatStreamController.__new__(ChatStreamController)
+    controller.playback_active = False
+    controller.typewriter_controller = FakeTypewriter()
+
+    ChatStreamController._handle_stream_status(
+        controller,
+        {"state": "tools", "message": "tool:watch_game_screen"},
+    )
+    assert controller.typewriter_controller.calls[-1]["text"] == "Spica正在尸检屏幕..."
+
+    # Other tools keep the generic fallback text.
+    ChatStreamController._handle_stream_status(
+        controller,
+        {"state": "tools", "message": "tool:other_tool"},
+    )
+    assert controller.typewriter_controller.calls[-1]["text"] == "正在处理工具..."

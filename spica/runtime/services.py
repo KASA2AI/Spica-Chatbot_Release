@@ -26,6 +26,18 @@ class AgentServices:
     # keep working unchanged.
     llm_adapter: Any | None = None
     memory_adapter: Any | None = None
+    # Phase 3: galgame committed-memory adapter (GameMemoryPort). Host wires it;
+    # tests/legacy callers leave it None -> deps.game_memory None -> gated stage
+    # injects nothing.
+    game_memory_adapter: Any | None = None
+    # Phase 5: galgame launch + window-binding adapters. Used by GameBinder (NOT by
+    # the turn), so they live on services + the host factory only -- never in deps.
+    game_launcher_adapter: Any | None = None
+    window_locator_adapter: Any | None = None
+    # Phase 6: galgame screen-capture + OCR adapters. Used by the OCR calibrator
+    # (NOT by the turn) -> services + host factory only, never in deps.
+    screen_capture_adapter: Any | None = None
+    ocr_adapter: Any | None = None
     # C7: the host's CapabilityRegistry (set after built-in tools register). When
     # present the turn resolves tools from it (registry-backed ToolSet); tests leave
     # it None and the ToolSet adapts tool_schemas / tool_functions instead.

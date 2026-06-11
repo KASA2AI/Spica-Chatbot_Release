@@ -51,10 +51,15 @@ def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> Non
 
     # Long-term commit is fire-and-forget via the injected JobRunner (C6).
     interlocutor = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
+    # §27① write-side symmetry (stage 2): commit under the same effective id the
+    # retrieve node reads (stages.retrieve_long_term_memory_node), so a galgame
+    # turn's extracted memories land in the caller's ORIGINAL conversation scope,
+    # not the galgame namespace. Plain chat turns leave memory_conversation_id
+    # unset -> effective == the raw conversation_id -> byte-identical to before.
     scope = MemoryScope(
         character_id=str(deps.config.character.character_id or "spica"),
         user_id=interlocutor,
-        conversation_id=ctx.request.conversation_id,
+        conversation_id=ctx.request.effective_memory_conversation_id,
     )
     meta = {
         "interlocutor_name": interlocutor,

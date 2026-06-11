@@ -21,22 +21,46 @@ The host exposes two narrow surfaces rather than one fat object:
 
 from __future__ import annotations
 
+import logging
+import uuid
 from typing import Any, Callable
 
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
 from spica.core.chat_engine import ChatEngine
+from spica.core.companion_events import CompanionEventSink, noop_companion_sink
 from spica.conversation.character_loader import DEFAULT_SPICA_SKILL_DIR
 from spica.core.character import load_character_package
+from spica.adapters.memory.sqlite import scoped_conversation_id
+from spica.galgame.binding import GameBinder
+from spica.galgame.companion_controller import GalgameCompanionController
+from spica.galgame.history import compose_play_history
+from spica.galgame.ocr_calibration import GalgameOcrCalibrator
+from spica.galgame.ocr_loop import OcrStreamRunner
+from spica.galgame.session import GalgameCompanionSession
+from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
+from spica.runtime.context import GameTurnBinding
+from spica.runtime.jobs import ThreadJobRunner
 from spica.host.agent_assembly import build_agent_services
 from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
 from spica.host.warmup import run_warmup
 from spica.plugins.host import PluginHost
 from spica.plugins.registry import CapabilityRegistry
+from spica.adapters.screen import LocalMoondreamScreenAnalysis
+from spica.adapters.tools.note_game_observation import NoteGameObservationTool
+from spica.adapters.tools.sing_song import SingSongTool
+from spica.adapters.tools.watch_game_screen import WatchGameScreenTool
+from spica.core.song_events import SongRequestEvent
+from spica.galgame.models import CompanionBeat, utc_now_iso
+from agent_tools.function_tools.screen.schema import ScreenToolError
+from agent_tools.function_tools.song.models import SongRequest
+from agent_tools.function_tools.song.netease import search_best_song
 from spica.adapters.visual import build_spica_visual
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, load_tts_config
+
+logger = logging.getLogger(__name__)
 
 
 class AppHost:
@@ -51,9 +75,58 @@ class AppHost:
         self.services: Any | None = None
         self.character_package: Any | None = None
         self.chat_engine: Any | None = None
+        # galgame companion event sink (Phase 4). Default no-op so the host runs
+        # headless; the UI injects a Qt-free bridge sink via attach_companion_sink.
+        self.companion_sink: CompanionEventSink = noop_companion_sink
+        # Path B stage 2: the process-wide companion controller singleton, built
+        # lazily by companion_controller(); _companion_game_binding reads it.
+        self._companion_controller: GalgameCompanionController | None = None
+        # B2: the sing_song closure's search seam (tests inject a fake).
+        self._song_search = search_best_song
         self.tts_provider: str = "gptsovits_current"
         self.registry = CapabilityRegistry()
         register_builtin_adapters(self.registry)
+        # Phase 9: the companion watch tool. Registered HERE (not in builtins)
+        # because it closes over this host -- the LAZY provider resolves the
+        # companion controller + adapters at RUN time (adapters only exist after
+        # initialize(); not playing -> None -> NO_ACTIVE_COMPANION tool error).
+        # Trigger layer: offered by STATE (companion play active), not by wordlist
+        # -- intent_gated=False, and the LLM decides the call via the description.
+        watch_tool = WatchGameScreenTool(LocalMoondreamScreenAnalysis(), self._companion_watch_context)
+        self.registry.register_tool(
+            watch_tool.schema(),
+            watch_tool.run,
+            available=lambda: self._companion_watch_context() is not None,
+            intent_gated=False,
+        )
+        # Phase 9 step 2: write-back. note_game_observation stores a
+        # dialogue-confirmed observation as a CompanionBeat in the GAME memory.
+        # Same trigger shape as watch (state supply, the LLM decides the call);
+        # the tool is a pure write shim -- beat construction and persistence
+        # live in the host closure (_record_game_observation), so write
+        # authority never leaves the host (CLAUDE.md #8).
+        note_tool = NoteGameObservationTool(
+            self._companion_game_binding, self._record_game_observation
+        )
+        self.registry.register_tool(
+            note_tool.schema(),
+            note_tool.run,
+            available=lambda: self._companion_game_binding() is not None,
+            intent_gated=False,
+            effect="write",  # P2: writes own-domain (game) memory
+        )
+        # B2 (P2): sing_song -- the first "act" tool. Supply is wordlist-PRE-
+        # FILTERED (intent_gated=True + the song terms in the router): the B1
+        # lesson applied correctly -- the wordlist gates SUPPLY (miss = rephrase,
+        # false hit = one wasted probe), it never hijacks/swallows the message.
+        # The host closure (_request_song) holds all authority; the tool is a shim.
+        sing_tool = SingSongTool(self._request_song)
+        self.registry.register_tool(
+            sing_tool.schema(),
+            sing_tool.run,
+            intent_gated=True,
+            effect="act",
+        )
         self.plugin_host = PluginHost(self.registry)
         self._management = ManagementSurface(
             registry=self.registry,
@@ -123,6 +196,10 @@ class AppHost:
             # ChatEngine is the conversation core (Phase 6D: SimpleAgent dissolved
             # into ChatEngine + spica/host/agent_assembly).
             self.chat_engine = ChatEngine(self.services, self.config)
+            # Stage 2: companion-play auto-injection. The provider is LAZY (reads
+            # the controller singleton at call time), so wiring order is free and a
+            # plain chat turn stays byte-identical while no companion play is active.
+            self.chat_engine.set_game_binding_provider(self._companion_game_binding)
         except Exception:
             if self.visual_tool is None:
                 try:
@@ -135,6 +212,243 @@ class AppHost:
     def conversation_surface(self) -> Any:
         """Entry point for the chat window: the ChatEngine (None before initialize)."""
         return self.chat_engine
+
+    def attach_companion_sink(self, sink: CompanionEventSink) -> None:
+        """Inject the galgame Host->UI event sink (Phase 4 seam).
+
+        ``spica/`` is Qt-free, so the concrete sink (a Qt bridge that marshals onto
+        the GUI thread) is created in ``ui/`` and injected down here. Sessions made
+        by ``new_companion_session`` after this call emit through it.
+        """
+        self.companion_sink = sink
+
+    def _new_summarizer(self) -> GalgameSummarizer | None:
+        # Summary LLM = config.galgame.summary_model, else the dialogue model (Phase 8),
+        # over the same resolved LLM adapter. None when no LLM is wired (tests).
+        if self.services is None or self.services.llm_adapter is None:
+            return None
+        summary_model = self.config.galgame.summary_model or self.config.llm.model
+        return GalgameSummarizer(self.services.llm_adapter, summary_model)
+
+    def new_companion_session(self) -> GalgameCompanionSession:
+        """Build a galgame companion session wired to the game-memory adapter, the
+        companion sink, a background ``ThreadJobRunner`` + the summarizer (Phase 8).
+        Requires ``initialize()`` first (provides the adapters)."""
+        return GalgameCompanionSession(
+            self.services.game_memory_adapter,
+            emit=self.companion_sink,
+            character_id=str(self.config.character.character_id or "spica"),
+            user_id=str(self.config.character.interlocutor_name or "麦"),
+            jobs=ThreadJobRunner(),
+            summarizer=self._new_summarizer(),
+            summary_trigger_chars=self.config.galgame.summary_trigger_chars,
+        )
+
+    def companion_controller(self) -> GalgameCompanionController:
+        """The process-wide companion controller (Path B stage 2) -- the ONE the
+        main program uses, built lazily via ``new_companion_controller()`` and
+        cached. The single-play guarantee = this singleton + ``start()``'s
+        already-started rejection. Requires ``initialize()`` first."""
+        if self._companion_controller is None:
+            self._companion_controller = self.new_companion_controller()
+        return self._companion_controller
+
+    def _companion_game_binding(self) -> GameTurnBinding | None:
+        """The provider wired into ChatEngine (stage 2): the active companion-turn
+        binding, or ``None`` (no controller yet / not playing) -> plain chat."""
+        controller = self._companion_controller
+        return controller.current_game_context() if controller is not None else None
+
+    def _companion_watch_context(self) -> tuple[str, str, Any, Any] | None:
+        """Lazy provider for the watch_game_screen tool (Phase 9): the live play's
+        (game_id, window_id, locator, capture), or ``None`` when not playing /
+        before initialize(). Reads the singleton WITHOUT building it."""
+        controller = self._companion_controller
+        if controller is None or self.services is None:
+            # Supply-chain diagnostic, DEBUG by default. Open riddle: the predicate
+            # is evaluated >=2x per turn (registry state filter + schemas_for_user_text)
+            # yet the real machine logged it only once at startup -- to chase it,
+            # logging.getLogger("spica.host.app_host").setLevel(logging.DEBUG).
+            logger.debug(
+                "watch context: None (controller built=%s, services ready=%s)",
+                controller is not None, self.services is not None,
+            )
+            return None
+        target = controller.current_watch_target()
+        if target is None:
+            logger.debug("watch context: None (controller built, no live play)")
+            return None
+        game_id, window_id = target
+        logger.debug("watch context: game_id=%s window_id=%s", game_id, window_id)
+        return (
+            game_id,
+            window_id,
+            self.services.window_locator_adapter,
+            self.services.screen_capture_adapter,
+        )
+
+    def new_companion_controller(self) -> GalgameCompanionController:
+        """Build the galgame companion controller (Path B) -- the start/stop
+        orchestration over session + OCR loop + summarizer, persisting to the REAL
+        game-memory adapter (spica_data/galgame.sqlite3). Requires ``initialize()``.
+        Builder used by demos/tests; the main program goes through the cached
+        ``companion_controller()`` singleton (stage 2)."""
+        return GalgameCompanionController(
+            self.services.game_memory_adapter,
+            self.services.screen_capture_adapter,
+            self.services.window_locator_adapter,
+            self.services.ocr_adapter,
+            summarizer=self._new_summarizer(),
+            emit=self.companion_sink,
+            record_history=self._record_play_history,  # B 方案: host 持写权限
+            character_id=str(self.config.character.character_id or "spica"),
+            user_id=str(self.config.character.interlocutor_name or "麦"),
+            summary_trigger_chars=self.config.galgame.summary_trigger_chars,
+            interval_seconds=self.config.galgame.ocr_interval_seconds,
+        )
+
+    def _request_song(self, query: str) -> dict[str, Any]:
+        """sing_song write closure (B2/P2, the first "act" tool). Resolve the song
+        NOW (sub-second netease search, so the turn's acknowledgment can NAME it),
+        hand the job to the UI via SongRequestEvent (RuntimeEvent sink -> bridge
+        Qt signal -> SongController starts the SongWorker), and return -- by the
+        time the followup streams, the song is already preparing in parallel.
+        ``self._song_search`` is the injection seam (tests swap in a fake)."""
+        request = SongRequest(query=query, title=None, artist=None, user_text=query)
+        try:
+            song = self._song_search(request)
+        except Exception as exc:  # noqa: BLE001 -- search failure = tool error envelope
+            raise ScreenToolError(
+                "SONG_NOT_FOUND", f"没有找到可以唱的歌：{query}"
+            ) from exc
+        self.companion_sink(
+            SongRequestEvent(query=query, title=song.title, artist=song.artist_text)
+        )
+        return {"title": song.title, "artist": song.artist_text}
+
+    # CompanionBeat content cap (Phase 9 step 2): a note is ONE summary-level
+    # sentence -- the [COMPANION_CONTEXT] section carries the 5 most recent
+    # beats, so an unclamped note could paste a whole story dump into prompts.
+    _GAME_OBSERVATION_MAX_CHARS = 200
+
+    def _record_game_observation(self, content: str) -> str:
+        """note_game_observation write closure (Phase 9 step 2): persist a
+        dialogue-confirmed observation as a CompanionBeat in the GAME memory
+        (spica_data/galgame.sqlite3) -- NEVER the character's long-term store
+        (CLAUDE.md #8; contrast _record_play_history below, which deliberately
+        writes the character store). source="spica" = recorded by her in
+        dialogue ("user" stays manual feed, "auto" reserved for future
+        non-dialogue writers); session_id=None in v1 (beats are retrieved by
+        game+user+character, never by session)."""
+        binding = self._companion_game_binding()
+        if binding is None:
+            # The tool checks first; this guards the stop()-raced window between
+            # the tool's check and this write (binding cleared FIRST on stop).
+            raise ScreenToolError(
+                "NO_ACTIVE_COMPANION", "当前没有正在陪玩的游戏，无法记录游戏观察。"
+            )
+        request = binding.game_context_request
+        beat = CompanionBeat(
+            beat_id=uuid.uuid4().hex,
+            game_id=request.game_id,
+            playthrough_id=request.playthrough_id or "default",
+            session_id=None,
+            type="shared_observation",
+            content=content[: self._GAME_OBSERVATION_MAX_CHARS],
+            source="spica",
+            created_at=utc_now_iso(),
+            scope={
+                "character_id": str(self.config.character.character_id or "spica"),
+                "user_id": str(self.config.character.interlocutor_name or "麦"),
+                "game_id": request.game_id,
+            },
+        )
+        return self.services.game_memory_adapter.add_companion_beat(beat)
+
+    def _record_play_history(self, game_id: str, card: str) -> None:
+        """Play-history bridge (B 方案, FINDINGS #15): upsert the card into the
+        character's DEFAULT-scope long-term memory so plain-chat retrieval finds
+        it. memory_key is the game -> one play of the same game OVERWRITES the
+        previous card (store.upsert_memory's explicit-key UPDATE semantics);
+        scope="relationship" renders as "スピカと麦" in the prompt."""
+        character_id = str(self.config.character.character_id or "spica")
+        self.services.memory_store.upsert_memory(
+            conversation_id=scoped_conversation_id(character_id, "default"),
+            scope="relationship",
+            content=card,
+            importance=0.85,  # high (survives pruning) but not pinned (no +2.0 retrieval floor)
+            memory_key=f"galgame_history:{game_id}",
+            memory_type="experience",
+            source="galgame_companion",
+        )
+
+    def recover_dangling_companion_sessions(self) -> list[str]:
+        """Crash recovery (Phase 8 / §12): 補總結 sessions left active/paused with no
+        ended_at, then mark them ended. The "ask the user to resume" UI is deferred.
+
+        B 方案 (FINDINGS #15): a recovered session never ran the normal stop() leg,
+        so its play-history card is written HERE (deduped per game). Best-effort."""
+        summarizer = self._new_summarizer()
+        if summarizer is None:
+            return []
+        game_memory = self.services.game_memory_adapter
+        dangling = {ps.session_id: ps for ps in game_memory.dangling_play_sessions()}
+        recovered = recover_dangling_sessions(game_memory, summarizer)
+        user_name = str(self.config.character.interlocutor_name or "麦")
+        seen_games: set[str] = set()
+        for session_id in recovered:
+            play_session = dangling.get(session_id)
+            if play_session is None or play_session.game_id in seen_games:
+                continue
+            seen_games.add(play_session.game_id)
+            try:
+                card = compose_play_history(
+                    game_memory, play_session.game_id, play_session.playthrough_id, user_name=user_name
+                )
+                if card:
+                    self._record_play_history(play_session.game_id, card)
+            except Exception as exc:  # noqa: BLE001 -- best-effort, never fail recovery
+                logger.warning(
+                    "play history record failed for recovered game %s: %s",
+                    play_session.game_id, exc, exc_info=True,
+                )
+        return recovered
+
+    def new_game_binder(self, session: GalgameCompanionSession | None = None) -> GameBinder:
+        """Build a launch + window-binding coordinator (Phase 5) wired to the
+        launcher / locator / game-memory adapters and the companion sink. The
+        ``session`` is the one this binder will flip to ``game_launched``;
+        ``None`` (stage 3) = selection/persistence-only mode -- the companion
+        controller's own start() does the binding afterwards."""
+        return GameBinder(
+            self.services.game_launcher_adapter,
+            self.services.window_locator_adapter,
+            self.services.game_memory_adapter,
+            session,
+            emit=self.companion_sink,
+        )
+
+    def new_ocr_stream_runner(self, session: GalgameCompanionSession) -> OcrStreamRunner:
+        """Build the background OCR text-stream runner (Phase 7) for an active play
+        session, wired to the capture / locator / OCR adapters. Caller starts it with
+        the resolved window id + calibrated region ratios."""
+        return OcrStreamRunner(
+            session,
+            self.services.screen_capture_adapter,
+            self.services.window_locator_adapter,
+            self.services.ocr_adapter,
+        )
+
+    def new_ocr_calibrator(self) -> GalgameOcrCalibrator:
+        """Build an OCR region calibration + test coordinator (Phase 6) wired to the
+        capture / locator / OCR / game-memory adapters and the companion sink."""
+        return GalgameOcrCalibrator(
+            self.services.screen_capture_adapter,
+            self.services.window_locator_adapter,
+            self.services.ocr_adapter,
+            self.services.game_memory_adapter,
+            emit=self.companion_sink,
+        )
 
     def warmup(self, on_progress: Callable[[str, str], None]) -> None:
         """Run startup warmup (Phase 6E), reporting progress as

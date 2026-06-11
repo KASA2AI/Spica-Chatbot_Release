@@ -36,6 +36,12 @@ SPICA_PACKAGES = [
     "spica.runtime",
     "spica.adapters",
     "spica.memory",
+    "spica.galgame",
+    "spica.adapters.game_memory",
+    "spica.adapters.game_launcher",
+    "spica.adapters.window_locator",
+    "spica.adapters.screen_capture",
+    "spica.adapters.ocr",
 ]
 
 

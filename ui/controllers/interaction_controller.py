@@ -46,24 +46,21 @@ class InteractionController(QObject):
             return
 
         if has_screen_attachment:
-            if self.song_controller.is_intent_confirming():
-                self.song_controller.exit_intent_confirmation()
             if self.song_controller.is_busy():
-                self.song_controller.cancel(show_message=False)
+                self.song_controller.cancel()
             screen_attachment = self.consume_screen_attachment()
             self._start_chat(message, screen_attachment=screen_attachment)
             return
 
-        intent = self.song_controller.route_text(message)
-        if self.song_controller.is_actionable_intent(intent):
-            self.song_controller.handle_intent(intent)
+        # B2: the pre-chat hijack is gone -- singing is the main LLM's sing_song
+        # tool. The ONLY rule left is the control fast path (pause/resume/cancel/
+        # restart while a song flow is live); any other message during a song
+        # cancels it and goes to normal chat (the pre-B2 modal behaviour, kept).
+        if self.song_controller.try_handle_control_text(message):
             return
 
-        if self.song_controller.is_intent_confirming():
-            self.song_controller.exit_intent_confirmation()
-
         if self.song_controller.is_busy():
-            self.song_controller.cancel(show_message=False)
+            self.song_controller.cancel()
 
         self._start_chat(message)
 

@@ -10,6 +10,7 @@ class WindowControls(QFrame):
     settings_requested = Signal()
     minimize_requested = Signal()
     close_requested = Signal()
+    companion_requested = Signal()  # galgame companion entry (stage 3)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -51,6 +52,15 @@ class WindowControls(QFrame):
         layout.setContentsMargins(5, 4, 5, 4)
         layout.setSpacing(4)
 
+        # HARD RULE (stage 3): the companion button's checked state is driven ONLY
+        # by backend events via set_companion_active -- a click merely REQUESTS an
+        # action. The handler undoes Qt's auto-toggle before forwarding.
+        self._companion_active = False
+        self.companion_button = QPushButton("🎮", self)
+        self.companion_button.setCheckable(True)
+        self.companion_button.setToolTip("陪玩 galgame")
+        self.companion_button.clicked.connect(self._on_companion_clicked)
+
         self.settings_button = QPushButton("⚙", self)
         self.settings_button.setToolTip("设置")
         self.settings_button.clicked.connect(lambda _checked=False: self.settings_requested.emit())
@@ -64,10 +74,26 @@ class WindowControls(QFrame):
         self.close_button.setToolTip("关闭")
         self.close_button.clicked.connect(lambda _checked=False: self.close_requested.emit())
 
+        layout.addWidget(self.companion_button)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.minimize_button)
         layout.addWidget(self.close_button)
         self.apply_scale(1.0)
+
+    def _on_companion_clicked(self) -> None:
+        # Undo the visual auto-toggle (checked reflects the REAL companion state,
+        # written back by events only), then forward the click as a request.
+        self.companion_button.blockSignals(True)
+        self.companion_button.setChecked(self._companion_active)
+        self.companion_button.blockSignals(False)
+        self.companion_requested.emit()
+
+    def set_companion_active(self, active: bool) -> None:
+        self._companion_active = bool(active)
+        self.companion_button.blockSignals(True)
+        self.companion_button.setChecked(self._companion_active)
+        self.companion_button.blockSignals(False)
+        self.companion_button.setToolTip("陪玩中（点击管理）" if active else "陪玩 galgame")
 
     def apply_scale(self, scale: float) -> None:
         button_size = scaled_px(28, scale)

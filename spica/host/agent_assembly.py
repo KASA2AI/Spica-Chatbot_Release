@@ -26,6 +26,11 @@ from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from common.timing import log_timing
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
+from spica.adapters.game_memory import GameMemorySqliteAdapter
+from spica.adapters.game_launcher import LinuxDesktopGameLauncher
+from spica.adapters.window_locator import LinuxX11WindowLocator
+from spica.adapters.screen_capture import MssScreenCapture
+from spica.adapters.ocr import RapidOcrAdapter
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets
 
@@ -73,12 +78,23 @@ def build_agent_services(
     config.character.character_id = character_id
     config.character.character_profile = character_profile
     config.character.character_name = character_name
+    # Single data root, host-resolved (NOT cwd-relative). The galgame store shares
+    # this root with the character memory store -- a separate file, never the same
+    # DB (CLAUDE.md #1.8). No config knob this phase; mirrors the memory.sqlite3 path.
+    data_dir = _REPO_ROOT / "spica_data"
     return AgentServices(
         llm_client=client,
         tts_adapter=tts_adapter,
         visual_tool=visual_tool,
-        memory_store=SQLiteMemoryStore(_REPO_ROOT / "spica_data" / "memory.sqlite3"),
+        memory_store=SQLiteMemoryStore(data_dir / "memory.sqlite3"),
         recent_memory=RecentMemory(max_turns=config.memory.recent_memory_turns),
+        game_memory_adapter=GameMemorySqliteAdapter(data_dir / "galgame.sqlite3"),
+        # Phase 5: galgame launch + window-binding adapters (linux/Bottles path).
+        game_launcher_adapter=LinuxDesktopGameLauncher(),
+        window_locator_adapter=LinuxX11WindowLocator(),
+        # Phase 6: galgame screen capture (mss) + OCR (RapidOCR bridge, shared engine).
+        screen_capture_adapter=MssScreenCapture(),
+        ocr_adapter=RapidOcrAdapter(),
         config={
             "model": config.llm.model,
             "character_profile": character_profile,

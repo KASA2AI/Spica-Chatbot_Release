@@ -242,6 +242,13 @@ _FROM_DATA: dict[str, Callable[[dict[str, Any]], RuntimeEvent]] = {
 }
 
 
+def register_event(kind: str, ctor: Callable[[dict[str, Any]], RuntimeEvent]) -> None:
+    """Register a typed constructor for ``kind`` so ``event_from_legacy`` rebuilds
+    the concrete subclass (not ``GenericEvent``). Galgame companion events register
+    here on import (see ``spica.core.companion_events``)."""
+    _FROM_DATA[kind] = ctor
+
+
 def event_from_legacy(event: Any) -> RuntimeEvent:
     """Adapt a legacy ``{"event", "data"}`` dict (or pass through a RuntimeEvent)."""
     if isinstance(event, RuntimeEvent):
@@ -266,4 +273,5 @@ __all__ = [
     "ErrorEvent",
     "GenericEvent",
     "event_from_legacy",
+    "register_event",
 ]

@@ -26,6 +26,7 @@ from spica.runtime.stages import (
     analyze_screen_attachment_node,
     build_prompt_node,
     load_recent_context_node,
+    retrieve_game_context_node,
     retrieve_long_term_memory_node,
     validate_input_node,
 )
@@ -249,6 +250,10 @@ def _produce_stream_events(
         if ctx.error:
             output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求失败。"}})
             return
+        # B3: gated galgame context injection, AFTER build_prompt, BEFORE the LLM.
+        # `none` (every plain chat turn) is a byte-level no-op; best-effort, never
+        # sets ctx.error, so no extra error gate is needed here.
+        ctx = retrieve_game_context_node(ctx, services, deps)
 
         visual_context = None
         if services.visual_tool is not None and hasattr(services.visual_tool, "prepare_stream_context"):

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
-import os
 import sys
 import threading
 from pathlib import Path
@@ -89,17 +88,22 @@ def _load_core(applio_root: Path) -> ModuleType:
 
 @contextlib.contextmanager
 def _applio_context(applio_root: Path) -> Iterator[None]:
-    old_cwd = os.getcwd()
+    # cwd-race fix (与 TTS pushd 的进程级 cwd 竞态): this context NO LONGER
+    # chdirs. Applio's lazily-evaluated relative paths were absolutized in the
+    # vendored files themselves (see the "LOCAL PATCH (Spica)" markers in
+    # f0.py / configs/config.py / prerequisites_download.py and the now_dir
+    # anchors in core.py / lib/utils.py / infer/infer.py / infer/pipeline.py /
+    # lib/tools/model_download.py), so RVC no longer reads through the cwd --
+    # the TTS pushd cannot flip paths under a running inference, and exiting
+    # here cannot restore a wrong cwd under a running TTS synthesis.
     inserted = False
     root_text = str(applio_root)
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
         inserted = True
-    os.chdir(root_text)
     try:
         yield
     finally:
-        os.chdir(old_cwd)
         if inserted:
             with contextlib.suppress(ValueError):
                 sys.path.remove(root_text)

@@ -64,9 +64,15 @@ class SongController(QObject):
         voice_mode_active_provider: Callable[[], bool],
         schedule_voice_recording: Callable[[int], None],
         request_proactive_turn: Callable[[ProactiveTurnRequest], Any] | None = None,
+        song_config: dict | None = None,
     ) -> None:
         super().__init__(parent)
         self.chat_stream_controller = chat_stream_controller
+        # P0b 2b: host-resolved song config for the SongWorker chain. The overlay
+        # constructs this controller BEFORE AppHost exists, so production wires
+        # this attribute right after host construction (qt_overlay._init_backend);
+        # None -> SongPipeline falls back to load_song_config.
+        self.song_config = song_config
         self.audio_controller = audio_controller
         self.set_song_status = set_song_status
         self.set_busy = set_busy
@@ -260,7 +266,7 @@ class SongController(QObject):
         )
         self.set_busy(False)
         self.set_song_status("🎤 准备唱歌中…")
-        self.song_worker = SongWorker(request, job_id, self)
+        self.song_worker = SongWorker(request, job_id, self, config=self.song_config)
         self.song_worker.progress.connect(self.handle_song_progress)
         self.song_worker.completed.connect(self.handle_song_ready)
         self.song_worker.failed.connect(self.handle_song_error)

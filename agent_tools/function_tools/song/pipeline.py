@@ -25,8 +25,14 @@ class _SongLightStageResult:
 
 
 class SongPipeline:
-    def __init__(self, config_path: str | Path | None = None) -> None:
-        self.config = load_song_config(config_path)
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        # P0b 2b: production injects the host-resolved config dict (read-only
+        # here); config=None falls back to load_song_config (demo/standalone).
+        self.config = config if config is not None else load_song_config(config_path)
         self.dirs = ensure_song_dirs(self.config)
 
     def run(

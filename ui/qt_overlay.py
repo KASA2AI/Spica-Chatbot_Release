@@ -225,6 +225,9 @@ class OverlayWindow(QWidget):
         # longer constructs services; it reads them back from the host. Qt wiring
         # (chat stream controller, dialogue messages) stays here.
         self.host = AppHost()
+        # P0b 2b: the song controller was constructed before the host exists
+        # (UI wiring order); hand it the host-resolved song config now.
+        self.song_controller.song_config = self.host.song_config
         try:
             self.host.initialize()
             self.visual_tool = self.host.visual_tool

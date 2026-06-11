@@ -15,10 +15,14 @@ class SongWorker(QThread):
         request: SongRequest,
         job_id: int,
         parent: QObject | None = None,
+        config: dict | None = None,
     ) -> None:
         super().__init__(parent)
         self.request = request
         self.job_id = job_id
+        # P0b 2b: the controller passes the host-resolved song config; None
+        # falls back inside SongPipeline (standalone use).
+        self.config = config
         self.cancellation = CancellationToken()
 
     def cancel(self) -> None:
@@ -27,7 +31,7 @@ class SongWorker(QThread):
 
     def run(self) -> None:
         try:
-            result = SongPipeline().run(
+            result = SongPipeline(config=self.config).run(
                 self.request,
                 self.cancellation,
                 progress=lambda stage, payload: self._emit_progress(stage, payload),

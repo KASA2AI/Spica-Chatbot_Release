@@ -99,7 +99,8 @@ class _FakeVisual:
                         "expression_id": "002", "hand_pose": "normal", "image_url": "/x.png", "reason": "x"}}
 
 
-def _fake_search(request):
+def _fake_search(request, limit=20):
+    # P0b 2b: the closure now passes limit from the resolved song config.
     if "没有这首" in request.search_keyword():
         raise RuntimeError("netease: no result")
     return SimpleNamespace(title="稻香", artists=["周杰伦"], artist_text="周杰伦")

@@ -56,6 +56,7 @@ from spica.core.song_events import SongRequestEvent
 from spica.galgame.models import CompanionBeat, utc_now_iso
 from agent_tools.function_tools.screen.config import load_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
+from agent_tools.function_tools.song.config import load_song_config
 from agent_tools.function_tools.song.models import SongRequest
 from agent_tools.function_tools.song.netease import search_best_song
 from spica.adapters.visual import build_spica_visual
@@ -90,6 +91,10 @@ class AppHost:
         # step 3 folds it into app.yaml) and inject the instance into every
         # production consumer (builtins inspect tool, watch tool, UI worker).
         self.screen_config = load_screen_config()
+        # P0b 2b: same resolve-once pattern for the song config (zero env reads
+        # post-B2; json > defaults). Injected into the UI SongWorker chain and
+        # read by _request_song for the search limit (single source).
+        self.song_config = load_song_config()
         self.registry = CapabilityRegistry()
         register_builtin_adapters(self.registry, screen_config=self.screen_config)
         # Phase 9: the companion watch tool. Registered HERE (not in builtins)
@@ -326,7 +331,11 @@ class AppHost:
         ``self._song_search`` is the injection seam (tests swap in a fake)."""
         request = SongRequest(query=query, title=None, artist=None, user_text=query)
         try:
-            song = self._song_search(request)
+            # P0b 2b: limit comes from the resolved song config (the pipeline
+            # already read search.limit from config -- this closure used the
+            # hard default 20; same value today, now a single source).
+            limit = int(self.song_config.get("search", {}).get("limit", 20))
+            song = self._song_search(request, limit=limit)
         except Exception as exc:  # noqa: BLE001 -- search failure = tool error envelope
             raise ScreenToolError(
                 "SONG_NOT_FOUND", f"没有找到可以唱的歌：{query}"

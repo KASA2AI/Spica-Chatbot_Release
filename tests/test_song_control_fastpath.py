@@ -55,10 +55,11 @@ class _FakeWorker(QObject):
     """Stands in for SongWorker: never touches netease/RVC; the test drives the
     controller's ready/error callbacks directly."""
 
-    def __init__(self, request, job_id, parent):
+    def __init__(self, request, job_id, parent, config=None):
         super().__init__(parent)
         self.request = request
         self.job_id = job_id
+        self.config = config  # P0b 2b: the controller now threads song config
         self.progress = _Signal()
         self.completed = _Signal()
         self.failed = _Signal()

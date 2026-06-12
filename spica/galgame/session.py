@@ -84,6 +84,21 @@ class GalgameStateError(RuntimeError):
 
 _S = GalgameState
 
+# Shared state-set constants (D-P5-8) -- the named truth for "which states are
+# OCR-monitored visible" so the #1 privacy gate and the P5 reaction gates can't
+# drift apart. The asymmetry is deliberate:
+# - watch is USER-initiated (CHOICE_CHECKING is its primary scenario: "该选哪个");
+# - a reaction is HER-initiated -- speaking up while the user is waiting on a
+#   choice analysis would steal the interaction, so CHOICE_CHECKING observes
+#   (cuts a beat, keeps context) but does not speak.
+WATCH_SAFE_STATES: frozenset[GalgameState] = frozenset(
+    {_S.PLAYING, _S.CHOICE_CHECKING, _S.BACKGROUND_SUMMARIZING}
+)
+REACTION_OBSERVE_STATES: frozenset[GalgameState] = frozenset(WATCH_SAFE_STATES)
+REACTION_SPEAK_STATES: frozenset[GalgameState] = frozenset(
+    {_S.PLAYING, _S.BACKGROUND_SUMMARIZING}
+)
+
 # §16.1 / §16.2 / §16.3 / §16.4 transition graph. The single source of truth for
 # legality; _transition rejects anything not here.
 ALLOWED_TRANSITIONS: dict[GalgameState, frozenset[GalgameState]] = {

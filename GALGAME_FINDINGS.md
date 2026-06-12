@@ -71,6 +71,28 @@
 - legacy `tool.py` self-load(冻结链组件,与 sync_chain 同退役);
 - 既有挂账原样保持:语音全双工(VoiceInputGate 接口位在)/anemoi/特判二/OCR 名字噪声(决议不修)/interval 死字段/declare_route/stable=2/存档槽/全表扫描/demo 群。
 
+## 外部代码审查处置(2026-06-12,review 9 条)
+
+裁决:#1 watch 隐私违约 + #6 SQLite 并发**现做**(落地后补记);#2/#9/H1 详细挂账见下(照着能改级;#3 即 H1 同条);#4 song 取消/缓存竞态(窗口窄,触发=取消后立刻重点同一首,下次动 pipeline 时改临时目录+原子 rename)与 #8 Moondream preload executor reset 不 shutdown(一行 `executor.shutdown(wait=False)`,下次动 screen 区域顺手)简记挂账;#5 vendored 不可复现=既定形态不动;#7 GPT-SoVITS pushd=已登记(上方「方案 d」)不另立。
+
+### 挂账#2:崩溃恢复漏最后一条 pending 行
+- **事实**:`spica/galgame/session.py:406-421 _write_pending_current` 把新稳定行立刻持久化为 `PENDING_CURRENT`(注释即 "crash safety §10.5");提升为 COMMITTED 只有两处——下一条稳定行(`session.py:401`)和正常 `end()`(`session.py:587`,§16.4 step 2)。崩溃恢复 `spica/galgame/summarizer.py:164-205 recover_dangling_sessions` 只读 `unsummarized_committed_story_lines`(`:174`)→ 崩溃点落在「最后一条稳定行已 pending、尚无下一条/未 stop」时,该行留在 DB、永不入总结。
+- **影响**:每次崩溃最多丢 1 行(pending 是单槽);该行状态永久停在 pending_current。
+- **改法**:① `spica/ports/game_memory.py` + `spica/adapters/game_memory/sqlite.py` 加查询 `pending_current_story_lines(game_id, playthrough_id) -> list[StoryLine]`(SELECT status='pending_current';提升机制 `update_story_line_status` 已有,`ports/game_memory.py:62`);② `recover_dangling_sessions` 在取 committed 行**之前**,对每个 dangling session 先把这些行逐条 `update_story_line_status(line_id, COMMITTED)`——镜像 `end()` 的 §16.4 step 2 语义,恢复路径与正常收尾同构;③ 然后照原逻辑取 unsummarized committed 总结。
+- **验证**:测试钉「有 pending 行的 dangling session 恢复后,总结输入包含该行且 DB 状态已提升」+「无 pending 行时行为不变」;现有 summarizer/恢复测试全绿。
+
+### 挂账#9:env 名册与 proxy strip 集合漂移
+- **事实**:`spica/config/runtime_env.py:22 _PROXY_ENV_KEYS` 实际 strip 6 项(`all_proxy/ALL_PROXY/http_proxy/https_proxy/HTTP_PROXY/HTTPS_PROXY`),`spica/config/env_roster.py:91 STRIPPED_ENV_VARS` 只登记 3 项大写。Layer B 元钉正则 `"([A-Z][A-Z0-9_]{2,})"` 只抽大写名,小写漏网——这就是它没被钉住的原因。
+- **性质**:纯审计/名册完整性,无功能 bug(strip 行为本身有行为测试覆盖)。
+- **改法**:① `env_roster.STRIPPED_ENV_VARS` 补全为 6 项(名册如实记录行为);② `runtime_env.py` 删本地 `_PROXY_ENV_KEYS`,改 `from spica.config.env_roster import STRIPPED_ENV_VARS`(单一居所、结构防漂移——P0b 本来纪律);③ 可加结构钉:断言 runtime_env 引用的就是 roster 常量(import 同一性)。
+- **验证**:Layer A diff 零变化(STRIPPED 是写侧名册,不参与 resolution,env_audit 不受影响);Layer B 41 钉不动(元钉方向是「源码大写名 ⊆ roster」,roster 增项不破);全绿。
+
+### 挂账 H1:LLM 端点协议判定写死 deepseek 名字(review #3;换 chat-only 端点前必修)
+- **事实**:`spica/adapters/llm/openai_compatible.py:262-264 _prefers_chat_completions` = `"deepseek" in base_url and _has_chat_completions(client)`,决定全链 Chat-Completions-first vs Responses-first。生产代码里该判定**仅此一处**(prompt/默认值无模型名写死)。
+- **触发条件**:换到 **chat-only OpenAI 兼容端点**(vLLM/Ollama/LM Studio 等,URL 不含 deepseek)时**必修**,否则:工具 probe 直接报错(`tool_round.py:127 create_responses` 无回落)+ galgame 总结永败(`complete_text`,`openai_compatible.py:121`,SummaryError 无限折叠重试)+ 聊天每轮 404 暗税(流式 `:175` 有 404→chat 回落,能用)——症状=**表面能聊天,工具与总结暗坏**。deepseek 现状与 OpenAI 官方(有 Responses API)不受影响。反向坑:URL 任意位置含 "deepseek"(如代理路径)会误判成 chat 模式。
+- **改法**:① `LLMConfig`(`spica/config/schema.py:21`)加字段 `api: str = "auto"`("auto" | "responses" | "chat_completions";默认 auto=现行名字判定,保 Layer A/B 零 diff;yaml-only 不开 env 名——若要 env 则按纪律进 roster+manager);② adapter 收下该值:`spica/host/builtins.py:33` 工厂签名加参、`spica/host/app_host.py:200 resolve_llm` 传 `config.llm.api`,实例 `prefers_chat_completions` 显式值优先、auto 走名字判定;③ 流式内部三个模块级函数(`:136 _iter_response_text` / `:240 _fallback_response_text` / `:280 _iter_chat_completion_text` 链)直接收 client,需加可选 prefer 参数由 adapter 实例传入——外部调用面 `tool_round.py:78` / `stages.py:592` / `complete_text`(`:119`)已走实例方法,零改动,单点全链生效。
+- **换时附加**:补非 deepseek 域名 chat-only client 测试 fixture(现有测试全钉 deepseek URL 形态);真机三连验证(对话流式为增量出字、工具触发一次、总结无 SummaryError)。
+
 ## 真机事实存档(无代码锚点,防失忆)
 
 ### anemoi 同源问题(#2,产品决策挂起)

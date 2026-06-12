@@ -273,10 +273,12 @@ class AppHost:
         controller = self._companion_controller
         return controller.current_game_context() if controller is not None else None
 
-    def _companion_watch_context(self) -> tuple[str, str, Any, Any] | None:
+    def _companion_watch_context(self) -> tuple[str, str, Any, Any, Any] | None:
         """Lazy provider for the watch_game_screen tool (Phase 9): the live play's
-        (game_id, window_id, locator, capture), or ``None`` when not playing /
-        before initialize(). Reads the singleton WITHOUT building it."""
+        (game_id, window_id, locator, capture, session_state), or ``None`` when not
+        playing / before initialize(). Reads the singleton WITHOUT building it.
+        session_state is read lock-free at call time (staleness <= one OCR cycle);
+        the tool's privacy gate (CLAUDE.md §4) refuses capture on unsafe states."""
         controller = self._companion_controller
         if controller is None or self.services is None:
             # Supply-chain diagnostic, DEBUG by default. Open riddle: the predicate
@@ -293,12 +295,23 @@ class AppHost:
             logger.debug("watch context: None (controller built, no live play)")
             return None
         game_id, window_id = target
-        logger.debug("watch context: game_id=%s window_id=%s", game_id, window_id)
+        session = controller.session
+        if session is None:
+            # stop() clears the watch target FIRST, so this is a narrow race;
+            # treat it as not playing (NO_ACTIVE_COMPANION) rather than crash.
+            logger.debug("watch context: None (target published but session gone)")
+            return None
+        state = session.state
+        logger.debug(
+            "watch context: game_id=%s window_id=%s state=%s",
+            game_id, window_id, getattr(state, "value", state),
+        )
         return (
             game_id,
             window_id,
             self.services.window_locator_adapter,
             self.services.screen_capture_adapter,
+            state,
         )
 
     def new_companion_controller(self) -> GalgameCompanionController:

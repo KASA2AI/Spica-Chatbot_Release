@@ -34,6 +34,7 @@ from spica.adapters.tools.note_game_observation import NoteGameObservationTool
 from spica.config.schema import AppConfig
 from spica.core.chat_engine import ChatEngine
 from spica.galgame.models import game_conversation_id
+from spica.galgame.session import GalgameState
 from spica.host.app_host import AppHost
 from spica.plugins.registry import CapabilityRegistry
 from spica.runtime.context import GameContextRequest, GameTurnBinding
@@ -306,6 +307,8 @@ class NoteHostRegistrationTest(unittest.TestCase):
         host._companion_controller = SimpleNamespace(
             current_game_context=lambda: GAME_BINDING,
             current_watch_target=lambda: ("limelight", "0x1"),
+            # privacy gate (review #1): the watch provider reads session.state
+            session=SimpleNamespace(state=GalgameState.PLAYING),
         )
         host.services = SimpleNamespace(
             window_locator_adapter=object(), screen_capture_adapter=object(),

@@ -19,6 +19,7 @@ from spica.adapters.tools.watch_game_screen import (
     WatchGameScreenTool,
 )
 from spica.config.schema import AppConfig
+from spica.galgame.session import GalgameState
 from spica.host.app_host import AppHost
 from spica.plugins.registry import CapabilityRegistry
 from spica.ports.screen_capture import CaptureImage
@@ -65,7 +66,9 @@ class _Analysis:
 class ThinShellTest(unittest.TestCase):
     def test_captures_the_bound_window_and_analyzes(self):
         locator, capture, analysis = _Locator(), _Capture(), _Analysis()
-        tool = WatchGameScreenTool(analysis, lambda: ("limelight", "0x42", locator, capture))
+        tool = WatchGameScreenTool(
+            analysis, lambda: ("limelight", "0x42", locator, capture, GalgameState.PLAYING)
+        )
         result = tool.run(question="这个角色是谁")
         self.assertEqual(result["schema_version"], "screen_observation.v1")
         self.assertEqual(locator.asked, ["0x42"])  # the BOUND window, not full screen
@@ -95,10 +98,70 @@ class ThinShellTest(unittest.TestCase):
 
     def test_window_gone_raises_unavailable(self):
         locator = _Locator(geometry=None)
-        tool = WatchGameScreenTool(_Analysis(), lambda: ("g", "0x1", locator, _Capture()))
+        tool = WatchGameScreenTool(
+            _Analysis(), lambda: ("g", "0x1", locator, _Capture(), GalgameState.PLAYING)
+        )
         with self.assertRaises(ScreenToolError) as caught:
             tool.run(question="看看")
         self.assertEqual(caught.exception.code, "GAME_WINDOW_UNAVAILABLE")
+
+
+class PrivacyGateTest(unittest.TestCase):
+    """External-review #1 (CLAUDE.md §4 隐私承诺对账): outside the OCR-monitored
+    visible states the tool refuses BEFORE any capture -- the rect under a
+    lost/paused window may show another application. The refusal is a ToolError
+    envelope (the turn survives; she can explain WHY she can't look)."""
+
+    @staticmethod
+    def _tool(state):
+        locator, capture, analysis = _Locator(), _Capture(), _Analysis()
+        tool = WatchGameScreenTool(
+            analysis, lambda: ("g", "0x1", locator, capture, state)
+        )
+        return tool, capture
+
+    def test_window_lost_refused_with_zero_captures(self):
+        tool, capture = self._tool(GalgameState.WINDOW_LOST)
+        with self.assertRaises(ScreenToolError) as caught:
+            tool.run(question="现在画面上是什么")
+        self.assertEqual(caught.exception.code, "GAME_WINDOW_NOT_SAFE")
+        self.assertIn("挡住", caught.exception.message)  # window-lost wording
+        self.assertEqual(capture.rects, [])  # privacy pin: capture_rect NEVER called
+
+    def test_window_lost_envelope_through_registry_toolset(self):
+        # End to end through the runtime tool surface: envelope, not a crashed turn.
+        tool, capture = self._tool(GalgameState.WINDOW_LOST)
+        registry = CapabilityRegistry()
+        registry.register_tool(tool.schema(), tool.run)
+        result = json.loads(
+            RegistryToolSet(registry).run("watch_game_screen", '{"question": "看看"}')
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "GAME_WINDOW_NOT_SAFE")
+        self.assertEqual(capture.rects, [])
+
+    def test_paused_refused_with_paused_wording(self):
+        tool, capture = self._tool(GalgameState.PAUSED)
+        with self.assertRaises(ScreenToolError) as caught:
+            tool.run(question="看看画面")
+        self.assertEqual(caught.exception.code, "GAME_WINDOW_NOT_SAFE")
+        self.assertIn("暂停", caught.exception.message)
+        self.assertEqual(capture.rects, [])
+
+    def test_monitored_states_allowed(self):
+        # CHOICE_CHECKING is the tool's PRIMARY scenario ("该选哪个" happens during
+        # choice detection) -- a strict PLAYING-only gate would kill it;
+        # BACKGROUND_SUMMARIZING is normal play with a summary running behind.
+        for state in (
+            GalgameState.PLAYING,
+            GalgameState.CHOICE_CHECKING,
+            GalgameState.BACKGROUND_SUMMARIZING,
+        ):
+            with self.subTest(state=state.value):
+                tool, capture = self._tool(state)
+                result = tool.run(question="该选哪个")
+                self.assertEqual(result["schema_version"], "screen_observation.v1")
+                self.assertEqual(capture.rects, [(10, 20, 300, 200)])  # captured normally
 
 
 class OfferGateTest(unittest.TestCase):
@@ -291,16 +354,31 @@ class HostWiringTest(unittest.TestCase):
         # NOT offered before initialize / while not playing (available predicate)...
         self.assertNotIn("watch_game_screen", self._offered_names(host))
         # ...offered as soon as the companion play is live.
-        host._companion_controller = SimpleNamespace(current_watch_target=lambda: ("g1", "0x9"))
+        host._companion_controller = SimpleNamespace(
+            current_watch_target=lambda: ("g1", "0x9"),
+            session=SimpleNamespace(state=GalgameState.PLAYING),
+        )
         host.services = SimpleNamespace(window_locator_adapter="LOC", screen_capture_adapter="CAP")
         self.assertIn("watch_game_screen", self._offered_names(host))
 
     def test_watch_context_provider(self):
         host = AppHost()
         self.assertIsNone(host._companion_watch_context())  # no controller yet
-        host._companion_controller = SimpleNamespace(current_watch_target=lambda: ("g1", "0x9"))
+        host._companion_controller = SimpleNamespace(
+            current_watch_target=lambda: ("g1", "0x9"),
+            session=SimpleNamespace(state=GalgameState.PLAYING),
+        )
         host.services = SimpleNamespace(window_locator_adapter="LOC", screen_capture_adapter="CAP")
-        self.assertEqual(host._companion_watch_context(), ("g1", "0x9", "LOC", "CAP"))
+        self.assertEqual(
+            host._companion_watch_context(),
+            ("g1", "0x9", "LOC", "CAP", GalgameState.PLAYING),
+        )
+        # the state element is LIVE: a lost window shows up in the same tuple
+        host._companion_controller.session = SimpleNamespace(state=GalgameState.WINDOW_LOST)
+        self.assertEqual(host._companion_watch_context()[4], GalgameState.WINDOW_LOST)
+        # target published but session gone (stop race) -> treated as not playing
+        host._companion_controller.session = None
+        self.assertIsNone(host._companion_watch_context())
         host._companion_controller = SimpleNamespace(current_watch_target=lambda: None)  # playing ended
         self.assertIsNone(host._companion_watch_context())
 

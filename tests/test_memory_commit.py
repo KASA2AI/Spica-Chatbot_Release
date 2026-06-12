@@ -5,7 +5,8 @@
 - the long-term commit_turn is fire-and-forget via the injected JobRunner: it is
   *submitted*, not run inline; running the submitted job performs the commit with
   the character-namespaced MemoryScope.
-- a commit failure only lands in ctx.metadata -- it never escapes to the caller.
+- a commit failure lands in ctx.metadata + a WARNING log (review #6: silent loss
+  is how memories vanish unnoticed) -- it never escapes to the caller.
 """
 
 import unittest
@@ -115,6 +116,30 @@ class SaveStreamMemoryTest(unittest.TestCase):
         jobs.submitted[0]()  # the backgrounded commit raises internally
 
         self.assertEqual(ctx.metadata.get("memory_error"), "commit boom")
+
+    def test_long_term_failure_logs_a_warning(self):
+        # Review #6: a lost memory must leave a trace -- WARNING log AND the
+        # original metadata behaviour, never silent.
+        jobs = _DeferredJobs()
+        ctx = _ctx("你好", "hi")
+        save_stream_memory(ctx, SimpleNamespace(recent_memory=_SpyRecent()), _deps(_BoomMemory(), jobs))
+        with self.assertLogs("spica.runtime.memory_commit", level="WARNING") as logs:
+            jobs.submitted[0]()
+        self.assertTrue(any("commit boom" in line for line in logs.output))
+        self.assertEqual(ctx.metadata.get("memory_error"), "commit boom")
+
+    def test_recent_failure_logs_a_warning(self):
+        class _BoomRecent:
+            def append_turn(self, *a, **k):
+                raise RuntimeError("recent boom")
+
+        jobs = _DeferredJobs()
+        ctx = _ctx("你好", "hi")
+        with self.assertLogs("spica.runtime.memory_commit", level="WARNING") as logs:
+            save_stream_memory(ctx, SimpleNamespace(recent_memory=_BoomRecent()), _deps(_SpyMemory(), jobs))
+        self.assertTrue(any("recent boom" in line for line in logs.output))
+        self.assertEqual(ctx.metadata.get("memory_error"), "recent boom")
+        self.assertEqual(len(jobs.submitted), 1)  # long-term path still proceeds
 
 
 if __name__ == "__main__":

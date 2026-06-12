@@ -16,6 +16,12 @@ is deliberately NO full-screen fallback (principle: only the bound game window)
 and NO keyword re-gate here -- the active-companion precondition is the strong
 gate; question wording during play is too varied for a wordlist to re-judge.
 
+PRIVACY GATE (CLAUDE.md §4 "绝不误截其他应用"): the screen rect under a lost or
+paused window may show ANOTHER application, so capture is allowed only in the
+OCR-monitored visible states ({PLAYING, CHOICE_CHECKING, BACKGROUND_SUMMARIZING}
+-- the loop is alive and runs its per-cycle safety check there). Any other state
+refuses with ``GAME_WINDOW_NOT_SAFE`` BEFORE ``capture_rect`` is touched.
+
 Qt-free (CLAUDE.md #1); local-only analysis (N0), never uploaded.
 """
 
@@ -31,12 +37,33 @@ from agent_tools.function_tools.screen.tool import (
     _capture_metadata_for_observation,
     classify_screen_question,
 )
+from spica.galgame.session import WATCH_SAFE_STATES, GalgameState
 from spica.ports.screen import ScreenAnalysisPort
 
 logger = logging.getLogger(__name__)
 
-# (game_id, window_id, locator, capture) of the CURRENT companion play, or None.
-WatchContextProvider = Callable[[], "tuple[str, str, Any, Any] | None"]
+# (game_id, window_id, locator, capture, session_state) of the CURRENT companion
+# play, or None. session_state is the GalgameState enum read lock-free at call
+# time (staleness <= one OCR cycle -- the same granularity the loop's own safety
+# check detects occlusion with); the privacy gate below judges it.
+WatchContextProvider = Callable[[], "tuple[str, str, Any, Any, Any] | None"]
+
+# The only states where the OCR loop is alive, runs _evaluate_safety every cycle
+# and the window is monitored-visible. CHOICE_CHECKING is the tool's PRIMARY
+# scenario ("该选哪个" happens during choice detection); BACKGROUND_SUMMARIZING is
+# normal play with a summary running behind. Everything else refuses.
+# D-P5-8: the set itself lives in session.py (WATCH_SAFE_STATES) so this gate and
+# the P5 reaction gates share one named truth; semantics here are unchanged.
+_WATCH_SAFE_STATES = WATCH_SAFE_STATES
+
+
+def _window_not_safe_message(state: Any) -> str:
+    if state is GalgameState.WINDOW_LOST:
+        return (
+            "游戏窗口现在不可见（被别的窗口挡住或最小化了），为了不误看别的东西，"
+            "我现在不截屏。把游戏窗口调回前台就能看了。"
+        )
+    return "陪玩暂停中，我现在没在看游戏画面。继续陪玩之后再问我吧。"
 
 WATCH_GAME_SCREEN_SCHEMA: dict[str, Any] = {
     "type": "function",
@@ -116,7 +143,15 @@ class WatchGameScreenTool:
                 "NO_ACTIVE_COMPANION",
                 "当前没有正在陪玩的游戏，无法查看游戏画面。要先开始陪玩并绑定游戏窗口。",
             )
-        game_id, window_id, locator, capture = context
+        game_id, window_id, locator, capture, state = context
+        if state not in _WATCH_SAFE_STATES:
+            # Privacy gate (CLAUDE.md §4): refuse BEFORE any capture -- the rect
+            # under a lost/paused window may show another application.
+            logger.info(
+                "watch_game_screen: refused, window not safe to capture (state=%s)",
+                getattr(state, "value", state),
+            )
+            raise ScreenToolError("GAME_WINDOW_NOT_SAFE", _window_not_safe_message(state))
         # Diagnostic (stale-frame triage): the DECISIVE marker that the tool really
         # ran this turn -- absent => the LLM reused a previous observation instead.
         logger.info("watch_game_screen: capturing window_id=%s game_id=%s", window_id, game_id)

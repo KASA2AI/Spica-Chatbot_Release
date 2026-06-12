@@ -10,7 +10,8 @@ C6 splits the two writes by latency requirement:
 - the long-term ``commit_turn`` is fire-and-forget via the injected ``JobRunner``
   (``deps.jobs``) so it never blocks the hot path. Inline in tests + the sync path
   (so cross-turn retrieval sees it); threaded in streaming (the orchestrator drains
-  it before the stream closes). A failure only lands in metadata -- it must never
+  it before the stream closes). A failure lands in metadata + a WARNING log
+  (review #6: silent loss is how memories vanish unnoticed) -- it must never
   touch the event stream.
 
 Qt-free.
@@ -18,6 +19,7 @@ Qt-free.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
@@ -26,6 +28,8 @@ from agent_tools.function_tools.screen.schema import screen_observation_context_
 from spica.ports.memory import MemoryScope
 from spica.runtime.context import TurnContext
 from spica.runtime.deps import TurnDeps
+
+logger = logging.getLogger(__name__)
 
 
 def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> None:
@@ -47,6 +51,7 @@ def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> Non
             screen_observation_context=screen_observation_context_for_next_turn(ctx.screen_observation),
         )
     except Exception as exc:
+        logger.warning("memory commit failed (recent append): %s", exc, exc_info=True)
         ctx.metadata["memory_error"] = str(exc)
 
     # Long-term commit is fire-and-forget via the injected JobRunner (C6).
@@ -71,6 +76,7 @@ def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> Non
             result = deps.memory.commit_turn(scope, ctx.user_input, answer_text, meta=meta)
             ctx.metadata.update(result)
         except Exception as exc:
+            logger.warning("memory commit failed (long-term): %s", exc, exc_info=True)
             ctx.metadata["memory_error"] = str(exc)
 
     deps.jobs.submit(_commit_long_term)

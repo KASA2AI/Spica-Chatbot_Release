@@ -42,6 +42,7 @@ from spica.adapters.tools.watch_game_screen import WatchGameScreenTool
 from spica.config.schema import AppConfig
 from spica.core.chat_engine import ChatEngine
 from spica.galgame.models import game_conversation_id
+from spica.galgame.session import GalgameState
 from spica.plugins.registry import CapabilityRegistry
 from spica.ports.screen_capture import CaptureImage
 from spica.ports.window_locator import WindowGeometry
@@ -180,7 +181,9 @@ def _build_engine(client, tmp, *, with_watch):
     if with_watch:
         watch = WatchGameScreenTool(
             analysis,
-            lambda: ("limelight", "0x07e00005", _WatchLocator(), _WatchCapture()),
+            # privacy gate (review #1): the provider now carries the session state
+            lambda: ("limelight", "0x07e00005", _WatchLocator(), _WatchCapture(),
+                     GalgameState.PLAYING),
         )
         registry.register_tool(watch.schema(), watch.run, available=lambda: True, intent_gated=False)
     services = AgentServices(

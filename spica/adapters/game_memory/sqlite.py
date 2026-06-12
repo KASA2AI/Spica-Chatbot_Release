@@ -479,6 +479,27 @@ class GameMemorySqliteAdapter:
             ).fetchall()
         return [CompanionBeat.from_dict(json.loads(row["data"])) for row in rows]
 
+    # P5 D-P5-6: TWO read paths over the same table. Prompt injection EXCLUDES
+    # silent reaction beats (NO_COMMENT / busy_drop accrue much faster than real
+    # speech and would crowd her spoken words out of [COMPANION_CONTEXT]); the
+    # similarity dedupe INCLUDES them (a swallowed scene is still a seen scene).
+    # silent/source live in the JSON blob, so filter in Python over an over-fetch.
+    _BEAT_FILTER_FETCH = 50
+
+    def recent_companion_beats_for_prompt(
+        self, game_id: str, user_id: str, character_id: str, limit: int = 10
+    ) -> list[CompanionBeat]:
+        beats = self.companion_beats(game_id, user_id, character_id, limit=self._BEAT_FILTER_FETCH)
+        visible = [b for b in beats if not (b.meta or {}).get("silent")]
+        return visible[: max(1, int(limit))]
+
+    def recent_reaction_beats_for_dedupe(
+        self, game_id: str, user_id: str, character_id: str, limit: int = 10
+    ) -> list[CompanionBeat]:
+        beats = self.companion_beats(game_id, user_id, character_id, limit=self._BEAT_FILTER_FETCH)
+        reactions = [b for b in beats if b.source == "spica"]
+        return reactions[: max(1, int(limit))]
+
     # -- helpers --------------------------------------------------------------
     @staticmethod
     def _replace(model: Any, fields: dict[str, Any]) -> Any:

@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import queue
+import re
 import threading
 import time
 from collections import OrderedDict, deque
@@ -47,6 +48,7 @@ from spica.core.companion_events import (
     GalgameStableLineCommittedEvent,
     GalgameStatusChangedEvent,
 )
+from spica.core.proactive import NO_COMMENT_SENTINEL
 from spica.galgame.session import (
     REACTION_OBSERVE_STATES,
     REACTION_SPEAK_STATES,
@@ -66,6 +68,13 @@ MAX_BEAT_LINES = 8
 MIN_LINES_FOR_PUNCT_CUT = 3
 BUDGET_WINDOW_SECONDS = 600.0
 DEDUPE_LRU_SIZE = 50
+SIMILARITY_RECENT_N = 10  # step-3 similarity gate: recent spica beats compared
+SIMILARITY_JACCARD_THRESHOLD = 0.55  # char-bigram jaccard >= this -> duplicate
+TRIGGER_TEXT_CAP = 200  # normalized beat text stored on CompanionBeat.meta
+# D-P5-7 修正: the directive's STORY EXCERPT has its own char budget so the
+# instruction tail can never be truncated by downstream recent-memory limits.
+REACTION_LINE_CHAR_CAP = 60
+REACTION_EXCERPT_CHAR_CAP = 300
 
 _STRONG_PUNCT = "！!？?…‼⁉"
 
@@ -280,6 +289,63 @@ def beat_hash(beat: ReactionBeat) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
+# Similarity compares CONTENT: punctuation is exactly what OCR re-reads change,
+# and its bigrams dilute the jaccard denominator -- strip it here (the HASH gate
+# stays strict on purpose: it wants byte-precision over the normal form).
+_SIMILARITY_STRIP = re.compile(r"[^\w一-鿿぀-ヿ゠-ヿ]+")
+
+
+def similarity_text(text: str) -> str:
+    return _SIMILARITY_STRIP.sub("", normalize_reaction_text(text))
+
+
+def _bigrams(text: str) -> set[str]:
+    return {text[i : i + 2] for i in range(len(text) - 1)}
+
+
+def bigram_jaccard(a: str, b: str) -> float:
+    """Char-bigram jaccard over normalized text -- the similarity gate's whole
+    algorithm (no model, no IO; microseconds at beat sizes)."""
+    set_a, set_b = _bigrams(a), _bigrams(b)
+    union = set_a | set_b
+    if not union:
+        return 0.0
+    return len(set_a & set_b) / len(union)
+
+
+def compose_reaction_directive(beat: ReactionBeat) -> str:
+    """The galgame domain's directive text (the P3 frame wraps it untouched).
+    Per-line + total caps (D-P5-7 修正) keep the excerpt bounded so the
+    instruction part is never the thing a downstream char limit truncates."""
+    excerpt: list[str] = []
+    total = 0
+    for line in beat.lines:
+        text = (line.text or "").strip()[:REACTION_LINE_CHAR_CAP]
+        rendered = f"{line.speaker}：{text}" if line.speaker else text
+        if total + len(rendered) > REACTION_EXCERPT_CHAR_CAP:
+            break
+        excerpt.append(rendered)
+        total += len(rendered)
+    parts = ["你正在和麦一起玩 galgame，刚刚看到了这段剧情：", *excerpt]
+    if beat.choice_options:
+        parts.append("现在画面上出现了选项：" + " / ".join(beat.choice_options))
+    parts.append(
+        "请对这段剧情说一句你自己的反应（吐槽、惊讶、调侃、感想都行），不超过40个字，"
+        "口语化，像坐在旁边一起看时随口说的。不要总结剧情，不要剧透，不要复述台词，"
+        f"不要问麦问题。如果这段实在没什么值得说的，只输出 {NO_COMMENT_SENTINEL}。"
+    )
+    return "\n".join(parts)
+
+
+@dataclass(frozen=True)
+class ReactionTurnFinished:
+    """Queue message: the UI reports the system turn this engine started has
+    ended. ``silent`` = the orchestrator swallowed a NO_COMMENT answer."""
+
+    answer: str
+    silent: bool
+
+
 _STOP = object()
 
 
@@ -297,6 +363,8 @@ class ReactionEngine:
         params_provider: Callable[[], ReactionModeParams] | None = None,
         scorer: Callable[[ReactionBeat], ScoreResult] | None = None,
         clock: Callable[[], float] | None = None,
+        beat_writer: Callable[[str, dict[str, Any]], None] | None = None,
+        recent_for_dedupe: Callable[[int], list[Any]] | None = None,
     ) -> None:
         self._speak = speak
         # D-P5-4 hot-swap seam: a holder callable, re-read per beat. v1 wires a
@@ -305,6 +373,11 @@ class ReactionEngine:
         self._params = params_provider or (lambda: REACTION_MODE_TABLE["normal"])
         self._scorer = scorer or null_scorer
         self._clock = clock or time.monotonic
+        # Step-3 wiring (both run on the WORKER thread only, D-P5-0/D-P5-10):
+        # beat_writer persists a CompanionBeat (host closure holds the scope);
+        # recent_for_dedupe reads recent spica beats for the similarity gate.
+        self._beat_writer = beat_writer
+        self._recent_for_dedupe = recent_for_dedupe
         self._queue: queue.Queue[Any] = queue.Queue()
         self._thread: threading.Thread | None = None
         # -- worker-owned state ----------------------------------------------
@@ -315,7 +388,12 @@ class ReactionEngine:
         self._seen_hashes: OrderedDict[str, None] = OrderedDict()
         self._spoken_at: deque[float] = deque()
         self._last_spoken_at: float | None = None
-        self._pending: tuple[ReactionBeat, int, float] | None = None
+        self._pending: tuple[ReactionBeat, ScoreResult, str, float] | None = None
+        # The spoken beat awaiting its turn-finish report:
+        # (beat, result, digest, prev_last_spoken_at, stamped_ts). A new spoke
+        # simply replaces it -- overlap is prevented by the arbiter's busy gate
+        # in production, so no engine-side guard that could wedge the pipeline.
+        self._in_flight: tuple[ReactionBeat, ScoreResult, str, float | None, float] | None = None
         self.decisions: deque[ReactionDecision] = deque(maxlen=200)
 
     # -- sink-facing entry (D-P5-0 red line) ----------------------------------
@@ -328,6 +406,13 @@ class ReactionEngine:
     def set_active_game(self, game_id: str) -> None:
         """Step-3 wiring calls this at companion start, BEFORE events flow."""
         self._game_id = str(game_id or "")
+
+    def notify_turn_finished(self, answer: str, *, silent: bool) -> None:
+        """UI-thread entry: report the system turn this engine started has
+        ended (done, swallowed, stopped or errored). Enqueue-only (D-P5-0);
+        the worker refunds budget / records the CompanionBeat. Safe to call
+        for ANY system turn -- ignored when nothing is in flight."""
+        self._queue.put_nowait(ReactionTurnFinished(answer=str(answer or ""), silent=bool(silent)))
 
     # -- worker shell -----------------------------------------------------------
 
@@ -371,6 +456,8 @@ class ReactionEngine:
             self._on_line(event, now)
         elif isinstance(event, GalgameChoiceDetectedEvent):
             self._on_choice(event, now)
+        elif isinstance(event, ReactionTurnFinished):
+            self._on_turn_finished(event, now)
         # every other companion event (summary progress, previews...) is noise here
 
     def handle_idle(self, now: float) -> None:
@@ -465,45 +552,121 @@ class ReactionEngine:
                          score=result.score, line_ids=line_ids)
             return
 
-        # [step 3 seam] similarity gate vs recent CompanionBeats goes HERE -- the
-        # one DB read in the chain, last on purpose (D-P5-10), worker-thread only
-        # by construction (D-P5-0).
+        # Similarity gate (D-P5-10: the one DB read in the chain, last on
+        # purpose; worker-thread only by construction, D-P5-0).
+        if self._is_similar_to_recent(beat):
+            self._decide("similarity_drop", detail=beat.cut_reason,
+                         score=result.score, line_ids=line_ids)
+            return
 
         if self._state not in REACTION_SPEAK_STATES:
             if self._pending is not None:
                 self._decide("pending_dropped", detail="replaced")
-            self._pending = (beat, result.score, now)
+            self._pending = (beat, result, digest, now)
             self._decide("speak_hold", detail=beat.cut_reason,
                          score=result.score, line_ids=line_ids)
             return
-        self._speak_now(beat, result.score, now)
+        self._speak_now(beat, result, digest, now)
+
+    def _is_similar_to_recent(self, beat: ReactionBeat) -> bool:
+        if self._recent_for_dedupe is None:
+            return False
+        try:
+            candidates = self._recent_for_dedupe(SIMILARITY_RECENT_N)
+        except Exception:  # noqa: BLE001 -- a DB hiccup must not kill the beat
+            logger.warning("reaction: similarity dedupe read failed", exc_info=True)
+            return False
+        new_text = similarity_text("".join(line.text for line in beat.lines))
+        for candidate in candidates:
+            meta = getattr(candidate, "meta", None) or {}
+            for text in (getattr(candidate, "content", "") or "", str(meta.get("trigger_text") or "")):
+                normalized = similarity_text(text)
+                if normalized and bigram_jaccard(new_text, normalized) >= SIMILARITY_JACCARD_THRESHOLD:
+                    return True
+        return False
 
     def _try_pending(self, now: float) -> None:
-        beat, score, cut_at = self._pending  # type: ignore[misc]
+        beat, result, digest, cut_at = self._pending  # type: ignore[misc]
         self._pending = None
         line_ids = tuple(line.line_id for line in beat.lines)
         if now - cut_at > PENDING_FRESHNESS_SECONDS:
-            self._decide("pending_dropped", detail="stale", score=score, line_ids=line_ids)
+            self._decide("pending_dropped", detail="stale", score=result.score, line_ids=line_ids)
             return
         params = self._params()
         if not self._budget_allows(params, now):
             kind = "cooldown_drop" if self._in_cooldown(params, now) else "budget_capped_drop"
-            self._decide(kind, detail="pending", score=score, line_ids=line_ids)
+            self._decide(kind, detail="pending", score=result.score, line_ids=line_ids)
             return
-        self._speak_now(beat, score, now)
+        self._speak_now(beat, result, digest, now)
 
-    def _speak_now(self, beat: ReactionBeat, score: int, now: float) -> None:
+    def _speak_now(self, beat: ReactionBeat, result: ScoreResult, digest: str, now: float) -> None:
         line_ids = tuple(line.line_id for line in beat.lines)
-        if self._speak(beat, score):
-            # Budget/cooldown charge only on an ACTUAL utterance (D-P5-2); the
-            # NO_COMMENT refund hook arrives with step 3's turn-finished callback.
+        if self._speak(beat, result.score):
+            # Budget/cooldown charge only on an ACTUAL utterance (D-P5-2); a
+            # NO_COMMENT finish refunds both via _on_turn_finished.
+            prev_last = self._last_spoken_at
             self._spoken_at.append(now)
             self._last_spoken_at = now
-            self._decide("spoke", detail=beat.cut_reason, score=score, line_ids=line_ids)
+            self._in_flight = (beat, result, digest, prev_last, now)
+            self._decide("spoke", detail=beat.cut_reason, score=result.score, line_ids=line_ids)
         else:
             # Arbiter busy: processed (hash stays recorded -- a stale tease is
-            # worse than none), no budget consumed, no cooldown stamped (D-P5-2).
-            self._decide("busy_drop", detail=beat.cut_reason, score=score, line_ids=line_ids)
+            # worse than none), no budget consumed, no cooldown stamped (D-P5-2),
+            # and the beat persists as a SILENT CompanionBeat (dedupe history).
+            self._write_beat("", self._beat_meta(beat, result, digest, silent=True, reason="busy_drop"))
+            self._decide("busy_drop", detail=beat.cut_reason, score=result.score, line_ids=line_ids)
+
+    def _on_turn_finished(self, message: ReactionTurnFinished, now: float) -> None:
+        if self._in_flight is None:
+            return  # a system turn we did not start (e.g. a song report)
+        beat, result, digest, prev_last, stamp = self._in_flight
+        self._in_flight = None
+        line_ids = tuple(line.line_id for line in beat.lines)
+        if message.silent:
+            # NO_COMMENT swallowed: refund the budget charge and the cooldown
+            # stamp; the beat stays processed (hash + silent record, no retry).
+            try:
+                self._spoken_at.remove(stamp)
+            except ValueError:
+                pass
+            self._last_spoken_at = prev_last
+            self._write_beat("", self._beat_meta(beat, result, digest, silent=True, reason="no_comment"))
+            self._decide("silent_refund", detail=beat.cut_reason,
+                         score=result.score, line_ids=line_ids)
+            return
+        answer = (message.answer or "").strip()
+        if not answer:
+            # stopped/errored before any answer: keep the budget charge (she did
+            # start speaking), record a silent beat so the scene stays deduped.
+            self._write_beat("", self._beat_meta(beat, result, digest, silent=True, reason="interrupted"))
+            self._decide("beat_recorded", detail="interrupted",
+                         score=result.score, line_ids=line_ids)
+            return
+        self._write_beat(answer, self._beat_meta(beat, result, digest, silent=False, reason="spoke"))
+        self._decide("beat_recorded", detail=beat.cut_reason,
+                     score=result.score, line_ids=line_ids)
+
+    def _beat_meta(
+        self, beat: ReactionBeat, result: ScoreResult, digest: str, *, silent: bool, reason: str
+    ) -> dict[str, Any]:
+        return {
+            "score": int(result.score),
+            "reasons": list(result.reasons),
+            "dedupe_hash": digest,
+            "source_line_ids": [line.line_id for line in beat.lines],
+            "silent": bool(silent),
+            "reason": reason,
+            # the similarity gate compares against this (same-scene reworded OCR)
+            "trigger_text": normalize_reaction_text(" ".join(line.text for line in beat.lines))[:TRIGGER_TEXT_CAP],
+        }
+
+    def _write_beat(self, content: str, meta: dict[str, Any]) -> None:
+        if self._beat_writer is None:
+            return
+        try:
+            self._beat_writer(content, meta)
+        except Exception:  # noqa: BLE001 -- a DB failure must not kill the worker
+            logger.warning("reaction: beat write failed", exc_info=True)
 
     # -- budget -----------------------------------------------------------------------
 

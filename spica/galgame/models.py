@@ -293,6 +293,10 @@ class CompanionBeat(_Model):
     source: str = "user"  # user | spica | auto
     created_at: str = ""
     scope: dict[str, Any] = field(default_factory=dict)  # {"character_id","user_id","game_id"}
+    # P5 reaction bookkeeping: {score, reasons, dedupe_hash, source_line_ids,
+    # silent, reason, trigger_text}. Old rows lack the key -> default {} via
+    # _Model.from_dict; lives inside the JSON blob, no schema migration.
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = [

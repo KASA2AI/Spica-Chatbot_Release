@@ -58,6 +58,37 @@ class NullInputGate:
         return None
 
 
+# P5 (D-P5-5): the domain-agnostic "nothing worth saying" escape for system
+# turns. A domain directive may offer it ("如果实在没什么值得说的,只输出
+# NO_COMMENT"); the orchestrator swallows a system turn whose WHOLE answer is
+# this sentinel -- no display, no TTS, no recent memory, silent completion.
+NO_COMMENT_SENTINEL = "NO_COMMENT"
+
+_SENTINEL_WRAPPERS = "\"'「」『』（）()"
+_SENTINEL_TRAILING_PUNCT = "。．.,，!！?？~～…"
+
+
+def _clean_sentinel_text(text: str) -> str:
+    return "".join((text or "").split()).strip(_SENTINEL_WRAPPERS).upper()
+
+
+def is_no_comment_answer(text: str) -> bool:
+    """True when a COMPLETE system-turn answer is the sentinel -- tolerant of
+    quotes / trailing punctuation / case, so a model writing "no_comment。"
+    still counts."""
+    return _clean_sentinel_text(text).rstrip(_SENTINEL_TRAILING_PUNCT) == NO_COMMENT_SENTINEL
+
+
+def may_become_no_comment(partial: str) -> bool:
+    """True while a PARTIAL streamed answer is still sentinel-compatible. The
+    orchestrator's system-turn hold gates on this EXPLICITLY, so swallowing
+    never depends on play-unit min_chars tuning (D-P5-5)."""
+    cleaned = _clean_sentinel_text(partial)
+    if len(cleaned) <= len(NO_COMMENT_SENTINEL):
+        return NO_COMMENT_SENTINEL.startswith(cleaned)
+    return is_no_comment_answer(partial)
+
+
 def compose_system_directive_message(directive: str) -> str:
     """Frame a directive as a SYSTEM event message. The framing lives in the
     message text (single-sourced here, shared by the engine entry and the UI),

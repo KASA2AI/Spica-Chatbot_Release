@@ -39,6 +39,11 @@ from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import ExecStrategy, Threaded
 from spica.runtime.jobs import ThreadJobRunner
 from spica.runtime.observer import DefaultTurnObserver
+from spica.core.proactive import (
+    NO_COMMENT_SENTINEL,
+    is_no_comment_answer,
+    may_become_no_comment,
+)
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
 from spica.runtime.sequencer import Sequencer
@@ -275,12 +280,19 @@ def _produce_stream_events(
         )
         extractor = JsonAnswerExtractor()
         raw_model_parts: list[str] = []
+        # P5 NO_COMMENT gate (D-P5-5), SYSTEM turns only: while the streamed
+        # answer is still sentinel-compatible, units are WITHHELD -- an explicit
+        # hold, so swallowing never depends on play_unit_min_chars tuning.
+        # Plain turns: hold is False from the start and every new branch below
+        # short-circuits (byte-identical behaviour).
+        hold_for_sentinel = ctx.request.interaction_mode == "system"
         # The generate phase begins: ctx.answer exists from here on (None during
         # the prep stages above, so they cannot read a not-yet-streamed answer).
         answer = StreamedAnswer()
         ctx.answer = answer
 
         def handle_raw_delta(delta: str) -> None:
+            nonlocal hold_for_sentinel
             if not delta:
                 return
             observer.mark_once("first_llm_delta_ms", relative_ms())
@@ -288,6 +300,11 @@ def _produce_stream_events(
             raw_model_parts.append(delta)
             answer.raw_model_output = "".join(raw_model_parts)
             answer_delta = extractor.feed(answer.raw_model_output)
+            if hold_for_sentinel:
+                if may_become_no_comment(extractor.answer):
+                    return  # withhold: the answer may still be the sentinel
+                hold_for_sentinel = False
+                answer_delta = extractor.answer  # diverged: release everything withheld
             if not answer_delta:
                 return
             previous_sentence_count = splitter.completed_sentence_count
@@ -315,7 +332,17 @@ def _produce_stream_events(
         answer.answer = normalize_square_brackets_for_speech(answer.parsed_reply["answer"])
         answer.parsed_reply["answer"] = answer.answer
         answer.emotion = normalize_emotion(ctx.request.emotion_override or answer.parsed_reply["emotion"])
-        if not created_units and answer.answer:
+        # P5 (D-P5-5): a system turn that answered the NO_COMMENT sentinel is
+        # swallowed. The hold above already kept units (and so TTS) at zero;
+        # here the no-units fallback is skipped, recent memory is skipped, and
+        # the done event carries the CANONICAL sentinel so the UI display
+        # suppression and the reaction engine's refund hook recognize it.
+        system_silent = hold_for_sentinel and is_no_comment_answer(answer.answer)
+        if system_silent:
+            answer.answer = NO_COMMENT_SENTINEL
+            answer.parsed_reply["answer"] = NO_COMMENT_SENTINEL
+            ctx.metadata["system_turn_silent"] = True
+        if not system_silent and not created_units and answer.answer:
             fallback_splitter = PlayUnitSplitter(
                 min_chars=splitter.min_chars,
                 max_chars=splitter.max_chars,
@@ -323,7 +350,8 @@ def _produce_stream_events(
             for unit_text in fallback_splitter.feed(answer.answer) + fallback_splitter.flush():
                 submit_unit(unit_text)
 
-        save_stream_memory(ctx, services, deps)
+        if not system_silent:
+            save_stream_memory(ctx, services, deps)
 
         for future in ready_futures:
             future.result()

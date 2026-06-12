@@ -9,7 +9,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QTimer
 
 from spica.core.events import event_from_legacy
-from spica.core.proactive import compose_system_directive_message
+from spica.core.proactive import NO_COMMENT_SENTINEL, compose_system_directive_message
 from spica.core.state_machine import ChatStateMachine
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.typewriter_controller import TypewriterController
@@ -62,6 +62,9 @@ class ChatStreamController(QObject):
         # its full-duplex restore point here. A LIST -- two waiters may coexist
         # (a sing_song event during a system turn), a single slot would drop one.
         self._on_current_stream_done: list[Callable[[], None]] = []
+        # P5: optional report channel -- called with the final answer whenever a
+        # SYSTEM stream reaches stream_done (the reaction engine's beat/refund hook).
+        self.on_system_stream_done: Callable[[str], None] | None = None
         self.audio_session_id = 0
 
         # Phase 6E: ChatState is the single source of truth for UI busy-ness.
@@ -484,6 +487,14 @@ class ChatStreamController(QObject):
         self.stream_done = True
         answer = str(data.get("answer") or "").strip()
         units_count = int(data.get("units_count") or 0)
+        if self.current_stream_kind == StreamKind.SYSTEM:
+            # P5: report the system turn's outcome (reaction beat/refund hook)...
+            if self.on_system_stream_done is not None:
+                self.on_system_stream_done(answer)
+            # ...and a swallowed NO_COMMENT turn must never reach the display --
+            # without this, the no-units fallback below would SHOW the sentinel.
+            if answer == NO_COMMENT_SENTINEL:
+                answer = ""
         logger.debug(
             "event=stream_done stream_id=%s kind=%s units_count=%s answer_len=%s pending=%s",
             self.active_stream_token.id if self.active_stream_token else None,

@@ -482,7 +482,11 @@ def _build_game_context_sections(
     if _should_inject_companion(mode, request):
         character_id = str(deps.config.character.character_id or "spica")
         user_id = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
-        beats = game_memory.companion_beats(game_id, user_id, character_id, limit=_GAME_CONTEXT_RECENT_LIMIT)
+        # P5 D-P5-6: the prompt reader EXCLUDES silent reaction beats -- they
+        # accrue faster than spoken ones and would crowd her real words out.
+        beats = game_memory.recent_companion_beats_for_prompt(
+            game_id, user_id, character_id, limit=_GAME_CONTEXT_RECENT_LIMIT
+        )
         if beats:
             sections.append(_section("[COMPANION_CONTEXT]", _format_beats(beats)))
 

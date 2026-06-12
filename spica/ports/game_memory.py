@@ -118,3 +118,13 @@ class GameMemoryPort(Protocol):
     def companion_beats(
         self, game_id: str, user_id: str, character_id: str, limit: int = 10
     ) -> list[CompanionBeat]: ...
+
+    # P5 D-P5-6: prompt injection EXCLUDES silent reaction beats; the
+    # similarity dedupe INCLUDES them (source="spica" only).
+    def recent_companion_beats_for_prompt(
+        self, game_id: str, user_id: str, character_id: str, limit: int = 10
+    ) -> list[CompanionBeat]: ...
+
+    def recent_reaction_beats_for_dedupe(
+        self, game_id: str, user_id: str, character_id: str, limit: int = 10
+    ) -> list[CompanionBeat]: ...

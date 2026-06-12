@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, Q
 
 from spica.config.secrets import load_secrets
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from spica.core.proactive import ProactiveTurnArbiter
+from spica.core.proactive import NO_COMMENT_SENTINEL, ProactiveTurnArbiter
 from spica.host.app_host import AppHost
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.chat_stream_controller import ChatStreamController
@@ -277,6 +277,11 @@ class OverlayWindow(QWidget):
         # B2: song events ride the SAME RuntimeEvent bridge (it is a generic
         # event channel despite the name); this slot only reacts to song kinds.
         self.companion_bridge.companion_event.connect(self._on_song_runtime_event)
+        # P5: reaction engine wiring -- the arbiter handoff (same shape as song's
+        # request_proactive_turn) + the system-turn outcome report channel.
+        self.host.attach_reaction_arbiter(self.proactive_arbiter.try_speak)
+        if self.chat_stream_controller is not None:
+            self.chat_stream_controller.on_system_stream_done = self._on_system_stream_done_for_reaction
         self.galgame_controller = GalgameController(
             self.companion_bridge,
             parent=self,
@@ -915,6 +920,25 @@ class OverlayWindow(QWidget):
         self.chat_stream_controller.notify_on_current_stream_done(
             self.proactive_arbiter.system_speech_finished
         )
+        # P5: a stopped/errored system stream never reaches stream_done -- this
+        # one-shot clears the reaction engine's in-flight slot (no-op when the
+        # real report already arrived, or for non-reaction turns like song).
+        self.chat_stream_controller.notify_on_current_stream_done(
+            self._reaction_stream_closed
+        )
+
+    def _on_system_stream_done_for_reaction(self, answer: str) -> None:
+        """P5 report channel: forward the system turn's outcome to the reaction
+        engine (beat recording + NO_COMMENT refund). Ignored by the engine when
+        it has nothing in flight (e.g. a song report turn)."""
+        engine = getattr(self.host, "reaction_engine", None)
+        if engine is not None:
+            engine.notify_turn_finished(answer, silent=(answer == NO_COMMENT_SENTINEL))
+
+    def _reaction_stream_closed(self) -> None:
+        engine = getattr(self.host, "reaction_engine", None)
+        if engine is not None:
+            engine.notify_turn_finished("", silent=False)
 
     def set_busy(self, busy: bool) -> None:
         if self._is_song_busy():

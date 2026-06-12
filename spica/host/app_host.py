@@ -36,8 +36,18 @@ from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.galgame.binding import GameBinder
 from spica.galgame.companion_controller import GalgameCompanionController
 from spica.galgame.history import compose_play_history
+from spica.core.proactive import ProactiveTurnRequest
+from spica.galgame.models import CompanionBeat, utc_now_iso
 from spica.galgame.ocr_calibration import GalgameOcrCalibrator
 from spica.galgame.ocr_loop import OcrStreamRunner
+from spica.galgame.reaction import (
+    REACTION_MODE_TABLE,
+    ReactionEngine,
+    ReactionLexicon,
+    compose_reaction_directive,
+    load_reaction_lexicon,
+    score_beat,
+)
 from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
 from spica.runtime.context import GameTurnBinding
@@ -77,9 +87,19 @@ class AppHost:
         self.services: Any | None = None
         self.character_package: Any | None = None
         self.chat_engine: Any | None = None
-        # galgame companion event sink (Phase 4). Default no-op so the host runs
-        # headless; the UI injects a Qt-free bridge sink via attach_companion_sink.
-        self.companion_sink: CompanionEventSink = noop_companion_sink
+        # galgame companion event sink (Phase 4). The PUBLIC sink is a stable
+        # dispatcher (P5 tee, D-P5-0): it forwards to the UI bridge and -- when
+        # the reaction engine is on -- enqueues into its worker queue. Default
+        # UI side is no-op so the host runs headless; the UI injects a Qt-free
+        # bridge via attach_companion_sink.
+        self._ui_companion_sink: CompanionEventSink = noop_companion_sink
+        self.companion_sink: CompanionEventSink = self._dispatch_companion_event
+        # P5 reaction engine (built in initialize() when reaction_mode != off;
+        # the arbiter handoff is UI-attached -- same shape as song's
+        # request_proactive_turn injection).
+        self.reaction_engine: ReactionEngine | None = None
+        self._reaction_try_speak: Any | None = None
+        self._reaction_lexicons: dict[str | None, ReactionLexicon] = {}
         # Path B stage 2: the process-wide companion controller singleton, built
         # lazily by companion_controller(); _companion_game_binding reads it.
         self._companion_controller: GalgameCompanionController | None = None
@@ -214,6 +234,9 @@ class AppHost:
             # the controller singleton at call time), so wiring order is free and a
             # plain chat turn stays byte-identical while no companion play is active.
             self.chat_engine.set_game_binding_provider(self._companion_game_binding)
+            # P5: the reaction engine (None while reaction_mode is off -- the
+            # tee then never enqueues, zero overhead on the OCR thread).
+            self.reaction_engine = self._build_reaction_engine()
         except Exception:
             if self.visual_tool is None:
                 try:
@@ -231,10 +254,122 @@ class AppHost:
         """Inject the galgame Host->UI event sink (Phase 4 seam).
 
         ``spica/`` is Qt-free, so the concrete sink (a Qt bridge that marshals onto
-        the GUI thread) is created in ``ui/`` and injected down here. Sessions made
-        by ``new_companion_session`` after this call emit through it.
+        the GUI thread) is created in ``ui/`` and injected down here. The public
+        ``companion_sink`` stays the stable dispatcher (P5 tee), so attach order
+        relative to session construction no longer matters.
         """
-        self.companion_sink = sink
+        self._ui_companion_sink = sink
+
+    def _dispatch_companion_event(self, event: Any) -> None:
+        """The P5 tee. May run on the OCR thread INSIDE the session lock, so the
+        reaction leg is enqueue-only (put_nowait, D-P5-0 red line) -- all real
+        work happens on the engine's own worker."""
+        self._ui_companion_sink(event)
+        engine = self.reaction_engine
+        if engine is not None:
+            engine.enqueue_event(event)
+
+    # -- P5 reaction engine assembly (closures only -- the host stays thin) ------
+
+    def attach_reaction_arbiter(self, try_speak: Any) -> None:
+        """UI hands over ``ProactiveTurnArbiter.try_speak`` (same injection shape
+        as the song controller's request_proactive_turn)."""
+        self._reaction_try_speak = try_speak
+
+    def _reaction_game_scope(self) -> tuple[str, str, GameTurnBinding] | None:
+        """(game_id, playthrough_id, binding) of the LIVE play, or None."""
+        binding = self._companion_game_binding()
+        if binding is None:
+            return None
+        request = binding.game_context_request
+        game_id = str(request.game_id or "")
+        if not game_id:
+            return None
+        return game_id, str(request.playthrough_id or "default"), binding
+
+    def _reaction_speak(self, beat: Any, score: int) -> bool:
+        """Engine speak callback (worker thread): directive composition + arbiter
+        handoff. False (= busy semantics, no budget charge) when the UI arbiter
+        is not attached or the play has already ended."""
+        del score  # telemetry lives in the engine's decision trail
+        try_speak = self._reaction_try_speak
+        scope = self._reaction_game_scope()
+        if try_speak is None or scope is None:
+            return False
+        _, _, binding = scope
+        request = ProactiveTurnRequest(
+            directive=compose_reaction_directive(beat),
+            source="galgame",
+            conversation_id=binding.conversation_id,
+        )
+        return bool(try_speak(request))
+
+    def _reaction_scorer(self, beat: Any):
+        """Lexicon scorer bound to the LIVE game (per-game overlay, cached)."""
+        scope = self._reaction_game_scope()
+        game_id = scope[0] if scope else None
+        if game_id not in self._reaction_lexicons:
+            self._reaction_lexicons[game_id] = load_reaction_lexicon(game_id)
+        return score_beat(beat, self._reaction_lexicons[game_id])
+
+    def _write_reaction_beat(self, content: str, meta: dict) -> None:
+        """Engine beat_writer (worker thread): persist a reaction CompanionBeat
+        under the live play's scope. Play already ended -> logged and dropped."""
+        scope = self._reaction_game_scope()
+        if scope is None or self.services is None:
+            logger.warning("reaction beat dropped: no live play scope to record under")
+            return
+        game_id, playthrough_id, _ = scope
+        character_id = str(self.config.character.character_id or "spica")
+        user_id = str(self.config.character.interlocutor_name or "麦")
+        self.services.game_memory_adapter.add_companion_beat(
+            CompanionBeat(
+                beat_id=uuid.uuid4().hex,
+                game_id=game_id,
+                playthrough_id=playthrough_id,
+                type="reaction",
+                content=content,
+                source="spica",
+                created_at=utc_now_iso(),
+                scope={"character_id": character_id, "user_id": user_id, "game_id": game_id},
+                meta=dict(meta),
+            )
+        )
+
+    def _recent_reaction_beats(self, limit: int) -> list:
+        """Engine recent_for_dedupe (worker thread): recent spica beats incl.
+        silent ones (D-P5-6) for the similarity gate."""
+        scope = self._reaction_game_scope()
+        if scope is None or self.services is None:
+            return []
+        game_id = scope[0]
+        character_id = str(self.config.character.character_id or "spica")
+        user_id = str(self.config.character.interlocutor_name or "麦")
+        return self.services.game_memory_adapter.recent_reaction_beats_for_dedupe(
+            game_id, user_id, character_id, limit=limit
+        )
+
+    def _build_reaction_engine(self) -> ReactionEngine | None:
+        """Assemble + start the reaction engine, or None when off. The mode is
+        resolve-once (D-P5-4: restart-effective; the params lambda is the holder
+        seam a future settings panel swaps). ``reaction_mode`` becomes a typed
+        galgame field in step 4 -- until then getattr falls back to off."""
+        mode = str(getattr(self.config.galgame, "reaction_mode", "off") or "off").strip().lower()
+        params = REACTION_MODE_TABLE.get(mode)
+        if params is None:
+            if mode != "off":
+                logger.warning("unknown galgame.reaction_mode %r -- reaction engine stays off", mode)
+            return None
+        engine = ReactionEngine(
+            speak=self._reaction_speak,
+            params_provider=lambda: params,
+            scorer=self._reaction_scorer,
+            beat_writer=self._write_reaction_beat,
+            recent_for_dedupe=self._recent_reaction_beats,
+        )
+        engine.start()
+        logger.info("reaction engine on (mode=%s)", mode)
+        return engine
 
     def _new_summarizer(self) -> GalgameSummarizer | None:
         # Summary LLM = config.galgame.summary_model, else the dialogue model (Phase 8),

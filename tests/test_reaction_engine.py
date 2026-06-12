@@ -25,6 +25,7 @@ from spica.core.companion_events import (
 from spica.galgame.reaction import (
     ReactionEngine,
     ReactionModeParams,
+    ReactionTurnFinished,
     ScoreResult,
 )
 from spica.galgame.session import GalgameState
@@ -61,12 +62,14 @@ class _SpeakSpy:
         return self.result
 
 
-def _engine(speak=None, *, score=None, params=None):
+def _engine(speak=None, *, score=None, params=None, beat_writer=None, recent_for_dedupe=None):
     spy = speak or _SpeakSpy()
     engine = ReactionEngine(
         speak=spy,
         params_provider=(lambda: params) if params else None,
         scorer=(lambda beat: ScoreResult(score, ("test",))) if score is not None else None,
+        beat_writer=beat_writer,
+        recent_for_dedupe=recent_for_dedupe,
     )
     return engine, spy
 
@@ -240,6 +243,111 @@ class BudgetTest(unittest.TestCase):
         spy.result = True  # 下一个 beat 立刻来:未被 busy 记冷却/扣预算
         self._beat(engine, 3.0, "乙")
         self.assertEqual(_kinds(engine), ["busy_drop", "spoke"])
+
+
+class SimilarityGateTest(unittest.TestCase):
+    """Step 3 (D-P5-10): the one DB gate -- reworded same-scene beats are
+    rejected against recent spica beats (content + stored trigger_text)."""
+
+    @staticmethod
+    def _recent(trigger_text="", content=""):
+        from types import SimpleNamespace
+
+        return [SimpleNamespace(content=content, meta={"trigger_text": trigger_text})]
+
+    def _drive(self, engine, texts):
+        engine.handle_event(_status(_S.PLAYING), now=0.0)
+        for t, text in enumerate(texts):
+            engine.handle_event(_line(text), now=float(t))
+
+    def test_reworded_same_scene_is_dropped(self):
+        recent = self._recent(trigger_text="其实我一直骗着你诶什么你说什么对不起")
+        engine, spy = _engine(score=10, recent_for_dedupe=lambda n: recent)
+        self._drive(engine, ["其实我一直骗着你。", "诶，你说什么。", "对不起啊！"])
+        self.assertEqual(_kinds(engine), ["similarity_drop"])
+        self.assertEqual(spy.calls, [])
+
+    def test_dissimilar_beat_passes(self):
+        recent = self._recent(trigger_text="其实我一直骗着你诶什么你说什么对不起")
+        engine, spy = _engine(score=10, recent_for_dedupe=lambda n: recent)
+        self._drive(engine, ["今天的Live要开始了。", "观众好多。", "紧张死了！"])
+        self.assertEqual(_kinds(engine), ["spoke"])
+        self.assertEqual(len(spy.calls), 1)
+
+    def test_dedupe_read_failure_never_kills_the_beat(self):
+        def boom(n):
+            raise RuntimeError("db boom")
+
+        engine, spy = _engine(score=10, recent_for_dedupe=boom)
+        self._drive(engine, ["剧情推进。", "继续推进。", "爆点来了！"])
+        self.assertEqual(_kinds(engine), ["spoke"])  # best-effort gate
+
+
+class TurnFinishedTest(unittest.TestCase):
+    """Step 3: the UI's turn-finish report -- beat recording + NO_COMMENT refund."""
+
+    def _spoken_engine(self, writer, speak=None):
+        engine, spy = _engine(speak, score=10, beat_writer=writer)
+        engine.handle_event(_status(_S.PLAYING), now=0.0)
+        for t, text in enumerate(["其实我一直骗着你。", "诶。", "什么！"]):
+            engine.handle_event(_line(text), now=float(t))
+        self.assertEqual(engine.decisions[-1].kind, "spoke")
+        return engine, spy
+
+    def test_spoken_turn_records_full_meta(self):
+        written = []
+        engine, _ = self._spoken_engine(lambda content, meta: written.append((content, meta)))
+        engine.handle_event(ReactionTurnFinished("这反转我没想到！", silent=False), now=5.0)
+        self.assertEqual(engine.decisions[-1].kind, "beat_recorded")
+        (content, meta), = written
+        self.assertEqual(content, "这反转我没想到！")
+        self.assertEqual(meta["silent"], False)
+        self.assertEqual(meta["reason"], "spoke")
+        self.assertEqual(meta["score"], 10)
+        self.assertEqual(len(meta["source_line_ids"]), 3)
+        self.assertIn("骗着你", meta["trigger_text"])
+
+    def test_silent_finish_refunds_budget_and_cooldown(self):
+        written = []
+        engine, _ = self._spoken_engine(lambda content, meta: written.append((content, meta)))
+        engine.handle_event(ReactionTurnFinished("NO_COMMENT", silent=True), now=5.0)
+        self.assertEqual(engine.decisions[-1].kind, "silent_refund")
+        self.assertEqual(written[-1][0], "")
+        self.assertEqual(written[-1][1]["reason"], "no_comment")
+        # refund proof: a fresh beat at t=10 (deep inside normal 90s cooldown)
+        for t, text in enumerate(["完全不同的新场景。", "新的角色登场。", "开演了！"]):
+            engine.handle_event(_line(text), now=10.0 + t)
+        self.assertEqual(engine.decisions[-1].kind, "spoke")
+
+    def test_interrupted_turn_keeps_budget_and_records_silent_beat(self):
+        written = []
+        engine, _ = self._spoken_engine(lambda content, meta: written.append((content, meta)))
+        engine.handle_event(ReactionTurnFinished("", silent=False), now=5.0)  # stopped mid-way
+        self.assertEqual(engine.decisions[-1].kind, "beat_recorded")
+        self.assertEqual(written[-1][1]["reason"], "interrupted")
+        # budget NOT refunded: the next beat inside cooldown is dropped
+        for t, text in enumerate(["另一个场景。", "继续。", "高潮！"]):
+            engine.handle_event(_line(text), now=10.0 + t)
+        self.assertEqual(engine.decisions[-1].kind, "cooldown_drop")
+
+    def test_finish_report_without_in_flight_is_ignored(self):
+        engine, _ = _engine(score=10)
+        before = len(engine.decisions)
+        engine.handle_event(ReactionTurnFinished("唱完啦", silent=False), now=1.0)  # song turn
+        self.assertEqual(len(engine.decisions), before)
+
+    def test_busy_drop_persists_a_silent_beat(self):
+        written = []
+        spy = _SpeakSpy(result=False)
+        engine, _ = _engine(spy, score=10, beat_writer=lambda c, m: written.append((c, m)))
+        engine.handle_event(_status(_S.PLAYING), now=0.0)
+        for t, text in enumerate(["铺垫。", "推进。", "爆点！"]):
+            engine.handle_event(_line(text), now=float(t))
+        self.assertEqual(engine.decisions[-1].kind, "busy_drop")
+        (content, meta), = written
+        self.assertEqual(content, "")
+        self.assertEqual(meta["silent"], True)
+        self.assertEqual(meta["reason"], "busy_drop")
 
 
 class SinkAsyncRedLineTest(unittest.TestCase):

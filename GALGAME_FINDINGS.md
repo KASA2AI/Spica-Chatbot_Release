@@ -45,12 +45,31 @@
 - 日志清理(triage INFO 降级 / httpx 压制 / 播放状态机 event= 双层降级)→ 完成(见日志清理收口节)。
 
 **仍挂账**:
-- **P0b 配置统一(确定的下一步)**:F6 screen env 收编、deepseek key 双名清理、app.yaml 落地、`test_no_getenv` 临时白名单 2 条清账;方向已定(单一权威 typed config,三载体),方案见审查记录;
+- ~~P0b 配置统一~~ → **已完成,见下方《P0b 关账清点》**(F6/deepseek 双名/app.yaml/白名单清账全清偿);
 - **语音全双工**(她外放时麦克风停车,半双工是 Initial release 原始设计):决议**暂不动**;`VoiceInputGate`(proactive.py)已留接口位,将来路线 b(识别结果硬过滤)→d(ReSpeaker 固件 AEC 验证)→c(软件 AEC);
 - anemoi 同源(#2,产品决策挂起)/ declare_route seam(#1)/ stable=2 B 方案(#6)/ 存档槽误截(#7 余项)/ interval 死字段 + `galgame::` 前缀统一(#9)/ unsummarized 全表扫描观察(#11,40h/200ms 接受)/ demo 群逐步退役(#12);
 - 特判二(watch 是否挂压缩器):继续挂起,压缩机制已通用化,挂上是一行注册参数;
 - OCR 名字级噪声(查珠=杏珠误读):**已决议不修**(名字归一化不值得,总结 LLM 能容忍);
 - F9(host 渐胖趋势):P3 实际落 UI 侧,host 未再加厚,降为低优先观察。
+
+## P0b 关账清点(2026-06-12,配置统一收官:守门→收编→typed 化→注入→app.yaml 落地→收墙)
+
+**已清偿**:
+- **F6(screen 平行 env 配置)**:SPICA_SCREEN_*×15 收编 typed config——env 读取经 manager(coercion 一份:env 侧 manager / file 侧 ScreenConfig validator),旧 json 归并 app.yaml `screen:` 节;
+- **deepseek key 双名**:B2 已使 DEEPSEEK_* 成死名(代码零读取),P0b 加 `load_secrets()` 残留 WARNING(不静默);xiaosan.env 两行已删,env_audit legacy 归零;
+- **app.yaml 落地**:名义权威首次成为事实载体——screen/song/plugins 三节由 `scripts/migrate_config_p0b.py` 迁入(写前字段级+生效级双断言,旧文件 `*.migrated` 仅回滚备份);三载体 = app.yaml + xiaosan.env + overlay_config.json,tts/visual.yaml 归角色数据文件(D1);
+- **guard 收墙**:SCAN_DIRS 补 hardware(RESPEAKER_*×3 收编),临时白名单清零,永久白名单恰好 config 层三件(manager/secrets/runtime_env——GPT-SoVITS env 写垫片挪入 config 层,D3);
+- **resolve-once 注入**:AppHost 构造期 resolve screen(8 调用点)/song(worker 链)各一次注入;`_request_song` 的 search limit 单源化;attachment 分析兜底走载体开关(③-B,零接触冻结链,golden 三件套不改一行);
+- **配置守门基建(长期资产)**:Layer A `scripts/dump_resolved_config.py`(真机快照:value/source/env_var/env_set 三遍差分归因 + env_audit + --diff exit 1)+ Layer B `tests/test_resolved_config_equivalence.py`(41 语义钉:优先级/coercion 全分支,P0b 全程一字未改);
+- **(顺带,非 P0b 立项)RVC cwd 竞态**:TTS pushd 与 Applio chdir 两 vendored 垫片进程级 cwd 互踩(缓存命中连唱触发 rmvpe.pt [Errno 2]),vendored 10 处相对路径锚定 `__file__` + 删 `_applio_context` 的 chdir,正反两向竞态同根拔除(确定性复现+复验)。
+
+**仍挂账**:
+- song 节 typed 化(D-3a:deep-merge+voices 开放字典语义,pydantic 化另立项);
+- 方案 d:GPT-SoVITS pushd 侧绝对化(挂账观察——RVC 不碰 cwd 后,残余仅 TTS-vs-TTS warmup 启动小窗);
+- 管理面 `update_config` save 全量落盘掉注释(D-3d 登记不动,设置中心启用前不触发);
+- D6 旧链分支下版本删除(「warn 一个版本」承诺,删时同删 `*.migrated` 三件);
+- legacy `tool.py` self-load(冻结链组件,与 sync_chain 同退役);
+- 既有挂账原样保持:语音全双工(VoiceInputGate 接口位在)/anemoi/特判二/OCR 名字噪声(决议不修)/interval 死字段/declare_route/stable=2/存档槽/全表扫描/demo 群。
 
 ## 真机事实存档(无代码锚点,防失忆)
 

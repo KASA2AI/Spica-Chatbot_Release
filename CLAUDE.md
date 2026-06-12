@@ -11,7 +11,7 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 
 **项目的核心是 galgame 陪玩系统。** LLM、TTS、记忆、屏幕识别这些子系统，本质上都是为「Spica 能陪你一起玩 galgame、记得剧情和你们一起玩的经历」这个目标搭桥。涉及取舍时，优先服务这个核心目标。
 
-平台重构 + 核心 turn 硬化（C0–C8）+ galgame 陪玩（Phase 0–9 / 路 B：看屏 watch、记忆写回 note、后台总结、履历桥、崩溃恢复、UI 接线）+ 架构硬化 P0–P3（守门墙扩域、生产链多轮工具轮、song 工具化 sing_song、主动开口 turn 发起器）已全部完成。当前确定的下一步：**P0b 配置统一**（见 §2「配置体系现状」，尚未实施）。
+平台重构 + 核心 turn 硬化（C0–C8）+ galgame 陪玩（Phase 0–9 / 路 B：看屏 watch、记忆写回 note、后台总结、履历桥、崩溃恢复、UI 接线）+ 架构硬化 P0–P3（守门墙扩域、生产链多轮工具轮、song 工具化 sing_song、主动开口 turn 发起器）+ **P0b 配置统一（三载体收敛，已完成，见 §2「配置体系」）** 已全部完成。当前无已立项的下一步；候选方向（主动吐槽 / 浏览器操控 / 视频陪看）见审查记录，未立项，不写承诺。
 
 ---
 
@@ -20,7 +20,7 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 1. **`spica/` 不准 import Qt / PySide / shiboken。** 核心层必须 UI 无关。所有 Qt 代码只能待在 `ui/`。截图预览、框选、确认窗口等也只能在 `ui/`。
 2. **跨 Host → UI 只能走 `RuntimeEvent` dataclass。** 后端线程**不准**直接调用 Qt widget。后端只 emit dataclass / event，UI 主线程消费后更新界面。galgame 的新事件同样遵守（见 §4）。
 3. **唯一对话路径是 `run_turn`。不准另起第二套 LLM prompt / 回答链路。** galgame 的所有问答仍然走 `ChatEngine → run_turn`，通过 gated stage 注入游戏上下文（见 §4）。**主动开口（系统 turn）同样：`ChatEngine.stream_system_turn` → run_turn（`interaction_mode="system"`，该模式下工具供给硬关断防自激）。不准为「她主动说话」另起播报通道或第二套 prompt。**
-4. **业务代码不准 `os.getenv`。** 只有 `config/manager.py` 和 `secrets.py` 能读环境变量，其他地方一律通过注入的 config 拿配置。
+4. **业务代码不准 `os.getenv`。** 只有 `spica/config` 三件（`manager.py`、`secrets.py`、`runtime_env.py`——后者是 vendored 运行时的 env 写垫片）能碰 `os.environ`，其他地方一律通过注入的 config 拿配置。env 名册的单一居所是 `spica/config/env_roster.py`。
 5. **Host 必须薄。** `AppHost` 只做组装与生命周期，不放业务逻辑。
 6. **测试命令固定为 `python -m pytest tests -q`。** 不准用裸 `pytest`——它会递归扫到 vendored 的 GPT-SoVITS runtime 直接崩。
 7. **新能力走现有 ports / adapters / registry 风格。** 不准另起 `spica/platform/` 这种和现仓库冲突的平行目录树。平台差异藏在 adapter 后面。
@@ -58,6 +58,7 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 | 屏幕识别工具链 | `agent_tools/function_tools/screen/`（`inspect_screen` ToolPort：本地截图 + RapidOCR + Moondream，**绝不上传**） |
 | 手动框选截图 UI | `ui/widgets/screenshot_selector.py::ScreenshotSelectionOverlay` + `ui/workers/screenshot_worker.py` |
 | 活体诊断器 | `scripts/verify_watch_chain.py`（工具不触发先跑它）、`scripts/diag_ocr_providers.py`（疑 OCR 回落 CPU 先跑它） |
+| 配置快照守门 | `scripts/dump_resolved_config.py`（Layer A 真机快照，`--diff` 守每个生效值）+ `tests/test_resolved_config_equivalence.py`（Layer B 语义钉）——**动配置解析前先 dump 基线，改完零 diff 才算完** |
 
 ### galgame 子系统（已落地的实际布局）
 
@@ -88,9 +89,14 @@ ui/                              # galgame 框选 / 校准 / 状态 chip / Compa
 - 系统 turn（`interaction_mode="system"`）工具供给硬关断（防自激，见铁律 #3）。
 - followup 压缩两层：工具自声明 `compact_output`（inspect 注册了历史压缩器）+ 8000 字符头尾截断兜底。
 
-### 配置体系现状（P0b 待做，**尚未实施**）
+### 配置体系（P0b 已完成，三载体）
 
-现状是多套载体并存：typed config（`AppConfig`，名义权威，`data/config/app.yaml` 文件目前不存在 = 纯默认值 + env 覆盖）、`xiaosan.env`（事实中心，由 `load_secrets()` 在 main 入口灌注——铁律 #10）、`config/screen_vision_config.json` + `SPICA_SCREEN_*` env（screen 工具平行配置，在 `test_no_getenv` 临时白名单记账）、`data/config/{tts,visual,plugins}.yaml`（各自私有 loader）、`song_config.json`（包内）、`ui/overlay_config.json`（UI 偏好）。**P0b 计划**：收敛为三载体（app.yaml + xiaosan.env + overlay_config.json），env 读取全部归 `manager.py`/`secrets.py`，临时白名单清零。在 P0b 完成前，**不要在文档或代码注释里把「配置已统一」写成既成事实**；新增配置一律走 typed config，不准再开新的 env 直读。
+- **三载体**：`data/config/app.yaml`（typed config 唯一 app 级文件载体，`AppConfig` 各域 section：llm/memory/character/stream/galgame/screen/song/plugins）+ `xiaosan.env`（只装 secrets/key，入口 `load_secrets()` 灌注——铁律 #10）+ `ui/overlay_config.json`（UI 偏好）。tts.yaml / visual.yaml 归类为**角色数据文件**（角色包整文件覆盖、visual 带 mtime 热重载），不是配置载体（D1）。
+- **env 只作 override 且只经 config 层**：全部 env 名册单一居所 `spica/config/env_roster.py`（manager / Layer A / Layer B 共用，结构上无法漂移）；读取只在 `manager.py`/`secrets.py`，vendored 运行时的 env 写垫片在 `runtime_env.py`——guard（`test_no_getenv`）的永久白名单恰好这三件，扫 spica/memory/agent_tools/ui/hardware 五目录，临时白名单为空。
+- **resolve-once + 注入**：`AppHost` 构造期把 screen / song 配置各 resolve 一次，注入全部生产消费方；screen 解析引擎只有一份（env 侧 coercion 在 manager，file 侧在 `ScreenConfig` validator）。
+- **旧载体已退役**：`screen_vision_config.json` / `song_config.json` / `plugins.yaml` 已迁入 app.yaml 并改名 `*.migrated`（仅回滚备份，不被读取）；D6 开关的旧链分支仍在（旧文件若重新出现会整链回退并 WARNING），计划下个版本删除旧链读取。
+- **守门长期在位**：`scripts/dump_resolved_config.py`（Layer A）+ `tests/test_resolved_config_equivalence.py`（Layer B）。**改配置解析前先 dump 基线，改完零 diff 才算完。**
+- **纪律**：新增配置一律走 typed config（env 名进 env_roster + manager），不准再开新的 env 直读；song 节暂为 untyped override dict（D-3a 挂账，typed 化另立项）。
 
 ---
 

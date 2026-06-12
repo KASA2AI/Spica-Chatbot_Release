@@ -13,7 +13,7 @@ Spica Chatbot 是一个本地桌面语音角色扮演陪伴应用。它用 PySid
 - 对话核心：`spica.core.chat_engine.ChatEngine`。
 - 流式运行时：`spica.runtime.orchestrator.stream_voice_events()`。
 - 对话 turn：`spica.runtime.turn.run_turn`（唯一事件路径）、`spica.runtime.context.TurnContext`（类型化子上下文）、`spica.runtime.deps.TurnDeps`（注入 config/ports/observer/jobs/tools）。
-- 配置入口：`spica.config.manager.ConfigManager` + `data/config/*.yaml` + `xiaosan.env`。
+- 配置入口：`data/config/app.yaml`（typed config 唯一 app 级载体）+ `xiaosan.env`（只装密钥）+ `ui/overlay_config.json`（UI 偏好）；env 只作 override，经 `spica.config.manager.ConfigManager` 解析。
 - 能力注册：`spica.plugins.registry.CapabilityRegistry`。
 - 角色包：`spica.core.character.CharacterPackage`，默认使用 `spica_data/Spica_skill`。
 - UI 状态：`spica.core.state_machine.ChatStateMachine` 驱动忙碌、生成、播放、暂停和错误状态。
@@ -62,7 +62,7 @@ flowchart TD
 
 `spica/` 是平台核心，不能 import PySide、PyQt、shiboken 或其他 GUI 库。这个约束由 `tests/test_layering.py` 守住。
 
-业务代码不能直接读取 `os.getenv()` 或 `os.environ`。环境变量只能在 `spica/config/manager.py` 和 `spica/config/secrets.py` 读取，其他层必须通过 `AppConfig` 或 `Secrets` 获取配置。这个约束由 `tests/test_no_getenv.py` 守住。
+业务代码不能直接读取 `os.getenv()` 或 `os.environ`。环境只能由 `spica/config` 三件碰：`manager.py`、`secrets.py`、`runtime_env.py`（vendored 运行时的 env 写垫片）；env 名册单一居所是 `spica/config/env_roster.py`。其他层必须通过 `AppConfig` 或 `Secrets` 获取配置。这个约束由 `tests/test_no_getenv.py` 守住（扫 spica/memory/agent_tools/ui/hardware，临时白名单为空）。
 
 Host 只做组装和窄接口转发，业务逻辑在 `ChatEngine`、runtime 组件、adapters、memory 和 tool 模块中。
 
@@ -89,9 +89,9 @@ Host 只做组装和窄接口转发，业务逻辑在 `ChatEngine`、runtime 组
 ├── memory/                             # RecentMemory、SQLiteMemoryStore、规则记忆抽取和去重
 ├── hardware/respeaker/                 # ReSpeaker 录音、USB control、Qt speech worker
 ├── ui/                                 # PySide6 UI、controllers、workers、models、widgets
-├── scripts/                            # 活体诊断器：verify_watch_chain.py（工具不触发先跑）、diag_ocr_providers.py（疑 OCR 回落先跑）
-├── data/config/                        # TTS、visual、plugin YAML 配置
-├── config/screen_vision_config.json     # 本地屏幕观察配置
+├── scripts/                            # 活体诊断器（verify_watch_chain.py / diag_ocr_providers.py）+ 配置守门（dump_resolved_config.py，动配置解析前先 dump 基线）
+├── data/config/                        # app.yaml（typed config 唯一 app 级载体）+ tts/visual YAML（角色数据文件）
+├── config/                             # （旧 screen json 已迁入 app.yaml，仅存 *.migrated 回滚备份）
 ├── spica_data/                         # 角色卡、立绘、参考音频、本地记忆数据，发布仓库不带大素材
 ├── static/generated_voice/             # 对话 TTS 输出，运行时生成
 ├── static/generated_song/              # 点歌翻唱缓存和输出，运行时生成
@@ -225,7 +225,7 @@ python -m pytest tests -q
 
 ## 配置
 
-> 现状：配置载体多套并存（typed config + `xiaosan.env` + 各 yaml/json，见下）。**P0b「配置统一」已立项未实施**（目标：收敛为 `app.yaml` + `xiaosan.env` + `ui/overlay_config.json` 三载体，env 读取全部归 `manager.py`/`secrets.py`）。本节描述的是当前真实状态。
+> 配置体系已统一为三载体（P0b）：`data/config/app.yaml`（typed config，含 llm/memory/character/stream/galgame/screen/song/plugins 八节）+ `xiaosan.env`（只装密钥）+ `ui/overlay_config.json`（UI 偏好）。env 只作 override 且只经 `manager.py`/`secrets.py`；tts.yaml / visual.yaml 是角色数据文件（角色包可整文件覆盖），不算配置载体。改配置解析前先跑 `python scripts/dump_resolved_config.py --out <baseline>`，改完 `--diff` 零差异才算完。
 
 ### `data/config/tts.yaml`
 
@@ -256,11 +256,11 @@ python -m pytest tests -q
 - `dialog`: 对白框 speaker、滤镜、颜色和透明度。
 - `character`: 默认表情、默认手势、布局比例。
 
-### `data/config/plugins.yaml`
+### app.yaml 的 `plugins:` 节
 
-插件 manifest。每个启用项会加载 `plugins/<name>/__init__.py` 并调用 `register(registry)`。
+插件 manifest（旧载体 `data/config/plugins.yaml` 已迁入 app.yaml）。每个启用项会加载 `plugins/<name>/__init__.py` 并调用 `register(registry)`。
 
-示例：
+示例（写在 app.yaml）：
 
 ```yaml
 plugins:
@@ -272,7 +272,7 @@ plugins:
 
 ### `data/config/app.yaml`
 
-这是 `ConfigManager` 的默认 typed config 文件路径。仓库可以没有该文件；没有时使用 `AppConfig` 默认值和环境变量覆盖。
+typed config 的唯一 app 级文件载体（P0b 后包含 screen/song/plugins 三节——由 `scripts/migrate_config_p0b.py` 自旧 json/yaml 迁入）。键缺省时使用 `AppConfig` 默认值；环境变量覆盖文件值。
 
 可选示例：
 
@@ -299,9 +299,9 @@ stream:
 max_tool_rounds: 3
 ```
 
-### `config/screen_vision_config.json`
+### app.yaml 的 `screen:` 节
 
-控制本地 screen pipeline：
+控制本地 screen pipeline（旧载体 `config/screen_vision_config.json` 已迁入 app.yaml，仅存 `.migrated` 回滚备份）：
 
 - `provider`: 当前为 `moondream_local`。
 - `device`: 当前设计为 `cuda`。
@@ -430,7 +430,7 @@ capture_full_screen -> RapidOCR -> Moondream local -> screen observation JSON ->
 -> static/generated_song 输出
 ```
 
-配置默认在 `agent_tools/function_tools/song/song_config.json`，缺失字段会用 `agent_tools.function_tools.song.config.DEFAULT_CONFIG` 补齐。
+配置在 `data/config/app.yaml` 的 `song:` 节（旧载体 `song_config.json` 已迁入，仅存 `.migrated` 回滚备份），缺失字段会用 `agent_tools.function_tools.song.config.DEFAULT_CONFIG` 补齐。
 
 发布仓库不会包含 `agent_tools/function_tools/song/Applio`，使用点歌翻唱前需要本地补齐 Applio、RVC 模型和相关依赖。
 
@@ -494,7 +494,7 @@ OPENAI_API_KEY=...
 
 ### screen pipeline 失败
 
-检查 CUDA、torch、transformers、RapidOCR 依赖，以及 `config/screen_vision_config.json`。当前本地 Moondream 配置默认要求 CUDA。
+检查 CUDA、torch、transformers、RapidOCR 依赖，以及 `data/config/app.yaml` 的 `screen:` 节（及 SPICA_SCREEN_* env 覆盖）。当前本地 Moondream 配置默认要求 CUDA。
 
 ### GitHub Actions 不是 GitHub-hosted runner
 

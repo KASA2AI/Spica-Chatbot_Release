@@ -9,9 +9,13 @@ Scans ``spica/`` + ``memory/`` + ``agent_tools/`` (vendors excluded) + ``ui/``
 + ``hardware/`` (added in P0b step 1 -- the RESPEAKER_* reads lived outside the
 old wall). P0a widened the wall after finding the old SCAN_DIRS swept a
 long-gone ``agent/`` directory; P0b step 1 cleared the temporary allowlist:
-screen/config.py now takes raw env values from ``manager.screen_env_overrides``
-and the GPT-SoVITS env shims moved into ``spica/config/runtime_env.py``. The
-scan is AST-based and matches ``os.getenv`` / ``os.environ`` attribute access.
+screen/config.py takes env values through the manager (raw
+``screen_env_overrides``; since step 2a the coerced
+``screen_env_config_overrides`` on top) and the GPT-SoVITS env shims moved into
+``spica/config/runtime_env.py``. P0b is COMPLETE -- this wall is the end state:
+the permanent trio below is the whole config layer, and the temporary list
+stays empty. The scan is AST-based and matches ``os.getenv`` / ``os.environ``
+attribute access.
 
 Root-level entry files (``webui_qt.py`` etc.) are not scanned: priming the
 process environment at the entry point is CLAUDE.md #10 territory (QT_IM_MODULE

@@ -13,7 +13,7 @@ character-agnostic and there is no ``agent -> spica.config -> agent`` cycle.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -68,6 +68,12 @@ class GalgameConfig(BaseModel):
     # OCR sampling interval (seconds) the companion controller hands the OCR loop.
     # 0.3 (not 1.0) so fast page-turns are still sampled often enough to settle a line.
     ocr_interval_seconds: float = 0.3
+    # P5 剧情反应系统 (step 4-A). Resolve-once, restart-effective (D-P5-4: the
+    # host wraps the resolved tier in a holder lambda -- a future settings panel
+    # swaps the holder value, not this field). "off" = engine never attached,
+    # zero overhead on the OCR thread. yaml-only knob: NO env name (铁律 #4 --
+    # nothing added to env_roster). A typo fails loud at startup (Literal).
+    reaction_mode: Literal["off", "low", "normal", "high"] = "off"
 
 
 # -- screen section coercion helpers (P0b step 2a) -----------------------------

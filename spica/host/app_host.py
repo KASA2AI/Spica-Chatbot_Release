@@ -351,12 +351,14 @@ class AppHost:
 
     def _build_reaction_engine(self) -> ReactionEngine | None:
         """Assemble + start the reaction engine, or None when off. The mode is
-        resolve-once (D-P5-4: restart-effective; the params lambda is the holder
-        seam a future settings panel swaps). ``reaction_mode`` becomes a typed
-        galgame field in step 4 -- until then getattr falls back to off."""
-        mode = str(getattr(self.config.galgame, "reaction_mode", "off") or "off").strip().lower()
+        the typed ``galgame.reaction_mode`` (step 4-A), resolve-once (D-P5-4:
+        restart-effective; the params lambda is the holder seam a future
+        settings panel swaps without touching this assembly)."""
+        mode = self.config.galgame.reaction_mode
         params = REACTION_MODE_TABLE.get(mode)
         if params is None:
+            # "off" by contract; anything else is schema-impossible (Literal),
+            # kept as a defensive guard for hand-built configs in tests.
             if mode != "off":
                 logger.warning("unknown galgame.reaction_mode %r -- reaction engine stays off", mode)
             return None

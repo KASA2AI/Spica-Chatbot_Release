@@ -14,9 +14,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
+import pydantic
+import pytest
+
 from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
-from spica.config.schema import AppConfig, CharacterConfig
+from spica.config.schema import AppConfig, CharacterConfig, GalgameConfig
 from spica.galgame.models import CompanionBeat, utc_now_iso
+from spica.galgame.reaction import REACTION_MODE_TABLE
 from spica.host.app_host import AppHost
 from spica.runtime.context import GameContextRequest, PromptBundle, TurnContext, TurnRequest
 from spica.runtime.deps import TurnDeps
@@ -62,6 +66,45 @@ class HostTeeTest(unittest.TestCase):
         host.attach_companion_sink(ui_events.append)
         sink("late")
         self.assertEqual(ui_events, ["late"])
+
+
+class ReactionModeConfigTest(unittest.TestCase):
+    """Step 4-A: the typed galgame.reaction_mode field drives the assembly."""
+
+    def test_default_is_off_and_engine_not_built(self):
+        self.assertEqual(AppConfig().galgame.reaction_mode, "off")
+        host = AppHost()
+        host.config = AppConfig()
+        self.assertIsNone(host._build_reaction_engine())
+        # off -> the tee has no engine leg: dispatch is a plain UI forward
+        ui_events = []
+        host.attach_companion_sink(ui_events.append)
+        host.companion_sink("evt")
+        self.assertEqual(ui_events, ["evt"])
+        self.assertIsNone(host.reaction_engine)
+
+    def test_normal_builds_a_running_engine_that_receives_events(self):
+        host = AppHost()
+        host.config = AppConfig(galgame=GalgameConfig(reaction_mode="normal"))
+        engine = host._build_reaction_engine()
+        self.assertIsNotNone(engine)
+        self.assertEqual(engine._params(), REACTION_MODE_TABLE["normal"])  # holder seam wired
+        self.assertTrue(engine._thread.is_alive())  # started by assembly
+        engine.stop()  # stop the worker so the fan-out below stays observable
+        host.reaction_engine = engine
+        host.attach_companion_sink(lambda e: None)
+        host.companion_sink("companion-event")
+        self.assertEqual(engine._queue.qsize(), 1)  # the tee reached the engine
+
+    def test_yaml_value_validates_and_typo_fails_loud(self):
+        loaded = AppConfig.model_validate({"galgame": {"reaction_mode": "high"}})
+        self.assertEqual(loaded.galgame.reaction_mode, "high")
+        with pytest.raises(pydantic.ValidationError):
+            AppConfig.model_validate({"galgame": {"reaction_mode": "loud"}})
+
+    def test_every_non_off_mode_has_a_tier_row(self):
+        # drift guard: the schema Literal and the engine's mode table must agree
+        self.assertEqual(set(REACTION_MODE_TABLE), {"low", "normal", "high"})
 
 
 class BeatReaderSplitTest(unittest.TestCase):

@@ -39,6 +39,13 @@ class InteractionController(QObject):
         self.chat_stream_controller = chat_stream_controller
 
     def handle_user_text(self, text: str) -> None:
+        # A (double-turn窄缝 second line): a send while a mic segment is still
+        # recording would otherwise produce two turns (this send + the segment's own
+        # recognition). In voice mode, retire the in-flight segment first. Pairs with
+        # the input lock (input_enabled=not recording): the lock prevents the keypress,
+        # this catches a send already in flight. No-op when nothing is recording.
+        if self.voice_input_controller.voice_mode_active:
+            self.voice_input_controller.interrupt_current_recording()
         message = (text or "").strip()
         has_screen_attachment = self.screen_attachment_provider() is not None
         if not message and not has_screen_attachment:

@@ -11,6 +11,7 @@ class InputPanel(QFrame):
     send_requested = Signal()
     voice_requested = Signal(bool)
     screenshot_requested = Signal()
+    stop_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,6 +47,18 @@ class InputPanel(QFrame):
             }
             QPushButton#sendButton:disabled {
                 background-color: rgba(22, 143, 197, 118);
+            }
+            QPushButton#stopButton {
+                background-color: #D9534F;
+                border: 0;
+                border-radius: 18px;
+                color: white;
+                font-size: 15px;
+                font-weight: 700;
+                padding: 0 18px;
+            }
+            QPushButton#stopButton:hover {
+                background-color: #C9302C;
             }
             QPushButton#voiceButton {
                 background-color: rgba(255, 255, 255, 150);
@@ -111,17 +124,43 @@ class InputPanel(QFrame):
         self.send_button.setFixedHeight(38)
         self.send_button.clicked.connect(lambda _checked=False: self.send_requested.emit())
 
+        # B: cross-mode stop affordance. Hidden by default; shown ONLY while a chat/
+        # reaction turn is in flight (set_turn_active), so the user can stop her
+        # speaking in EITHER input mode without voice barge-in. Click -> stop_current
+        # (rides #1's worker.cancel, halting the backend producer cleanly).
+        self.stop_button = QPushButton("停止", self)
+        self.stop_button.setObjectName("stopButton")
+        self.stop_button.setFixedHeight(38)
+        self.stop_button.setToolTip("停止 Spica 说话")
+        self.stop_button.hide()
+        self.stop_button.clicked.connect(lambda _checked=False: self.stop_requested.emit())
+
         layout.addWidget(self.input, 1)
         layout.addWidget(self.screenshot_button)
         layout.addWidget(self.voice_button)
         layout.addWidget(self.send_button)
+        layout.addWidget(self.stop_button)
         self.apply_scale(1.0)
 
-    def set_busy(self, busy: bool, voice_enabled: bool = True) -> None:
-        self.input.setEnabled(not busy)
-        self.send_button.setEnabled(not busy)
+    def set_busy(self, busy: bool, voice_enabled: bool = True, *, input_enabled: bool | None = None) -> None:
+        # A: input + send track input_enabled, NOT busy -- so the user can type to
+        # interrupt while she speaks (turn active -> enabled), yet stay locked while a
+        # mic recording segment is in flight (input_enabled=False) to avoid a double
+        # turn. Default None falls back to `not busy` (pre-A behaviour), so bare
+        # callers -- including test_screenshot_ui -- are byte-identical. screenshot
+        # stays `not busy` (test-pinned); voice stays voice_enabled.
+        text_enabled = (not busy) if input_enabled is None else input_enabled
+        self.input.setEnabled(text_enabled)
+        self.send_button.setEnabled(text_enabled)
         self.screenshot_button.setEnabled(not busy)
         self.voice_button.setEnabled(voice_enabled)
+
+    def set_turn_active(self, active: bool) -> None:
+        """B: show the stop button exactly while a chat/reaction turn is in flight.
+        Visibility is the ONLY gate, and it tracks the chat-stream busy state -- never
+        the input mode -- so the button is reachable in voice mode too (where she
+        cannot be interrupted by voice). Cross-mode by construction."""
+        self.stop_button.setVisible(active)
 
     def set_voice_active(self, active: bool) -> None:
         self.voice_button.blockSignals(True)
@@ -177,6 +216,18 @@ class InputPanel(QFrame):
             QPushButton#sendButton:disabled {{
                 background-color: rgba(22, 143, 197, 118);
             }}
+            QPushButton#stopButton {{
+                background-color: #D9534F;
+                border: 0;
+                border-radius: {input_radius}px;
+                color: white;
+                font-size: {font_size}px;
+                font-weight: 700;
+                padding: 0 {scaled_px(18, scale)}px;
+            }}
+            QPushButton#stopButton:hover {{
+                background-color: #C9302C;
+            }}
             QPushButton#voiceButton {{
                 background-color: rgba(255, 255, 255, 150);
                 border: 1px solid rgba(25, 151, 181, 98);
@@ -212,3 +263,4 @@ class InputPanel(QFrame):
         self.voice_button.setFixedSize(button_size, button_size)
         self.voice_button.setIconSize(QSize(max(1, icon_size - 2), max(1, icon_size - 2)))
         self.send_button.setFixedHeight(send_height)
+        self.stop_button.setFixedHeight(send_height)

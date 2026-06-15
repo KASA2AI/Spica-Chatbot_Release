@@ -140,6 +140,7 @@ class OverlayWindow(QWidget):
         self.input_panel.send_requested.connect(self.send_message)
         self.input_panel.voice_requested.connect(self.toggle_voice)
         self.input_panel.screenshot_requested.connect(self.toggle_screenshot_selection)
+        self.input_panel.stop_requested.connect(self._on_stop_requested)
         self.voice_input_controller = VoiceInputController(
             parent=self,
             set_voice_active=self.input_panel.set_voice_active,
@@ -899,17 +900,21 @@ class OverlayWindow(QWidget):
             or self._is_song_busy()
         )
 
-    def _is_proactive_busy(self) -> bool:
-        """P3 arbiter busy truth: conversation busy OR a user recording in
-        flight -- she must never start talking over the user's half-spoken
-        sentence."""
+    def _is_recording(self) -> bool:
+        """A user voice segment is in flight (a SpeechWorker is running). A (input
+        lock) and P3 (arbiter busy) share this one truth."""
         worker = (
             self.voice_input_controller.speech_worker
             if self.voice_input_controller is not None
             else None
         )
-        recording = bool(worker is not None and worker.isRunning())
-        return self._is_conversation_busy() or recording
+        return bool(worker is not None and worker.isRunning())
+
+    def _is_proactive_busy(self) -> bool:
+        """P3 arbiter busy truth: conversation busy OR a user recording in
+        flight -- she must never start talking over the user's half-spoken
+        sentence."""
+        return self._is_conversation_busy() or self._is_recording()
 
     def _start_system_turn(self, request: Any) -> None:
         """P3 arbiter start callback: launch the system turn and park the
@@ -940,13 +945,37 @@ class OverlayWindow(QWidget):
         if engine is not None:
             engine.notify_turn_finished("", silent=False)
 
+    def _on_stop_requested(self) -> None:
+        """B: the cross-mode stop affordance -- a PURE stop (no message). Rides the
+        same stop_current as a new turn, so #1's worker.cancel halts the backend
+        producer cleanly (tool / memory / LLM-delta checkpoints). Because stop_current
+        does NOT call on_chat_done, voice mode resumes mic monitoring here, mirroring
+        _handle_chat_stream_done. The stop itself touches no microphone/recording
+        state (no VAD, no SpeechWorker) -- the resume is the standard turn-done rearm."""
+        if self.chat_stream_controller is not None:
+            self.chat_stream_controller.stop_current()
+        if self._is_voice_mode_active():
+            self._schedule_next_voice_recording(320)
+
     def set_busy(self, busy: bool) -> None:
+        # B: stop button visible iff a chat/reaction turn is in flight. Driven by the
+        # chat-stream busy truth -- cross-mode, independent of voice/text AND of the
+        # `busy` arg (which is also True during a mic recording segment, when there is
+        # no turn to stop). Set first so it applies on every busy transition.
+        turn_active = self.chat_stream_controller is not None and self.chat_stream_controller.is_busy()
+        self.input_panel.set_turn_active(turn_active)
         if self._is_song_busy():
             self.input_panel.set_busy(False, voice_enabled=True)
             if self.screenshot_worker is not None and self.screenshot_worker.isRunning():
                 self.input_panel.screenshot_button.setEnabled(False)
             return
-        self.input_panel.set_busy(busy, voice_enabled=(not busy or self._is_voice_mode_active()))
+        self.input_panel.set_busy(
+            busy,
+            voice_enabled=(not busy or self._is_voice_mode_active()),
+            # A: typeable while she speaks (turn active); locked only while a mic
+            # segment is in flight, so a send cannot race the segment into a double turn.
+            input_enabled=not self._is_recording(),
+        )
         if self.screenshot_worker is not None and self.screenshot_worker.isRunning():
             self.input_panel.screenshot_button.setEnabled(False)
 

@@ -173,6 +173,8 @@ class HijackDeathTest(unittest.TestCase):
 
 
 class _DummyVoice:
+    voice_mode_active = False  # faithful to VoiceInputController (A: send-path gate)
+
     def interrupt_current_recording(self):
         pass
 

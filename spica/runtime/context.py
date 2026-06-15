@@ -27,6 +27,7 @@ Pure: no ``agent`` import, Qt-free (CLAUDE.md #1).
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -102,6 +103,15 @@ class TurnRequest:
     memory_conversation_id: str | None = None
     command_intent: str | None = None  # canonical CommandIntent enum lands with Phase 4 commands.py
     game_context_request: GameContextRequest | None = None
+    # #1 ghost-producer cancellation: a turn-level cancel flag the UI (ChatWorker)
+    # sets when its stream is retired -- user cancel OR proactive/P5 preemption, both
+    # via stop_current. The producer thread checks it at its three side-effect points
+    # (tool execution / memory write / LLM delta loop) and short-circuits, so a
+    # cancelled turn cannot ghost-execute tools, write ghost memory, or burn tokens
+    # after the consumer stopped reading. compare=False so it never affects request
+    # equality; None / unset -> is_turn_cancelled is False -> every checkpoint stays
+    # byte-identical to before (the deadline guarantee).
+    cancelled: threading.Event | None = field(default=None, compare=False)
 
     @property
     def effective_memory_conversation_id(self) -> str:
@@ -112,6 +122,19 @@ class TurnRequest:
         defined now so the fallback semantics are typed and unit-tested.
         """
         return self.memory_conversation_id or self.conversation_id
+
+
+def is_turn_cancelled(request: TurnRequest) -> bool:
+    """True iff this turn was cancelled (its cancel Event exists and is set).
+
+    The single predicate shared by the producer's three side-effect checkpoints
+    (tool_round._run_tool_calls and orchestrator's save_stream_memory / delta loop).
+    Defensive ``getattr`` + the None/unset short-circuit mean a request without a
+    live cancel Event -- every non-UI caller: run_voice / sync_chain / all tests --
+    returns False, so those paths stay byte-identical (the #1 deadline guarantee).
+    """
+    ev = getattr(request, "cancelled", None)
+    return ev is not None and ev.is_set()
 
 
 @dataclass

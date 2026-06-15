@@ -248,6 +248,10 @@ class ChatStreamController(QObject):
         worker.token = None
         if interrupt and worker.isRunning():
             worker.requestInterruption()
+            # #1: also stop the BACKEND producer, not just this consumer thread --
+            # the same stop_current path serves user-cancel AND proactive/P5
+            # preemption, so this one line covers a preempted reaction's ghost too.
+            worker.cancel()
         self.chat_worker = None
         if worker.isRunning() and worker not in self.retired_chat_workers:
             self.retired_chat_workers.append(worker)

@@ -15,7 +15,7 @@ from typing import Any
 
 from spica.runtime.stages import _compact_tool_history_for_prompt, record_screen_tool_result
 from common.timing import elapsed_ms, now_ms
-from spica.runtime.context import TurnContext
+from spica.runtime.context import TurnContext, is_turn_cancelled
 from spica.runtime.llm_stream import get_attr, record_usage
 
 logger = logging.getLogger(__name__)
@@ -237,6 +237,14 @@ def _run_tool_calls(
     pass ``history`` so executions accumulate into the same list."""
     tool_history: list[dict[str, Any]] = history if history is not None else []
     for call in calls:
+        # #1 checkpoint ①: a cancelled turn stops BEFORE executing any (further)
+        # tool. This is what blocks ghost sing_song -- its SongRequestEvent rides
+        # the companion_sink bridge, bypassing the stream token, so once tools.run
+        # fires nothing else can stop it singing. Returns the history accumulated
+        # so far. Deadline: cancelled None/unset -> is_turn_cancelled False -> never
+        # taken, every tool runs exactly as before.
+        if is_turn_cancelled(ctx.request):
+            break
         obs.bump("agent_function_calls", 1)
         tool_start_ms = now_ms()
         tool_name = call["name"]

@@ -34,7 +34,7 @@ from spica.conversation.reply_parser import EMOTION_LABELS, guess_emotion, norma
 from spica.runtime.services import AgentServices
 from spica.conversation.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
 from common.timing import now_ms
-from spica.runtime.context import StreamedAnswer, TurnContext
+from spica.runtime.context import StreamedAnswer, TurnContext, is_turn_cancelled
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import ExecStrategy, Threaded
 from spica.runtime.jobs import ThreadJobRunner
@@ -317,9 +317,18 @@ def _produce_stream_events(
         if prefetched_raw is not None:
             handle_raw_delta(prefetched_raw)
             drain_ready()
-        else:
+        elif not is_turn_cancelled(ctx.request):
+            # #1 checkpoint ③a: a turn cancelled during the tool round skips the LLM
+            # stream entirely -- don't even open it. Deadline: cancelled None ->
+            # `not False` -> identical to the original unconditional `else`.
             request = {"model": model, "input": prompt_for_stream}
             for delta in deps.llm.iter_response_text(request, ctx):
+                # #1 checkpoint ③b: stop consuming deltas the moment cancel lands
+                # mid-stream (saves tokens + halts further submit_unit -> TTS).
+                # Breaking the for-loop suspends the generator; its connection is
+                # closed on GC -- we stop CONSUMING, we do not force-abort the HTTP.
+                if is_turn_cancelled(ctx.request):
+                    break
                 handle_raw_delta(delta)
                 drain_ready()
 
@@ -350,7 +359,10 @@ def _produce_stream_events(
             for unit_text in fallback_splitter.feed(answer.answer) + fallback_splitter.flush():
                 submit_unit(unit_text)
 
-        if not system_silent:
+        if not system_silent and not is_turn_cancelled(ctx.request):
+            # #1 checkpoint ②: a cancelled turn writes no ghost memory -- neither the
+            # synchronous recent append nor the backgrounded long-term commit. Deadline:
+            # cancelled None -> `not False` True -> equals the original `if not system_silent`.
             save_stream_memory(ctx, services, deps)
 
         for future in ready_futures:

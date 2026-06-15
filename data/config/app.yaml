@@ -129,3 +129,5 @@ song:
     normalize_peak: 0.95
     output_subtype: PCM_16
 plugins: []
+galgame:
+  reaction_mode: normal

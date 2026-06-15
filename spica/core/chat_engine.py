@@ -12,6 +12,7 @@ INVARIANT (CLAUDE.md #1): Qt-free.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable
 
 from spica.conversation.character_loader import (
@@ -73,6 +74,7 @@ class ChatEngine:
         include_user_time_context: bool,
         interaction_mode: str,
         screen_attachment: dict[str, Any] | None,
+        cancelled: threading.Event | None = None,
     ) -> TurnRequest:
         binding = self._game_binding_provider() if self._game_binding_provider else None
         # Double-wrap guard: a caller already addressing a galgame conversation
@@ -93,6 +95,7 @@ class ChatEngine:
                 visual_overrides=visual_overrides or {},
                 memory_conversation_id=conversation_id or "default",
                 game_context_request=binding.game_context_request,
+                cancelled=cancelled,
             )
         return TurnRequest(
             user_input=user_input or "",
@@ -103,6 +106,7 @@ class ChatEngine:
             screen_attachment=screen_attachment,
             tts_param_overrides=tts_param_overrides,
             visual_overrides=visual_overrides or {},
+            cancelled=cancelled,
         )
 
     @staticmethod
@@ -145,11 +149,13 @@ class ChatEngine:
         include_user_time_context: bool = True,
         interaction_mode: str = "chat",
         screen_attachment: dict[str, Any] | None = None,
+        cancelled: threading.Event | None = None,
     ):
         """Drive a turn, yielding typed ``RuntimeEvent``s via the run_turn entry."""
         req = self._request(
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
+            cancelled=cancelled,
         )
         yield from run_turn(self._context_from_request(req), self.services, deps=self.deps)
 
@@ -159,6 +165,7 @@ class ChatEngine:
         *,
         conversation_id: str | None = None,
         source: str = "",
+        cancelled: threading.Event | None = None,
     ):
         """P3: a SYSTEM-initiated turn (proactive speech). Mode-agnostic: the
         caller (song report today, galgame tease / video commentary later) only
@@ -171,6 +178,7 @@ class ChatEngine:
             compose_system_directive_message(directive),
             conversation_id=conversation_id or "default",
             interaction_mode="system",
+            cancelled=cancelled,
         )
 
     def stream_voice(
@@ -183,6 +191,7 @@ class ChatEngine:
         include_user_time_context: bool = True,
         interaction_mode: str = "chat",
         screen_attachment: dict[str, Any] | None = None,
+        cancelled: threading.Event | None = None,
     ):
         """Drive a turn, yielding legacy dict events for the current UI."""
         for event in self.stream_voice_runtime(
@@ -194,6 +203,7 @@ class ChatEngine:
             include_user_time_context=include_user_time_context,
             interaction_mode=interaction_mode,
             screen_attachment=screen_attachment,
+            cancelled=cancelled,
         ):
             yield event.to_legacy_dict()
 

@@ -319,6 +319,11 @@ def _iter_chat_completion_text(
             error=str(exc),
         )
 
+    # Review #3 (AABC fix): the dedupe baseline must include what THIS stream
+    # already yielded -- on the chat-first path ``already_streamed`` is "" and
+    # the locally streamed prefix was never stripped, so a stream dying after
+    # "A" plus a fallback answering "ABC" played "AABC" in UI/TTS/memory.
+    streamed = already_streamed + full_text
     fallback_request = dict(chat_request)
     fallback_request["stream"] = False
     response = client.chat.completions.create(**fallback_request)
@@ -327,9 +332,12 @@ def _iter_chat_completion_text(
         message = _get_attr(choices[0], "message")
         full_text = str(_get_attr(message, "content", "") or "")
     _record_usage(state, response)
-    if already_streamed and full_text.startswith(already_streamed):
-        yield full_text[len(already_streamed):]
+    if streamed and full_text.startswith(streamed):
+        yield full_text[len(streamed):]
     else:
+        # Registered edge: a non-deterministic re-answer whose prefix differs
+        # from what already streamed cannot be deduped -- keep the historical
+        # whole-text yield (we cannot un-say the streamed prefix).
         yield full_text
 
 

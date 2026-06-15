@@ -354,6 +354,27 @@ class StartFeedStopTest(ControllerTestBase):
         self.assertIsNone(controller.session)  # stopped
         self.assertEqual(controller.game_id, "g1")  # kept for later stages
 
+    def test_stop_during_choice_checking_ends_the_session(self):
+        """Review #2: stopping mid-choice must end() normally -- previously
+        CHOICE_CHECKING was outside _ENDABLE (stage-1 scoping), so stop() left
+        an active PlaySession for dangling recovery to mop up at next start."""
+        controller = self._controller()
+        controller.start("0x1", game_id="g1", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
+        session_id = controller.session.session_id
+        controller.session.on_ocr_result("L1")
+        controller.session.on_ocr_result("L1")  # L1 stable (pending_current)
+        controller.session.begin_choice_check()
+        self.assertEqual(controller.session.state, GalgameState.CHOICE_CHECKING)
+
+        controller.stop()
+
+        self.assertEqual(self.mem.get_play_session(session_id).state, "ended")
+        self.assertEqual(self.mem.dangling_play_sessions(), [])  # not crash residue
+        # end() committed the pending line + wrote the final summary as usual
+        self.assertEqual({l.text for l in self.mem.committed_story_lines("g1")}, {"L1"})
+        self.assertEqual(len(self.mem.recent_summaries("g1")), 1)
+        self.assertIsNone(controller.session)
+
     def test_start_guesses_game_id_from_title(self):
         controller = self._controller()
         game_id = controller.start("0x1", window_title="LimeLight Lemonade Jam", dialog_ratios=(0.0, 0.0, 1.0, 1.0))

@@ -77,6 +77,51 @@ def _state():
     return SimpleNamespace(timing={}, response_id=None, raw_model_output=None)
 
 
+class _FlakyChatCompletions:
+    """Streams one chunk ("A"), then the stream dies; the non-stream fallback
+    answers the full text. Review #3's exact failure shape."""
+
+    def __init__(self, full_text):
+        self.full_text = full_text
+
+    def create(self, **kwargs):
+        if kwargs.get("stream"):
+            def chunks():
+                yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="A"))])
+                raise RuntimeError("stream died mid-iteration")
+            return chunks()
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=self.full_text))],
+            usage=None,
+        )
+
+
+class ChatStreamFallbackDedupTest(unittest.TestCase):
+    """Review #3 (AABC fix): the fallback dedupes against the LOCALLY streamed
+    prefix too -- previously only the caller-passed already_streamed (empty on
+    the chat-first path) was stripped, duplicating the prefix in UI/TTS/memory."""
+
+    def test_mid_stream_failure_does_not_duplicate_the_streamed_prefix(self):
+        client = SimpleNamespace(
+            base_url="https://api.deepseek.com/v1",
+            chat=SimpleNamespace(completions=_FlakyChatCompletions("ABC")),
+        )
+        adapter = OpenAICompatibleAdapter(client)
+        out = "".join(adapter.iter_response_text({"model": "m", "input": "hi"}, _state()))
+        self.assertEqual(out, "ABC")  # was "AABC" before the fix
+
+    def test_diverging_fallback_keeps_whole_text(self):
+        # Registered edge: a re-answer not sharing the streamed prefix cannot be
+        # deduped -- the historical whole-text yield is preserved.
+        client = SimpleNamespace(
+            base_url="https://api.deepseek.com/v1",
+            chat=SimpleNamespace(completions=_FlakyChatCompletions("XYZ")),
+        )
+        adapter = OpenAICompatibleAdapter(client)
+        out = "".join(adapter.iter_response_text({"model": "m", "input": "hi"}, _state()))
+        self.assertEqual(out, "AXYZ")
+
+
 class LLMAdapterTest(unittest.TestCase):
     def test_prefers_chat_completions_branch(self):
         self.assertFalse(OpenAICompatibleAdapter(_FakeOpenAI()).prefers_chat_completions())

@@ -357,7 +357,7 @@ class ChatStreamController(QObject):
                 self.typewriter_controller.start("正在查看屏幕...", interval_ms=55)
                 return
             if message == "tool:watch_game_screen":
-                self.typewriter_controller.start("Spica正在尸检屏幕...", interval_ms=55)
+                self.typewriter_controller.start("Spica正在查看屏幕...", interval_ms=55)
                 return
             self.typewriter_controller.start("正在处理工具...", interval_ms=55)
 

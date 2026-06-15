@@ -43,6 +43,11 @@ class GameContextRequest:
     mode: str = "none"  # active | offline | none
     game_id: str | None = None
     playthrough_id: str = "default"
+    # B1: the live companion session id. Scopes the [CURRENT_LINE] pending-row read
+    # to THIS play, so a crash-residue PENDING_CURRENT row left by an already-ended
+    # session (dangling recovery does NOT reconcile pending rows) can never be
+    # mistaken for the current on-screen line. None (manual/debug path) -> not read.
+    session_id: str | None = None
 
 
 # The galgame conversation-id namespace prefix. Defined HERE (typed-request layer)

@@ -32,13 +32,16 @@ logger = logging.getLogger(__name__)
 Ratios = tuple[float, float, float, float]
 
 # States with a live (active) PlaySession that end() can finalize. game_launched/idle
-# have no PlaySession to finalize; ending/error/summarizing/choice_checking are not
-# stop targets in stage 1. Guards stop()/cleanup from an illegal end() transition.
+# have no PlaySession to finalize; ending/error/summarizing are not stop targets.
+# Guards stop()/cleanup from an illegal end() transition. CHOICE_CHECKING joined
+# in review #2 (the stage-1 scoping is lifted): stopping mid-choice used to skip
+# end(), leaving an active PlaySession for dangling recovery to mop up.
 _ENDABLE = frozenset(
     {
         GalgameState.PLAYING,
         GalgameState.PAUSED,
         GalgameState.WINDOW_LOST,
+        GalgameState.CHOICE_CHECKING,
         GalgameState.BACKGROUND_SUMMARIZING,
     }
 )
@@ -236,7 +239,10 @@ class GalgameCompanionController:
             self._published_binding = GameTurnBinding(
                 conversation_id=game_conversation_id(resolved, "default"),
                 game_context_request=GameContextRequest(
-                    mode="active", game_id=resolved, playthrough_id="default"
+                    mode="active", game_id=resolved, playthrough_id="default",
+                    # B1: scope the turn's [CURRENT_LINE] read to this live session
+                    # (session.start() above has assigned session_id).
+                    session_id=session.session_id,
                 ),
             )
             self._published_watch_target = (resolved, window_id)  # Phase 9: watch tool target

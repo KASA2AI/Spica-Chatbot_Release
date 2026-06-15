@@ -93,6 +93,28 @@
 - **改法**:① `LLMConfig`(`spica/config/schema.py:21`)加字段 `api: str = "auto"`("auto" | "responses" | "chat_completions";默认 auto=现行名字判定,保 Layer A/B 零 diff;yaml-only 不开 env 名——若要 env 则按纪律进 roster+manager);② adapter 收下该值:`spica/host/builtins.py:33` 工厂签名加参、`spica/host/app_host.py:200 resolve_llm` 传 `config.llm.api`,实例 `prefers_chat_completions` 显式值优先、auto 走名字判定;③ 流式内部三个模块级函数(`:136 _iter_response_text` / `:240 _fallback_response_text` / `:280 _iter_chat_completion_text` 链)直接收 client,需加可选 prefer 参数由 adapter 实例传入——外部调用面 `tool_round.py:78` / `stages.py:592` / `complete_text`(`:119`)已走实例方法,零改动,单点全链生效。
 - **换时附加**:补非 deepseek 域名 chat-only client 测试 fixture(现有测试全钉 deepseek URL 形态);真机三连验证(对话流式为增量出字、工具触发一次、总结无 SummaryError)。
 
+## 外部代码审查处置·第二轮(2026-06-12,review 9 条)
+
+裁决:#3 AABC 前缀重复 / #2 choice 态 stop 漏 end / #9 「尸检屏幕」文案 三条**已修**(修A/B/C);#1 幽灵 producer 薄片版**下一步立项**(方案见下,实施前单独放行);#4/#6 详细挂账;#7 核实**不成立**入档防复报;#5/#8 指回既有挂账位。review 自报 673 passed 与本仓库基准不符(其环境少收集),结论事实性不受影响。
+
+### 挂账#1(立项级):取消只断 UI,幽灵 producer 跑到底
+- **事实**:`spica/runtime/orchestrator.py:67-80` producer 独立线程灌**无界** queue,无 cancel token;`ui/workers/chat_worker.py:45` 只在收到下一事件后查 `isInterruptionRequested`;生成器被弃后 producer 跑完全程——LLM 全收、**工具照执行**、TTS 照合成、`save_stream_memory` 照写(被掐断 turn 的全文进 recent memory)。最刺眼:sing_song 经 host 闭包发 `SongRequestEvent` 走 companion bridge,**完全绕开 stream token 守卫**——取消后的旧 turn 仍可能真的开始唱歌(可听见的副作用穿透取消)。
+- **P5 放大**:吐槽 turn 设计即「用户开口恒抢占」,每次抢占留一个幽灵 producer(写 galgame recent memory + 白烧 LLM/TTS)。
+- **薄片版方案**(已预审):turn 级 `cancelled: threading.Event`(TurnRequest 一字段),ChatWorker 中断时 set;producer 三个副作用点前检查:①工具执行前(堵幽灵点歌,最高价值)②`save_stream_memory` 前(堵幽灵记忆)③LLM delta 循环(省 token/停 TTS 提交)。**死线**:不取消的 turn 零行为变化(golden 一字不动全绿为放行硬证,同 NO_COMMENT gate 形制)。不做:阶段内强杀/线程强终止。全量取消(producer 强收敛/队列有界化)另议。
+
+### 挂账#4(合并):song 取消的完整账
+既有「取消/重启与缓存写入竞态」(第一轮 #4)+ 本轮「阶段内不可中断」合并:cancel token 只在阶段边界检查,separator/RVC/mix 是长 C 扩展调用,阶段内中断需进程隔离(不值)。**可做上限** = 临时目录+原子 rename(防缓存半成品)+ 阶段边界检查保持;下次动 `song/pipeline.py` 时一并。
+
+### 挂账#6:长期记忆 upsert 非原子,并发可重 key
+- **事实**:`memory/store.py` 无 UNIQUE 索引;`upsert_memory`(`:115+`)同事务 SELECT-then-INSERT/UPDATE,跨连接 check-then-act 无保护;`spica/runtime/jobs.py:42 ThreadJobRunner` 是 thread-per-submit **不串行**,快速连续两 turn 的后台 commit 可重叠 → 同 (conversation_id, scope, memory_key, status) 重复行。窗口窄,实害未观测(每 turn 一 job)。
+- **改法**(单独立项,含真机 DB migration):①存量按四元组去重清洗 ②建 UNIQUE 部分索引(status='active') ③`INSERT ... ON CONFLICT DO UPDATE` 替换 select-then-act。
+
+### #7 song chip 不在 mask——核实不成立(防复报)
+`song_status_label` 几何(`ui/qt_overlay.py:490`:y=top_margin,height=controls_height)完整落在 `_controls_drag_rect` 全宽顶带(`QRect(0,0,width,controls_height+2*top_margin)`)内,该顶带是 mask 第一个并入的区域——渲染与命中已被覆盖;真机长期点歌从未不可见。companion chip 需显式入列是因为它不在顶带内。
+
+### #5 / #8 指回既有挂账
+#5 TTS pushd = 已登记(P0b 关账「方案 d 观察」),第二次重复发现;#8 file 侧 bool 字符串真值语义 = P0b 零 diff 红线下**有意钉死**的 legacy coercion(Layer B 有钉),app.yaml 用真 YAML bool 不触发,D6 删旧链版本一并收紧。
+
 ## 真机事实存档(无代码锚点,防失忆)
 
 ### anemoi 同源问题(#2,产品决策挂起)

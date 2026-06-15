@@ -118,7 +118,8 @@ def test_chat_stream_status_watch_game_screen_text(qapp):
         controller,
         {"state": "tools", "message": "tool:watch_game_screen"},
     )
-    assert controller.typewriter_controller.calls[-1]["text"] == "Spica正在尸检屏幕..."
+    # review #9 (修C): the copy used to read 「尸检屏幕」(autopsy) -- fixed.
+    assert controller.typewriter_controller.calls[-1]["text"] == "Spica正在查看屏幕..."
 
     # Other tools keep the generic fallback text.
     ChatStreamController._handle_stream_status(

@@ -110,7 +110,11 @@ ALLOWED_TRANSITIONS: dict[GalgameState, frozenset[GalgameState]] = {
     ),
     _S.PAUSED: frozenset({_S.PLAYING, _S.WINDOW_LOST, _S.SUMMARIZING, _S.ERROR}),
     _S.WINDOW_LOST: frozenset({_S.PLAYING, _S.PAUSED, _S.SUMMARIZING, _S.ERROR}),
-    _S.CHOICE_CHECKING: frozenset({_S.PLAYING, _S.WINDOW_LOST, _S.ERROR}),
+    # SUMMARIZING edge: review #2 -- stop() during a choice check must be able to
+    # end() normally (end transitions source -> SUMMARIZING); without this edge
+    # the session stayed active in the DB and dangling recovery treated a normal
+    # stop as crash residue.
+    _S.CHOICE_CHECKING: frozenset({_S.PLAYING, _S.WINDOW_LOST, _S.SUMMARIZING, _S.ERROR}),
     _S.BACKGROUND_SUMMARIZING: frozenset({_S.PLAYING, _S.SUMMARIZING, _S.ERROR}),
     _S.SUMMARIZING: frozenset({_S.ENDING, _S.ERROR}),
     _S.ENDING: frozenset({_S.GAME_LAUNCHED, _S.IDLE, _S.ERROR}),

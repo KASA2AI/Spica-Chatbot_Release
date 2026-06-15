@@ -313,6 +313,25 @@ class GameMemorySqliteAdapter:
             if line.line_id not in summarized
         ]
 
+    def current_pending_story_line(
+        self, game_id: str, playthrough_id: str, session_id: str | None
+    ) -> StoryLine | None:
+        # B1: scoped by session_id so a crash-residue PENDING_CURRENT row from an
+        # already-ended session is never returned (dangling recovery does not
+        # reconcile pending rows). _write_pending_current persists BEFORE the
+        # in-memory field, so this DB read is never staler than the owner's state.
+        # WAL + statement atomicity (Fix #6) -> a consistent committed snapshot.
+        if not session_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT data FROM story_lines "
+                "WHERE game_id = ? AND playthrough_id = ? AND session_id = ? AND status = ? "
+                "ORDER BY timestamp DESC, line_id DESC LIMIT 1",
+                (game_id, playthrough_id, session_id, StoryLineStatus.PENDING_CURRENT.value),
+            ).fetchone()
+        return StoryLine.from_dict(json.loads(row["data"])) if row else None
+
     def _summarized_line_ids(self, game_id: str, playthrough_id: str) -> set[str]:
         # NOTE (Phase 7/8): unions source_line_ids across ALL summaries of this
         # game/playthrough on every call -- a full-history scan. Fine at Phase 2

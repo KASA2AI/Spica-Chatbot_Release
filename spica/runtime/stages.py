@@ -343,7 +343,9 @@ def _parse_playthrough_from_conversation(conversation_id: str) -> str | None:
     return None
 
 
-def _resolve_game_target(request: Any, game_memory: Any, mode: str) -> tuple[str | None, str]:
+def _resolve_game_target(
+    request: Any, game_memory: Any, mode: str
+) -> tuple[str | None, str, str | None]:
     gcr = getattr(request, "game_context_request", None)
     conversation_id = getattr(request, "conversation_id", "") or ""
     game_id = getattr(gcr, "game_id", None) if gcr is not None else None
@@ -352,12 +354,16 @@ def _resolve_game_target(request: Any, game_memory: Any, mode: str) -> tuple[str
     playthrough_id = getattr(gcr, "playthrough_id", None) if gcr is not None else None
     if not playthrough_id:
         playthrough_id = _parse_playthrough_from_conversation(conversation_id) or "default"
+    # B1: the live session id rides on the typed gate request (the companion
+    # controller stamps it into the published binding). Absent on the manual/debug
+    # conversation-id path -> CURRENT_LINE is simply not read for that turn.
+    session_id = getattr(gcr, "session_id", None) if gcr is not None else None
     if not game_id and mode == "offline":
         last = game_memory.last_played_game()
         if last is not None:
             game_id = last.game_id
             playthrough_id = last.active_playthrough_id or "default"
-    return game_id, playthrough_id
+    return game_id, playthrough_id, session_id
 
 
 def _should_inject_companion(mode: str, request: Any) -> bool:
@@ -446,7 +452,8 @@ def _format_beats(beats: list[Any]) -> str:
 
 
 def _build_game_context_sections(
-    mode: str, game_memory: Any, request: Any, deps: Any, game_id: str, playthrough_id: str
+    mode: str, game_memory: Any, request: Any, deps: Any, game_id: str, playthrough_id: str,
+    session_id: str | None,
 ) -> list[str]:
     sections: list[str] = []
 
@@ -470,6 +477,16 @@ def _build_game_context_sections(
         buffer_lines = game_memory.unsummarized_committed_story_lines(game_id, playthrough_id)
         if buffer_lines:
             sections.append(_section("[CURRENT_GAME_BUFFER]", _format_buffer(buffer_lines)))
+        # B1: the line currently on screen (PENDING_CURRENT) -- not yet committed
+        # into the buffer above. Reading order is past -> present: progress ->
+        # summaries -> committed buffer -> the line right now. Scoped to this live
+        # session_id (crash-residue isolation); status partitions it from the
+        # COMMITTED buffer so the same line is never injected twice; omitted during
+        # the brief commit gap (the line is in the buffer then). Active-only (the
+        # else branch): offline has no live session.
+        current_line = game_memory.current_pending_story_line(game_id, playthrough_id, session_id)
+        if current_line is not None:
+            sections.append(_section("[CURRENT_LINE]", _format_buffer([current_line])))
 
     relations = game_memory.character_relations(game_id, playthrough_id)
     if relations:
@@ -513,11 +530,11 @@ def retrieve_game_context_node(ctx: TurnContext, services: AgentServices, deps: 
         if game_memory is None or ctx.prompt is None:
             return ctx
         try:
-            game_id, playthrough_id = _resolve_game_target(ctx.request, game_memory, mode)
+            game_id, playthrough_id, session_id = _resolve_game_target(ctx.request, game_memory, mode)
             if not game_id:
                 return ctx
             sections = _build_game_context_sections(
-                mode, game_memory, ctx.request, deps, game_id, playthrough_id
+                mode, game_memory, ctx.request, deps, game_id, playthrough_id, session_id
             )
         except Exception as exc:  # noqa: BLE001 -- best-effort: never fail the turn
             # Hard rule (Phase 3): do NOT silently swallow. Surface the failure on

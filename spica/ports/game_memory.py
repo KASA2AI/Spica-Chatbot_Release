@@ -82,6 +82,21 @@ class GameMemoryPort(Protocol):
         """
         ...
 
+    def current_pending_story_line(
+        self, game_id: str, playthrough_id: str, session_id: str | None
+    ) -> StoryLine | None:
+        """The single line currently on screen for THIS live session: the most
+        recent ``PENDING_CURRENT`` row (not yet committed into the buffer), or None.
+
+        Scoped by ``session_id`` ON PURPOSE: dangling recovery (§12) reconciles
+        committed lines but leaves orphaned PENDING_CURRENT rows untouched, so a
+        crash-residue pending row from an already-ended session must never be
+        returned as the live current line. ``session_id is None`` -> None.
+        Status (PENDING_CURRENT) partitions it from the COMMITTED buffer, so the
+        two reads never double-inject the same line.
+        """
+        ...
+
     # -- summaries ------------------------------------------------------------
     def add_summary(self, summary: StorySummary) -> str: ...
 

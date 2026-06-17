@@ -36,10 +36,32 @@
 #   play_unit_max_chars: 96      # env PLAY_UNIT_MAX_CHARS
 #   visual_stream_workers: 2     # env VISUAL_STREAM_WORKERS
 
-# galgame:
+# galgame:                                # 陪玩调参;env 无名,只此文件 (铁律 #4)。解开某键放进下方 live galgame 块即生效
 #   summary_model: null
-#   summary_trigger_chars: 2000
-#   ocr_interval_seconds: 0.3
+#   summary_trigger_chars: 2000           # 默认 2000:攒够这么多未总结字符触发后台总结
+#   ocr_interval_seconds: 0.3             # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
+#   prompt_context_recent_limit: 5        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
+#   reaction_reply_char_limit: 40         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
+#   reaction_budget_window_seconds: 600   # 默认 600:吐槽频率统计滑窗(秒)
+#   reaction_excerpt_line_char_limit: 60  # 默认 60:吐槽 directive 剧情摘录单行字数上限
+#   reaction_excerpt_total_char_limit: 300  # 默认 300:剧情摘录总字数上限
+#   play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
+#   # 吐槽三档表(做法X:整块保持注释=用代码内置表 REACTION_MODE_TABLE,Layer A 零diff;解开才接管)。
+#   #   reaction_mode 选哪档 → 哪档生效,另两档备查。改坏了照各行"# 默认"注释还原。
+#   # 出厂默认: low=5/1/180  normal=4/3/90  high=3/6/45   (min_score / max_per_window / cooldown_seconds)
+#   reaction_table:
+#     low:
+#       min_score: 5             # 默认 5
+#       max_per_window: 1        # 默认 1
+#       cooldown_seconds: 180    # 默认 180
+#     normal:
+#       min_score: 4             # 默认 4
+#       max_per_window: 3        # 默认 3
+#       cooldown_seconds: 90     # 默认 90
+#     high:
+#       min_score: 3             # 默认 3
+#       max_per_window: 6        # 默认 6
+#       cooldown_seconds: 45     # 默认 45
 
 # screen:                        # legacy carrier: config/screen_vision_config.json
 #   enabled: true                # env SPICA_SCREEN_ENABLED

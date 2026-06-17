@@ -41,11 +41,13 @@ from spica.galgame.models import CompanionBeat, utc_now_iso
 from spica.galgame.ocr_calibration import GalgameOcrCalibrator
 from spica.galgame.ocr_loop import OcrStreamRunner
 from spica.galgame.reaction import (
-    REACTION_MODE_TABLE,
     ReactionEngine,
     ReactionLexicon,
+    ReactionModeParams,
     compose_reaction_directive,
+    lexicon_source_mtime,
     load_reaction_lexicon,
+    merge_mode_table,
     score_beat,
 )
 from spica.galgame.session import GalgameCompanionSession
@@ -100,6 +102,7 @@ class AppHost:
         self.reaction_engine: ReactionEngine | None = None
         self._reaction_try_speak: Any | None = None
         self._reaction_lexicons: dict[str | None, ReactionLexicon] = {}
+        self._reaction_lexicon_mtimes: dict[str | None, float] = {}
         # Path B stage 2: the process-wide companion controller singleton, built
         # lazily by companion_controller(); _companion_game_binding reads it.
         self._companion_controller: GalgameCompanionController | None = None
@@ -298,18 +301,30 @@ class AppHost:
             return False
         _, _, binding = scope
         request = ProactiveTurnRequest(
-            directive=compose_reaction_directive(beat),
+            directive=compose_reaction_directive(
+                beat,
+                reply_char_limit=self.config.galgame.reaction_reply_char_limit,
+                line_char_cap=self.config.galgame.reaction_excerpt_line_char_limit,
+                excerpt_char_cap=self.config.galgame.reaction_excerpt_total_char_limit,
+            ),
             source="galgame",
             conversation_id=binding.conversation_id,
         )
         return bool(try_speak(request))
 
     def _reaction_scorer(self, beat: Any):
-        """Lexicon scorer bound to the LIVE game (per-game overlay, cached)."""
+        """Lexicon scorer bound to the LIVE game (per-game overlay). mtime-cached
+        (step 4-B hot-reload, mirrors VisualDiffService): a default.yaml /
+        <game_id>.yaml edit is picked up on the next beat without a restart."""
         scope = self._reaction_game_scope()
         game_id = scope[0] if scope else None
-        if game_id not in self._reaction_lexicons:
+        mtime = lexicon_source_mtime(game_id)
+        if (
+            game_id not in self._reaction_lexicons
+            or self._reaction_lexicon_mtimes.get(game_id) != mtime
+        ):
             self._reaction_lexicons[game_id] = load_reaction_lexicon(game_id)
+            self._reaction_lexicon_mtimes[game_id] = mtime
         return score_beat(beat, self._reaction_lexicons[game_id])
 
     def _write_reaction_beat(self, content: str, meta: dict) -> None:
@@ -355,7 +370,20 @@ class AppHost:
         restart-effective; the params lambda is the holder seam a future
         settings panel swaps without touching this assembly)."""
         mode = self.config.galgame.reaction_mode
-        params = REACTION_MODE_TABLE.get(mode)
+        override_raw = self.config.galgame.reaction_table
+        override = (
+            {
+                name: ReactionModeParams(
+                    min_score=tier.min_score,
+                    max_per_window=tier.max_per_window,
+                    cooldown_seconds=tier.cooldown_seconds,
+                )
+                for name, tier in override_raw.items()
+            }
+            if override_raw
+            else None
+        )
+        params = merge_mode_table(override).get(mode)
         if params is None:
             # "off" by contract; anything else is schema-impossible (Literal),
             # kept as a defensive guard for hand-built configs in tests.
@@ -368,6 +396,7 @@ class AppHost:
             scorer=self._reaction_scorer,
             beat_writer=self._write_reaction_beat,
             recent_for_dedupe=self._recent_reaction_beats,
+            budget_window_seconds=self.config.galgame.reaction_budget_window_seconds,
         )
         engine.start()
         logger.info("reaction engine on (mode=%s)", mode)
@@ -469,6 +498,7 @@ class AppHost:
             user_id=str(self.config.character.interlocutor_name or "麦"),
             summary_trigger_chars=self.config.galgame.summary_trigger_chars,
             interval_seconds=self.config.galgame.ocr_interval_seconds,
+            play_history_card_max_chars=self.config.galgame.play_history_card_max_chars,
         )
 
     def _request_song(self, query: str) -> dict[str, Any]:
@@ -571,7 +601,9 @@ class AppHost:
             seen_games.add(play_session.game_id)
             try:
                 card = compose_play_history(
-                    game_memory, play_session.game_id, play_session.playthrough_id, user_name=user_name
+                    game_memory, play_session.game_id, play_session.playthrough_id,
+                    user_name=user_name,
+                    max_chars=self.config.galgame.play_history_card_max_chars,
                 )
                 if card:
                     self._record_play_history(play_session.game_id, card)

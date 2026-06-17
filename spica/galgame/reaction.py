@@ -75,6 +75,7 @@ TRIGGER_TEXT_CAP = 200  # normalized beat text stored on CompanionBeat.meta
 # instruction tail can never be truncated by downstream recent-memory limits.
 REACTION_LINE_CHAR_CAP = 60
 REACTION_EXCERPT_CHAR_CAP = 300
+REACTION_REPLY_CHAR_LIMIT = 40  # the "不超过N个字" length cap in the directive
 
 _STRONG_PUNCT = "！!？?…‼⁉"
 
@@ -97,6 +98,18 @@ REACTION_MODE_TABLE: dict[str, ReactionModeParams] = {
     "normal": ReactionModeParams(min_score=4, max_per_window=3, cooldown_seconds=90.0),
     "high": ReactionModeParams(min_score=3, max_per_window=6, cooldown_seconds=45.0),
 }
+
+
+def merge_mode_table(
+    override: dict[str, ReactionModeParams] | None,
+) -> dict[str, ReactionModeParams]:
+    """The active tier table (step 4-B). ``None`` -> the code REACTION_MODE_TABLE
+    is the source of truth (做法X: an un-set app.yaml resolves byte-identical). A
+    provided override replaces matching tiers per key; tiers it omits fall back to
+    the code defaults, so a partial table is safe."""
+    if not override:
+        return REACTION_MODE_TABLE
+    return {**REACTION_MODE_TABLE, **override}
 
 
 # -- data shapes -----------------------------------------------------------------
@@ -231,6 +244,26 @@ def load_reaction_lexicon(
     return ReactionLexicon(categories=parsed, signals=signals)
 
 
+def lexicon_source_mtime(
+    game_id: str | None = None, base_dir: str | Path | None = None
+) -> float:
+    """Max mtime of the source files ``load_reaction_lexicon`` reads for this game
+    (default.yaml + optional <game_id>.yaml); 0.0 when none exist. A caller caches
+    the parsed lexicon and reloads only when this changes -- hot-reload (mirrors
+    VisualDiffService), so a default.yaml weight/word edit takes effect on the next
+    beat without a restart."""
+    root = Path(base_dir) if base_dir is not None else _REACTION_DATA_DIR
+    latest = 0.0
+    for name in ("default", str(game_id) if game_id else None):
+        if not name:
+            continue
+        try:
+            latest = max(latest, (root / f"{name}.yaml").stat().st_mtime)
+        except OSError:
+            continue
+    return latest
+
+
 def score_beat(
     beat: ReactionBeat, lexicon: ReactionLexicon, context: Any = None
 ) -> ScoreResult:
@@ -313,16 +346,24 @@ def bigram_jaccard(a: str, b: str) -> float:
     return len(set_a & set_b) / len(union)
 
 
-def compose_reaction_directive(beat: ReactionBeat) -> str:
+def compose_reaction_directive(
+    beat: ReactionBeat,
+    *,
+    reply_char_limit: int = REACTION_REPLY_CHAR_LIMIT,
+    line_char_cap: int = REACTION_LINE_CHAR_CAP,
+    excerpt_char_cap: int = REACTION_EXCERPT_CHAR_CAP,
+) -> str:
     """The galgame domain's directive text (the P3 frame wraps it untouched).
     Per-line + total caps (D-P5-7 修正) keep the excerpt bounded so the
-    instruction part is never the thing a downstream char limit truncates."""
+    instruction part is never the thing a downstream char limit truncates. Caps +
+    reply length default to the module constants; the host passes the resolved
+    ``galgame.*`` config (step 4-B), so bare callers stay byte-identical."""
     excerpt: list[str] = []
     total = 0
     for line in beat.lines:
-        text = (line.text or "").strip()[:REACTION_LINE_CHAR_CAP]
+        text = (line.text or "").strip()[:line_char_cap]
         rendered = f"{line.speaker}：{text}" if line.speaker else text
-        if total + len(rendered) > REACTION_EXCERPT_CHAR_CAP:
+        if total + len(rendered) > excerpt_char_cap:
             break
         excerpt.append(rendered)
         total += len(rendered)
@@ -330,7 +371,7 @@ def compose_reaction_directive(beat: ReactionBeat) -> str:
     if beat.choice_options:
         parts.append("现在画面上出现了选项：" + " / ".join(beat.choice_options))
     parts.append(
-        "请对这段剧情说一句你自己的反应（吐槽、惊讶、调侃、感想都行），不超过40个字，"
+        f"请对这段剧情说一句你自己的反应（吐槽、惊讶、调侃、感想都行），不超过{reply_char_limit}个字，"
         "口语化，像坐在旁边一起看时随口说的。不要总结剧情，不要剧透，不要复述台词，"
         f"不要问麦问题。如果这段实在没什么值得说的，只输出 {NO_COMMENT_SENTINEL}。"
     )
@@ -365,6 +406,7 @@ class ReactionEngine:
         clock: Callable[[], float] | None = None,
         beat_writer: Callable[[str, dict[str, Any]], None] | None = None,
         recent_for_dedupe: Callable[[int], list[Any]] | None = None,
+        budget_window_seconds: float = BUDGET_WINDOW_SECONDS,
     ) -> None:
         self._speak = speak
         # D-P5-4 hot-swap seam: a holder callable, re-read per beat. v1 wires a
@@ -378,6 +420,7 @@ class ReactionEngine:
         # recent_for_dedupe reads recent spica beats for the similarity gate.
         self._beat_writer = beat_writer
         self._recent_for_dedupe = recent_for_dedupe
+        self._budget_window = float(budget_window_seconds)
         self._queue: queue.Queue[Any] = queue.Queue()
         self._thread: threading.Thread | None = None
         # -- worker-owned state ----------------------------------------------
@@ -679,7 +722,7 @@ class ReactionEngine:
     def _budget_allows(self, params: ReactionModeParams, now: float) -> bool:
         if self._in_cooldown(params, now):
             return False
-        while self._spoken_at and now - self._spoken_at[0] > BUDGET_WINDOW_SECONDS:
+        while self._spoken_at and now - self._spoken_at[0] > self._budget_window:
             self._spoken_at.popleft()
         return len(self._spoken_at) < params.max_per_window
 

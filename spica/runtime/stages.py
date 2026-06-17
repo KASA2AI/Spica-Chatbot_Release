@@ -63,9 +63,9 @@ _OFFLINE_COMMAND_INTENTS = frozenset(
     {"ask_last_progress", "ask_game_progress", "ask_character_relation"}
 )
 _COMPANION_INTENT = "ask_companion_memory"
-_GAME_CONTEXT_RECENT_LIMIT = 5
 # Stage 2 (Path B): active mode also injects the most recent summaries -- a smaller
-# limit than offline's 5 because EVERY companion turn pays the prompt cost. This
+# limit than offline's prompt_context_recent_limit because EVERY companion turn pays
+# the prompt cost. This
 # bridges "summary fired -> buffer emptied -> details of 20 minutes ago vanish":
 # progress.current_scene_summary is never written and major_events is titles only,
 # so without summaries an active turn loses all summarized narrative.
@@ -462,7 +462,7 @@ def _build_game_context_sections(
         sections.append(_section("[GAME_PROGRESS]", _format_progress(progress)))
 
     if mode == "offline":
-        summaries = game_memory.recent_summaries(game_id, playthrough_id, limit=_GAME_CONTEXT_RECENT_LIMIT)
+        summaries = game_memory.recent_summaries(game_id, playthrough_id, limit=deps.config.galgame.prompt_context_recent_limit)
         if summaries:
             sections.append(_section("[RECENT_GAME_SUMMARIES]", _format_summaries(summaries)))
     else:
@@ -492,7 +492,7 @@ def _build_game_context_sections(
     if relations:
         sections.append(_section("[GAME_RELATIONS]", _format_relations(relations)))
 
-    choices = game_memory.recent_choice_events(game_id, playthrough_id, limit=_GAME_CONTEXT_RECENT_LIMIT)
+    choices = game_memory.recent_choice_events(game_id, playthrough_id, limit=deps.config.galgame.prompt_context_recent_limit)
     if choices:
         sections.append(_section("[GAME_CHOICES]", _format_choices(choices)))
 
@@ -502,7 +502,7 @@ def _build_game_context_sections(
         # P5 D-P5-6: the prompt reader EXCLUDES silent reaction beats -- they
         # accrue faster than spoken ones and would crowd her real words out.
         beats = game_memory.recent_companion_beats_for_prompt(
-            game_id, user_id, character_id, limit=_GAME_CONTEXT_RECENT_LIMIT
+            game_id, user_id, character_id, limit=deps.config.galgame.prompt_context_recent_limit
         )
         if beats:
             sections.append(_section("[COMPANION_CONTEXT]", _format_beats(beats)))

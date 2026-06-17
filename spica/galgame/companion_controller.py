@@ -95,6 +95,7 @@ class GalgameCompanionController:
         user_id: str = "麦",
         summary_trigger_chars: int = 2000,
         interval_seconds: float = 0.3,
+        play_history_card_max_chars: int = 220,
     ) -> None:
         self._game_memory = game_memory
         self._capture = capture
@@ -111,6 +112,7 @@ class GalgameCompanionController:
         self._user_id = user_id
         self._summary_trigger_chars = summary_trigger_chars
         self._interval_seconds = interval_seconds
+        self._play_history_card_max_chars = play_history_card_max_chars
         self._lock = threading.RLock()
         self._session: GalgameCompanionSession | None = None
         self._runner: OcrStreamRunner | None = None
@@ -280,7 +282,10 @@ class GalgameCompanionController:
         if self._record_history is None or not game_id:
             return
         try:
-            card = compose_play_history(self._game_memory, game_id, user_name=self._user_id)
+            card = compose_play_history(
+                self._game_memory, game_id, user_name=self._user_id,
+                max_chars=self._play_history_card_max_chars,
+            )
             if card:
                 self._record_history(game_id, card)
         except Exception as exc:  # noqa: BLE001 -- best-effort: never block stop

@@ -119,6 +119,7 @@ def build_play_history_card(
     summaries: Any = None,
     played_at: str | None = None,
     user_name: str = "麦",
+    max_chars: int = CARD_MAX_CHARS,
 ) -> str:
     """Greedy priority assembly: the head (game name, both scripts) + date tail
     always fit; optional segments join in priority order and an overflowing
@@ -143,7 +144,7 @@ def build_play_history_card(
     if latest_text:
         segments.append(f"。最近剧情：{_truncate(latest_text, 56)}")
 
-    budget = CARD_MAX_CHARS - len(tail)
+    budget = max_chars - len(tail)
     card = head
     for segment in segments:
         if len(card) + len(segment) <= budget:
@@ -159,6 +160,7 @@ def compose_play_history(
     playthrough_id: str = "default",
     *,
     user_name: str = "麦",
+    max_chars: int = CARD_MAX_CHARS,
 ) -> str | None:
     """Read the store + assemble the card; ``None`` when nothing was ever played
     (no progress, no relations, no summaries -- a bare GameProfile is just a name,
@@ -179,4 +181,5 @@ def compose_play_history(
         summaries=summaries,
         played_at=played_at,
         user_name=user_name,
+        max_chars=max_chars,
     )

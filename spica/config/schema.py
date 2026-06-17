@@ -58,6 +58,17 @@ class StreamConfig(BaseModel):
     visual_stream_workers: int = 2
 
 
+class ReactionTierParams(BaseModel):
+    """One reaction tier's gate values (P5 step 4-B). Mirrors the code-side
+    ``reaction.ReactionModeParams`` 1:1; fields are REQUIRED (no defaults) so a
+    half-filled tier in app.yaml fails loud rather than silently defaulting. Only
+    materialized when ``GalgameConfig.reaction_table`` is uncommented (做法X)."""
+
+    min_score: int
+    max_per_window: int
+    cooldown_seconds: float
+
+
 class GalgameConfig(BaseModel):
     # Phase 8: galgame story summarization. ``summary_model`` is a dedicated config
     # slot for the summary LLM; None -> fall back to the dialogue model (config.llm),
@@ -74,6 +85,26 @@ class GalgameConfig(BaseModel):
     # zero overhead on the OCR thread. yaml-only knob: NO env name (铁律 #4 --
     # nothing added to env_roster). A typo fails loud at startup (Literal).
     reaction_mode: Literal["off", "low", "normal", "high"] = "off"
+    # -- P5 step 4-B real-machine tuning knobs. Every default == the prior
+    # hardcoded value, so an un-set app.yaml resolves byte-identical (the code
+    # constants stay the source of truth until a key is uncommented). yaml-only
+    # (铁律 #4: no env names).
+    #
+    # reaction_table: per-tier gate table. None (default) -> the code
+    # REACTION_MODE_TABLE is the source of truth (做法X: Layer A zero-diff). A
+    # provided table replaces matching tiers; reaction_mode still selects which
+    # tier is live. Factory: low=5/1/180  normal=4/3/90  high=3/6/45.
+    reaction_table: dict[str, ReactionTierParams] | None = None
+    reaction_reply_char_limit: int = 40  # 吐槽回复字数上限 (compose_reaction_directive)
+    reaction_budget_window_seconds: float = 600.0  # 吐槽频率统计滑窗(秒)
+    reaction_excerpt_line_char_limit: int = 60  # 吐槽 directive 剧情摘录单行上限
+    reaction_excerpt_total_char_limit: int = 300  # 剧情摘录总字数上限
+    # 注入 prompt 的剧情(摘要/选项/陪玩 beat)各取最近几条 -- the former one
+    # shared stages._GAME_CONTEXT_RECENT_LIMIT (summaries/choices/beats together).
+    prompt_context_recent_limit: int = 5
+    # 履历卡硬字数上限 (history.CARD_MAX_CHARS). 注: prompt_builder._compact_text
+    # 另在 220 截断,设高于 220 需同改那处才真正变长.
+    play_history_card_max_chars: int = 220
 
 
 # -- screen section coercion helpers (P0b step 2a) -----------------------------

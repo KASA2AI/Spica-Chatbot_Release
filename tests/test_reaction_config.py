@@ -114,6 +114,7 @@ def test_reaction_scorer_hot_reloads_lexicon_on_mtime_change(tmp_path, monkeypat
     host = AppHost.__new__(AppHost)  # no full construction -- only the scorer's deps
     host._reaction_lexicons = {}
     host._reaction_lexicon_mtimes = {}
+    host._reaction_judge = None  # judge off -> the lexicon (hot-reload) scorer path
     host._reaction_game_scope = lambda: ("g1", "default", object())
 
     beat = _twist_beat()
@@ -149,6 +150,7 @@ def test_reaction_scorer_does_not_reload_when_file_unchanged(tmp_path, monkeypat
     host = AppHost.__new__(AppHost)
     host._reaction_lexicons = {}
     host._reaction_lexicon_mtimes = {}
+    host._reaction_judge = None  # judge off -> the lexicon (hot-reload) scorer path
     host._reaction_game_scope = lambda: ("g1", "default", object())
 
     beat = _twist_beat()

@@ -38,12 +38,12 @@
 
 # galgame:                                # 陪玩调参;env 无名,只此文件 (铁律 #4)。解开某键放进下方 live galgame 块即生效
 #   summary_model: null
-#   summary_trigger_chars: 2000           # 默认 2000:攒够这么多未总结字符触发后台总结
-#   ocr_interval_seconds: 0.3             # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
-#   prompt_context_recent_limit: 5        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
-#   reaction_reply_char_limit: 40         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
-#   reaction_budget_window_seconds: 600   # 默认 600:吐槽频率统计滑窗(秒)
-#   reaction_excerpt_line_char_limit: 60  # 默认 60:吐槽 directive 剧情摘录单行字数上限
+#   summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
+#   ocr_interval_seconds: 0.2           # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
+#   prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
+#   reaction_reply_char_limit: 200         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
+#   reaction_budget_window_seconds: 150   # 默认 600:吐槽频率统计滑窗(秒)
+#   reaction_excerpt_line_char_limit: 80  # 默认 60:吐槽 directive 剧情摘录单行字数上限
 #   reaction_excerpt_total_char_limit: 300  # 默认 300:剧情摘录总字数上限
 #   play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
 #   # 吐槽三档表(做法X:整块保持注释=用代码内置表 REACTION_MODE_TABLE,Layer A 零diff;解开才接管)。
@@ -152,4 +152,18 @@ song:
     output_subtype: PCM_16
 plugins: []
 galgame:
-  reaction_mode: normal
+  reaction_mode: high
+  summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
+  ocr_interval_seconds: 0.2           # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
+  prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
+  reaction_reply_char_limit: 200         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
+  reaction_budget_window_seconds: 150   # 默认 600:吐槽频率统计滑窗(秒)
+  reaction_excerpt_line_char_limit: 80 # 默认 60:吐槽 directive 剧情摘录单行字数上限
+  reaction_excerpt_total_char_limit: 300  # 默认 300:剧情摘录总字数上限
+  # -- P5 v2 LLM judge(默认关=零 diff)。开它=把"选哪个 beat 吐"从盲词表换成 LLM
+  #    (看场景窗口,不漏无词戏)。离线已验证(scripts/reaction_judge_report.py)。
+  #    ★启用时务必同时把下方 reaction_table 解开并设成 worth 标度(low=8/normal=7/high=6),
+  #     否则引擎阈仍是词表标度、judge 的 0-10 worth 会过载狂吐。judge 挂了自动回退词表打分(不沉默)。
+  # reaction_judge_enabled: true
+  # reaction_judge_model: deepseek-v4-flash   # null -> 回退主对话模型(config.llm.model)
+  play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)

@@ -22,6 +22,7 @@ The host exposes two narrow surfaces rather than one fat object:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any, Callable
 
@@ -41,15 +42,18 @@ from spica.galgame.models import CompanionBeat, utc_now_iso
 from spica.galgame.ocr_calibration import GalgameOcrCalibrator
 from spica.galgame.ocr_loop import OcrStreamRunner
 from spica.galgame.reaction import (
+    REACTION_MODE_TABLE,
     ReactionEngine,
     ReactionLexicon,
     ReactionModeParams,
+    ScoreResult,
     compose_reaction_directive,
     lexicon_source_mtime,
     load_reaction_lexicon,
     merge_mode_table,
     score_beat,
 )
+from spica.galgame.reaction_judge import GalgameReactionJudge, ReactionJudgeError
 from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
 from spica.runtime.context import GameTurnBinding
@@ -75,6 +79,20 @@ from spica.adapters.visual import build_spica_visual
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, load_tts_config
 
 logger = logging.getLogger(__name__)
+
+# -- P5 v2 reaction-judge host-wiring tunables --------------------------------
+# judge-cooldown: minimum seconds between LLM judge calls on the engine worker
+# thread (single-consumer, no lock). Caps the judge call rate even when it keeps
+# declining (a decline stamps NO budget cooldown, so without this the closure
+# would re-judge every non-cooldown beat). budget/cooldown still gate BEFORE the
+# scorer (reaction.py L587), so this is an extra throttle, not the only one.
+REACTION_JUDGE_COOLDOWN_SECONDS = 15.0
+# scene window: tail N unsummarized committed lines the judge sees (the offline
+# report's default). The cross-beat run-up the lexicon gate is blind to.
+REACTION_JUDGE_WINDOW_LINES = 24
+# judge-down fallback (叉口②-b): a pass score above any worth threshold, so the
+# engine's worth-scale min_score can't silence a beat the LEXICON scale passed.
+_LEXICON_FALLBACK_PASS_SCORE = 1000
 
 
 class AppHost:
@@ -103,6 +121,11 @@ class AppHost:
         self._reaction_try_speak: Any | None = None
         self._reaction_lexicons: dict[str | None, ReactionLexicon] = {}
         self._reaction_lexicon_mtimes: dict[str | None, float] = {}
+        # P5 v2 LLM judge: built in initialize() when reaction_judge_enabled (None
+        # -> the lexicon score_beat stays the scorer, zero diff). _last_at throttles
+        # re-judging (worker-thread only, single-consumer -> no lock).
+        self._reaction_judge: GalgameReactionJudge | None = None
+        self._reaction_judge_last_at: float | None = None
         # Path B stage 2: the process-wide companion controller singleton, built
         # lazily by companion_controller(); _companion_game_binding reads it.
         self._companion_controller: GalgameCompanionController | None = None
@@ -237,6 +260,9 @@ class AppHost:
             # the controller singleton at call time), so wiring order is free and a
             # plain chat turn stays byte-identical while no companion play is active.
             self.chat_engine.set_game_binding_provider(self._companion_game_binding)
+            # P5 v2: the reaction judge (None unless reaction_judge_enabled). Built
+            # BEFORE the engine so the scorer closure sees it on the first beat.
+            self._reaction_judge = self._new_reaction_judge()
             # P5: the reaction engine (None while reaction_mode is off -- the
             # tee then never enqueues, zero overhead on the OCR thread).
             self.reaction_engine = self._build_reaction_engine()
@@ -312,12 +338,11 @@ class AppHost:
         )
         return bool(try_speak(request))
 
-    def _reaction_scorer(self, beat: Any):
-        """Lexicon scorer bound to the LIVE game (per-game overlay). mtime-cached
-        (step 4-B hot-reload, mirrors VisualDiffService): a default.yaml /
-        <game_id>.yaml edit is picked up on the next beat without a restart."""
-        scope = self._reaction_game_scope()
-        game_id = scope[0] if scope else None
+    def _reaction_lexicon_for(self, game_id: str | None) -> ReactionLexicon:
+        """mtime-cached per-game lexicon (step 4-B hot-reload, mirrors
+        VisualDiffService): a default.yaml / <game_id>.yaml edit is picked up on
+        the next beat without a restart. Shared by the lexicon scorer (judge off)
+        and the judge's failure fallback so both see the same hot-reloaded words."""
         mtime = lexicon_source_mtime(game_id)
         if (
             game_id not in self._reaction_lexicons
@@ -325,7 +350,78 @@ class AppHost:
         ):
             self._reaction_lexicons[game_id] = load_reaction_lexicon(game_id)
             self._reaction_lexicon_mtimes[game_id] = mtime
-        return score_beat(beat, self._reaction_lexicons[game_id])
+        return self._reaction_lexicons[game_id]
+
+    def _reaction_scorer(self, beat: Any) -> ScoreResult:
+        """The scorer behind the engine's ``self._scorer(beat)`` seam (reaction.py
+        L592). ENGINE UNTOUCHED: the signature is ``(beat) -> ScoreResult`` and the
+        L396 injection are both unchanged.
+
+        - Judge OFF (default) -> lexicon ``score_beat`` (byte-identical to pre-judge,
+          zero diff).
+        - Judge ON -> LLM worth via the judge, reading a scene WINDOW + arc from
+          game_memory (the same data ``_build_game_context_sections`` injects), so
+          it no longer misses wordless drama.
+        - judge-cooldown -> a worth-0 sentinel (drops below any worth threshold)
+          without an LLM call, throttling the rate.
+        - ANY judge failure DEGRADES HERE, not in the engine: the engine's worker
+          loop swallows scorer exceptions into a silent drop, so catching here is
+          the only place a failure becomes lexicon scoring rather than silence."""
+        scope = self._reaction_game_scope()
+        game_id = scope[0] if scope else None
+        lexicon = self._reaction_lexicon_for(game_id)
+        if self._reaction_judge is None:
+            return score_beat(beat, lexicon)  # judge off: zero-diff lexicon path
+
+        now = time.monotonic()
+        if (
+            self._reaction_judge_last_at is not None
+            and now - self._reaction_judge_last_at < REACTION_JUDGE_COOLDOWN_SECONDS
+        ):
+            return ScoreResult(0, ("judge_cooldown",))
+        if scope is None or self.services is None:
+            return self._lexicon_fallback(beat, lexicon)  # no live scope -> lexicon scale
+
+        game_id, playthrough_id, _ = scope
+        gm = self.services.game_memory_adapter
+        character_id = str(self.config.character.character_id or "spica")
+        user_id = str(self.config.character.interlocutor_name or "麦")
+        try:
+            window = gm.unsummarized_committed_story_lines(game_id, playthrough_id)
+            verdict = self._reaction_judge.judge(
+                beat_lines=list(beat.lines),
+                window_lines=window[-REACTION_JUDGE_WINDOW_LINES:],
+                recent_summaries=gm.recent_summaries(game_id, playthrough_id, limit=2),
+                progress=gm.get_progress_state(game_id, playthrough_id),
+                recent_beats=gm.recent_companion_beats_for_prompt(
+                    game_id, user_id, character_id,
+                    limit=self.config.galgame.prompt_context_recent_limit,
+                ),
+            )
+        except ReactionJudgeError:
+            logger.warning("reaction judge failed -> lexicon fallback", exc_info=True)
+            return self._lexicon_fallback(beat, lexicon)
+        # Only an ACTUAL judge call stamps the cooldown (cooldown returns / fallback
+        # do not), so the throttle measures spacing between real LLM calls.
+        self._reaction_judge_last_at = now
+        return ScoreResult(
+            score=verdict.worth,
+            reasons=(f"worth:{verdict.worth}", f"moment:{verdict.moment}", f"angle:{verdict.angle}"),
+        )
+
+    def _lexicon_fallback(self, beat: Any, lexicon: ReactionLexicon) -> ScoreResult:
+        """叉口②-b: judge unavailable -> lexicon scoring on the LEXICON scale.
+        Decide pass/fail against the CODE ``REACTION_MODE_TABLE`` (lexicon weight
+        scale) -- NOT the worth-scale ``reaction_table`` the engine gates the judge
+        with -- then return a pass/fail-encoded score so the engine's worth
+        threshold can never silence a lexicon-passing beat (两套阈, 不沉默不崩)."""
+        lex = score_beat(beat, lexicon)
+        tier = REACTION_MODE_TABLE.get(self.config.galgame.reaction_mode)
+        passed = tier is not None and lex.score >= tier.min_score
+        return ScoreResult(
+            score=(_LEXICON_FALLBACK_PASS_SCORE if passed else 0),
+            reasons=("lexicon_fallback",) + lex.reasons,
+        )
 
     def _write_reaction_beat(self, content: str, meta: dict) -> None:
         """Engine beat_writer (worker thread): persist a reaction CompanionBeat
@@ -409,6 +505,18 @@ class AppHost:
             return None
         summary_model = self.config.galgame.summary_model or self.config.llm.model
         return GalgameSummarizer(self.services.llm_adapter, summary_model)
+
+    def _new_reaction_judge(self) -> GalgameReactionJudge | None:
+        """The P5 v2 reaction judge. None unless reaction_judge_enabled AND an LLM
+        is wired (so a half-config or a test never builds it). Model =
+        reaction_judge_model, else the dialogue model -- same resolved adapter as
+        the summarizer (mirrors _new_summarizer)."""
+        if not self.config.galgame.reaction_judge_enabled:
+            return None
+        if self.services is None or self.services.llm_adapter is None:
+            return None
+        model = self.config.galgame.reaction_judge_model or self.config.llm.model
+        return GalgameReactionJudge(self.services.llm_adapter, model)
 
     def new_companion_session(self) -> GalgameCompanionSession:
         """Build a galgame companion session wired to the game-memory adapter, the

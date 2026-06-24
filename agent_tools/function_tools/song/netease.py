@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import urllib.parse
 import urllib.request
@@ -8,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from agent_tools.function_tools.song.models import NeteaseSong, SongRequest
+
+
+logger = logging.getLogger(__name__)
 
 
 def search_best_song(request: SongRequest, limit: int = 20) -> NeteaseSong:
@@ -29,6 +33,7 @@ def search_best_song(request: SongRequest, limit: int = 20) -> NeteaseSong:
 
 
 def get_audio_url(song_id: str, bitrate: int = 320000) -> str:
+    _ensure_saved_pyncm_session_loaded()
     apis = _pyncm_apis()
     audio = apis.track.GetTrackAudio(int(song_id), bitrate=bitrate)
     data = audio.get("data", [])
@@ -104,6 +109,32 @@ def _ratio(left: str, right: str) -> float:
     if left in right or right in left:
         return 0.92
     return SequenceMatcher(None, left, right).ratio()
+
+
+def _ensure_saved_pyncm_session_loaded(session_path: Path | None = None) -> bool:
+    try:
+        import pyncm
+    except Exception:
+        return False
+
+    current_session = pyncm.GetCurrentSession()
+    if current_session.logged_in:
+        return True
+
+    path = session_path or _default_pyncm_session_path()
+    if not path.exists():
+        return False
+    try:
+        loaded_session = pyncm.LoadSessionFromString(path.read_text(encoding="utf-8").strip())
+        pyncm.SetCurrentSession(loaded_session)
+    except Exception:  # pragma: no cover - depends on local pyncm save format
+        logger.warning("无法加载 pyncm 登录态文件：%s", path)
+        return False
+    return bool(pyncm.GetCurrentSession().logged_in)
+
+
+def _default_pyncm_session_path() -> Path:
+    return Path.home() / ".pyncm"
 
 
 def _pyncm_apis() -> Any:

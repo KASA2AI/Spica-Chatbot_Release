@@ -95,6 +95,23 @@ class GalgameConfig(BaseModel):
     # provided table replaces matching tiers; reaction_mode still selects which
     # tier is live. Factory: low=5/1/180  normal=4/3/90  high=3/6/45.
     reaction_table: dict[str, ReactionTierParams] | None = None
+    # P5 v2 LLM reaction judge (offline-validated; replaces the blind lexicon gate
+    # as the LIVE scorer when enabled). TWO fields by design (叉口①):
+    # - reaction_judge_enabled: the on/off switch. False (default) -> the lexicon
+    #   ``score_beat`` stays the scorer, byte-identical to pre-judge (zero behaviour
+    #   diff). True -> selection routes through the LLM judge via the host
+    #   ``_reaction_scorer`` seam (the reaction ENGINE is untouched either way).
+    # - reaction_judge_model: which model the judge uses; None -> fall back to the
+    #   dialogue model (``config.llm.model``), mirroring ``summary_model``. Use a
+    #   small/fast tier (the offline report ran deepseek-v4-flash).
+    # CALIBRATION (two scales, 叉口②-b): the judge scores on a 0-10 WORTH scale,
+    # NOT the lexicon weight-sum scale. When enabling the judge, set
+    # ``reaction_table`` to the worth scale (offline start: low=8/normal=7/high=6).
+    # The code-side REACTION_MODE_TABLE (low=5/normal=4/high=3) stays the LEXICON
+    # scale -- the host closure also uses it as the FALLBACK threshold when a judge
+    # call fails, so it must keep the lexicon scale. yaml-only (铁律 #4: no env name).
+    reaction_judge_enabled: bool = False
+    reaction_judge_model: str | None = None
     reaction_reply_char_limit: int = 40  # 吐槽回复字数上限 (compose_reaction_directive)
     reaction_budget_window_seconds: float = 600.0  # 吐槽频率统计滑窗(秒)
     reaction_excerpt_line_char_limit: int = 60  # 吐槽 directive 剧情摘录单行上限

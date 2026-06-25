@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Iterator
 
 from spica.runtime.stages import _compact_tool_history_for_prompt, record_screen_tool_result
 from common.timing import elapsed_ms, now_ms
@@ -19,6 +19,12 @@ from spica.runtime.context import TurnContext, is_turn_cancelled
 from spica.runtime.llm_stream import get_attr, record_usage
 
 logger = logging.getLogger(__name__)
+
+# Sentinel yielded by the streaming chat-tool generator BETWEEN the probe phase and
+# the followup phase (tool turns only): tells the orchestrator to discard the raw
+# accumulated so far (the plain, unplayed tool preamble) so only the followup answer
+# reaches the final parse / memory. The no-tool path never yields it.
+STREAM_RESET = object()
 
 
 def prepare_prompt_for_streaming(
@@ -104,18 +110,56 @@ def prepare_prompt_for_streaming(
             )
             return calls, text
 
-        tool_calls, probe_text = _probe_chat(str(prompt_input or ""), 1)
-        if not tool_calls:
-            return str(prompt_input or ""), probe_text
-        tool_history = _run_tool_calls(ctx, obs, tools, put_status, tool_calls)
-        if not _any_chainable(tools, tool_calls):
-            # Every executed tool is single-shot (watch/note/inspect): today's
-            # single-round path, byte for byte -- the P1 loop never engages.
-            put_status("thinking", "thinking")
-            return build_tool_followup_prompt(prompt_input, tool_history, compact_lookup), None
-        return _run_chain_rounds(
-            ctx, deps, obs, tools, put_status, prompt_input, tool_history, _probe_chat
-        )
+        # Round 1 STREAMS: the no-tool JSON answer plays as it generates (the latency
+        # win) instead of waiting for the whole non-streamed reply. The whole flow
+        # (probe stream -> [tools -> followup stream]) is ONE generator the orchestrator
+        # consumes through its existing delta loop. A plain-text tool preamble carries
+        # no "answer" field -> the orchestrator's JsonAnswerExtractor drops it (nothing
+        # played); STREAM_RESET then clears it from raw before the followup answer.
+        def _chat_tool_stream() -> Iterator[Any]:
+            calls_sink: list[dict[str, str]] = []
+            probe_start_ms = now_ms()
+            for delta in deps.llm.iter_chat_with_tools(
+                model=model, prompt=str(prompt_input or ""),
+                tools=active_tool_schemas, state=ctx, tool_calls_sink=calls_sink,
+            ):
+                yield delta
+            probe_ms = elapsed_ms(probe_start_ms)
+            obs.mark("agent_rounds", 1)
+            obs.mark("agent_response_initial_ms", probe_ms)
+            obs.event(
+                "agent_response", probe_ms, phase="tool_probe",
+                endpoint="chat_completions", model=model, use_tools=True, round=1,
+            )
+            if not calls_sink:
+                return  # no tool -> the JSON answer already streamed (the win)
+            if is_turn_cancelled(ctx.request):
+                return  # cancelled during the (unplayed) preamble -> never run tools
+            yield STREAM_RESET  # drop the plain preamble; keep only the followup answer
+            tool_history = _run_tool_calls(ctx, obs, tools, put_status, calls_sink)
+            if not _any_chainable(tools, calls_sink):
+                # Single-shot tools (watch/note/inspect): one followup, streamed.
+                put_status("thinking", "thinking")
+                followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup)
+                for delta in deps.llm.iter_response_text({"model": model, "input": followup}, ctx):
+                    if is_turn_cancelled(ctx.request):
+                        break
+                    yield delta
+                return
+            # Chainable tools are dormant today (all single-shot); the chain re-probes
+            # NON-streaming (round 2+) then its final answer is emitted as one delta.
+            chain_prompt, chain_text = _run_chain_rounds(
+                ctx, deps, obs, tools, put_status, prompt_input, tool_history, _probe_chat
+            )
+            if chain_text is not None:
+                yield chain_text
+                return
+            for delta in deps.llm.iter_response_text({"model": model, "input": chain_prompt}, ctx):
+                if is_turn_cancelled(ctx.request):
+                    break
+                yield delta
+
+        return str(prompt_input or ""), _chat_tool_stream()
 
     def _probe_responses(prompt_text: str, round_number: int) -> tuple[list[dict[str, str]], str]:
         request = {

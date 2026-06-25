@@ -70,12 +70,27 @@ class _ChainChatAPI:
 
     def create(self, **kwargs):
         self._calls.append(("chat.completions.create", kwargs))
+        want_tool = bool(kwargs.get("tools")) and self._budget > 0
         if kwargs.get("stream"):
-            def chunks():
+            if want_tool:
+                # Round-1 STREAMING probe -> flip_page tool_call delta (index-keyed).
+                self._budget -= 1
+                self._step += 1
+                step = self._step
+                def chunks():
+                    yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[SimpleNamespace(index=0, id=f"call_{step}", type="function",
+                            function=SimpleNamespace(
+                                name="flip_page", arguments=json.dumps({"step": step})))]))])
+                return chunks()
+
+            def chunks():  # streamed final answer (prefetched final / forced final)
                 yield SimpleNamespace(choices=[SimpleNamespace(
                     delta=SimpleNamespace(content=RAW_ANSWER))])
             return chunks()
-        if kwargs.get("tools") and self._budget > 0:
+        if want_tool:
+            # NON-streaming chain rounds (2+, via _run_chain_rounds / sync chain).
             self._budget -= 1
             self._step += 1
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
@@ -170,11 +185,14 @@ class ChainRoundsTest(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(answer, "翻完了。")
-        # Three probes, ALL non-streaming WITH tools; the final answer came from
-        # probe 3's text (prefetched channel) -- ZERO streamed calls.
+        # Three probes WITH tools: round 1 STREAMS (streaming probe), rounds 2-3 are
+        # the NON-streaming chain re-probes; the final answer came from probe 3's
+        # text (prefetched channel).
         self.assertEqual(len(calls), 3)
+        self.assertTrue(calls[0][1].get("stream"))  # round 1 streams now
+        for _method, kwargs in calls[1:]:
+            self.assertNotIn("stream", kwargs)  # chain re-probes stay non-streaming
         for _method, kwargs in calls:
-            self.assertNotIn("stream", kwargs)
             self.assertEqual(_nested_names(kwargs["tools"]), ["flip_page"])
         # The tool really ran twice, with the chained arguments.
         self.assertEqual([e["step"] for e in executions], [1, 2])
@@ -203,7 +221,7 @@ class NonChainableSingleRoundTest(unittest.TestCase):
         self.assertEqual(answer, "翻完了。")
         self.assertEqual(len(calls), 2)  # no third call, ever
         probe = calls[0][1]
-        self.assertNotIn("stream", probe)
+        self.assertTrue(probe.get("stream"))  # the round-1 probe streams now
         self.assertEqual(_nested_names(probe["tools"]), ["flip_page"])
         followup = calls[1][1]
         self.assertTrue(followup.get("stream"))
@@ -230,8 +248,10 @@ class LoopOverflowTest(unittest.TestCase):
         # forced final: streamed, WITHOUT tools, prompt-noted to stop.
         self.assertEqual(len(calls), 4)
         probes, final = calls[:3], calls[3][1]
+        self.assertTrue(probes[0][1].get("stream"))  # round 1 streams now
+        for _method, kwargs in probes[1:]:
+            self.assertNotIn("stream", kwargs)  # chain re-probes stay non-streaming
         for _method, kwargs in probes:
-            self.assertNotIn("stream", kwargs)
             self.assertIn("tools", kwargs)
         self.assertTrue(final.get("stream"))
         self.assertNotIn("tools", final)

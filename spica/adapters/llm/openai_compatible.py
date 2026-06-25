@@ -107,6 +107,62 @@ class OpenAICompatibleAdapter:
                 )
         return calls, text
 
+    def iter_chat_with_tools(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        tools: list[dict[str, Any]],
+        state: Any,
+        tool_calls_sink: list[dict[str, str]],
+    ) -> Iterator[str]:
+        """STREAMING chat tool probe (the streaming counterpart of
+        ``create_chat_with_tools``). Streams ``chat.completions`` WITH tools and:
+
+        - yields ``delta.content`` text live (so the JSON answer of a no-tool turn
+          plays as it generates -- the latency win; a plain-text tool preamble like
+          "让我先看看屏幕" carries no ``"answer":`` field, so the caller's
+          JsonAnswerExtractor drops it and nothing is spoken);
+        - accumulates ``delta.tool_calls`` across chunks BY INDEX (the streamed
+          ``function.arguments`` arrive in fragments) and, at stream end, appends the
+          completed ``{"name","arguments"}`` calls to ``tool_calls_sink`` (a return
+          channel -- a generator cannot return a value cleanly).
+
+        Single-worker / serial use only (one turn streams at a time). No usage
+        recording in the loop (mirrors ``_iter_chat_completion_text``)."""
+        probe_start_ms = now_ms()
+        stream = self.client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            tools=to_chat_completions_tools(tools),
+            stream=True,
+        )
+        acc: dict[int, dict[str, str]] = {}
+        for chunk in stream:
+            choices = list(_get_attr(chunk, "choices", []) or [])
+            if not choices:
+                continue
+            delta = _get_attr(choices[0], "delta")
+            content = str(_get_attr(delta, "content", "") or "")
+            if content:
+                yield content
+            for item in list(_get_attr(delta, "tool_calls", []) or []):
+                index = int(_get_attr(item, "index", 0) or 0)
+                slot = acc.setdefault(index, {"name": "", "arguments": ""})
+                function = _get_attr(item, "function")
+                name = str(_get_attr(function, "name", "") or "")
+                if name:
+                    slot["name"] = name
+                arguments = str(_get_attr(function, "arguments", "") or "")
+                if arguments:
+                    slot["arguments"] += arguments
+        log_timing("llm_chat_tool_probe", elapsed_ms(probe_start_ms), model=model, streamed=True)
+        for index in sorted(acc):
+            if acc[index]["name"]:
+                tool_calls_sink.append(
+                    {"name": acc[index]["name"], "arguments": acc[index]["arguments"] or "{}"}
+                )
+
     def iter_response_text(self, request: dict[str, Any], state: Any) -> Iterator[str]:
         """Stream assistant text deltas, with all fallbacks handled internally."""
         return _iter_response_text(self.client, request, state)

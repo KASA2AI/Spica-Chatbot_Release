@@ -1,0 +1,7 @@
+2026-06-25 13:16:22,558 common.timing [TIMING] step=tts_warmup duration_ms=10766.00 emotion=happy synthesize=True
+2026-06-25 13:16:23,286 common.timing [TIMING] step=stt_model_load duration_ms=713.19 model=spica_data/models/faster-whisper-large-v3-turbo device=cuda
+2026-06-25 13:16:23,288 common.timing [TIMING] step=stt_warmup duration_ms=730.21 model=spica_data/models/faster-whisper-large-v3-turbo
+2026-06-25 13:17:35,321 common.timing [TIMING] step=reaction_judge duration_ms=4294.05 model=deepseek-v4-flash worth=4 angle=惊讶 degraded=False lines=4
+2026-06-25 13:17:35,321 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=4, line_ids=('dea9615ac5884355998c17d2e0d05fa7', 'da38e6aaed624f289b3265ad6627c4dd', 'b0c9f782b6594087bc0033cfdcdd6b74', 'c7f2a43674c742539c31c0c15c0ec156'))
+2026-06-25 13:17:55,487 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('0f7cfe7ff6af4f82b3184101becd0883', '66dd07b1f0eb4f3bb2612395687e7610', '6674e283edee41ddad42b31142a4e73e', '9d9ff624fb7b47189493c280e2878ce7', '93dd20d90a50482abd4c0572317a1373'))
+2026-06-25 13:18:02,568 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('cae88be237964a21aaa9c83e1d2b2853',))

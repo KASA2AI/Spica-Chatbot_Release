@@ -70,21 +70,28 @@ class _ChatCompletionsAPI:
 
     def create(self, **kwargs):
         self._calls.append(("chat.completions.create", kwargs))
+        is_followup = "[TOOL_RESULTS]" in kwargs["messages"][0]["content"]
+        want_tool = bool(kwargs.get("tools")) and not self._issued and not is_followup
+        args = json.dumps({"observation": self._observation}, ensure_ascii=False)
         if kwargs.get("stream"):
+            if want_tool:
+                self._issued = True
+                def chunks():  # streaming probe -> note tool_call delta
+                    yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[SimpleNamespace(index=0, id="call_1", type="function",
+                            function=SimpleNamespace(name="note_game_observation", arguments=args))]))])
+                return chunks()
+
             def chunks():
-                yield SimpleNamespace(choices=[SimpleNamespace(
-                    delta=SimpleNamespace(content=RAW_ANSWER))])
+                yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=RAW_ANSWER))])
             return chunks()
-        if (kwargs.get("tools") and not self._issued
-                and "[TOOL_RESULTS]" not in kwargs["messages"][0]["content"]):
+        if want_tool:  # NON-streaming (sync chain)
             self._issued = True
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
                 content="",
                 tool_calls=[SimpleNamespace(id="call_1", type="function",
-                    function=SimpleNamespace(
-                        name="note_game_observation",
-                        arguments=json.dumps({"observation": self._observation},
-                                             ensure_ascii=False)))],
+                    function=SimpleNamespace(name="note_game_observation", arguments=args))],
             ))], usage=None)
         return SimpleNamespace(choices=[SimpleNamespace(
             message=SimpleNamespace(content=RAW_ANSWER))], usage=None)

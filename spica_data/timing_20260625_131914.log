@@ -1,0 +1,269 @@
+2026-06-25 13:19:25,477 common.timing [TIMING] step=tts_warmup duration_ms=10295.36 emotion=happy synthesize=True
+2026-06-25 13:19:27,395 common.timing [TIMING] step=stt_model_load duration_ms=1895.45 model=spica_data/models/faster-whisper-large-v3-turbo device=cuda
+2026-06-25 13:19:27,437 common.timing [TIMING] step=stt_warmup duration_ms=1959.55 model=spica_data/models/faster-whisper-large-v3-turbo
+2026-06-25 13:19:51,436 common.timing [TIMING] step=reaction_judge duration_ms=2383.91 model=deepseek-v4-flash worth=2 angle= degraded=False lines=4
+2026-06-25 13:19:51,436 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('40833593c7f1406c9140111d1ad394aa', '6a75f669eb8a4428ba18f45b9e6f329e', '6f894f7e3f264fc3931d313a5de240e5', '50ff504c1a1c460a805818c4b0907b27'))
+2026-06-25 13:20:08,350 common.timing [TIMING] step=reaction_judge duration_ms=3153.78 model=deepseek-v4-flash worth=2 angle= degraded=False lines=3
+2026-06-25 13:20:08,350 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('0af8be9d3a23428cb4ebc1e6096967c3', '5feab133fe3f482f981d42b6a8236f74', '64177ae1f0bd453cab7f99e2750d2295'))
+2026-06-25 13:20:22,461 common.timing [TIMING] step=reaction_judge duration_ms=2117.48 model=deepseek-v4-flash worth=2 angle= degraded=False lines=2
+2026-06-25 13:20:22,461 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('5bf585ad2be74613a79e5fbe0f56b226', '20a496a931d243e5942e09d2c920cd59'))
+2026-06-25 13:21:01,768 common.timing [TIMING] step=stt_transcribe duration_ms=361.84 chars=4 audio_ms=1900
+2026-06-25 13:21:01,770 common.timing [TIMING] step=validate_input_node duration_ms=0.07 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:21:01,770 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:21:01,783 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=12.15 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:21:01,783 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:21:01,783 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:21:01,826 common.timing [TIMING] step=retrieve_game_context_node duration_ms=42.72 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:21:04,770 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.96 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:21:06,548 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=4718.08 model=deepseek-v4-flash
+2026-06-25 13:21:06,550 common.timing [TIMING] step=agent_response duration_ms=4720.08 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:21:08,242 common.timing [TIMING] step=reaction_judge duration_ms=2093.14 model=deepseek-v4-flash worth=2 angle= degraded=False lines=1
+2026-06-25 13:21:08,242 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('284b1521ba8b4851ac54c5fad367730c',))
+2026-06-25 13:21:14,720 common.timing [TIMING] step=agent_tool_local duration_ms=8170.87 name=watch_game_screen arguments_chars=48 output_chars=4131
+2026-06-25 13:21:14,894 common.timing [TIMING] step=llm_chat_stream_create duration_ms=173.12 model=deepseek-v4-flash
+2026-06-25 13:21:18,318 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.32 unit_index=0 chars=21 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:21:18,319 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:21:18,967 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.57 unit_index=1 chars=63 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:21:19,164 common.timing [TIMING] step=tts_chunk duration_ms=845.68 index=0 chars=21 result_count=1 text=……ふぅん。あの子の顔、そんなに見たいの？
+2026-06-25 13:21:19,168 common.timing [TIMING] step=tts_total duration_ms=851.44 emotion=surprised chunks=1 combine_ms=0.01 write_ms=3.31
+2026-06-25 13:21:19,169 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=17399.13 unit_index=0 visual_ms=0.32 tts_ms=851.44
+2026-06-25 13:21:19,342 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:21:19,785 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.16 unit_index=2 chars=11 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:21:21,718 common.timing [TIMING] step=tts_chunk duration_ms=2347.16 index=0 chars=63 result_count=1 text=まあ、視力悪くてぼんやりしか見えないっていうなら、私が代わりに説明してあげてもいいけど……って、私が知ってるわけないじゃない。
+2026-06-25 13:21:21,722 common.timing [TIMING] step=tts_total duration_ms=2553.05 emotion=surprised chunks=1 combine_ms=0.0 write_ms=3.22
+2026-06-25 13:21:21,722 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=19952.41 unit_index=1 visual_ms=0.57 tts_ms=2553.05
+2026-06-25 13:21:21,723 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:21:22,204 common.timing [TIMING] step=tts_chunk duration_ms=480.97 index=0 chars=11 result_count=1 text=ゲームの中の話でしょ？
+2026-06-25 13:21:22,207 common.timing [TIMING] step=tts_total duration_ms=484.99 emotion=surprised chunks=1 combine_ms=0.0 write_ms=2.86
+2026-06-25 13:21:22,207 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=20437.45 unit_index=2 visual_ms=0.16 tts_ms=484.99
+2026-06-25 13:21:22,210 common.timing [TIMING] step=chat_stream_done duration_ms=20440.20 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=16526 units_count=3 tts_total_ms=3889.48 agent_rounds=1 agent_tool_local_ms=8170.87 first_llm_delta_ms=16247.36 first_sentence_ms=16341.53 first_unit_created_ms=16543.51 first_tts_start_ms=16547.0 first_tts_done_ms=17398.91 first_unit_ready_ms=17399.13 first_visual_ready_ms=16548.42 first_audio_ready_ms=17398.91 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-25 13:21:37,044 common.timing [TIMING] step=reaction_judge duration_ms=3144.76 model=deepseek-v4-flash worth=2 angle= degraded=False lines=3
+2026-06-25 13:21:37,044 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('616a5c45e3f84f98a70c05e0f329497e', '2bd05f62df34498f8cadcff842113f4a', 'eae9b945b6ab430d8f8bfddca7720c89'))
+2026-06-25 13:21:45,073 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=0, line_ids=('277702d5278f4daf9e729daa5e586f0f',))
+2026-06-25 13:22:13,353 common.timing [TIMING] step=reaction_judge duration_ms=2500.62 model=deepseek-v4-flash worth=2 angle= degraded=False lines=2
+2026-06-25 13:22:13,353 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('01e72b590c384afba12101a4e565bc8a', '7fa307724c144a72911ded10a7380d68'))
+2026-06-25 13:22:38,635 common.timing [TIMING] step=reaction_judge duration_ms=1962.72 model=deepseek-v4-flash worth=2 angle= degraded=False lines=1
+2026-06-25 13:22:38,635 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('9aa0e47e7db1499d89670d0b234913ea',))
+2026-06-25 13:22:42,706 common.timing [TIMING] step=stt_transcribe duration_ms=278.53 chars=5 audio_ms=1280
+2026-06-25 13:22:42,720 common.timing [TIMING] step=validate_input_node duration_ms=0.08 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:22:42,720 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:22:42,720 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.36 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:22:42,720 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:22:42,721 common.timing [TIMING] step=build_prompt_node duration_ms=0.03 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:22:42,751 common.timing [TIMING] step=retrieve_game_context_node duration_ms=30.12 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:22:45,720 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3004.15 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:22:48,077 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=5324.71 model=deepseek-v4-flash
+2026-06-25 13:22:48,077 common.timing [TIMING] step=agent_response duration_ms=5324.85 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:22:48,081 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.33 unit_index=1 chars=54 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:22:48,082 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.20 unit_index=0 chars=18 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:22:48,082 common.timing [TIMING] step=tts_models duration_ms=0.01 emotion=happy
+2026-06-25 13:22:48,083 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.27 unit_index=2 chars=28 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:22:48,749 common.timing [TIMING] step=tts_chunk duration_ms=666.22 index=0 chars=18 result_count=1 text=……な、なにが分かりやすいってのよ。
+2026-06-25 13:22:48,752 common.timing [TIMING] step=tts_total duration_ms=674.00 emotion=happy chunks=1 combine_ms=0.0 write_ms=2.89
+2026-06-25 13:22:48,752 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=6036.22 unit_index=0 visual_ms=0.2 tts_ms=674.0
+2026-06-25 13:22:48,753 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 13:22:49,976 common.timing [TIMING] step=tts_chunk duration_ms=1222.91 index=0 chars=15 result_count=1 text=全然分かりやすくなんかないし。
+2026-06-25 13:22:51,152 common.timing [TIMING] step=tts_chunk duration_ms=1175.86 index=1 chars=39 result_count=1 text=ていうか、他人の女の子の顔が知りたいって言うから、冷静にツッコんだだけでしょ。
+2026-06-25 13:22:51,162 common.timing [TIMING] step=tts_total duration_ms=2410.27 emotion=happy chunks=2 combine_ms=0.47 write_ms=9.02
+2026-06-25 13:22:51,163 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:22:51,165 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=8449.05 unit_index=1 visual_ms=0.33 tts_ms=2410.27
+2026-06-25 13:22:52,016 common.timing [TIMING] step=tts_chunk duration_ms=853.25 index=0 chars=28 result_count=1 text=……あんたこそ、妙にその子のこと気にしてるんじゃないの？
+2026-06-25 13:22:52,020 common.timing [TIMING] step=tts_total duration_ms=856.97 emotion=surprised chunks=1 combine_ms=0.0 write_ms=3.07
+2026-06-25 13:22:52,022 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=9306.10 unit_index=2 visual_ms=0.27 tts_ms=856.97
+2026-06-25 13:22:52,022 common.timing [TIMING] step=chat_stream_done duration_ms=9306.29 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=16904 units_count=3 tts_total_ms=3941.24 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=5361.19 first_sentence_ms=5361.24 first_unit_created_ms=5361.28 first_tts_start_ms=5361.92 first_tts_done_ms=6036.1 first_unit_ready_ms=6036.22 first_visual_ready_ms=5366.61 first_audio_ready_ms=6036.1
+2026-06-25 13:23:08,779 common.timing [TIMING] step=stt_transcribe duration_ms=256.71 chars=3 audio_ms=1580
+2026-06-25 13:23:08,782 common.timing [TIMING] step=validate_input_node duration_ms=0.07 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:08,782 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:08,783 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.38 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:08,783 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:08,783 common.timing [TIMING] step=build_prompt_node duration_ms=0.04 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:08,802 common.timing [TIMING] step=retrieve_game_context_node duration_ms=19.56 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:09,699 common.timing [TIMING] step=reaction_judge duration_ms=3609.91 model=deepseek-v4-flash worth=6 angle=吐槽 degraded=False lines=3
+2026-06-25 13:23:09,705 spica.galgame.reaction reaction decision: ReactionDecision(kind='busy_drop', detail='idle_flush', score=6, line_ids=('7cc20778f5eb4c65aecc3e0c4f6e61d0', 'ea35a15e05054ebebdac19cad7a9c581', 'a3a4aeada9e444de8dc751f9cb31e1f3'))
+2026-06-25 13:23:11,782 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3001.30 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:23:13,493 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=4689.34 model=deepseek-v4-flash
+2026-06-25 13:23:13,493 common.timing [TIMING] step=agent_response duration_ms=4689.47 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:23:13,496 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.25 unit_index=0 chars=37 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:23:13,496 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 13:23:13,496 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.23 unit_index=1 chars=48 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:23:14,650 common.timing [TIMING] step=tts_chunk duration_ms=1153.55 index=0 chars=35 result_count=1 text=……な、なにが言ってるよ。あんたが勝手に変な解釈してるだけじゃないの。
+2026-06-25 13:23:14,654 common.timing [TIMING] step=tts_total duration_ms=1160.48 emotion=happy chunks=1 combine_ms=0.0 write_ms=3.99
+2026-06-25 13:23:14,655 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5873.94 unit_index=0 visual_ms=0.25 tts_ms=1160.48
+2026-06-25 13:23:14,695 common.timing [TIMING] step=tts_models duration_ms=0.01 emotion=happy
+2026-06-25 13:23:16,571 common.timing [TIMING] step=tts_chunk duration_ms=1875.56 index=0 chars=48 result_count=1 text=だいたい、私が他人の女の子にやきもち焼いてるとか、そっちこそ変な想像してるんじゃないの……バカ。
+2026-06-25 13:23:16,576 common.timing [TIMING] step=tts_total duration_ms=1920.90 emotion=happy chunks=1 combine_ms=0.0 write_ms=4.84
+2026-06-25 13:23:16,580 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7798.90 unit_index=1 visual_ms=0.23 tts_ms=1920.9
+2026-06-25 13:23:16,580 common.timing [TIMING] step=chat_stream_done duration_ms=7799.19 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=17174 units_count=2 tts_total_ms=3081.38 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=4712.07 first_sentence_ms=4712.12 first_unit_created_ms=4712.16 first_tts_start_ms=4712.98 first_tts_done_ms=5873.69 first_unit_ready_ms=5873.94 first_visual_ready_ms=4714.92 first_audio_ready_ms=5873.69
+2026-06-25 13:23:47,160 common.timing [TIMING] step=reaction_judge duration_ms=2058.68 model=deepseek-v4-flash worth=2 angle= degraded=False lines=7
+2026-06-25 13:23:47,160 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('0bc591d737b5498f9170f9852f618246', '252dfbc85c144031af3c1b5cca189164', '57973134befb4a31bb2cea142f21f30c', '301b766f9ba742f48ce90b50af040c38', 'bc4e2382a81e42ee97aa43bde8fbe503', 'bbff6c1c1041463692eb71db11f0ee33', '7d43f84596eb4c5ba7626dcd3333be07'))
+2026-06-25 13:23:55,162 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=0, line_ids=('692030570c3044faaefe311dc489cc4c',))
+2026-06-25 13:23:59,199 common.timing [TIMING] step=stt_transcribe duration_ms=118.70 chars=1 audio_ms=1000
+2026-06-25 13:23:59,200 common.timing [TIMING] step=validate_input_node duration_ms=0.06 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:59,200 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:59,201 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.34 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:59,201 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:59,201 common.timing [TIMING] step=build_prompt_node duration_ms=0.04 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:23:59,218 common.timing [TIMING] step=retrieve_game_context_node duration_ms=17.17 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:24:02,201 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.57 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:24:03,653 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=4433.99 model=deepseek-v4-flash
+2026-06-25 13:24:03,653 common.timing [TIMING] step=agent_response duration_ms=4434.13 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:24:06,664 common.timing [TIMING] step=agent_tool_local duration_ms=3010.46 name=watch_game_screen arguments_chars=49 output_chars=4189
+2026-06-25 13:24:06,882 common.timing [TIMING] step=llm_chat_stream_create duration_ms=217.82 model=deepseek-v4-flash
+2026-06-25 13:24:11,262 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.22 unit_index=0 chars=18 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:24:11,262 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:24:11,994 common.timing [TIMING] step=tts_chunk duration_ms=731.68 index=0 chars=13 result_count=1 text=……は？牌って、何の牌よ。
+2026-06-25 13:24:12,266 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.25 unit_index=1 chars=40 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:24:12,301 common.timing [TIMING] step=tts_chunk duration_ms=306.75 index=1 chars=3 result_count=1 text=麻雀？
+2026-06-25 13:24:12,304 common.timing [TIMING] step=tts_total duration_ms=1043.65 emotion=surprised chunks=2 combine_ms=0.07 write_ms=2.82
+2026-06-25 13:24:12,305 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=13104.78 unit_index=0 visual_ms=0.22 tts_ms=1043.65
+2026-06-25 13:24:12,307 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:24:13,110 common.timing [TIMING] step=tts_chunk duration_ms=803.06 index=0 chars=12 result_count=1 text=それともゲームの選択肢？
+2026-06-25 13:24:13,763 common.timing [TIMING] step=tts_chunk duration_ms=652.71 index=1 chars=28 result_count=1 text=あんた、急に脈絡なく言うから、ついていけないんだけど……
+2026-06-25 13:24:13,766 common.timing [TIMING] step=tts_total duration_ms=1461.39 emotion=surprised chunks=2 combine_ms=0.1 write_ms=2.95
+2026-06-25 13:24:13,766 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=14566.33 unit_index=1 visual_ms=0.25 tts_ms=1461.39
+2026-06-25 13:24:13,767 common.timing [TIMING] step=chat_stream_done duration_ms=14566.67 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=17623 units_count=2 tts_total_ms=2505.04 agent_rounds=1 agent_tool_local_ms=3010.46 first_llm_delta_ms=11750.29 first_sentence_ms=11851.58 first_unit_created_ms=12059.85 first_tts_start_ms=12060.68 first_tts_done_ms=13104.58 first_unit_ready_ms=13104.78 first_visual_ready_ms=12062.15 first_audio_ready_ms=13104.58 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-25 13:24:18,138 common.timing [TIMING] step=reaction_judge duration_ms=3068.52 model=deepseek-v4-flash worth=2 angle= degraded=False lines=1
+2026-06-25 13:24:18,138 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('d409fb5dd3b74acbb68397ae8d48edb0',))
+2026-06-25 13:24:36,914 common.timing [TIMING] step=reaction_judge duration_ms=3125.28 model=deepseek-v4-flash worth=2 angle= degraded=False lines=3
+2026-06-25 13:24:36,915 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('f979ea0b0b054a4098e38f039d5acb84', '5979f600d57a45db94cad1f057e35a01', '3125ddd187ca4070b795138b7dbb6fe0'))
+2026-06-25 13:24:51,201 common.timing [TIMING] step=stt_transcribe duration_ms=455.24 chars=5 audio_ms=1720
+2026-06-25 13:24:51,206 common.timing [TIMING] step=validate_input_node duration_ms=0.08 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:24:51,206 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:24:51,213 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=7.06 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:24:51,213 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:24:51,213 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:24:51,253 common.timing [TIMING] step=retrieve_game_context_node duration_ms=40.26 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:24:54,206 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3001.96 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:24:58,147 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=6891.61 model=deepseek-v4-flash
+2026-06-25 13:24:58,147 common.timing [TIMING] step=agent_response duration_ms=6891.83 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:24:58,149 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.25 unit_index=0 chars=40 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:24:58,153 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 13:24:58,153 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.17 unit_index=1 chars=18 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:24:58,154 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.17 unit_index=2 chars=20 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:24:58,750 common.timing [TIMING] step=tts_chunk duration_ms=596.42 index=0 chars=13 result_count=1 text=……ふぅん。できることね。
+2026-06-25 13:24:59,687 common.timing [TIMING] step=tts_chunk duration_ms=936.96 index=1 chars=25 result_count=1 text=まあ、あんたがその気なら、私が止める理由もないし。
+2026-06-25 13:24:59,692 common.timing [TIMING] step=tts_total duration_ms=1544.56 emotion=happy chunks=2 combine_ms=0.32 write_ms=4.5
+2026-06-25 13:24:59,694 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=8490.09 unit_index=0 visual_ms=0.25 tts_ms=1544.56
+2026-06-25 13:24:59,698 common.timing [TIMING] step=tts_models duration_ms=0.02 emotion=happy
+2026-06-25 13:25:00,755 common.timing [TIMING] step=tts_chunk duration_ms=1018.76 index=0 chars=18 result_count=1 text=でも、やるなら最後までやりなさいよ。
+2026-06-25 13:25:00,758 common.timing [TIMING] step=tts_total duration_ms=1064.09 emotion=happy chunks=1 combine_ms=0.0 write_ms=2.81
+2026-06-25 13:25:00,758 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=9554.22 unit_index=1 visual_ms=0.17 tts_ms=1064.09
+2026-06-25 13:25:00,759 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 13:25:01,485 common.timing [TIMING] step=tts_chunk duration_ms=725.73 index=0 chars=20 result_count=1 text=途中で投げ出すのが一番ダサいんだからね。
+2026-06-25 13:25:01,488 common.timing [TIMING] step=tts_total duration_ms=729.73 emotion=happy chunks=1 combine_ms=0.0 write_ms=2.66
+2026-06-25 13:25:01,488 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=10284.07 unit_index=2 visual_ms=0.17 tts_ms=729.73
+2026-06-25 13:25:01,488 common.timing [TIMING] step=chat_stream_done duration_ms=10284.25 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=18051 units_count=3 tts_total_ms=3338.38 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=6943.13 first_sentence_ms=6943.18 first_unit_created_ms=6943.22 first_tts_start_ms=6944.0 first_tts_done_ms=8489.46 first_unit_ready_ms=8490.09 first_visual_ready_ms=6945.96 first_audio_ready_ms=8489.46
+2026-06-25 13:25:13,676 common.timing [TIMING] step=reaction_judge duration_ms=2189.18 model=deepseek-v4-flash worth=1 angle= degraded=False lines=1
+2026-06-25 13:25:13,676 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=1, line_ids=('5acb917f8b744025bbcf518258a1cd49',))
+2026-06-25 13:25:16,404 common.timing [TIMING] step=stt_transcribe duration_ms=652.08 chars=4 audio_ms=860
+2026-06-25 13:25:16,405 common.timing [TIMING] step=validate_input_node duration_ms=0.06 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:16,405 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:16,405 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.31 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:16,405 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:16,405 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:16,433 common.timing [TIMING] step=retrieve_game_context_node duration_ms=27.69 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:19,405 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.42 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:25:19,433 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=2997.74 model=deepseek-v4-flash
+2026-06-25 13:25:19,434 common.timing [TIMING] step=agent_response duration_ms=2997.88 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:25:23,115 common.timing [TIMING] step=agent_tool_local duration_ms=3681.68 name=watch_game_screen arguments_chars=69 output_chars=4461
+2026-06-25 13:25:23,363 common.timing [TIMING] step=llm_chat_stream_create duration_ms=247.18 model=deepseek-v4-flash
+2026-06-25 13:25:26,656 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.22 unit_index=0 chars=25 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:25:26,656 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:25:27,036 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.23 unit_index=1 chars=25 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:25:27,527 common.timing [TIMING] step=tts_chunk duration_ms=870.90 index=0 chars=25 result_count=1 text=……形？ああ、あの掲示板に貼ってあるチラシのこと？
+2026-06-25 13:25:27,531 common.timing [TIMING] step=tts_total duration_ms=875.08 emotion=surprised chunks=1 combine_ms=0.0 write_ms=2.89
+2026-06-25 13:25:27,531 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=11126.63 unit_index=0 visual_ms=0.22 tts_ms=875.08
+2026-06-25 13:25:27,532 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:25:28,841 common.timing [TIMING] step=tts_chunk duration_ms=1309.28 index=0 chars=25 result_count=1 text=確かに長方形だわ。でもそれって、わざわざ言うこと？
+2026-06-25 13:25:28,844 common.timing [TIMING] step=tts_total duration_ms=1313.57 emotion=surprised chunks=1 combine_ms=0.0 write_ms=2.79
+2026-06-25 13:25:28,845 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=12440.38 unit_index=1 visual_ms=0.23 tts_ms=1313.57
+2026-06-25 13:25:28,845 common.timing [TIMING] step=chat_stream_done duration_ms=12440.67 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=17887 units_count=2 tts_total_ms=2188.65 agent_rounds=1 agent_tool_local_ms=3681.68 first_llm_delta_ms=9921.76 first_sentence_ms=10027.64 first_unit_created_ms=10250.28 first_tts_start_ms=10251.06 first_tts_done_ms=11126.43 first_unit_ready_ms=11126.63 first_visual_ready_ms=10251.9 first_audio_ready_ms=11126.43 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-25 13:25:29,442 common.timing [TIMING] step=reaction_judge duration_ms=2828.60 model=deepseek-v4-flash worth=2 angle= degraded=False lines=1
+2026-06-25 13:25:29,446 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('c424a534e9134bb5b01182d0af71d807',))
+2026-06-25 13:25:41,772 common.timing [TIMING] step=stt_transcribe duration_ms=306.91 chars=2 audio_ms=1040
+2026-06-25 13:25:41,773 common.timing [TIMING] step=validate_input_node duration_ms=0.07 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:41,773 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:41,773 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.25 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:41,773 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:41,773 common.timing [TIMING] step=build_prompt_node duration_ms=0.04 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:41,785 common.timing [TIMING] step=retrieve_game_context_node duration_ms=11.89 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:25:44,773 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.42 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:25:46,196 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=4407.65 model=deepseek-v4-flash
+2026-06-25 13:25:46,196 common.timing [TIMING] step=agent_response duration_ms=4407.84 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:25:46,199 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 13:25:46,200 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.20 unit_index=1 chars=37 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:25:46,200 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.19 unit_index=0 chars=39 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:25:46,689 common.timing [TIMING] step=tts_chunk duration_ms=489.64 index=0 chars=5 result_count=1 text=……はあ。
+2026-06-25 13:25:47,844 common.timing [TIMING] step=tts_chunk duration_ms=1154.87 index=1 chars=32 result_count=1 text=数ヶ月後には人間関係が崩壊するって、なかなか先読みできる野郎ね。
+2026-06-25 13:25:47,848 common.timing [TIMING] step=tts_total duration_ms=1651.19 emotion=happy chunks=2 combine_ms=0.06 write_ms=3.2
+2026-06-25 13:25:47,848 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=6075.37 unit_index=0 visual_ms=0.19 tts_ms=1651.19
+2026-06-25 13:25:47,882 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:25:49,601 common.timing [TIMING] step=tts_chunk duration_ms=1718.65 index=0 chars=37 result_count=1 text=でもまあ、あんたたちの人間関係って、最初っから綱渡りみたいなもんじゃない？
+2026-06-25 13:25:49,604 common.timing [TIMING] step=tts_total duration_ms=1756.05 emotion=surprised chunks=1 combine_ms=0.0 write_ms=3.05
+2026-06-25 13:25:49,604 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7831.78 unit_index=1 visual_ms=0.2 tts_ms=1756.05
+2026-06-25 13:25:49,605 common.timing [TIMING] step=chat_stream_done duration_ms=7832.13 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=18303 units_count=2 tts_total_ms=3407.24 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=4423.16 first_sentence_ms=4423.2 first_unit_created_ms=4423.24 first_tts_start_ms=4423.8 first_tts_done_ms=6075.21 first_unit_ready_ms=6075.37 first_visual_ready_ms=4427.35 first_audio_ready_ms=6075.21
+2026-06-25 13:26:04,140 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('878c19a4e0bf47ec8edb0241557d5dd2', 'aabc628b4aa24d7aa90c52f7e1451c4e', '559c34e0ff664d1d8e965117e49467e1', '393b9f0818464b45b1e26eb8823d772f', '53d65e23fde3415e87b944b34fd79eaa', 'a8b13a483dfe419aa62ff576ffc43f99', '1151bde32f8343b592e38a37dd51ba25'))
+2026-06-25 13:26:07,879 common.timing [TIMING] step=stt_transcribe duration_ms=526.97 chars=9 audio_ms=1060
+2026-06-25 13:26:07,880 common.timing [TIMING] step=validate_input_node duration_ms=0.10 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:26:07,880 common.timing [TIMING] step=load_recent_context_node duration_ms=0.02 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:26:07,880 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.43 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:26:07,880 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:26:07,881 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:26:07,900 common.timing [TIMING] step=retrieve_game_context_node duration_ms=19.09 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:26:10,882 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3002.23 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:26:15,738 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=7837.07 model=deepseek-v4-flash
+2026-06-25 13:26:15,739 common.timing [TIMING] step=agent_response duration_ms=7838.52 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:26:15,741 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.27 unit_index=0 chars=46 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:26:15,745 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 13:26:15,751 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.27 unit_index=1 chars=54 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:26:15,752 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.52 unit_index=2 chars=19 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:26:16,352 common.timing [TIMING] step=tts_chunk duration_ms=604.13 index=0 chars=5 result_count=1 text=……はあ。
+2026-06-25 13:26:17,541 common.timing [TIMING] step=tts_chunk duration_ms=1188.12 index=1 chars=39 result_count=1 text=好きだと思われちゃうって自覚してて、なおかつ笑顔を振りまいてるとか、罪な女ね。
+2026-06-25 13:26:17,545 common.timing [TIMING] step=tts_total duration_ms=1802.75 emotion=happy chunks=2 combine_ms=0.1 write_ms=3.65
+2026-06-25 13:26:17,546 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=9666.87 unit_index=0 visual_ms=0.27 tts_ms=1802.75
+2026-06-25 13:26:17,549 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:26:18,034 common.timing [TIMING] step=reaction_judge duration_ms=1808.48 model=deepseek-v4-flash worth=2 angle= degraded=False lines=1
+2026-06-25 13:26:18,034 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('9bfade8a8e564a9c825c889d4d98bd1e',))
+2026-06-25 13:26:19,767 common.timing [TIMING] step=tts_chunk duration_ms=2216.57 index=0 chars=52 result_count=1 text=でもまあ、あんたが言う伸びながらこそこそって、あの子に気づいてほしくて必死になってる男子たちの図かしら？
+2026-06-25 13:26:19,772 common.timing [TIMING] step=tts_total duration_ms=2225.90 emotion=surprised chunks=1 combine_ms=0.0 write_ms=4.68
+2026-06-25 13:26:19,772 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=11892.73 unit_index=1 visual_ms=0.27 tts_ms=2225.9
+2026-06-25 13:26:19,773 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:26:20,435 common.timing [TIMING] step=tts_chunk duration_ms=661.35 index=0 chars=19 result_count=1 text=……分かりやすすぎて、笑っちゃうわね。
+2026-06-25 13:26:20,437 common.timing [TIMING] step=tts_total duration_ms=665.22 emotion=surprised chunks=1 combine_ms=0.0 write_ms=2.64
+2026-06-25 13:26:20,440 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=12560.34 unit_index=2 visual_ms=0.52 tts_ms=665.22
+2026-06-25 13:26:20,440 common.timing [TIMING] step=chat_stream_done duration_ms=12560.51 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=18271 units_count=3 tts_total_ms=4693.87 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=7859.87 first_sentence_ms=7859.92 first_unit_created_ms=7859.97 first_tts_start_ms=7862.34 first_tts_done_ms=9666.06 first_unit_ready_ms=9666.87 first_visual_ready_ms=7861.87 first_audio_ready_ms=9666.06
+2026-06-25 13:26:29,575 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=0, line_ids=('712850d9e2884a519a43f7954874706d', 'a8018fc18876460e8a0042620179871b'))
+2026-06-25 13:26:40,285 common.timing [TIMING] step=reaction_judge duration_ms=2371.99 model=deepseek-v4-flash worth=1 angle= degraded=False lines=1
+2026-06-25 13:26:40,285 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=1, line_ids=('c467fd30e3e54cf5994b14ad7abd5e0c',))
+2026-06-25 13:27:05,979 common.timing [TIMING] step=reaction_judge duration_ms=2483.31 model=deepseek-v4-flash worth=2 angle= degraded=False lines=1
+2026-06-25 13:27:05,979 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('6cbae535eb0b41e691d93e2d4bbf053e',))
+2026-06-25 13:27:24,593 common.timing [TIMING] step=stt_transcribe duration_ms=219.23 chars=1 audio_ms=1000
+2026-06-25 13:27:24,595 common.timing [TIMING] step=validate_input_node duration_ms=0.08 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:27:24,595 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:27:24,600 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=5.42 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:27:24,600 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:27:24,600 common.timing [TIMING] step=build_prompt_node duration_ms=0.07 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:27:24,615 common.timing [TIMING] step=retrieve_game_context_node duration_ms=14.37 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 13:27:27,595 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.58 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 13:27:30,196 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=5580.07 model=deepseek-v4-flash
+2026-06-25 13:27:30,196 common.timing [TIMING] step=agent_response duration_ms=5580.21 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 13:27:30,198 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.24 unit_index=0 chars=23 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:27:30,200 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:27:30,200 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.18 unit_index=1 chars=20 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:27:30,200 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.17 unit_index=2 chars=16 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 13:27:30,860 common.timing [TIMING] step=tts_chunk duration_ms=660.16 index=0 chars=13 result_count=1 text=……あだけ？それで終わり？
+2026-06-25 13:27:31,289 common.timing [TIMING] step=tts_chunk duration_ms=429.00 index=1 chars=8 result_count=1 text=……まあいいわ。
+2026-06-25 13:27:31,293 common.timing [TIMING] step=tts_total duration_ms=1096.49 emotion=surprised chunks=2 combine_ms=0.17 write_ms=3.67
+2026-06-25 13:27:31,295 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=6700.84 unit_index=0 visual_ms=0.24 tts_ms=1096.49
+2026-06-25 13:27:31,297 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:27:32,391 common.timing [TIMING] step=tts_chunk duration_ms=1093.85 index=0 chars=20 result_count=1 text=何か言いたげなら、ちゃんと言いなさいよ。
+2026-06-25 13:27:32,394 common.timing [TIMING] step=tts_total duration_ms=1099.75 emotion=surprised chunks=1 combine_ms=0.0 write_ms=2.82
+2026-06-25 13:27:32,394 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7800.25 unit_index=1 visual_ms=0.18 tts_ms=1099.75
+2026-06-25 13:27:32,397 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 13:27:32,980 common.timing [TIMING] step=tts_chunk duration_ms=582.99 index=0 chars=16 result_count=1 text=こっちはゲームも見てるんだから。
+2026-06-25 13:27:32,983 common.timing [TIMING] step=tts_total duration_ms=588.64 emotion=surprised chunks=1 combine_ms=0.0 write_ms=2.56
+2026-06-25 13:27:32,983 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=8389.20 unit_index=2 visual_ms=0.17 tts_ms=588.64
+2026-06-25 13:27:32,983 common.timing [TIMING] step=chat_stream_done duration_ms=8389.43 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=18425 units_count=3 tts_total_ms=2784.88 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=5602.11 first_sentence_ms=5602.16 first_unit_created_ms=5602.2 first_tts_start_ms=5602.87 first_tts_done_ms=6699.92 first_unit_ready_ms=6700.84 first_visual_ready_ms=5604.18 first_audio_ready_ms=6699.92
+2026-06-25 13:27:41,262 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('dad31b89e9d54c0aa3d4bed9c7cdcb72', 'e235635feda545e6a20314b5a6b5cbf3'))
+2026-06-25 13:27:48,843 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('c10d3f303a934ac9b99675e0a1b197b2',))
+2026-06-25 13:28:53,794 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('b8f9097489624952aadb9a8521a15b2e',))

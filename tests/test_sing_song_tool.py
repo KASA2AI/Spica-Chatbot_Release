@@ -50,19 +50,26 @@ class _ChatCompletionsAPI:
 
     def create(self, **kwargs):
         self._calls.append(("chat.completions.create", kwargs))
+        is_followup = "[TOOL_RESULTS]" in kwargs["messages"][0]["content"]
+        want_tool = bool(kwargs.get("tools")) and self._issue and not is_followup
+        args = json.dumps({"query": "稻香"}, ensure_ascii=False)
         if kwargs.get("stream"):
+            if want_tool:
+                def chunks():  # streaming probe -> sing_song tool_call delta
+                    yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[SimpleNamespace(index=0, id="call_1", type="function",
+                            function=SimpleNamespace(name="sing_song", arguments=args))]))])
+                return chunks()
+
             def chunks():
-                yield SimpleNamespace(choices=[SimpleNamespace(
-                    delta=SimpleNamespace(content=RAW_ANSWER))])
+                yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=RAW_ANSWER))])
             return chunks()
-        if (kwargs.get("tools") and self._issue
-                and "[TOOL_RESULTS]" not in kwargs["messages"][0]["content"]):
+        if want_tool:  # NON-streaming (sync chain)
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
                 content="",
                 tool_calls=[SimpleNamespace(id="call_1", type="function",
-                    function=SimpleNamespace(
-                        name="sing_song",
-                        arguments=json.dumps({"query": "稻香"}, ensure_ascii=False)))],
+                    function=SimpleNamespace(name="sing_song", arguments=args))],
             ))], usage=None)
         return SimpleNamespace(choices=[SimpleNamespace(
             message=SimpleNamespace(content=RAW_ANSWER))], usage=None)
@@ -181,12 +188,23 @@ class SingSongChainTest(unittest.TestCase):
             client.chat._issue = True
             original_create = client.chat.create
 
+            missing = json.dumps({"query": "没有这首"}, ensure_ascii=False)
+
             def create_with_missing_song(**kwargs):
                 response = original_create(**kwargs)
+                if kwargs.get("stream"):
+                    # Streaming probe: rewrite the tool_call args inside the chunks.
+                    def rewritten():
+                        for chunk in response:
+                            for choice in (chunk.choices or []):
+                                for tc in (getattr(choice.delta, "tool_calls", None) or []):
+                                    if tc.function and tc.function.name == "sing_song":
+                                        tc.function.arguments = missing
+                            yield chunk
+                    return rewritten()
                 message = getattr(response.choices[0], "message", None)
                 if message is not None and getattr(message, "tool_calls", None):
-                    message.tool_calls[0].function.arguments = json.dumps(
-                        {"query": "没有这首"}, ensure_ascii=False)
+                    message.tool_calls[0].function.arguments = missing
                 return response
 
             client.chat.create = create_with_missing_song

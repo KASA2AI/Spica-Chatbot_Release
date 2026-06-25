@@ -87,22 +87,43 @@ class _ResponsesAPI:
 
 
 class _ChatCompletionsAPI:
-    def __init__(self, calls, decline_tools=False):
+    def __init__(self, calls, decline_tools=False, preamble=""):
         self._calls = calls
         self._decline_tools = decline_tools
+        self._preamble = preamble  # optional plain-text preamble before the tool_call
         self.completions = self
 
     def create(self, **kwargs):
         self._calls.append(("chat.completions.create", kwargs))
+        is_followup = "[TOOL_RESULTS]" in kwargs["messages"][0]["content"]
+        want_tool = bool(kwargs.get("tools")) and not self._decline_tools and not is_followup
         if kwargs.get("stream"):
-            def chunks():
-                yield SimpleNamespace(choices=[SimpleNamespace(
-                    delta=SimpleNamespace(content=RAW_ANSWER))])
+            if want_tool:
+                # Streaming tool probe -> an optional plain-text preamble (the shape
+                # deepseek really emits), then tool_call deltas SPLIT across chunks
+                # (name then arguments), exercising tc.index accumulation.
+                preamble = self._preamble
+
+                def chunks():
+                    if preamble:
+                        yield SimpleNamespace(choices=[SimpleNamespace(
+                            delta=SimpleNamespace(content=preamble))])
+                    yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[SimpleNamespace(index=0, id="call_1", type="function",
+                            function=SimpleNamespace(name="watch_game_screen", arguments=""))]))])
+                    yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+                        content=None,
+                        tool_calls=[SimpleNamespace(index=0, function=SimpleNamespace(
+                            name=None,
+                            arguments=json.dumps({"question": QUESTION}, ensure_ascii=False)))]))])
+                return chunks()
+
+            def chunks():  # streamed content (no-tool answer / declined probe / followup)
+                yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=RAW_ANSWER))])
             return chunks()
-        if (kwargs.get("tools") and not self._decline_tools
-                and "[TOOL_RESULTS]" not in kwargs["messages"][0]["content"]):
-            # First probe -> call the tool; the followup round (prompt already
-            # carries [TOOL_RESULTS]) answers with content like a real model.
+        if want_tool:
+            # NON-streaming probe (the frozen sync chain via call_llm_node).
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
                 content="",
                 tool_calls=[SimpleNamespace(id="call_1", type="function",
@@ -239,11 +260,12 @@ class StreamChatToolRoundTest(unittest.TestCase):
         messages = [s.get("message") for s in statuses]
         self.assertIn("tool:watch_game_screen", messages)
         self.assertNotIn("processing_tools", messages)
-        # Probe: chat.completions, non-streaming, tools in the NESTED chat format.
+        # Probe: chat.completions, now STREAMING (Plan: streaming tool probe), tools
+        # in the NESTED chat format. The followup also streams -> two chat calls.
         methods = [m for m, _ in calls]
         self.assertEqual(methods, ["chat.completions.create", "chat.completions.create"])
         probe = calls[0][1]
-        self.assertNotIn("stream", probe)
+        self.assertTrue(probe["stream"])  # streaming probe (was non-streaming pre-change)
         self.assertEqual(_nested_names(probe["tools"]), ["watch_game_screen"])
         for tool in probe["tools"]:
             self.assertEqual(tool["type"], "function")
@@ -258,6 +280,27 @@ class StreamChatToolRoundTest(unittest.TestCase):
         followup_text = followup["messages"][0]["content"]
         self.assertIn("[TOOL_RESULTS]", followup_text)
         self.assertIn("watch_game_screen", followup_text)
+
+
+class StreamPreambleDroppedTest(unittest.TestCase):
+    """edge 1 + RESET: deepseek often streams a PLAIN preamble ("好的我看看屏幕")
+    before the tool_call. The JsonAnswerExtractor drops it (no "answer" field) so
+    nothing is spoken, and STREAM_RESET clears it from raw before the followup -- so
+    the final answer is the followup ONLY, never the preamble."""
+
+    def test_plain_preamble_before_tool_not_played_and_raw_reset(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _deepseek_client(calls)
+            client.chat._preamble = "好的，我看看屏幕。"  # plain preamble before the tool_call
+            engine, analysis = _build_engine(client, tmp, with_watch=True)
+            answer, _ = _stream(engine, QUESTION)
+
+        # The followup answer is spoken; the preamble is NOT part of it.
+        self.assertEqual(answer, "画面上是个女孩。")
+        self.assertNotIn("好的", answer)
+        self.assertNotIn("看屏幕", answer)
+        self.assertEqual(analysis.calls, [("game_window", QUESTION)])  # the tool still ran
 
 
 class StreamChatNoToolsByteIdenticalTest(unittest.TestCase):

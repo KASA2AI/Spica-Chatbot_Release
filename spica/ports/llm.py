@@ -47,6 +47,21 @@ class LLMPort(Protocol):
         prefer Chat Completions (DeepSeek) never receive tool schemas."""
         ...
 
+    def iter_chat_with_tools(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        tools: list[dict[str, Any]],
+        state: Any,
+        tool_calls_sink: list[dict[str, str]],
+    ) -> Iterator[str]:
+        """Streaming chat tool probe: yields assistant text deltas live while
+        accumulating tool calls (by index, across chunks) into ``tool_calls_sink``.
+        The streaming counterpart of ``create_chat_with_tools`` -- lets a no-tool
+        answer stream instead of waiting for the whole non-streamed reply."""
+        ...
+
     def complete_text(self, prompt: str, *, model: str) -> str:
         """One-shot, turn-INDEPENDENT completion (galgame summarization, Phase 8):
         prompt -> text, reusing this same endpoint. NOT part of run_turn -- no

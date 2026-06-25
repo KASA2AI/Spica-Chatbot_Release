@@ -164,7 +164,7 @@ song:
     output_subtype: PCM_16
 plugins: []
 galgame:
-  reaction_mode: normal                 # judge 已启用:normal -> worth≥7 才吐(离线验证=吐真戏)
+  reaction_mode: high                 # judge 已启用:normal -> worth≥7 才吐(离线验证=吐真戏)
   summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
   ocr_interval_seconds: 0.2           # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
   prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)

@@ -47,7 +47,7 @@ from spica.core.proactive import (
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
 from spica.runtime.sequencer import Sequencer
-from spica.runtime.tool_round import prepare_prompt_for_streaming
+from spica.runtime.tool_round import STREAM_RESET, prepare_prompt_for_streaming
 from spica.runtime.tts_job import synthesize_unit_audio
 from spica.runtime.visual_job import build_unit_visual_and_emit
 
@@ -273,7 +273,7 @@ def _produce_stream_events(
         observer.mark("agent_model", model)
         observer.mark("prompt_input_chars", len(str(prompt_input or "")))
 
-        prompt_for_stream, prefetched_raw = prepare_prompt_for_streaming(ctx, services, put_status, deps)
+        prompt_for_stream, prefetched = prepare_prompt_for_streaming(ctx, services, put_status, deps)
         splitter = PlayUnitSplitter(
             min_chars=deps.config.stream.play_unit_min_chars,
             max_chars=deps.config.stream.play_unit_max_chars,
@@ -314,9 +314,39 @@ def _produce_stream_events(
             for unit_text in units:
                 submit_unit(unit_text)
 
-        if prefetched_raw is not None:
-            handle_raw_delta(prefetched_raw)
+        def reset_stream_state() -> None:
+            # STREAM_RESET (tool turns): discard the plain, UNPLAYED tool preamble so
+            # only the followup answer reaches raw/extractor/splitter -> final parse +
+            # memory carry the real answer, never the preamble. Re-create extractor +
+            # splitter (nothing was submitted from a plain preamble, so this is clean).
+            nonlocal extractor, splitter
+            raw_model_parts.clear()
+            answer.raw_model_output = ""
+            extractor = JsonAnswerExtractor()
+            splitter = PlayUnitSplitter(
+                min_chars=deps.config.stream.play_unit_min_chars,
+                max_chars=deps.config.stream.play_unit_max_chars,
+            )
+
+        if isinstance(prefetched, str):
+            # Non-streamed prefetch (Responses no-tool / dormant chain final): one
+            # delta -> byte-identical to the pre-streaming behaviour.
+            handle_raw_delta(prefetched)
             drain_ready()
+        elif prefetched is not None:
+            # Streaming chat-tool generator (DeepSeek): yields content deltas live and
+            # may yield STREAM_RESET before the followup answer (tool turns).
+            for item in prefetched:
+                # #1 checkpoint ③b: stop consuming the moment cancel lands. Breaking
+                # suspends the generator BEFORE it runs any (further) tool -> a turn
+                # cancelled during the preamble never executes the tool at all.
+                if is_turn_cancelled(ctx.request):
+                    break
+                if item is STREAM_RESET:
+                    reset_stream_state()
+                    continue
+                handle_raw_delta(item)
+                drain_ready()
         elif not is_turn_cancelled(ctx.request):
             # #1 checkpoint ③a: a turn cancelled during the tool round skips the LLM
             # stream entirely -- don't even open it. Deadline: cancelled None ->

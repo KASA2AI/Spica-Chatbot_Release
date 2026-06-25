@@ -224,11 +224,16 @@ class JudgeCooldownTest(unittest.TestCase):
     def test_within_cooldown_returns_zero_without_calling_llm(self):
         judge = _CountingJudge(JudgeVerdict(worth=7, moment="m", angle="吐槽"))
         host = _judge_host(judge)
-        # t=0 (judge), t=5 (<15 -> cooldown), t=20 (>=15 -> judge again)
-        with patch.object(app_host_module.time, "monotonic", side_effect=[0.0, 5.0, 20.0, 20.0]):
-            r1 = host._reaction_scorer(_beat(("S", "a")))
-            r2 = host._reaction_scorer(_beat(("S", "b")))
-            r3 = host._reaction_scorer(_beat(("S", "c")))
+        # settable fake clock: robust to however many monotonic reads a scorer call
+        # makes (cooldown check + judge-timing), unlike a fixed side_effect list.
+        clock = {"t": 0.0}
+        with patch.object(app_host_module.time, "monotonic", lambda: clock["t"]):
+            clock["t"] = 0.0
+            r1 = host._reaction_scorer(_beat(("S", "a")))   # judge runs, last_at=0
+            clock["t"] = 5.0
+            r2 = host._reaction_scorer(_beat(("S", "b")))   # 5-0<15 -> cooldown, no LLM
+            clock["t"] = 20.0
+            r3 = host._reaction_scorer(_beat(("S", "c")))   # 20-0>=15 -> judge runs again
         self.assertEqual(r1.score, 7)
         self.assertEqual((r2.score, r2.reasons), (0, ("judge_cooldown",)))
         self.assertEqual(r3.score, 7)

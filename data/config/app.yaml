@@ -41,6 +41,7 @@
 #   summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
 #   ocr_interval_seconds: 0.2           # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
 #   prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
+#   game_buffer_tail_limit: 40            # 默认 0(不截断):[CURRENT_GAME_BUFFER] 只保留最近 N 行未总结台词,防 prompt 随时长无限膨胀(更早的靠摘要兜底);只截 prompt 视图,总结器仍读全量
 #   reaction_reply_char_limit: 200         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
 #   reaction_budget_window_seconds: 150   # 默认 600:吐槽频率统计滑窗(秒)
 #   reaction_excerpt_line_char_limit: 80  # 默认 60:吐槽 directive 剧情摘录单行字数上限
@@ -62,6 +63,17 @@
 #       min_score: 3             # 默认 3
 #       max_per_window: 6        # 默认 6
 #       cooldown_seconds: 45     # 默认 45
+
+# stt:                           # 本地语音转文字 (Plan B):faster-whisper 取代 Google STT。yaml-only 无 env (铁律 #4)
+#   backend: faster_whisper      # faster_whisper(默认本地)| google(旧回退,无超时会卡,仅显式选用)
+#   model: large-v3-turbo        # repo 名走 HF 缓存,或填本地目录路径(完全离线)
+#   device: cuda                 # cuda | cpu
+#   compute_type: float16        # float16(GPU)| int8(CPU)
+#   language: zh
+#   beam_size: 5
+#   vad_filter: false
+#   warmup_on_startup: true      # 随 TTS 启动预热(模型只加载一次);false=首次说话懒加载
+#   download_root: null          # null=HF 默认缓存;可指向预下载目录
 
 # screen:                        # legacy carrier: config/screen_vision_config.json
 #   enabled: true                # env SPICA_SCREEN_ENABLED
@@ -152,18 +164,44 @@ song:
     output_subtype: PCM_16
 plugins: []
 galgame:
-  reaction_mode: high
+  reaction_mode: normal                 # judge 已启用:normal -> worth≥7 才吐(离线验证=吐真戏)
   summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
   ocr_interval_seconds: 0.2           # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
   prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
+  game_buffer_tail_limit: 40            # 默认 0(不截断):[CURRENT_GAME_BUFFER] 只保留最近 N 行未总结台词,防 prompt 随时长无限膨胀(更早的靠摘要兜底);只截 prompt 视图,总结器仍读全量
   reaction_reply_char_limit: 200         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
   reaction_budget_window_seconds: 150   # 默认 600:吐槽频率统计滑窗(秒)
   reaction_excerpt_line_char_limit: 80 # 默认 60:吐槽 directive 剧情摘录单行字数上限
   reaction_excerpt_total_char_limit: 300  # 默认 300:剧情摘录总字数上限
-  # -- P5 v2 LLM judge(默认关=零 diff)。开它=把"选哪个 beat 吐"从盲词表换成 LLM
-  #    (看场景窗口,不漏无词戏)。离线已验证(scripts/reaction_judge_report.py)。
-  #    ★启用时务必同时把下方 reaction_table 解开并设成 worth 标度(low=8/normal=7/high=6),
-  #     否则引擎阈仍是词表标度、judge 的 0-10 worth 会过载狂吐。judge 挂了自动回退词表打分(不沉默)。
-  # reaction_judge_enabled: true
-  # reaction_judge_model: deepseek-v4-flash   # null -> 回退主对话模型(config.llm.model)
+  # -- P5 v2 LLM judge:已启用(两步:enabled + worth 标度 reaction_table;缺第二步会狂吐)。
+  #    judge 看场景窗口选"哪个 beat 值得吐"(不漏无词戏),离线已验证。judge 挂了自动回退词表打分(不沉默)。
+  reaction_judge_enabled: true
+  reaction_judge_model: null              # null -> 用主对话模型(config.llm 的 deepseek);换小模型在此填模型名
+  # ★第二步(不能漏):reaction_table 设成 worth 标度(judge 打 0-10 worth,不是词表权重和)。
+  #   reaction_mode 选哪档 → 哪档 min_score 生效(now normal=worth≥7)。max_per_window/cooldown 保持各档原默认。
+  #   注:judge 挂掉的 fallback 用代码内置词表标度表(5/4/3),不受这里影响(两套阈,刻意分开)。
+  reaction_table:
+
+    low:                                  # worth≥8:只吐最戏的(离线 ~4/h)
+      min_score: 8
+      max_per_window: 1
+      cooldown_seconds: 180
+    normal:                               # worth≥7:吐真戏(离线 ~28/h raw,budget 再砍)
+      min_score: 7
+      max_per_window: 3
+      cooldown_seconds: 90
+    high:                                 # worth≥6:较松(离线 ~67/h raw)
+      min_score: 6
+      max_per_window: 6
+      cooldown_seconds: 45
   play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
+stt:                                     # 本地语音转文字(Plan B):faster-whisper 取代 Google STT(无网络/不卡死)。yaml-only 无 env(铁律 #4)
+  backend: faster_whisper                # faster_whisper(默认,本地)| google(旧回退,仍无超时会卡,仅显式选用)
+  model: spica_data/models/faster-whisper-large-v3-turbo  # 本地预下目录(完全离线);也可填 "large-v3-turbo" 走 HF 缓存
+  device: cuda
+  compute_type: float16                  # 显存约 2-3GB 常驻;CPU 可改 int8
+  language: zh
+  beam_size: 5
+  vad_filter: false
+  warmup_on_startup: true                # 随 TTS 一起启动预热(模型只加载一次,绝不每次调用重载);false=首次说话懒加载
+  download_root: null                    # null=HF 默认缓存;model 填本地目录时此项不用

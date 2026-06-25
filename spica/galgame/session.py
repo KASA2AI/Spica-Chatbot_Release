@@ -630,13 +630,37 @@ class GalgameCompanionSession:
 
         with self._lock:
             summary_id: str | None = None
+            # An end-summary FAILURE (we HAD lines to summarize but the LLM returned
+            # nothing) must NOT finalize the PlaySession: finalizing stamps
+            # state=ended + ended_at, which makes it invisible to
+            # dangling_play_sessions (scans active/paused + ended_at IS NULL) -> the
+            # batch is orphaned FOREVER (the 06-23 47becb69 bug). Skipping finalize
+            # leaves the row at the ENDING projection (state="active", ended_at NULL)
+            # = the exact dangling shape, so next startup's recover_dangling_sessions
+            # retries the summary. Gated tightly so NORMAL ends are byte-identical:
+            #   - empty snapshot (everything already background-summarized) -> finalize
+            #   - no summarizer wired (tests) -> finalize
+            # only "had residue AND the summary failed" diverges. Failure persists
+            # NOTHING (the if-result block holds persist + advance together), so there
+            # is no half-summarized batch -> recovery's retry is idempotent.
+            summary_failed = self._summarizer is not None and bool(snapshot) and result is None
             if result is not None:
                 summary_id = self._persist_summary(result, snapshot)
                 self._apply_progress_and_relations(result)
                 self._advance_unsummarized(snapshot)
             self._emit(GalgameSummaryDoneEvent(summary_id=summary_id))
             self._transition(_S.ENDING)  # summarizing -> ending
-            self._finalize_play_session()  # mark PlaySession ended (+ ended_at)
+            if summary_failed:
+                # Leave it dangling for retry -- withhold ONLY the durable "ended"
+                # stamp. The FSM still lands in game_launched below (a new game can
+                # start); the DB row stays active/NULL for next-startup recovery.
+                logger.warning(
+                    "galgame end summary failed (session_id=%s): left dangling for "
+                    "next-startup recovery retry (%d lines unsummarized)",
+                    session_id, len(snapshot),
+                )
+            else:
+                self._finalize_play_session()  # mark PlaySession ended (+ ended_at)
             self._transition(_S.GAME_LAUNCHED)  # ending -> game_launched (window still open)
             self._session_id = None
             self._play_session = None

@@ -29,9 +29,19 @@ class VoiceInputController(QObject):
         self.speech_worker: SpeechWorker | None = None
         self.voice_mode_active = False
         self.voice_session_id = 0
+        # Plan B: the resident local STT adapter (faster-whisper), injected AFTER
+        # host.initialize() via set_stt_port (this controller is built before the
+        # host). Passed by reference into each SpeechWorker; None -> google fallback.
+        self._stt_port = None
 
     def set_on_recognized_text(self, on_recognized_text: Callable[[str], None]) -> None:
         self.on_recognized_text = on_recognized_text
+
+    def set_stt_port(self, stt_port) -> None:
+        """Inject the resident STT adapter (delayed: the host builds it during
+        initialize(), after this controller is constructed). Each subsequent
+        SpeechWorker gets this same instance by reference -- no per-worker reload."""
+        self._stt_port = stt_port
 
     def start(self) -> None:
         if not self.backend_ready():
@@ -96,6 +106,19 @@ class VoiceInputController(QObject):
         if self.speech_worker and self.speech_worker.isRunning():
             self.speech_worker.requestInterruption()
 
+    def is_capturing_user_speech(self) -> bool:
+        """True only while a SpeechWorker has actually detected the user speaking
+        (hardware VAD started), NOT while it idly waits for speech. The P3 arbiter
+        treats this -- not the mere presence of a running worker -- as "busy", so a
+        proactive reaction can fire during the (common) idle-listen gaps yet never
+        cuts off a half-spoken sentence (option A: preempt idle, never active)."""
+        worker = self.speech_worker
+        return bool(
+            worker is not None
+            and worker.isRunning()
+            and worker.is_capturing_user_speech()
+        )
+
     def handle_speech_status(self, message: str, session_id: int) -> None:
         if session_id == self.voice_session_id and self.voice_mode_active:
             self.set_dialogue_text(message)
@@ -137,7 +160,7 @@ class VoiceInputController(QObject):
     def _start_speech_worker(self) -> None:
         self.set_busy(True)
         session_id = self.voice_session_id
-        self.speech_worker = SpeechWorker(self)
+        self.speech_worker = SpeechWorker(self, stt_port=self._stt_port)
         self.speech_worker.status_changed.connect(
             lambda message, sid=session_id: self.handle_speech_status(message, sid)
         )
@@ -149,3 +172,32 @@ class VoiceInputController(QObject):
         )
         self.speech_worker.finished.connect(lambda sid=session_id: self.handle_finished(sid))
         self.speech_worker.start()
+
+
+class ReactionVoiceDuckGate:
+    """Real ``VoiceInputGate`` (the full-duplex seam proactive.py reserves): when
+    she starts a SYSTEM turn (galgame reaction / song report) it ducks the idly
+    listening mic so her own TTS is not captured as the user speaking.
+
+    Resume is FREE: a system turn's completion always runs ``on_chat_done`` ->
+    ``schedule_next_recording`` (``_end_stream_playback`` is reached for a played
+    AND a swallowed NO_COMMENT turn; an errored turn resumes via ``on_error``), so
+    this gate only needs the duck -- adding a resume here would double-start the
+    mic. No-op outside voice mode (text mode never holds the mic).
+
+    Duck-typed to ``spica.core.proactive.VoiceInputGate``. ``before_system_speech``
+    runs on the reaction engine's worker thread -- exactly like the existing
+    ``start_turn`` call on that path -- and only touches ``QThread.requestInterruption``
+    (atomic) plus a monotonic session-id bump, so no widget is touched off-GUI.
+    """
+
+    def __init__(self, voice_input_controller: VoiceInputController | None) -> None:
+        self._vc = voice_input_controller
+
+    def before_system_speech(self) -> None:
+        vc = self._vc
+        if vc is not None and vc.voice_mode_active:
+            vc.interrupt_current_recording()
+
+    def after_system_speech(self) -> None:
+        return None  # resume rides the existing on_chat_done path (see class docstring)

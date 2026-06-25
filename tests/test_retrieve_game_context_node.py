@@ -16,11 +16,13 @@ from tempfile import TemporaryDirectory
 from memory.store import SQLiteMemoryStore
 from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
 from spica.adapters.memory.sqlite import SqliteMemoryAdapter, scoped_conversation_id
-from spica.config.schema import AppConfig, CharacterConfig
+from spica.config.schema import AppConfig, CharacterConfig, GalgameConfig
 from spica.galgame.manual import ManualGameMemory
 from spica.galgame.models import (
     CharacterRelation,
     GameProfile,
+    StoryLine,
+    StoryLineStatus,
     StorySummary,
     game_conversation_id,
     utc_now_iso,
@@ -47,9 +49,12 @@ def _ctx(request: TurnRequest, prompt: str = BASE_PROMPT) -> TurnContext:
     return ctx
 
 
-def _deps(ctx, *, game_memory=None, memory=None, llm=None, character_id="spica", user_id="麦"):
+def _deps(ctx, *, game_memory=None, memory=None, llm=None, character_id="spica", user_id="麦", galgame=None):
     return TurnDeps(
-        config=AppConfig(character=CharacterConfig(character_id=character_id, interlocutor_name=user_id)),
+        config=AppConfig(
+            character=CharacterConfig(character_id=character_id, interlocutor_name=user_id),
+            galgame=galgame or GalgameConfig(),
+        ),
         llm=llm,
         tts=None,
         visual=None,
@@ -263,6 +268,74 @@ class ActiveSummariesInjectionTest(unittest.TestCase):
                     summarized_texts |= {by_id[i] for i in summary.source_line_ids}
             self.assertEqual(summarized_texts, {"L1", "L2"})
             self.assertFalse(buffer_texts & summarized_texts)
+
+
+class BufferTailCapTest(unittest.TestCase):
+    """[CURRENT_GAME_BUFFER] sizing: the compact (null-speaker-omitting) format and
+    the galgame.game_buffer_tail_limit cap that stops the unsummarized backlog from
+    growing the live prompt without bound (the 28k-prompt / 6s-first-token cause)."""
+
+    @staticmethod
+    def _active_req():
+        return TurnRequest(
+            user_input="刚才?", conversation_id="default", interaction_mode="galgame",
+            game_context_request=GameContextRequest(mode="active", game_id="ABC"),
+        )
+
+    def _buffer_items(self, ctx):
+        prompt = ctx.prompt.prompt_input
+        chunk = prompt.split("[CURRENT_GAME_BUFFER]\n", 1)[1]
+        return json.loads(chunk.split("\n\n", 1)[0])
+
+    def _feed_lines(self, gm, n, speaker=None):
+        # Write COMMITTED lines directly with DISTINCT increasing timestamps:
+        # committed_story_lines orders by (timestamp, line_id), so same-second rows
+        # (what the manual facade would stamp in a loop) tiebreak on the random
+        # line_id -> a "last N" assertion would be non-deterministic. Real OCR lines
+        # carry monotonic timestamps, so the tail IS the newest N.
+        for i in range(n):
+            gm.add_story_line(StoryLine(
+                line_id=f"LN{i:03d}", session_id="S1", game_id="ABC", text=f"L{i}",
+                timestamp=f"2026-06-10T10:00:{i:02d}", speaker=speaker,
+                source="ocr", status=StoryLineStatus.COMMITTED,
+            ))
+
+    def test_null_speaker_line_omits_speaker_key(self):
+        with TemporaryDirectory() as tmp:
+            gm = GameMemorySqliteAdapter(Path(tmp) / "g.sqlite3")
+            self._feed_lines(gm, 1, speaker=None)
+            ctx = _ctx(self._active_req())
+            retrieve_game_context_node(ctx, None, _deps(ctx, game_memory=gm))
+            item = self._buffer_items(ctx)[0]
+            self.assertEqual(item, {"text": "L0"})  # no "speaker": null framing
+            self.assertNotIn("null", ctx.prompt.prompt_input.split("[CURRENT_GAME_BUFFER]")[1].split("\n\n")[0])
+
+    def test_speaker_line_keeps_speaker_key(self):
+        with TemporaryDirectory() as tmp:
+            gm = GameMemorySqliteAdapter(Path(tmp) / "g.sqlite3")
+            self._feed_lines(gm, 1, speaker="朱比華")
+            ctx = _ctx(self._active_req())
+            retrieve_game_context_node(ctx, None, _deps(ctx, game_memory=gm))
+            self.assertEqual(self._buffer_items(ctx)[0], {"speaker": "朱比華", "text": "L0"})
+
+    def test_tail_limit_keeps_only_last_n(self):
+        with TemporaryDirectory() as tmp:
+            gm = GameMemorySqliteAdapter(Path(tmp) / "g.sqlite3")
+            self._feed_lines(gm, 5)
+            ctx = _ctx(self._active_req())
+            deps = _deps(ctx, game_memory=gm, galgame=GalgameConfig(game_buffer_tail_limit=3))
+            retrieve_game_context_node(ctx, None, deps)
+            texts = [it["text"] for it in self._buffer_items(ctx)]
+            self.assertEqual(texts, ["L2", "L3", "L4"])  # last 3, oldest dropped, order kept
+
+    def test_tail_limit_zero_means_no_cap(self):
+        with TemporaryDirectory() as tmp:
+            gm = GameMemorySqliteAdapter(Path(tmp) / "g.sqlite3")
+            self._feed_lines(gm, 5)
+            ctx = _ctx(self._active_req())
+            # default GalgameConfig -> game_buffer_tail_limit == 0 -> all 5 (zero-diff).
+            retrieve_game_context_node(ctx, None, _deps(ctx, game_memory=gm))
+            self.assertEqual(len(self._buffer_items(ctx)), 5)
 
 
 class OfflineModeTest(unittest.TestCase):

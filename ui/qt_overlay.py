@@ -21,7 +21,7 @@ from ui.controllers.galgame_controller import GalgameController, selection_to_ph
 from ui.controllers.interaction_controller import InteractionController
 from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
-from ui.controllers.voice_input_controller import VoiceInputController
+from ui.controllers.voice_input_controller import ReactionVoiceDuckGate, VoiceInputController
 from ui.overlay_config import OverlayConfig, load_overlay_config
 from ui.widgets.window_picker_dialog import WindowPickerDialog
 from ui.workers.companion_action_worker import CompanionActionWorker
@@ -151,10 +151,14 @@ class OverlayWindow(QWidget):
             backend_ready=lambda: self.agent is not None,
         )
         # P3: the mode-agnostic proactive-turn arbiter. busy = conversation
-        # (chat/song) OR a user recording in flight (never talk over the user).
+        # (chat/song) OR the user MID-UTTERANCE (never talk over the user). A mic
+        # that is merely idle-listening is NOT busy -- the duck gate stops it the
+        # instant she speaks, so a galgame reaction can fire in voice mode instead
+        # of being perpetually busy_drop'd (option A: preempt idle, never active).
         self.proactive_arbiter = ProactiveTurnArbiter(
             is_busy=self._is_proactive_busy,
             start_turn=self._start_system_turn,
+            input_gate=ReactionVoiceDuckGate(self.voice_input_controller),
         )
         self.song_controller = SongController(
             parent=self,
@@ -235,6 +239,11 @@ class OverlayWindow(QWidget):
             self.tts_tool = self.host.tts_tool
             self.tts_adapter = self.host.tts_adapter
             self.agent = self.host.conversation_surface
+            # Plan B: inject the resident local STT adapter into the voice loop
+            # (delayed -- the controller is built before the host). None when
+            # backend=google -> SpeechWorker uses the legacy fallback.
+            if self.voice_input_controller is not None:
+                self.voice_input_controller.set_stt_port(self.host.stt_adapter)
             self._init_chat_stream_controller()
             self._init_companion_ui()
             self.interlocutor_name = self.agent.interlocutor_name
@@ -901,8 +910,10 @@ class OverlayWindow(QWidget):
         )
 
     def _is_recording(self) -> bool:
-        """A user voice segment is in flight (a SpeechWorker is running). A (input
-        lock) and P3 (arbiter busy) share this one truth."""
+        """A user voice segment is in flight (a SpeechWorker is running, idle OR
+        mid-utterance). Drives input-lock A (the text box stays disabled while the
+        mic owns the turn). The P3 arbiter NO LONGER shares this -- it gates on the
+        narrower ``_is_user_speaking`` so an idle mic doesn't block reactions."""
         worker = (
             self.voice_input_controller.speech_worker
             if self.voice_input_controller is not None
@@ -910,11 +921,21 @@ class OverlayWindow(QWidget):
         )
         return bool(worker is not None and worker.isRunning())
 
+    def _is_user_speaking(self) -> bool:
+        """The user is ACTIVELY mid-utterance (hardware VAD has detected speech),
+        as opposed to the mic merely idle-listening. The P3 arbiter's busy truth:
+        a reaction may fire during idle-listen gaps (the duck gate stops the mic
+        when she speaks) but never over a half-spoken sentence."""
+        return bool(
+            self.voice_input_controller is not None
+            and self.voice_input_controller.is_capturing_user_speech()
+        )
+
     def _is_proactive_busy(self) -> bool:
-        """P3 arbiter busy truth: conversation busy OR a user recording in
-        flight -- she must never start talking over the user's half-spoken
-        sentence."""
-        return self._is_conversation_busy() or self._is_recording()
+        """P3 arbiter busy truth: conversation busy (chat/song) OR the user
+        mid-utterance -- NOT a merely idle-listening mic (else reactions are
+        perpetually busy_drop'd in voice mode)."""
+        return self._is_conversation_busy() or self._is_user_speaking()
 
     def _start_system_turn(self, request: Any) -> None:
         """P3 arbiter start callback: launch the system turn and park the

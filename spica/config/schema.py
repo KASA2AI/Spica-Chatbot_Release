@@ -119,6 +119,15 @@ class GalgameConfig(BaseModel):
     # 注入 prompt 的剧情(摘要/选项/陪玩 beat)各取最近几条 -- the former one
     # shared stages._GAME_CONTEXT_RECENT_LIMIT (summaries/choices/beats together).
     prompt_context_recent_limit: int = 5
+    # [CURRENT_GAME_BUFFER] tail cap: keep only the last N unsummarized committed
+    # lines in the live prompt (the OLDER ones are covered by [RECENT_GAME_SUMMARIES]
+    # / [GAME_PROGRESS]). Without this the buffer = ALL unsummarized lines, so a
+    # summary failure (or a fast player) lets it grow unbounded -> a 28k-char prompt
+    # -> ~6s first-token. 0 (default) == NO cap == byte-identical to pre-cap (Layer
+    # zero-diff when unset); app.yaml sets a real cap. Only caps the PROMPT view --
+    # the summarizer (summarizer.py) still reads ALL unsummarized lines. yaml-only
+    # (铁律 #4: no env name).
+    game_buffer_tail_limit: int = 0
     # 履历卡硬字数上限 (history.CARD_MAX_CHARS). 注: prompt_builder._compact_text
     # 另在 220 截断,设高于 220 需同改那处才真正变长.
     play_history_card_max_chars: int = 220
@@ -232,12 +241,36 @@ class PluginEntryConfig(BaseModel):
     enabled: bool = True
 
 
+class SttConfig(BaseModel):
+    """Speech-to-text (Plan B): local faster-whisper replaces network Google STT.
+    yaml-only (铁律 #4: no env names -- nothing added to env_roster). All fields
+    restart-effective; the model is resolved once at startup and kept resident."""
+
+    # "faster_whisper" -> local whisper (default; no network, cannot hang).
+    # "google" -> legacy recognize_google fallback (STILL timeout-less / can hang;
+    # kept only as an explicit opt-out, never auto-selected).
+    backend: str = "faster_whisper"
+    model: str = "large-v3-turbo"  # repo id OR a local dir path (pre-downloaded)
+    device: str = "cuda"  # cuda | cpu
+    compute_type: str = "float16"  # float16 (gpu) | int8 | int8_float16 ...
+    language: str = "zh"
+    beam_size: int = 5
+    vad_filter: bool = False
+    # Warm the model at startup alongside TTS (predictable first-utterance latency).
+    # False -> lazy load on the first transcribe (still loaded ONCE, never per call).
+    warmup_on_startup: bool = True
+    # None -> faster-whisper's default HF cache. Set to a dir to pin a pre-downloaded
+    # model (China-friendly: avoids a blocking first-startup download).
+    download_root: str | None = None
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     character: CharacterConfig = Field(default_factory=CharacterConfig)
     stream: StreamConfig = Field(default_factory=StreamConfig)
     galgame: GalgameConfig = Field(default_factory=GalgameConfig)
+    stt: SttConfig = Field(default_factory=SttConfig)
     screen: ScreenConfig = Field(default_factory=ScreenConfig)
     # P0b step 3 (D-3a): the song section is intentionally UNTYPED -- it is the
     # override dict layered over song/config.py's DEFAULT_CONFIG by the same

@@ -69,8 +69,16 @@ def record_respeaker_channel0_hardware_vad(
     pre_roll_seconds: float = 0.25,
     vad_poll_seconds: float = 0.02,
     should_stop: Callable[[], bool] | None = None,
+    on_speech_start: Callable[[], None] | None = None,
 ) -> bytes:
-    """Record channel 0 until the ReSpeaker hardware VAD sees speech end."""
+    """Record channel 0 until the ReSpeaker hardware VAD sees speech end.
+
+    ``on_speech_start`` (optional) fires ONCE, on this thread, the instant the
+    hardware VAD first reports voice -- i.e. the user has actually started
+    speaking (not merely the mic idling). It lets a caller distinguish
+    "mid-utterance" from "idle-listening" so a proactive turn can fire in the
+    idle gaps without cutting off a half-spoken sentence (P5 reaction-in-voice).
+    """
     _validate_hardware_vad_args(
         max_seconds=max_seconds,
         start_timeout=start_timeout,
@@ -126,6 +134,11 @@ def record_respeaker_channel0_hardware_vad(
                     recorded.extend(pre_roll)
                     pre_roll.clear()
                     logger.info("ReSpeaker hardware VAD started recording")
+                    if on_speech_start is not None:
+                        try:
+                            on_speech_start()
+                        except Exception:  # noqa: BLE001 -- a hint cb must never kill recording
+                            logger.warning("on_speech_start hint failed", exc_info=True)
                 recorded.append(channel0)
                 speech_elapsed += chunk_seconds
                 silence_elapsed = 0.0

@@ -408,8 +408,15 @@ def _format_summaries(summaries: list[Any]) -> str:
 
 
 def _format_buffer(lines: list[Any]) -> str:
+    # Compact: omit the speaker key when there is no speaker. OCR narration lines
+    # carry speaker=None, and emitting `"speaker": null, ` for each is pure prompt
+    # bloat (~17 chars/line) on a long backlog -- a reader gets the identical {text}
+    # whether the null key is present or absent, so this is semantically lossless.
     return json.dumps(
-        [{"speaker": line.speaker, "text": line.text} for line in lines],
+        [
+            {"speaker": line.speaker, "text": line.text} if line.speaker else {"text": line.text}
+            for line in lines
+        ],
         ensure_ascii=False,
     )
 
@@ -475,6 +482,14 @@ def _build_game_context_sections(
         if summaries:
             sections.append(_section("[RECENT_GAME_SUMMARIES]", _format_summaries(summaries)))
         buffer_lines = game_memory.unsummarized_committed_story_lines(game_id, playthrough_id)
+        # Tail cap (yaml: galgame.game_buffer_tail_limit): keep only the last N lines
+        # so the live prompt does not grow unbounded with the unsummarized backlog
+        # (older lines are covered by [RECENT_GAME_SUMMARIES] above). <=0 -> no cap
+        # (byte-identical to pre-cap). Caps ONLY this prompt view; the summarizer
+        # still reads the full backlog via the same adapter method.
+        tail_limit = deps.config.galgame.game_buffer_tail_limit
+        if tail_limit > 0 and len(buffer_lines) > tail_limit:
+            buffer_lines = buffer_lines[-tail_limit:]
         if buffer_lines:
             sections.append(_section("[CURRENT_GAME_BUFFER]", _format_buffer(buffer_lines)))
         # B1: the line currently on screen (PENDING_CURRENT) -- not yet committed

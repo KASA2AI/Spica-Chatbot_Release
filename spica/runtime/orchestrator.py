@@ -375,11 +375,23 @@ def _produce_stream_events(
         observer.mark("units_count", len(created_units))
         observer.mark("units", unit_timings)
         snap = observer.snapshot()
+        # Telemetry enrichment (behaviour-neutral, log-only): a single parseable
+        # per-turn line carrying turn type + prompt size + the FULL-answer TTS sum
+        # + the fallback REASON (not just the bool -- deepseek's benign chat path
+        # always sets fallback_used=True, so the reason is what flags a real break).
+        tts_total_ms = round(
+            sum(float((t or {}).get("tts_duration_ms") or 0) for t in unit_timings), 2
+        )
         observer.event(
             "chat_stream_done",
             done_ms,
             conversation_id=ctx.request.conversation_id,
+            interaction_mode=ctx.request.interaction_mode,
+            prompt_input_chars=snap.get("prompt_input_chars"),
             units_count=len(created_units),
+            tts_total_ms=tts_total_ms,
+            agent_rounds=snap.get("agent_rounds"),
+            agent_tool_local_ms=snap.get("agent_tool_local_ms"),
             first_llm_delta_ms=snap.get("first_llm_delta_ms"),
             first_sentence_ms=snap.get("first_sentence_ms"),
             first_unit_created_ms=snap.get("first_unit_created_ms"),
@@ -390,6 +402,7 @@ def _produce_stream_events(
             first_audio_ready_ms=snap.get("first_audio_ready_ms"),
             llm_stream_create_ms=snap.get("llm_stream_create_ms"),
             llm_stream_fallback_used=snap.get("llm_stream_fallback_used"),
+            llm_stream_fallback_reason=snap.get("llm_stream_fallback_reason"),
         )
         output_queue.put(
             {

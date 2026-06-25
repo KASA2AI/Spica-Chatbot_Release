@@ -14,18 +14,29 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
-def run_warmup(
+def _warmup_stt(stt_adapter: Any, on_progress: Callable[[str, str], None]) -> None:
+    """Plan B: warm the local STT model alongside TTS so the first utterance has no
+    load/compile lag. Best-effort -- a failure is reported but never blocks startup
+    (voice simply loads on first use, or stays unavailable with a clear log). Only
+    runs when an adapter exists (backend == faster_whisper) and warmup_on_startup."""
+    warmup = getattr(stt_adapter, "warmup", None)
+    if stt_adapter is None or warmup is None:
+        return
+    on_progress("initializing", "正在预热本地语音识别(faster-whisper)模型...")
+    result = warmup()
+    if result.get("ok"):
+        on_progress("ready", f"语音识别模型已就绪（{float(result.get('duration_ms') or 0):.0f}ms）。")
+    else:
+        # Not fatal: surface a CLEAR cause so a non-transcribing mic is diagnosable.
+        on_progress("error", f"语音识别模型预热失败：{result.get('error') or 'unknown'}")
+
+
+def _warmup_tts(
     surface: Any,
     tts_adapter: Any,
     on_progress: Callable[[str, str], None],
 ) -> None:
-    """Run startup warmup, reporting progress as ``on_progress(stage, message)``
-    where stage is ``"initializing" | "ready" | "error"``.
-
-    ``surface`` is the conversation surface (for the LLM model name); ``tts_adapter``
-    is the active TTS adapter (for model warmup). Formerly lived in the UI's
-    StartupWarmupWorker, then on AppHost.warmup; the host now forwards here.
-    """
+    """TTS (+ LLM-ready) warmup -- the original run_warmup body, unchanged."""
     tts = tts_adapter
     try:
         model = str(getattr(surface, "model", "") or "unknown")
@@ -61,3 +72,21 @@ def run_warmup(
         on_progress("ready", f"{provider_name} 模型已就绪（{total_duration_ms:.0f}ms）。")
     except Exception as exc:
         on_progress("error", f"启动预热失败：{exc}")
+
+
+def run_warmup(
+    surface: Any,
+    tts_adapter: Any,
+    on_progress: Callable[[str, str], None],
+    stt_adapter: Any = None,
+) -> None:
+    """Run startup warmup, reporting progress as ``on_progress(stage, message)``
+    where stage is ``"initializing" | "ready" | "error"``.
+
+    Warms TTS (+ LLM-ready) first, then the optional local STT adapter (Plan B).
+    STT runs regardless of the TTS outcome (independent models), so a TTS issue
+    never skips loading the voice-input model. The UI runs this on a background
+    thread and maps stages to its loading UI.
+    """
+    _warmup_tts(surface, tts_adapter, on_progress)
+    _warmup_stt(stt_adapter, on_progress)

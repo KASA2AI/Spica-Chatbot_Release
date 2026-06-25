@@ -26,6 +26,8 @@ import time
 import uuid
 from typing import Any, Callable
 
+from common.timing import log_timing
+
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
@@ -104,6 +106,7 @@ class AppHost:
         self.visual_tool: Any | None = None
         self.tts_tool: Any | None = None
         self.tts_adapter: Any | None = None
+        self.stt_adapter: Any | None = None  # Plan B: local faster-whisper STT (resident singleton)
         self.services: Any | None = None
         self.character_package: Any | None = None
         self.chat_engine: Any | None = None
@@ -266,6 +269,11 @@ class AppHost:
             # P5: the reaction engine (None while reaction_mode is off -- the
             # tee then never enqueues, zero overhead on the OCR thread).
             self.reaction_engine = self._build_reaction_engine()
+            # Plan B: build the STT adapter ONCE (resident singleton). Construction
+            # is cheap (the WhisperModel loads lazily at warmup/first transcribe);
+            # injected by reference into each SpeechWorker so worker churn never
+            # reloads the model.
+            self.stt_adapter = self._new_stt_adapter()
         except Exception:
             if self.visual_tool is None:
                 try:
@@ -386,6 +394,8 @@ class AppHost:
         gm = self.services.game_memory_adapter
         character_id = str(self.config.character.character_id or "spica")
         user_id = str(self.config.character.interlocutor_name or "麦")
+        judge_model = self.config.galgame.reaction_judge_model or self.config.llm.model
+        judge_started = time.monotonic()
         try:
             window = gm.unsummarized_committed_story_lines(game_id, playthrough_id)
             verdict = self._reaction_judge.judge(
@@ -399,8 +409,16 @@ class AppHost:
                 ),
             )
         except ReactionJudgeError:
+            # Telemetry: one line per ACTUAL judge call (degraded path). 不改行为.
+            log_timing("reaction_judge", (time.monotonic() - judge_started) * 1000.0,
+                       model=judge_model, degraded=True, lines=len(beat.lines))
             logger.warning("reaction judge failed -> lexicon fallback", exc_info=True)
             return self._lexicon_fallback(beat, lexicon)
+        # Telemetry: judge latency + worth (correlate with the engine's downstream
+        # "reaction decision: spoke|below_threshold" log to see if worth was selected).
+        log_timing("reaction_judge", (time.monotonic() - judge_started) * 1000.0,
+                   model=judge_model, worth=verdict.worth, angle=verdict.angle,
+                   degraded=False, lines=len(beat.lines))
         # Only an ACTUAL judge call stamps the cooldown (cooldown returns / fallback
         # do not), so the throttle measures spacing between real LLM calls.
         self._reaction_judge_last_at = now
@@ -517,6 +535,24 @@ class AppHost:
             return None
         model = self.config.galgame.reaction_judge_model or self.config.llm.model
         return GalgameReactionJudge(self.services.llm_adapter, model)
+
+    def _new_stt_adapter(self) -> Any | None:
+        """Plan B local STT. None unless backend == "faster_whisper" (the "google"
+        backend keeps the legacy in-worker recognize_google fallback -- never built
+        here). Resolve-once; the returned adapter holds the WhisperModel singleton
+        and is injected by reference into every SpeechWorker (worker churn != model
+        churn). Mirrors _new_summarizer/_new_reaction_judge (host stays thin)."""
+        cfg = self.config.stt
+        if str(cfg.backend) != "faster_whisper":
+            logger.info("STT backend=%s -> no local adapter (legacy fallback in worker)", cfg.backend)
+            return None
+        from spica.adapters.stt.faster_whisper import FasterWhisperAdapter
+
+        return FasterWhisperAdapter(
+            model=cfg.model, device=cfg.device, compute_type=cfg.compute_type,
+            language=cfg.language, beam_size=cfg.beam_size, vad_filter=cfg.vad_filter,
+            download_root=cfg.download_root,
+        )
 
     def new_companion_session(self) -> GalgameCompanionSession:
         """Build a galgame companion session wired to the game-memory adapter, the
@@ -767,7 +803,7 @@ class AppHost:
         The UI runs this on a background thread and maps stages to its loading UI;
         keeping this method preserves that call site (``host.warmup(...)``).
         """
-        run_warmup(self.conversation_surface, self.tts_adapter, on_progress)
+        run_warmup(self.conversation_surface, self.tts_adapter, on_progress, stt_adapter=self.stt_adapter)
 
     @property
     def management_surface(self) -> Any:

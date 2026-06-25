@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 
 from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
 from spica.galgame.session import GalgameCompanionSession, GalgameState
-from spica.galgame.summarizer import SummaryError, SummaryResult
+from spica.galgame.summarizer import SummaryError, SummaryResult, recover_dangling_sessions
 from spica.runtime.jobs import InlineJobRunner, ThreadJobRunner
 
 
@@ -114,6 +114,76 @@ class EndSummaryTest(SessionSummaryBase):
         ids = {l.text: l.line_id for l in self.mem.committed_story_lines("ABC")}
         self.assertEqual(set(summaries[0].source_line_ids), {ids["L1"], ids["L2"]})
         self.assertEqual(self.mem.get_play_session(sid).state, "ended")
+
+
+class _AlwaysFailSummarizer:
+    """An end-summary that always raises -- exercises the (b) dangling-retry path."""
+
+    def __init__(self):
+        self.calls = []
+
+    def summarize(self, lines, *, recent_summaries=None, progress=None):
+        self.calls.append([l.line_id for l in lines])
+        raise SummaryError("always boom")
+
+
+class EndSummaryFailureDanglingTest(SessionSummaryBase):
+    """(b): a FAILED end-summary must leave the PlaySession dangling (active/paused
+    + ended_at NULL) for next-startup recovery -- NOT finalize to ended (which would
+    orphan the batch forever, the 06-23 47becb69 bug). Tightly gated: only "had
+    residue AND summary failed" diverges; clean ends stay byte-identical."""
+
+    def test_end_summary_failure_leaves_session_dangling_not_ended(self):
+        s = self._session(jobs=InlineJobRunner(), summarizer=_AlwaysFailSummarizer(), trigger=100000)
+        sid = s.session_id
+        self._feed(s, "L1", "L1", "L2", "L2")  # commit L1; L2 pending
+        s.end()  # commits L2, summarize([L1, L2]) FAILS
+        self.assertEqual(s.state, GalgameState.GAME_LAUNCHED)  # FSM still lands cleanly
+        ps = self.mem.get_play_session(sid)
+        self.assertIn(ps.state, ("active", "paused"))  # NOT "ended"
+        self.assertIsNone(ps.ended_at)  # NOT stamped -> dangling shape
+        self.assertIn(sid, [d.session_id for d in self.mem.dangling_play_sessions()])
+        self.assertEqual(self.mem.recent_summaries("ABC"), [])  # nothing persisted (no half-batch)
+        self.assertTrue(self.mem.unsummarized_committed_story_lines("ABC"))  # lines kept
+
+    def test_dangling_failure_is_recovered_and_idempotent(self):
+        s = self._session(jobs=InlineJobRunner(), summarizer=_AlwaysFailSummarizer(), trigger=100000)
+        sid = s.session_id
+        self._feed(s, "L1", "L1", "L2", "L2")
+        s.end()  # -> dangling
+        # next-startup recovery with a WORKING summarizer retries the summary once
+        working = _StubSummarizer(result=SummaryResult(summary_zh="recovered", characters=["麦"]))
+        self.assertEqual(recover_dangling_sessions(self.mem, working), [sid])
+        self.assertEqual(self.mem.dangling_play_sessions(), [])  # no longer dangling
+        self.assertEqual(self.mem.get_play_session(sid).state, "ended")
+        summaries = self.mem.recent_summaries("ABC")
+        self.assertEqual(len(summaries), 1)  # summarized exactly once
+        ids = {l.text: l.line_id for l in self.mem.committed_story_lines("ABC")}
+        self.assertEqual(set(summaries[0].source_line_ids), {ids["L1"], ids["L2"]})
+        # idempotent: a second pass finds nothing dangling + adds no duplicate summary
+        self.assertEqual(recover_dangling_sessions(self.mem, working), [])
+        self.assertEqual(len(self.mem.recent_summaries("ABC")), 1)
+
+    def test_empty_snapshot_finalizes_to_ended_even_with_failing_summarizer(self):
+        # 命门: NO residue at end -> finalize to ended even though the summarizer would
+        # fail. bool(snapshot) is False so summarize is never called -> never dangling.
+        s = self._session(jobs=InlineJobRunner(), summarizer=_AlwaysFailSummarizer(), trigger=100000)
+        sid = s.session_id
+        s.end()  # no feeds -> empty snapshot
+        self.assertEqual(s.state, GalgameState.GAME_LAUNCHED)
+        self.assertEqual(self.mem.get_play_session(sid).state, "ended")  # NOT dangling
+        self.assertIsNotNone(self.mem.get_play_session(sid).ended_at)
+        self.assertEqual(self.mem.dangling_play_sessions(), [])
+
+    def test_no_summarizer_finalizes_to_ended(self):
+        # no LLM wired (tests) -> end() finalizes byte-identically: lines stay
+        # unsummarized but the session is ended, not dangling.
+        s = self._session(jobs=InlineJobRunner(), summarizer=None, trigger=100000)
+        sid = s.session_id
+        self._feed(s, "L1", "L1", "L2", "L2")
+        s.end()
+        self.assertEqual(self.mem.get_play_session(sid).state, "ended")
+        self.assertEqual(self.mem.dangling_play_sessions(), [])
 
 
 class RouteAuthorityTest(SessionSummaryBase):

@@ -114,6 +114,42 @@ class ReSpeakerAudioTests(unittest.TestCase):
         self.assertEqual(fake_audio.open_kwargs["input_device_index"], 2)
         self.assertTrue(fake_audio.terminated)
 
+    def test_on_speech_start_fires_once_when_vad_triggers(self):
+        fake_audio = FakeAudio()
+        fake_pyaudio = FakePyAudioModule(fake_audio)
+        # idle, idle, SPEECH (x2), trailing silence -> started flips once.
+        FakeControl.values = [False, False, True, True, False, False]
+        fired = []
+
+        with patch.object(respeaker_audio, "_load_pyaudio", return_value=fake_pyaudio), patch.object(
+            respeaker_audio, "ReSpeakerControl", FakeControl
+        ):
+            respeaker_audio.record_respeaker_channel0_hardware_vad(
+                max_seconds=2.0, start_timeout=1.0, end_silence_seconds=0.04,
+                min_speech_seconds=0.02, pre_roll_seconds=0.04, vad_poll_seconds=0.02,
+                on_speech_start=lambda: fired.append(True),
+            )
+
+        self.assertEqual(fired, [True])  # exactly once, at speech onset
+
+    def test_on_speech_start_not_fired_when_no_speech(self):
+        fake_audio = FakeAudio()
+        fake_pyaudio = FakePyAudioModule(fake_audio)
+        FakeControl.values = [False]  # never any voice -> start_timeout -> NoSpeech
+        fired = []
+
+        with patch.object(respeaker_audio, "_load_pyaudio", return_value=fake_pyaudio), patch.object(
+            respeaker_audio, "ReSpeakerControl", FakeControl
+        ):
+            with self.assertRaises(respeaker_audio.ReSpeakerNoSpeechError):
+                respeaker_audio.record_respeaker_channel0_hardware_vad(
+                    max_seconds=1.0, start_timeout=0.1, end_silence_seconds=0.04,
+                    min_speech_seconds=0.02, pre_roll_seconds=0.04, vad_poll_seconds=0.02,
+                    on_speech_start=lambda: fired.append(True),
+                )
+
+        self.assertEqual(fired, [])  # idle-listening never marks capturing
+
     def test_tuning_path_can_come_from_environment(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tuning_path = Path(tmpdir) / "tuning.py"

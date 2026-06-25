@@ -1,0 +1,10 @@
+# Local speech-to-text (Plan B): faster-whisper replaces network Google STT.
+# ctranslate2 (the CUDA backend) + onnxruntime come in as faster-whisper deps.
+# Install CUDA-enabled torch separately for the target GPU/runtime.
+#
+# Model: large-v3-turbo (~1.6GB). Pre-download to avoid a blocking first start:
+#   HF_ENDPOINT=https://hf-mirror.com huggingface-cli download \
+#     mobiuslabsgmbh/faster-whisper-large-v3-turbo \
+#     --local-dir spica_data/models/faster-whisper-large-v3-turbo
+# then point stt.model at that dir (see data/config/app.yaml).
+faster-whisper>=1.1,<2

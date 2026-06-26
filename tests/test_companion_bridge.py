@@ -194,7 +194,7 @@ def test_m2_switch_runs_stop_before_start(qapp):
     calls = []
     fake_ctrl = SimpleNamespace(
         stop=lambda: calls.append("stop"),
-        start=lambda window_id, game_id=None, window_title=None: calls.append(("start", game_id)) or game_id,
+        start=lambda window_id, game_id=None, window_title=None, overlay_window_id=None: calls.append(("start", game_id)) or game_id,
         is_active=True,
     )
     host = SimpleNamespace(companion_controller=lambda: fake_ctrl, _companion_controller=fake_ctrl)
@@ -218,13 +218,44 @@ def test_m2_switch_runs_stop_before_start(qapp):
     assert "陪玩中：b1" in statuses[-1]
 
 
+def test_start_play_forwards_overlay_window_id_from_provider(qapp):
+    # window_lost fix wiring (env 0 + 1): the provider's overlay id must reach
+    # controller.start so check_safety's focus exemption can fire while typing. Real
+    # winId()->WM match is verified in久测 via xprop; here we pin the WIRING with a
+    # stub provider (offscreen winId is not a real X11 id, so we never call the real
+    # lambda) -- this is how the wiring is testable without a real window manager.
+    bridge = CompanionEventBridge()
+    received = {}
+    fake_ctrl = SimpleNamespace(
+        stop=lambda: None,
+        start=lambda window_id, game_id=None, window_title=None, overlay_window_id=None: (
+            received.update(overlay_window_id=overlay_window_id) or game_id
+        ),
+        is_active=False,
+    )
+    host = SimpleNamespace(companion_controller=lambda: fake_ctrl, _companion_controller=fake_ctrl)
+    controller = GalgameController(
+        bridge, host=host, overlay_window_id_provider=lambda: "0x5a00005",
+    )
+    controller._busy = True
+    controller._pending_game_id = "g1"
+    controller._pending_window_id = "0x9"
+    controller._pending_title = "G"
+
+    controller._start_play()
+    _spin_until(qapp, lambda: not controller._busy)
+    _drain_workers(qapp, controller)
+
+    assert received == {"overlay_window_id": "0x5a00005"}  # provider id reached controller.start
+
+
 def test_m2_switch_start_failure_resets_with_a_stopped(qapp):
     # Switch mid-failure: stop(A) already ran, start(B) raised -> honest reset
     # (A stopped, B not started -> button unchecked, status cleared).
     bridge = CompanionEventBridge()
     calls = []
 
-    def _start(window_id, game_id=None, window_title=None):
+    def _start(window_id, game_id=None, window_title=None, overlay_window_id=None):
         calls.append(("start", game_id))
         raise RuntimeError("game 'b1' has no calibrated dialog region")
 

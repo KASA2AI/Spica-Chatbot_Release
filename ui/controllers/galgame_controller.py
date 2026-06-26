@@ -74,6 +74,7 @@ class GalgameController(QObject):
         pick_window: PickWindow | None = None,
         select_region: SelectRegion | None = None,
         ask_active_action: AskActiveAction | None = None,
+        overlay_window_id_provider: Callable[[], str | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._bridge = bridge
@@ -84,6 +85,12 @@ class GalgameController(QObject):
         self._pick_window: PickWindow = pick_window or (lambda _candidates: None)
         self._select_region: SelectRegion = select_region or (lambda _wid, on_done: on_done(None))
         self._ask_active_action: AskActiveAction = ask_active_action or (lambda: None)
+        # window_lost fix (overlay focus exemption): supplies the Spica overlay's own
+        # X11 id so check_safety's focus exemption fires while the user TYPES to her
+        # (focus on the overlay != "left the game" -> no false WINDOW_NOT_FOCUSED). A
+        # PROVIDER, not a value: winId() is read at start time (after the window is
+        # shown), never at construct time. None -> exemption stays off -- unchanged.
+        self._overlay_window_id_provider = overlay_window_id_provider
 
         self._preview = None  # OcrCalibrationPreview, created lazily
         self._calibrator: Any | None = None  # host.new_ocr_calibrator(), built lazily
@@ -257,7 +264,13 @@ class GalgameController(QObject):
                 # card complete before this returns -- start(B) can never skip them.
                 controller.stop()
             # dialog_ratios omitted on purpose: start() reads the persisted profile.
-            return controller.start(window_id, game_id=game_id, window_title=title or None)
+            overlay_window_id = (
+                self._overlay_window_id_provider() if self._overlay_window_id_provider else None
+            )
+            return controller.start(
+                window_id, game_id=game_id, window_title=title or None,
+                overlay_window_id=overlay_window_id,
+            )
 
         def _ok(_result: Any) -> None:
             self._busy = False

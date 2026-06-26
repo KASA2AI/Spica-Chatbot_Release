@@ -110,6 +110,21 @@ class IntervalForwardingTest(ControllerTestBase):
         self.assertEqual(c._runner._interval, 0.3)  # falls back to the construct default
         c.stop()
 
+    def test_start_overlay_window_id_reaches_runner(self):
+        # window_lost fix (env 2): start() must forward overlay_window_id to the OCR
+        # runner (-> ocr_loop -> check_safety's focus exemption). This is the spica/
+        # half of the wiring (the ui/ half is in test_companion_bridge).
+        c = self._controller_with(0.3)
+        c.start("0x1", game_id="g1", dialog_ratios=(0.0, 0.0, 1.0, 1.0), overlay_window_id="0x5a00005")
+        self.assertEqual(c._runner._overlay_window_id, "0x5a00005")  # reached runner/ocr_loop
+        c.stop()
+
+    def test_start_without_overlay_window_id_leaves_runner_none(self):
+        c = self._controller_with(0.3)
+        c.start("0x1", game_id="g1", dialog_ratios=(0.0, 0.0, 1.0, 1.0))  # no overlay id
+        self.assertIsNone(c._runner._overlay_window_id)  # default off -> exemption stays off
+        c.stop()
+
     def test_controller_construct_default_is_point_three(self):
         # No interval_seconds at construction -> 0.3 (the new default, NOT 1.0).
         c = GalgameCompanionController(

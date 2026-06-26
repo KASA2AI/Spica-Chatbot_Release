@@ -178,6 +178,7 @@ class GalgameCompanionController:
         speaker_ratios: Ratios | None = None,
         match_rule: WindowMatchRule | None = None,
         interval_seconds: float | None = None,
+        overlay_window_id: str | None = None,
     ) -> str:
         """Bind the game + start OCR loop. game_id from the caller (else guessed from
         window_title). ``dialog_ratios``/``speaker_ratios`` omitted -> read from the
@@ -228,6 +229,7 @@ class GalgameCompanionController:
                     dialog_ratios=dialog_ratios,
                     match_rule=match_rule or WindowMatchRule(title_keywords=[resolved]),
                     speaker_ratios=speaker_ratios,
+                    overlay_window_id=overlay_window_id,
                 )
             except Exception:
                 self._cleanup_failed_start(session, runner)  # finalize -> no dangling

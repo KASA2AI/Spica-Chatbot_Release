@@ -313,6 +313,9 @@ class OverlayWindow(QWidget):
             pick_window=lambda candidates: WindowPickerDialog.pick(candidates, self),
             select_region=self._select_companion_region,
             ask_active_action=self._ask_companion_active_action,
+            # window_lost fix: hand GalgameController this overlay's X11 id (read at
+            # start time) so check_safety's focus exemption fires while typing to her.
+            overlay_window_id_provider=lambda: hex(int(self.winId())),
         )
 
     def _on_companion_requested(self) -> None:

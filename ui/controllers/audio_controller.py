@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QUrl
+from PySide6.QtCore import QObject, QTimer, QUrl
 
 from ui.models.playback import AudioOwner, AudioToken
 
@@ -226,11 +226,33 @@ class AudioController(QObject):
             return
 
         if status in (QMediaPlayer.MediaStatus.EndOfMedia, QMediaPlayer.MediaStatus.InvalidMedia):
+            # Capture teardown targets + cb and NULL self refs NOW (plain Python, no
+            # Qt re-entry), then defer ALL Qt teardown + playback advance out of THIS
+            # signal's dispatch. Disconnecting/stopping the player that is CURRENTLY
+            # emitting mediaStatusChanged deadlocks Qt's cross-thread signal dispatch
+            # (2026-06-27: two py-spy frames froze byte-identical at _release_player
+            # disconnect, audio_controller.py:298). The slot must run ONLY plain
+            # Python; every QMediaPlayer op (disconnect/stop/deleteLater) and the
+            # advance run on the next loop tick, on a clean stack.
+            media_player = self._chat_media_player
+            audio_output = self._chat_audio_output
             on_finished = self._chat_on_finished
+            self._chat_media_player = None
+            self._chat_audio_output = None
+            self._chat_token = None
+            self._chat_on_finished = None
             logger.debug("event=chat_audio_end token_id=%s status=%s", token.id, status)
-            self.release_chat_audio()
-            if on_finished is not None:
-                on_finished()
+
+            def _finish_chat_eom() -> None:
+                # release BEFORE on_finished (same order as the original sync path).
+                # The CAPTURED player (not self.*) is torn down, so a stop()/new turn
+                # during the defer gap -- which sees self refs already None -- can
+                # neither double-free it nor mix old/new players.
+                self._release_player(media_player, audio_output, self._handle_chat_media_status)
+                if on_finished is not None:
+                    on_finished()
+
+            QTimer.singleShot(0, _finish_chat_eom)
 
     def _handle_song_media_status(self, status) -> None:
         if QMediaPlayer is None:
@@ -245,19 +267,39 @@ class AudioController(QObject):
             )
             return
 
-        if status == QMediaPlayer.MediaStatus.InvalidMedia:
-            on_error = self._song_on_error
-            logger.debug("event=song_audio_end token_id=%s status=%s reason=invalid_media", token.id, status)
-            self.stop_song()
-            if on_error is not None:
-                on_error("歌曲音频无法播放。")
-            return
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+        if status in (QMediaPlayer.MediaStatus.InvalidMedia, QMediaPlayer.MediaStatus.EndOfMedia):
+            # Same re-entrancy fix as the chat handler: stop_song() -> _release_player
+            # -> disconnect(:298) the signal being emitted deadlocks Qt dispatch
+            # (stop_song mirrors release_chat_audio exactly -- the same latent bug,
+            # rarer only because a song ends far less often than a chat segment).
+            # Capture + null self refs synchronously; defer all Qt teardown + the
+            # callback off the dispatch stack. InvalidMedia -> on_error, EndOfMedia
+            # -> on_finished (the original split preserved).
+            invalid = status == QMediaPlayer.MediaStatus.InvalidMedia
+            media_player = self._song_media_player
+            audio_output = self._song_audio_output
             on_finished = self._song_on_finished
-            logger.debug("event=song_audio_end token_id=%s status=%s", token.id, status)
-            self.stop_song()
-            if on_finished is not None:
-                on_finished()
+            on_error = self._song_on_error
+            self._song_media_player = None
+            self._song_audio_output = None
+            self._song_token = None
+            self._song_on_finished = None
+            self._song_on_error = None
+            logger.debug(
+                "event=song_audio_end token_id=%s status=%s%s",
+                token.id, status, " reason=invalid_media" if invalid else "",
+            )
+
+            def _finish_song_eom() -> None:
+                self._release_player(media_player, audio_output, self._handle_song_media_status)
+                if invalid:
+                    if on_error is not None:
+                        on_error("歌曲音频无法播放。")
+                elif on_finished is not None:
+                    on_finished()
+
+            QTimer.singleShot(0, _finish_song_eom)
+            return
 
     def _preloaded_key_for_path(self, path: Path) -> int | None:
         for key, preloaded in self._preloaded_chat.items():

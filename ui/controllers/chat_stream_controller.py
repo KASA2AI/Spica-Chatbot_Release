@@ -1141,7 +1141,15 @@ class ChatStreamController(QObject):
         )
         self.current_audio_finished = False
         self.current_text_finished = False
-        self._finish_playback(pump_immediately=True)
+        # Defer the pump -- MUST NOT start the next segment synchronously here.
+        # This advance is reached from inside the previous segment's QMediaPlayer
+        # mediaStatusChanged(EndOfMedia) callback; starting the next .play() in
+        # that re-entrant stack deadlocks the Qt audio backend (2026-06-27 freeze:
+        # two py-spy dumps froze byte-for-byte at audio_controller.py:79).
+        # _finish_playback()'s default branch posts it via QTimer.singleShot(0),
+        # so the next .play() runs on a clean stack after EndOfMedia dispatch
+        # returns -- the same deferral the visual swap (:944) already uses.
+        self._finish_playback()
 
     def _finish_playback(self, *, pump_immediately: bool = False) -> None:
         self.playback_active = False

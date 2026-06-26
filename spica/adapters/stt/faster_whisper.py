@@ -130,5 +130,6 @@ class FasterWhisperAdapter:
         log_timing(
             "stt_transcribe", now_ms() - start,
             chars=len(text), audio_ms=round(len(audio) / sample_rate * 1000),
+            text=text[:80],  # so recognition accuracy is verifiable from the log (local debug)
         )
         return text

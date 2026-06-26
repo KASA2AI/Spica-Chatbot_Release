@@ -1,0 +1,171 @@
+# Spica resource/liveness monitor @ 20260626_180737 (30s interval)
+2026-06-26 18:07:37 GONE  gpu[memMiB,util%,tempC]=2627,21,46
+2026-06-26 18:08:07 GONE  gpu[memMiB,util%,tempC]=2631,22,47
+2026-06-26 18:08:37 GONE  gpu[memMiB,util%,tempC]=2629,20,46
+2026-06-26 18:09:07 GONE  gpu[memMiB,util%,tempC]=2628,36,44
+2026-06-26 18:09:37 GONE  gpu[memMiB,util%,tempC]=2628,65,43
+2026-06-26 18:10:07 GONE  gpu[memMiB,util%,tempC]=2628,21,43
+2026-06-26 18:10:37 ALIVE pid=3457595 rss_mb=4955 gpu[memMiB,util%,tempC]=6443,19,45
+2026-06-26 18:11:07 ALIVE pid=3457595 rss_mb=5440 gpu[memMiB,util%,tempC]=7557,23,48
+2026-06-26 18:11:37 ALIVE pid=3457595 rss_mb=5412 gpu[memMiB,util%,tempC]=6962,15,45
+2026-06-26 18:12:07 ALIVE pid=3457595 rss_mb=5513 gpu[memMiB,util%,tempC]=6962,15,43
+2026-06-26 18:12:37 ALIVE pid=3457595 rss_mb=5502 gpu[memMiB,util%,tempC]=6962,16,42
+2026-06-26 18:13:07 ALIVE pid=3457595 rss_mb=5496 gpu[memMiB,util%,tempC]=6962,16,44
+2026-06-26 18:13:37 ALIVE pid=3457595 rss_mb=5533 gpu[memMiB,util%,tempC]=6795,8,46
+2026-06-26 18:14:07 ALIVE pid=3457595 rss_mb=5496 gpu[memMiB,util%,tempC]=6907,10,48
+2026-06-26 18:14:37 ALIVE pid=3457595 rss_mb=5565 gpu[memMiB,util%,tempC]=7085,15,48
+2026-06-26 18:15:07 ALIVE pid=3457595 rss_mb=5544 gpu[memMiB,util%,tempC]=7085,8,44
+2026-06-26 18:15:37 ALIVE pid=3457595 rss_mb=5700 gpu[memMiB,util%,tempC]=7085,18,43
+2026-06-26 18:16:07 ALIVE pid=3457595 rss_mb=5645 gpu[memMiB,util%,tempC]=7085,7,43
+2026-06-26 18:16:37 ALIVE pid=3457595 rss_mb=5645 gpu[memMiB,util%,tempC]=7085,25,46
+2026-06-26 18:17:07 ALIVE pid=3457595 rss_mb=5645 gpu[memMiB,util%,tempC]=7085,16,47
+2026-06-26 18:17:37 ALIVE pid=3457595 rss_mb=5738 gpu[memMiB,util%,tempC]=7093,8,46
+2026-06-26 18:18:07 ALIVE pid=3457595 rss_mb=5665 gpu[memMiB,util%,tempC]=7018,8,43
+2026-06-26 18:18:37 ALIVE pid=3457595 rss_mb=5678 gpu[memMiB,util%,tempC]=7018,7,42
+2026-06-26 18:19:07 ALIVE pid=3457595 rss_mb=5645 gpu[memMiB,util%,tempC]=7018,16,43
+2026-06-26 18:19:37 ALIVE pid=3457595 rss_mb=5726 gpu[memMiB,util%,tempC]=7018,9,45
+2026-06-26 18:20:08 ALIVE pid=3457595 rss_mb=5726 gpu[memMiB,util%,tempC]=7018,16,47
+2026-06-26 18:20:38 ALIVE pid=3457595 rss_mb=5726 gpu[memMiB,util%,tempC]=7018,14,47
+2026-06-26 18:21:08 ALIVE pid=3457595 rss_mb=5728 gpu[memMiB,util%,tempC]=7018,8,43
+2026-06-26 18:21:38 ALIVE pid=3457595 rss_mb=5743 gpu[memMiB,util%,tempC]=7018,16,42
+2026-06-26 18:22:08 ALIVE pid=3457595 rss_mb=5743 gpu[memMiB,util%,tempC]=7010,8,43
+2026-06-26 18:22:38 ALIVE pid=3457595 rss_mb=5756 gpu[memMiB,util%,tempC]=7018,7,46
+2026-06-26 18:23:08 ALIVE pid=3457595 rss_mb=5767 gpu[memMiB,util%,tempC]=7018,11,46
+2026-06-26 18:23:38 ALIVE pid=3457595 rss_mb=5877 gpu[memMiB,util%,tempC]=7018,22,48
+2026-06-26 18:24:08 ALIVE pid=3457595 rss_mb=5914 gpu[memMiB,util%,tempC]=7018,27,44
+2026-06-26 18:24:38 ALIVE pid=3457595 rss_mb=5824 gpu[memMiB,util%,tempC]=7018,8,43
+2026-06-26 18:25:08 ALIVE pid=3457595 rss_mb=5801 gpu[memMiB,util%,tempC]=7034,22,43
+2026-06-26 18:25:38 ALIVE pid=3457595 rss_mb=5830 gpu[memMiB,util%,tempC]=7018,8,45
+2026-06-26 18:26:08 ALIVE pid=3457595 rss_mb=5842 gpu[memMiB,util%,tempC]=7018,16,46
+2026-06-26 18:26:38 ALIVE pid=3457595 rss_mb=5843 gpu[memMiB,util%,tempC]=7018,6,47
+2026-06-26 18:27:08 ALIVE pid=3457595 rss_mb=5843 gpu[memMiB,util%,tempC]=7018,11,45
+2026-06-26 18:27:38 ALIVE pid=3457595 rss_mb=5844 gpu[memMiB,util%,tempC]=7018,20,43
+2026-06-26 18:28:08 ALIVE pid=3457595 rss_mb=5809 gpu[memMiB,util%,tempC]=7018,25,43
+2026-06-26 18:28:38 ALIVE pid=3457595 rss_mb=5860 gpu[memMiB,util%,tempC]=7018,25,44
+2026-06-26 18:29:08 ALIVE pid=3457595 rss_mb=5873 gpu[memMiB,util%,tempC]=7018,9,46
+2026-06-26 18:29:38 ALIVE pid=3457595 rss_mb=5874 gpu[memMiB,util%,tempC]=7018,7,47
+2026-06-26 18:30:08 ALIVE pid=3457595 rss_mb=5874 gpu[memMiB,util%,tempC]=7018,10,46
+2026-06-26 18:30:38 ALIVE pid=3457595 rss_mb=5843 gpu[memMiB,util%,tempC]=7018,38,45
+2026-06-26 18:31:08 ALIVE pid=3457595 rss_mb=5894 gpu[memMiB,util%,tempC]=7018,40,44
+2026-06-26 18:31:38 ALIVE pid=3457595 rss_mb=5872 gpu[memMiB,util%,tempC]=7018,7,43
+2026-06-26 18:32:08 ALIVE pid=3457595 rss_mb=5878 gpu[memMiB,util%,tempC]=7018,20,47
+2026-06-26 18:32:38 ALIVE pid=3457595 rss_mb=5942 gpu[memMiB,util%,tempC]=7026,20,47
+2026-06-26 18:33:08 ALIVE pid=3457595 rss_mb=5953 gpu[memMiB,util%,tempC]=6990,8,45
+2026-06-26 18:33:38 ALIVE pid=3457595 rss_mb=5928 gpu[memMiB,util%,tempC]=6990,16,43
+2026-06-26 18:34:08 ALIVE pid=3457595 rss_mb=5953 gpu[memMiB,util%,tempC]=6990,8,42
+2026-06-26 18:34:38 ALIVE pid=3457595 rss_mb=5953 gpu[memMiB,util%,tempC]=6990,7,43
+2026-06-26 18:35:09 ALIVE pid=3457595 rss_mb=5954 gpu[memMiB,util%,tempC]=6990,12,45
+2026-06-26 18:35:39 ALIVE pid=3457595 rss_mb=5945 gpu[memMiB,util%,tempC]=6990,9,46
+2026-06-26 18:36:09 ALIVE pid=3457595 rss_mb=5993 gpu[memMiB,util%,tempC]=6990,16,48
+2026-06-26 18:36:39 ALIVE pid=3457595 rss_mb=6055 gpu[memMiB,util%,tempC]=7006,8,44
+2026-06-26 18:37:09 ALIVE pid=3457595 rss_mb=5983 gpu[memMiB,util%,tempC]=6990,7,43
+2026-06-26 18:37:39 ALIVE pid=3457595 rss_mb=5946 gpu[memMiB,util%,tempC]=6990,10,42
+2026-06-26 18:38:09 ALIVE pid=3457595 rss_mb=5973 gpu[memMiB,util%,tempC]=6990,9,46
+2026-06-26 18:38:39 ALIVE pid=3457595 rss_mb=6048 gpu[memMiB,util%,tempC]=6982,8,46
+2026-06-26 18:39:09 ALIVE pid=3457595 rss_mb=6026 gpu[memMiB,util%,tempC]=6982,31,49
+2026-06-26 18:39:39 ALIVE pid=3457595 rss_mb=5954 gpu[memMiB,util%,tempC]=6982,17,44
+2026-06-26 18:40:09 ALIVE pid=3457595 rss_mb=5941 gpu[memMiB,util%,tempC]=6982,11,42
+2026-06-26 18:40:39 ALIVE pid=3457595 rss_mb=5978 gpu[memMiB,util%,tempC]=6982,9,42
+2026-06-26 18:41:09 ALIVE pid=3457595 rss_mb=5982 gpu[memMiB,util%,tempC]=6982,16,44
+2026-06-26 18:41:39 ALIVE pid=3457595 rss_mb=6008 gpu[memMiB,util%,tempC]=6982,35,46
+2026-06-26 18:42:09 ALIVE pid=3457595 rss_mb=5972 gpu[memMiB,util%,tempC]=6982,8,48
+2026-06-26 18:42:39 ALIVE pid=3457595 rss_mb=5959 gpu[memMiB,util%,tempC]=6982,12,46
+2026-06-26 18:43:09 ALIVE pid=3457595 rss_mb=5987 gpu[memMiB,util%,tempC]=6982,9,43
+2026-06-26 18:43:39 ALIVE pid=3457595 rss_mb=5995 gpu[memMiB,util%,tempC]=6990,10,42
+2026-06-26 18:44:09 ALIVE pid=3457595 rss_mb=5999 gpu[memMiB,util%,tempC]=6990,7,44
+2026-06-26 18:44:39 ALIVE pid=3457595 rss_mb=6023 gpu[memMiB,util%,tempC]=6990,9,45
+2026-06-26 18:45:09 ALIVE pid=3457595 rss_mb=5976 gpu[memMiB,util%,tempC]=6990,16,47
+2026-06-26 18:45:39 ALIVE pid=3457595 rss_mb=6008 gpu[memMiB,util%,tempC]=6990,7,47
+2026-06-26 18:46:09 ALIVE pid=3457595 rss_mb=6008 gpu[memMiB,util%,tempC]=6990,16,44
+2026-06-26 18:46:39 ALIVE pid=3457595 rss_mb=6027 gpu[memMiB,util%,tempC]=6982,18,42
+2026-06-26 18:47:09 ALIVE pid=3457595 rss_mb=6057 gpu[memMiB,util%,tempC]=7006,19,43
+2026-06-26 18:47:39 ALIVE pid=3457595 rss_mb=6020 gpu[memMiB,util%,tempC]=6990,22,45
+2026-06-26 18:48:09 ALIVE pid=3457595 rss_mb=6021 gpu[memMiB,util%,tempC]=6982,20,47
+2026-06-26 18:48:39 ALIVE pid=3457595 rss_mb=6034 gpu[memMiB,util%,tempC]=6982,18,47
+2026-06-26 18:49:09 ALIVE pid=3457595 rss_mb=6010 gpu[memMiB,util%,tempC]=6982,11,44
+2026-06-26 18:49:39 ALIVE pid=3457595 rss_mb=6027 gpu[memMiB,util%,tempC]=6982,9,42
+2026-06-26 18:50:09 ALIVE pid=3457595 rss_mb=6048 gpu[memMiB,util%,tempC]=6998,18,43
+2026-06-26 18:50:40 ALIVE pid=3457595 rss_mb=6049 gpu[memMiB,util%,tempC]=6982,17,45
+2026-06-26 18:51:10 ALIVE pid=3457595 rss_mb=6051 gpu[memMiB,util%,tempC]=6982,14,47
+2026-06-26 18:51:40 ALIVE pid=3457595 rss_mb=6016 gpu[memMiB,util%,tempC]=6974,19,47
+2026-06-26 18:52:10 ALIVE pid=3457595 rss_mb=6041 gpu[memMiB,util%,tempC]=6982,19,44
+2026-06-26 18:52:40 ALIVE pid=3457595 rss_mb=6054 gpu[memMiB,util%,tempC]=6982,10,42
+2026-06-26 18:53:10 ALIVE pid=3457595 rss_mb=6139 gpu[memMiB,util%,tempC]=6998,26,43
+2026-06-26 18:53:40 ALIVE pid=3457595 rss_mb=6095 gpu[memMiB,util%,tempC]=6986,8,45
+2026-06-26 18:54:10 ALIVE pid=3457595 rss_mb=6211 gpu[memMiB,util%,tempC]=6986,21,46
+2026-06-26 18:54:40 ALIVE pid=3457595 rss_mb=6108 gpu[memMiB,util%,tempC]=6986,10,47
+2026-06-26 18:55:10 ALIVE pid=3457595 rss_mb=6119 gpu[memMiB,util%,tempC]=6994,19,44
+2026-06-26 18:55:40 ALIVE pid=3457595 rss_mb=6126 gpu[memMiB,util%,tempC]=6994,17,43
+2026-06-26 18:56:10 ALIVE pid=3457595 rss_mb=6129 gpu[memMiB,util%,tempC]=6994,13,42
+2026-06-26 18:56:40 ALIVE pid=3457595 rss_mb=6129 gpu[memMiB,util%,tempC]=6994,11,44
+2026-06-26 18:57:10 ALIVE pid=3457595 rss_mb=6130 gpu[memMiB,util%,tempC]=6994,19,46
+2026-06-26 18:57:40 ALIVE pid=3457595 rss_mb=6134 gpu[memMiB,util%,tempC]=6994,9,47
+2026-06-26 18:58:10 ALIVE pid=3457595 rss_mb=6134 gpu[memMiB,util%,tempC]=6982,16,46
+2026-06-26 18:58:40 ALIVE pid=3457595 rss_mb=6160 gpu[memMiB,util%,tempC]=6982,20,43
+2026-06-26 18:59:10 ALIVE pid=3457595 rss_mb=6099 gpu[memMiB,util%,tempC]=6982,14,42
+2026-06-26 18:59:40 ALIVE pid=3457595 rss_mb=6118 gpu[memMiB,util%,tempC]=6982,13,44
+2026-06-26 19:00:10 ALIVE pid=3457595 rss_mb=6160 gpu[memMiB,util%,tempC]=6982,9,45
+2026-06-26 19:00:40 ALIVE pid=3457595 rss_mb=6112 gpu[memMiB,util%,tempC]=6982,12,47
+2026-06-26 19:01:10 ALIVE pid=3457595 rss_mb=6138 gpu[memMiB,util%,tempC]=6982,22,47
+2026-06-26 19:01:40 ALIVE pid=3457595 rss_mb=6138 gpu[memMiB,util%,tempC]=6982,11,45
+2026-06-26 19:02:10 ALIVE pid=3457595 rss_mb=6201 gpu[memMiB,util%,tempC]=6982,12,42
+2026-06-26 19:02:40 ALIVE pid=3457595 rss_mb=6103 gpu[memMiB,util%,tempC]=6982,19,43
+2026-06-26 19:03:10 ALIVE pid=3457595 rss_mb=6119 gpu[memMiB,util%,tempC]=6982,13,45
+2026-06-26 19:03:40 ALIVE pid=3457595 rss_mb=6188 gpu[memMiB,util%,tempC]=6990,15,46
+2026-06-26 19:04:10 ALIVE pid=3457595 rss_mb=6143 gpu[memMiB,util%,tempC]=6990,23,48
+2026-06-26 19:04:40 ALIVE pid=3457595 rss_mb=6160 gpu[memMiB,util%,tempC]=6982,9,44
+2026-06-26 19:05:11 ALIVE pid=3457595 rss_mb=6164 gpu[memMiB,util%,tempC]=6990,12,42
+2026-06-26 19:05:41 ALIVE pid=3457595 rss_mb=6165 gpu[memMiB,util%,tempC]=6990,12,42
+2026-06-26 19:06:11 ALIVE pid=3457595 rss_mb=6184 gpu[memMiB,util%,tempC]=6990,30,46
+2026-06-26 19:06:41 ALIVE pid=3457595 rss_mb=6218 gpu[memMiB,util%,tempC]=6990,12,46
+2026-06-26 19:07:11 ALIVE pid=3457595 rss_mb=6280 gpu[memMiB,util%,tempC]=6974,10,47
+2026-06-26 19:07:41 ALIVE pid=3457595 rss_mb=6282 gpu[memMiB,util%,tempC]=6990,13,46
+2026-06-26 19:08:11 ALIVE pid=3457595 rss_mb=6283 gpu[memMiB,util%,tempC]=6982,22,43
+2026-06-26 19:08:41 ALIVE pid=3457595 rss_mb=6210 gpu[memMiB,util%,tempC]=6998,19,42
+2026-06-26 19:09:11 ALIVE pid=3457595 rss_mb=6199 gpu[memMiB,util%,tempC]=6982,20,42
+2026-06-26 19:09:41 ALIVE pid=3457595 rss_mb=6200 gpu[memMiB,util%,tempC]=6982,20,44
+2026-06-26 19:10:11 ALIVE pid=3457595 rss_mb=6239 gpu[memMiB,util%,tempC]=6982,21,46
+2026-06-26 19:10:41 ALIVE pid=3457595 rss_mb=6240 gpu[memMiB,util%,tempC]=6982,12,47
+2026-06-26 19:11:11 ALIVE pid=3457595 rss_mb=6301 gpu[memMiB,util%,tempC]=6982,20,46
+2026-06-26 19:11:41 ALIVE pid=3457595 rss_mb=6376 gpu[memMiB,util%,tempC]=6982,11,43
+2026-06-26 19:12:11 ALIVE pid=3457595 rss_mb=6246 gpu[memMiB,util%,tempC]=6982,11,42
+2026-06-26 19:12:41 ALIVE pid=3457595 rss_mb=6308 gpu[memMiB,util%,tempC]=6982,24,43
+2026-06-26 19:13:11 ALIVE pid=3457595 rss_mb=6309 gpu[memMiB,util%,tempC]=6982,11,46
+2026-06-26 19:13:41 ALIVE pid=3457595 rss_mb=6372 gpu[memMiB,util%,tempC]=6982,12,46
+2026-06-26 19:14:11 ALIVE pid=3457595 rss_mb=6375 gpu[memMiB,util%,tempC]=6982,13,47
+2026-06-26 19:14:41 ALIVE pid=3457595 rss_mb=6376 gpu[memMiB,util%,tempC]=6982,13,44
+2026-06-26 19:15:11 ALIVE pid=3457595 rss_mb=6340 gpu[memMiB,util%,tempC]=6982,21,42
+2026-06-26 19:15:41 ALIVE pid=3457595 rss_mb=6316 gpu[memMiB,util%,tempC]=6982,12,42
+2026-06-26 19:16:11 ALIVE pid=3457595 rss_mb=6366 gpu[memMiB,util%,tempC]=6982,12,45
+2026-06-26 19:16:41 ALIVE pid=3457595 rss_mb=6320 gpu[memMiB,util%,tempC]=6982,13,46
+2026-06-26 19:17:11 ALIVE pid=3457595 rss_mb=6346 gpu[memMiB,util%,tempC]=6982,12,47
+2026-06-26 19:17:41 ALIVE pid=3457595 rss_mb=6244 gpu[memMiB,util%,tempC]=6982,13,45
+2026-06-26 19:18:11 ALIVE pid=3457595 rss_mb=6308 gpu[memMiB,util%,tempC]=6982,12,43
+2026-06-26 19:18:41 ALIVE pid=3457595 rss_mb=6309 gpu[memMiB,util%,tempC]=6982,13,42
+2026-06-26 19:19:11 ALIVE pid=3457595 rss_mb=6313 gpu[memMiB,util%,tempC]=6982,12,43
+2026-06-26 19:19:42 ALIVE pid=3457595 rss_mb=6314 gpu[memMiB,util%,tempC]=6982,12,45
+2026-06-26 19:20:12 ALIVE pid=3457595 rss_mb=6328 gpu[memMiB,util%,tempC]=6982,12,46
+2026-06-26 19:20:42 ALIVE pid=3457595 rss_mb=6323 gpu[memMiB,util%,tempC]=6982,11,47
+2026-06-26 19:21:12 ALIVE pid=3457595 rss_mb=6325 gpu[memMiB,util%,tempC]=6982,12,44
+2026-06-26 19:21:42 ALIVE pid=3457595 rss_mb=6351 gpu[memMiB,util%,tempC]=6982,19,42
+2026-06-26 19:22:12 ALIVE pid=3457595 rss_mb=6355 gpu[memMiB,util%,tempC]=6982,21,42
+2026-06-26 19:22:42 ALIVE pid=3457595 rss_mb=6356 gpu[memMiB,util%,tempC]=6982,15,44
+2026-06-26 19:23:12 ALIVE pid=3457595 rss_mb=6357 gpu[memMiB,util%,tempC]=6982,23,45
+2026-06-26 19:23:42 ALIVE pid=3457595 rss_mb=6358 gpu[memMiB,util%,tempC]=6982,20,47
+2026-06-26 19:24:12 ALIVE pid=3457595 rss_mb=6375 gpu[memMiB,util%,tempC]=6982,12,47
+2026-06-26 19:24:42 ALIVE pid=3457595 rss_mb=6375 gpu[memMiB,util%,tempC]=6982,10,44
+2026-06-26 19:25:12 ALIVE pid=3457595 rss_mb=6378 gpu[memMiB,util%,tempC]=6982,12,42
+2026-06-26 19:25:42 ALIVE pid=3457595 rss_mb=6381 gpu[memMiB,util%,tempC]=6990,20,42
+2026-06-26 19:26:12 ALIVE pid=3457595 rss_mb=6382 gpu[memMiB,util%,tempC]=6990,14,44
+2026-06-26 19:26:42 ALIVE pid=3457595 rss_mb=6383 gpu[memMiB,util%,tempC]=6990,10,46
+2026-06-26 19:27:12 GONE  gpu[memMiB,util%,tempC]=1890,12,47
+2026-06-26 19:27:42 GONE  gpu[memMiB,util%,tempC]=1890,14,45
+2026-06-26 19:28:12 GONE  gpu[memMiB,util%,tempC]=1878,13,43
+2026-06-26 19:28:42 GONE  gpu[memMiB,util%,tempC]=1846,12,42
+2026-06-26 19:29:12 GONE  gpu[memMiB,util%,tempC]=1846,11,44
+2026-06-26 19:29:42 GONE  gpu[memMiB,util%,tempC]=1846,13,45
+2026-06-26 19:30:12 GONE  gpu[memMiB,util%,tempC]=1846,11,46
+2026-06-26 19:30:42 GONE  gpu[memMiB,util%,tempC]=1846,13,47
+2026-06-26 19:31:12 GONE  gpu[memMiB,util%,tempC]=1846,10,44
+2026-06-26 19:31:42 GONE  gpu[memMiB,util%,tempC]=1846,11,42
+2026-06-26 19:31:42 monitor stop (app gone ~5min)

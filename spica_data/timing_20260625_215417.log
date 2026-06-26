@@ -1,0 +1,156 @@
+2026-06-25 21:54:25,934 common.timing [TIMING] step=tts_warmup duration_ms=7780.12 emotion=happy synthesize=True
+2026-06-25 21:54:25,947 spica.adapters.stt.faster_whisper loading faster-whisper model=spica_data/models/faster-whisper-large-v3-turbo device=cuda compute_type=float16 download_root=None (one-time; reused for the process lifetime)
+2026-06-25 21:54:26,565 common.timing [TIMING] step=stt_model_load duration_ms=617.97 model=spica_data/models/faster-whisper-large-v3-turbo device=cuda
+2026-06-25 21:54:26,565 spica.adapters.stt.faster_whisper faster-whisper model loaded in 618ms
+2026-06-25 21:54:26,566 common.timing [TIMING] step=stt_warmup duration_ms=632.59 model=spica_data/models/faster-whisper-large-v3-turbo
+2026-06-25 21:54:26,567 spica.adapters.stt.faster_whisper faster-whisper warmup ok in 633ms
+2026-06-25 21:54:37,529 common.timing [TIMING] step=stt_transcribe duration_ms=97.76 chars=9 audio_ms=1900 text=我们刚刚玩到哪里了
+2026-06-25 21:54:37,530 common.timing [TIMING] step=validate_input_node duration_ms=0.08 conversation_id=default
+2026-06-25 21:54:37,530 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=default
+2026-06-25 21:54:37,533 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=2.93 conversation_id=default
+2026-06-25 21:54:37,533 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=default
+2026-06-25 21:54:37,533 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=default
+2026-06-25 21:54:37,896 common.timing [TIMING] step=llm_chat_stream_create duration_ms=197.48 model=deepseek-v4-flash
+2026-06-25 21:54:38,918 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:54:38,918 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.36 unit_index=0 chars=25 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:54:39,524 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.29 unit_index=1 chars=43 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:54:40,062 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.30 unit_index=2 chars=42 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:54:40,141 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.18 unit_index=3 chars=21 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:54:40,403 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.16 unit_index=4 chars=18 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:54:41,103 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.15 unit_index=5 chars=17 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:54:41,499 common.timing [TIMING] step=tts_chunk duration_ms=2580.66 index=0 chars=23 result_count=1 text=ふぅん……ええと、Limelightの話よね。
+2026-06-25 21:54:41,500 common.timing [TIMING] step=tts_total duration_ms=2582.88 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.72
+2026-06-25 21:54:41,500 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3970.40 unit_index=0 visual_ms=0.36 tts_ms=2582.88
+2026-06-25 21:54:41,632 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:54:42,532 common.timing [TIMING] step=tts_chunk duration_ms=899.46 index=0 chars=43 result_count=1 text=雪鷹がライブハウスの店長から、ストリートライブの穴埋めを頼まれたところまで進んでたわ。
+2026-06-25 21:54:42,533 common.timing [TIMING] step=tts_total duration_ms=1032.91 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.77
+2026-06-25 21:54:42,533 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5003.45 unit_index=1 visual_ms=0.29 tts_ms=1032.91
+2026-06-25 21:54:42,534 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:54:42,851 common.timing [TIMING] step=tts_chunk duration_ms=316.91 index=0 chars=15 result_count=1 text=あの店長、なかなかしたたかね。
+2026-06-25 21:54:43,204 common.timing [TIMING] step=tts_chunk duration_ms=353.11 index=1 chars=27 result_count=1 text=……まあ、続きはまた今度、ゆっくりやればいいじゃない。
+2026-06-25 21:54:43,205 common.timing [TIMING] step=tts_total duration_ms=671.82 emotion=happy chunks=2 combine_ms=0.04 write_ms=0.72
+2026-06-25 21:54:43,205 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5675.42 unit_index=2 visual_ms=0.3 tts_ms=671.82
+2026-06-25 21:54:43,206 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:54:43,535 common.timing [TIMING] step=tts_chunk duration_ms=329.32 index=0 chars=21 result_count=1 text=今日はもう遅いし、無理しなくてもいいのよ。
+2026-06-25 21:54:43,536 common.timing [TIMING] step=tts_total duration_ms=330.84 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.61
+2026-06-25 21:54:43,536 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=6006.79 unit_index=3 visual_ms=0.18 tts_ms=330.84
+2026-06-25 21:54:43,537 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:54:43,852 common.timing [TIMING] step=tts_chunk duration_ms=315.09 index=0 chars=18 result_count=1 text=……別に、私が眠いとかじゃないから。
+2026-06-25 21:54:43,852 common.timing [TIMING] step=tts_total duration_ms=316.56 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.48
+2026-06-25 21:54:43,853 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=6323.10 unit_index=4 visual_ms=0.16 tts_ms=316.56
+2026-06-25 21:54:43,853 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:54:44,159 common.timing [TIMING] step=tts_chunk duration_ms=305.41 index=0 chars=17 result_count=1 text=ほら、もう風が冷たくなってきたわ。
+2026-06-25 21:54:44,159 common.timing [TIMING] step=tts_total duration_ms=306.78 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.51
+2026-06-25 21:54:44,159 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=6629.97 unit_index=5 visual_ms=0.15 tts_ms=306.78
+2026-06-25 21:54:44,160 common.timing [TIMING] step=chat_stream_done duration_ms=6630.18 conversation_id=default interaction_mode=chat prompt_input_chars=10441 units_count=6 tts_total_ms=5241.79 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=1009.99 first_sentence_ms=1383.78 first_unit_created_ms=1384.44 first_tts_start_ms=1386.91 first_tts_done_ms=3970.24 first_unit_ready_ms=3970.4 first_visual_ready_ms=1389.05 first_audio_ready_ms=3970.24 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-25 21:55:20,978 common.timing [TIMING] step=stt_transcribe duration_ms=90.22 chars=9 audio_ms=2000 text=我们之前玩到哪里了
+2026-06-25 21:55:20,979 common.timing [TIMING] step=validate_input_node duration_ms=0.08 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:20,979 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:20,983 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=4.11 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:20,983 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:20,983 common.timing [TIMING] step=build_prompt_node duration_ms=0.06 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:20,994 common.timing [TIMING] step=retrieve_game_context_node duration_ms=10.41 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:23,623 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.30 unit_index=0 chars=47 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:55:23,623 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:55:23,737 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.26 unit_index=1 chars=30 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:55:23,851 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.18 unit_index=2 chars=27 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:55:23,994 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.18 unit_index=3 chars=44 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:55:24,357 common.timing [TIMING] step=tts_chunk duration_ms=733.51 index=0 chars=47 result_count=1 text=ふぅん……さっきはね、雪鷹が大夢さんの話を受けてストリートライブの穴埋めを引き受けたところよ。
+2026-06-25 21:55:24,358 common.timing [TIMING] step=tts_total duration_ms=736.56 emotion=happy chunks=1 combine_ms=0.0 write_ms=1.38
+2026-06-25 21:55:24,358 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3379.94 unit_index=0 visual_ms=0.3 tts_ms=736.56
+2026-06-25 21:55:24,360 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:55:24,980 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=3985.63 model=deepseek-v4-flash streamed=True
+2026-06-25 21:55:24,980 common.timing [TIMING] step=agent_response duration_ms=3985.73 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 21:55:24,981 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.15 unit_index=4 chars=5 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:55:25,047 common.timing [TIMING] step=tts_chunk duration_ms=687.28 index=0 chars=28 result_count=1 text=それから衛哉が雪鷹と組みたいってすごく熱心に迫ってきて。
+2026-06-25 21:55:25,048 common.timing [TIMING] step=tts_total duration_ms=689.73 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.97
+2026-06-25 21:55:25,048 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=4069.94 unit_index=1 visual_ms=0.26 tts_ms=689.73
+2026-06-25 21:55:25,049 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:55:25,498 common.timing [TIMING] step=tts_chunk duration_ms=449.23 index=0 chars=25 result_count=1 text=でも雪鷹はまだ分かんないみたいな感じで流してたわ。
+2026-06-25 21:55:25,499 common.timing [TIMING] step=tts_total duration_ms=450.61 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.57
+2026-06-25 21:55:25,499 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=4520.56 unit_index=2 visual_ms=0.18 tts_ms=450.61
+2026-06-25 21:55:25,500 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:55:26,102 common.timing [TIMING] step=tts_chunk duration_ms=602.07 index=0 chars=44 result_count=1 text=それで酔っ払いに演奏を罵られたあと、雪鷹が自嘲しながらまた寝ちゃったところまで進んだの。
+2026-06-25 21:55:26,102 common.timing [TIMING] step=tts_total duration_ms=603.54 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.65
+2026-06-25 21:55:26,103 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5124.58 unit_index=3 visual_ms=0.18 tts_ms=603.54
+2026-06-25 21:55:26,103 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 21:55:26,397 common.timing [TIMING] step=tts_chunk duration_ms=293.46 index=0 chars=5 result_count=1 text=覚えてる？
+2026-06-25 21:55:26,397 common.timing [TIMING] step=tts_total duration_ms=294.91 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.46
+2026-06-25 21:55:26,398 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5419.17 unit_index=4 visual_ms=0.15 tts_ms=294.91
+2026-06-25 21:55:26,398 common.timing [TIMING] step=chat_stream_done duration_ms=5419.50 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=15277 units_count=5 tts_total_ms=2775.35 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=776.08 first_sentence_ms=2642.22 first_unit_created_ms=2642.26 first_tts_start_ms=2643.06 first_tts_done_ms=3379.79 first_unit_ready_ms=3379.94 first_visual_ready_ms=2644.26 first_audio_ready_ms=3379.79
+2026-06-25 21:55:59,142 common.timing [TIMING] step=stt_transcribe duration_ms=91.74 chars=9 audio_ms=2880 text=他不是幫助女孩嗎?
+2026-06-25 21:55:59,144 common.timing [TIMING] step=validate_input_node duration_ms=0.13 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:59,144 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:59,145 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=1.18 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:59,145 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:59,145 common.timing [TIMING] step=build_prompt_node duration_ms=0.04 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:55:59,151 common.timing [TIMING] step=retrieve_game_context_node duration_ms=5.65 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:00,947 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.26 unit_index=0 chars=30 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:00,948 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:56:01,288 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.27 unit_index=1 chars=31 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:01,471 common.timing [TIMING] step=tts_chunk duration_ms=523.13 index=0 chars=30 result_count=1 text=ああ……あの酔っ払いに絡まれた後に、確かに女の子がいたわね。
+2026-06-25 21:56:01,472 common.timing [TIMING] step=tts_total duration_ms=525.73 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.82
+2026-06-25 21:56:01,472 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=2329.25 unit_index=0 visual_ms=0.26 tts_ms=525.73
+2026-06-25 21:56:01,473 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:56:01,484 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.19 unit_index=2 chars=23 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:01,798 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.17 unit_index=3 chars=28 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:02,226 common.timing [TIMING] step=tts_chunk duration_ms=751.41 index=0 chars=31 result_count=1 text=違法撮影っぽいことをしてた子。雪鷹、結構優しく対応してたわよ。
+2026-06-25 21:56:02,226 common.timing [TIMING] step=tts_total duration_ms=754.08 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.66
+2026-06-25 21:56:02,227 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3083.72 unit_index=1 visual_ms=0.27 tts_ms=754.08
+2026-06-25 21:56:02,227 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:56:02,591 common.timing [TIMING] step=tts_chunk duration_ms=363.82 index=0 chars=23 result_count=1 text=ルールはちゃんと教えつつ、追い詰めない感じで。
+2026-06-25 21:56:02,592 common.timing [TIMING] step=tts_total duration_ms=365.07 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.53
+2026-06-25 21:56:02,592 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3448.71 unit_index=2 visual_ms=0.19 tts_ms=365.07
+2026-06-25 21:56:02,592 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:56:02,968 common.timing [TIMING] step=tts_chunk duration_ms=376.15 index=0 chars=28 result_count=1 text=……まあ、ああいうところは、人間として悪くないと思うわ。
+2026-06-25 21:56:02,969 common.timing [TIMING] step=tts_total duration_ms=377.40 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.55
+2026-06-25 21:56:02,969 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3826.14 unit_index=3 visual_ms=0.17 tts_ms=377.4
+2026-06-25 21:56:03,026 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=3873.76 model=deepseek-v4-flash streamed=True
+2026-06-25 21:56:03,026 common.timing [TIMING] step=agent_response duration_ms=3873.90 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 21:56:03,027 common.timing [TIMING] step=chat_stream_done duration_ms=3883.65 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=15488 units_count=4 tts_total_ms=2022.28 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=1423.1 first_sentence_ms=1802.18 first_unit_created_ms=1802.23 first_tts_start_ms=1803.24 first_tts_done_ms=2329.11 first_unit_ready_ms=2329.25 first_visual_ready_ms=1804.59 first_audio_ready_ms=2329.11
+2026-06-25 21:56:26,573 common.timing [TIMING] step=stt_transcribe duration_ms=95.08 chars=5 audio_ms=1620 text=我記得他還
+2026-06-25 21:56:26,574 common.timing [TIMING] step=validate_input_node duration_ms=0.08 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:26,574 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:26,574 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.34 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:26,574 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:26,575 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:26,581 common.timing [TIMING] step=retrieve_game_context_node duration_ms=5.94 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:28,148 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=1566.86 model=deepseek-v4-flash streamed=True
+2026-06-25 21:56:28,148 common.timing [TIMING] step=agent_response duration_ms=1566.96 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 21:56:28,150 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.28 unit_index=0 chars=46 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:28,151 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:56:28,151 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.15 unit_index=1 chars=28 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:28,488 common.timing [TIMING] step=tts_chunk duration_ms=337.32 index=0 chars=10 result_count=1 text=懂よ。思い出したわ。
+2026-06-25 21:56:28,932 common.timing [TIMING] step=tts_chunk duration_ms=443.69 index=1 chars=36 result_count=1 text=あの後、酔っ払いに絡まれて、雪鷹が自嘲しながら寝ちゃったところまでよね。
+2026-06-25 21:56:28,933 common.timing [TIMING] step=tts_total duration_ms=783.56 emotion=happy chunks=2 combine_ms=0.05 write_ms=0.66
+2026-06-25 21:56:28,933 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=2359.53 unit_index=0 visual_ms=0.28 tts_ms=783.56
+2026-06-25 21:56:28,934 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 21:56:29,697 common.timing [TIMING] step=tts_chunk duration_ms=762.17 index=0 chars=26 result_count=1 text=……で、麦は何を言いかけたの？まだ……って、続きは？
+2026-06-25 21:56:29,698 common.timing [TIMING] step=tts_total duration_ms=764.61 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.73
+2026-06-25 21:56:29,698 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3124.23 unit_index=1 visual_ms=0.15 tts_ms=764.61
+2026-06-25 21:56:29,698 common.timing [TIMING] step=chat_stream_done duration_ms=3124.50 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=15492 units_count=2 tts_total_ms=1548.17 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=720.42 first_sentence_ms=1574.95 first_unit_created_ms=1574.95 first_tts_start_ms=1575.71 first_tts_done_ms=2359.39 first_unit_ready_ms=2359.53 first_visual_ready_ms=1577.24 first_audio_ready_ms=2359.39
+2026-06-25 21:56:39,342 common.timing [TIMING] step=stt_transcribe duration_ms=79.77 chars=7 audio_ms=1780 text=我都这样看一下
+2026-06-25 21:56:39,343 common.timing [TIMING] step=validate_input_node duration_ms=0.08 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:39,343 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:39,345 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=1.23 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:39,345 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:39,345 common.timing [TIMING] step=build_prompt_node duration_ms=0.04 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:39,350 common.timing [TIMING] step=retrieve_game_context_node duration_ms=5.66 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 21:56:41,397 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=2045.45 model=deepseek-v4-flash streamed=True
+2026-06-25 21:56:41,397 common.timing [TIMING] step=agent_response duration_ms=2045.60 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 21:56:41,397 spica.adapters.tools.watch_game_screen watch_game_screen: refused, window not safe to capture (state=window_lost)
+2026-06-25 21:56:41,397 common.timing [TIMING] step=agent_tool_local duration_ms=0.35 name=watch_game_screen arguments_chars=41 output_chars=140
+2026-06-25 21:56:41,592 common.timing [TIMING] step=llm_chat_stream_create duration_ms=195.01 model=deepseek-v4-flash
+2026-06-25 21:56:42,343 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.39 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-25 21:56:42,983 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.27 unit_index=0 chars=38 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:42,984 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:56:43,383 common.timing [TIMING] step=tts_chunk duration_ms=399.66 index=0 chars=14 result_count=1 text=ふぅん……そう言われてもね。
+2026-06-25 21:56:43,495 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.22 unit_index=1 chars=16 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 21:56:43,750 common.timing [TIMING] step=tts_chunk duration_ms=366.25 index=1 chars=24 result_count=1 text=画面が見えないと、何が映ってるか分からないのよ。
+2026-06-25 21:56:43,751 common.timing [TIMING] step=tts_total duration_ms=768.39 emotion=happy chunks=2 combine_ms=0.04 write_ms=0.79
+2026-06-25 21:56:43,751 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=4408.14 unit_index=0 visual_ms=0.27 tts_ms=768.39
+2026-06-25 21:56:43,752 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 21:56:44,142 common.timing [TIMING] step=tts_chunk duration_ms=389.27 index=0 chars=16 result_count=1 text=ちゃんとゲームを持ってきなさい。
+2026-06-25 21:56:44,142 common.timing [TIMING] step=tts_total duration_ms=391.48 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.52
+2026-06-25 21:56:44,142 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=4799.75 unit_index=1 visual_ms=0.22 tts_ms=391.48
+2026-06-25 21:56:44,143 common.timing [TIMING] step=chat_stream_done duration_ms=4799.92 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=15790 units_count=2 tts_total_ms=1159.87 agent_rounds=1 agent_tool_local_ms=0.35 first_llm_delta_ms=956.89 first_sentence_ms=3440.54 first_unit_created_ms=3638.29 first_tts_start_ms=3639.44 first_tts_done_ms=4407.98 first_unit_ready_ms=4408.14 first_visual_ready_ms=3640.38 first_audio_ready_ms=4407.98 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client

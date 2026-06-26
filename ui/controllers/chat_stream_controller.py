@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -164,6 +165,17 @@ class ChatStreamController(QObject):
         screen_attachment: dict[str, Any] | None,
         conversation_id: str | None = None,
     ) -> StreamToken:
+        # Regression alarm for the system-turn GUI-thread marshal (2026-06-26
+        # libQt6Gui GPF fix): every _start_stream -- user, song, AND reaction --
+        # must run on the GUI thread (== the Python main thread; QApplication runs
+        # there). A non-main thread here means a system turn drove Qt off-thread
+        # again; log loudly rather than silently risk a segfault.
+        if threading.current_thread() is not threading.main_thread():
+            logger.warning(
+                "event=stream_start_off_gui_thread thread=%s kind=%s -- Qt driven off "
+                "the GUI thread (system-turn marshal regression)",
+                threading.current_thread().name, kind.value,
+            )
         self.stop_current()
         self._prune_retired_chat_workers()
         token = self._next_stream_token(kind)

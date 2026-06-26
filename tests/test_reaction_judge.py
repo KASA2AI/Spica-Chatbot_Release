@@ -15,11 +15,13 @@ spica/galgame/reaction.py`` being empty + the existing reaction golden suite
 staying green -- compose_reaction_directive lives in that untouched file, so ⑦ ⊆ ⑤.
 """
 
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from spica.config.schema import AppConfig, GalgameConfig, LLMConfig
+from spica.config.secrets import Secrets, load_secrets
 from spica.galgame.reaction import (
     BeatLine,
     LexiconCategory,
@@ -278,6 +280,102 @@ class ZeroDiffTest(unittest.TestCase):
             galgame=GalgameConfig(reaction_judge_enabled=True, reaction_judge_model="small-m"),
         )
         self.assertEqual(host._new_reaction_judge()._model, "small-m")
+
+
+# -- judge LLM-key split (relieve the deepseek endpoint saturation) -----------
+
+class JudgeKeySplitTest(unittest.TestCase):
+    """The reaction judge runs on its OWN endpoint (JUDGE_API_KEY + JUDGE_BASE_URL +
+    JUDGE_MODEL) so its load never saturates the main chat/summary endpoint. Each
+    knob falls back to the main LLM independently; no key -> shares the main adapter
+    (zero behaviour change). Chat + summary always stay on the main adapter."""
+
+    def _host(self, judge_key, judge_base_url=None):
+        host = AppHost()
+        host.config = AppConfig(
+            llm=LLMConfig(provider="openai_compatible", model="m", base_url="https://main.example/v1"),
+            galgame=GalgameConfig(reaction_judge_base_url=judge_base_url),
+        )
+        main_adapter = SimpleNamespace(name="main")
+        host.services = SimpleNamespace(llm_adapter=main_adapter)
+        host.secrets = Secrets(openai_api_key="K1", judge_api_key=judge_key)
+        # stub the registry so resolve_llm returns a marker carrying the built client
+        # + the reasoning effort (no real provider registration needed for the unit).
+        host.registry = SimpleNamespace(
+            resolve_llm=lambda provider, client, reasoning_effort="default": SimpleNamespace(
+                tag="judge", client=client, reasoning_effort=reasoning_effort))
+        return host, main_adapter
+
+    def test_separate_key_builds_distinct_adapter_with_second_key(self):
+        host, main = self._host(judge_key="K2")  # base_url unset -> falls back to main
+        adapter = host._judge_llm_adapter()
+        self.assertIsNot(adapter, main)                 # judge adapter != main
+        self.assertEqual(adapter.tag, "judge")
+        self.assertEqual(adapter.client.api_key, "K2")  # built from the judge key
+        self.assertIn("main.example", str(adapter.client.base_url))  # base_url fell back to main
+
+    def test_separate_base_url_when_set(self):
+        host, _main = self._host(judge_key="K2", judge_base_url="https://judge.example/v1")
+        adapter = host._judge_llm_adapter()
+        self.assertIn("judge.example", str(adapter.client.base_url))  # judge endpoint used
+        self.assertEqual(adapter.client.api_key, "K2")
+
+    def test_judge_reasoning_effort_independent_of_main(self):
+        host, _ = self._host(judge_key="K2")
+        host.config.llm.reasoning_effort = "none"                       # main off
+        host.config.galgame.reaction_judge_reasoning_effort = "low"     # judge on (gpt effort)
+        adapter = host._judge_llm_adapter()
+        self.assertEqual(adapter.reasoning_effort, "low")  # judge gets ITS knob, not main's
+
+    def test_no_judge_key_falls_back_to_main(self):
+        host, main = self._host(judge_key=None)
+        self.assertIs(host._judge_llm_adapter(), main)  # zero behaviour change
+
+    def test_secrets_none_falls_back_to_main(self):
+        host, main = self._host(judge_key="K2")
+        host.secrets = None  # e.g. a test/host built without load_secrets
+        self.assertIs(host._judge_llm_adapter(), main)
+
+    def test_judge_model_from_env_field_else_main(self):
+        # JUDGE_MODEL -> galgame.reaction_judge_model; unset -> config.llm.model.
+        host, _ = self._host(judge_key="K2")
+        host.config = AppConfig(
+            llm=LLMConfig(model="main-m"),
+            galgame=GalgameConfig(reaction_judge_enabled=True, reaction_judge_model="judge-m"),
+        )
+        self.assertEqual(host._new_reaction_judge()._model, "judge-m")
+
+    def test_summary_stays_on_main_key(self):
+        host, _main = self._host(judge_key="K2")
+        host.config = AppConfig(llm=LLMConfig(model="m"), galgame=GalgameConfig())
+        # summary must NOT move to the judge endpoint -- it reads services.llm_adapter.
+        self.assertIs(host._new_summarizer()._llm, host.services.llm_adapter)
+
+    def test_load_secrets_reads_both_keys(self):
+        import spica.config.secrets as secmod
+        with patch.object(secmod, "_ensure_env_loaded", lambda: None), patch.dict(
+            os.environ, {"OPENAI_API_KEY": "K1", "JUDGE_API_KEY": "K2"}, clear=True
+        ):
+            s = load_secrets()
+        self.assertEqual((s.openai_api_key, s.judge_api_key), ("K1", "K2"))
+
+    def test_manager_env_overrides_judge_base_url_and_model(self):
+        # JUDGE_BASE_URL / JUDGE_MODEL flow through manager.py (config, not secret)
+        # onto galgame.reaction_judge_base_url / reaction_judge_model.
+        import spica.config.manager as mgr
+        with patch.object(mgr.ConfigManager, "_ensure_env_loaded", lambda *a, **k: None), \
+                patch.dict(os.environ, {"JUDGE_MODEL": "jm", "JUDGE_BASE_URL": "https://j/v1"}, clear=True):
+            g = mgr.ConfigManager(config_path="/no/such/app.yaml").load().galgame
+        self.assertEqual(g.reaction_judge_model, "jm")
+        self.assertEqual(g.reaction_judge_base_url, "https://j/v1")
+
+    def test_load_secrets_judge_key_none_when_unset(self):
+        import spica.config.secrets as secmod
+        with patch.object(secmod, "_ensure_env_loaded", lambda: None), patch.dict(
+            os.environ, {"OPENAI_API_KEY": "K1"}, clear=True
+        ):
+            s = load_secrets()
+        self.assertIsNone(s.judge_api_key)
 
 
 if __name__ == "__main__":

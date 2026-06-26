@@ -48,7 +48,23 @@ if str(REPO) not in sys.path:
 # The two loggers that carry the structured telemetry. common.timing = every
 # log_timing line (turns / judge / fallback / tool / stages); spica.galgame.reaction
 # = the reaction gate decision trail (spoke / below_threshold / cooldown_drop / ...).
-TELEMETRY_LOGGERS = ("common.timing", "spica.galgame.reaction")
+TELEMETRY_LOGGERS = (
+    "common.timing", "spica.galgame.reaction",
+    # Diagnostics that otherwise only hit the console (INFO) and vanish: watch
+    # refusal + window state (WINDOW_LOST false-positive triage), STT model load /
+    # failures, and background/end summary failures (the 47becb69 orphan was
+    # invisible because its failure never reached a file).
+    "spica.adapters.tools.watch_game_screen",
+    "spica.adapters.stt.faster_whisper",
+    "spica.galgame.session",
+    # auto-galgame stress: warns when the OCR cycle can't hold the interval (the
+    # direct "lines may be getting missed" signal).
+    "spica.galgame.ocr_loop",
+    # watch troubleshooting: "stream turn tools offered: [...]" (was watch_game_screen
+    # offered to the LLM?) + "watch context: None (reason)" (why watch isn't supplied).
+    "spica.runtime.tool_round",
+    "spica.host.app_host",
+)
 
 
 def main() -> int:
@@ -57,6 +73,16 @@ def main() -> int:
     else:
         logfile = REPO / "spica_data" / f"timing_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     logfile.parent.mkdir(parents=True, exist_ok=True)
+
+    # Crash forensics (added after the 2026-06-26 libQt6Gui GPF): on a fatal signal
+    # -- SIGSEGV/GPF in a native lib (Qt/torch/CUDA), SIGABRT from a malloc check,
+    # SIGBUS -- dump EVERY thread's Python stack to a file. This names the exact
+    # thread + Python frame driving into the C++ crash, which neither the timing log
+    # nor the terminal reliably keep (the run that segfaulted had no stderr capture).
+    # Behaviour-neutral: only fires on an otherwise-fatal signal.
+    import faulthandler
+    _crashlog = open(logfile.with_name(logfile.stem + ".crash.txt"), "w", encoding="utf-8")
+    faulthandler.enable(file=_crashlog, all_threads=True)
 
     handler = logging.FileHandler(logfile, encoding="utf-8")
     handler.setLevel(logging.DEBUG)

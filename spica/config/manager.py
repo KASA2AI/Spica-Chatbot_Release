@@ -130,6 +130,8 @@ class ConfigManager:
             llm["model"] = os.getenv("MODEL")
         if os.getenv("OPENAI_BASE_URL"):
             llm["base_url"] = os.getenv("OPENAI_BASE_URL")
+        if os.getenv("REASONING_EFFORT"):
+            llm["reasoning_effort"] = os.getenv("REASONING_EFFORT")
 
         memory: dict[str, Any] = {}
         for env_key, field in (
@@ -162,6 +164,17 @@ class ConfigManager:
             if value:
                 stream[field] = int(value)
 
+        # Reaction-judge LLM endpoint (the ONLY galgame fields with env names): the
+        # non-secret base_url + model halves of a swappable judge endpoint. The key
+        # half is the secret JUDGE_API_KEY (secrets.py). Roster: env_roster.APP_ENV_MAP.
+        galgame: dict[str, Any] = {}
+        if os.getenv("JUDGE_MODEL"):
+            galgame["reaction_judge_model"] = os.getenv("JUDGE_MODEL")
+        if os.getenv("JUDGE_BASE_URL"):
+            galgame["reaction_judge_base_url"] = os.getenv("JUDGE_BASE_URL")
+        if os.getenv("JUDGE_REASONING_EFFORT"):
+            galgame["reaction_judge_reasoning_effort"] = os.getenv("JUDGE_REASONING_EFFORT")
+
         overrides: dict[str, Any] = {}
         if llm:
             overrides["llm"] = llm
@@ -171,6 +184,8 @@ class ConfigManager:
             overrides["character"] = character
         if stream:
             overrides["stream"] = stream
+        if galgame:
+            overrides["galgame"] = galgame
         # P0b 2a: the screen section folds env with the SCREEN coercion rules
         # (wordlist bools, clamp ints) -- NOT the loud int() the knobs above use.
         screen = screen_env_config_overrides()

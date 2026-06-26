@@ -1,0 +1,43 @@
+===== Spica freeze dump @ 20260625_223202 =====
+app pid (play_with_timing.py): NOT FOUND
+
+===== 1) py-spy thread dump (the decisive one: where is it stuck?) =====
+py-spy NOT installed -> run:  pip install py-spy   then re-run this script.
+
+===== 2) nvidia-smi (GPU util + memory) =====
+Thu Jun 25 22:32:02 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 555.42.06              Driver Version: 555.42.06      CUDA Version: 12.5     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 4090        Off |   00000000:01:00.0  On |                  Off |
+|  0%   45C    P8             34W /  450W |    1759MiB /  24564MiB |     24%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A      1460      G   /usr/lib/xorg/Xorg                            812MiB |
+|    0   N/A  N/A      2299      G   /usr/bin/gnome-shell                          185MiB |
+|    0   N/A  N/A     41713      G   ...pycharm-2026.1.1/jbr/lib/cef_server          6MiB |
+|    0   N/A  N/A     41802      G   ...m2026.1/log/jcef_chromium_40768.log         15MiB |
+|    0   N/A  N/A     47277      G   /home/san/下载/squashfs-root/FlClash        144MiB |
+|    0   N/A  N/A    486814      G   /usr/bin/python3                               13MiB |
+|    0   N/A  N/A    804226      G   ...AAAAAAAACAAAAAAAAAA= --shared-files         77MiB |
+|    0   N/A  N/A    838302      G   ...irefox/8545/usr/lib/firefox/firefox        284MiB |
+|    0   N/A  N/A    940293    C+G   ...ドジャム\limelight_lj_Crack.exe         55MiB |
+|    0   N/A  N/A   3791283      G   /tmp/.mount_CherryQMbxXm/CherryStudio          54MiB |
++-----------------------------------------------------------------------------------------+
+
+--- per-process GPU memory (which model holds what) ---
+pid, process_name, used_gpu_memory [MiB]
+940293, C:\GAME\ライムライト・レモネードジャム\limelight_lj_Crack.exe, 55 MiB
+
+===== 3) GPU driver errors (dmesg Xid/NVRM) =====
+(no Xid/NVRM lines, or dmesg needs root -> try:  sudo dmesg | grep -i xid | tail)

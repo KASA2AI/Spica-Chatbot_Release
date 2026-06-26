@@ -37,10 +37,25 @@ APP_ENV_MAP: dict[str, str] = {
     "stream.play_unit_max_chars": "PLAY_UNIT_MAX_CHARS",
     "stream.visual_stream_workers": "VISUAL_STREAM_WORKERS",
     "max_tool_rounds": "MAX_TOOL_ROUNDS",
+    # Main-LLM reasoning/thinking control (deepseek thinking off / gpt effort).
+    "llm.reasoning_effort": "REASONING_EFFORT",
+    # Reaction-judge LLM endpoint (the ONLY galgame fields with env names -- judge
+    # is a swappable LLM endpoint, unlike galgame's yaml-only tuning knobs). The
+    # key half is the secret JUDGE_API_KEY (SECRETS_ENV_MAP); these are the
+    # non-secret base_url + model + reasoning. All OpenAI-compatible (deepseek/...).
+    "galgame.reaction_judge_base_url": "JUDGE_BASE_URL",
+    "galgame.reaction_judge_model": "JUDGE_MODEL",
+    "galgame.reaction_judge_reasoning_effort": "JUDGE_REASONING_EFFORT",
 }
 
 SECRETS_ENV_MAP: dict[str, str] = {
     "openai_api_key": "OPENAI_API_KEY",
+    # Separate key for the reaction-judge LLM endpoint, so the judge's load never
+    # saturates the main chat/summary endpoint (they share one key otherwise).
+    # Vendor-neutral name -- the judge endpoint is any OpenAI-compatible provider
+    # (deepseek/OpenAI/...; the base_url + model are JUDGE_BASE_URL / JUDGE_MODEL
+    # below). Unset -> judge falls back to OPENAI_API_KEY (zero behaviour change).
+    "judge_api_key": "JUDGE_API_KEY",
 }
 
 SCREEN_ENV_MAP: dict[str, str] = {

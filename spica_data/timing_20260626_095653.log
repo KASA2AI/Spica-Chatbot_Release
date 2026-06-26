@@ -1,0 +1,1115 @@
+2026-06-26 09:56:54,717 spica.host.app_host reaction judge: separate endpoint (JUDGE_API_KEY, base_url=https://api.deepseek.com/v1)
+2026-06-26 09:56:54,718 spica.host.app_host reaction engine on (mode=high)
+2026-06-26 09:57:13,544 common.timing [TIMING] step=tts_warmup duration_ms=18607.23 emotion=happy synthesize=True
+2026-06-26 09:57:13,583 spica.adapters.stt.faster_whisper loading faster-whisper model=spica_data/models/faster-whisper-large-v3-turbo device=cuda compute_type=float16 download_root=None (one-time; reused for the process lifetime)
+2026-06-26 09:57:14,964 common.timing [TIMING] step=stt_model_load duration_ms=1380.88 model=spica_data/models/faster-whisper-large-v3-turbo device=cuda
+2026-06-26 09:57:14,964 spica.adapters.stt.faster_whisper faster-whisper model loaded in 1381ms
+2026-06-26 09:57:14,966 common.timing [TIMING] step=stt_warmup duration_ms=1422.66 model=spica_data/models/faster-whisper-large-v3-turbo
+2026-06-26 09:57:14,966 spica.adapters.stt.faster_whisper faster-whisper warmup ok in 1423ms
+2026-06-26 09:57:27,602 spica.galgame.ocr_loop ocr_cycle_ms=1915 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:29,035 spica.galgame.ocr_loop ocr_cycle_ms=833 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:30,483 spica.galgame.ocr_loop ocr_cycle_ms=848 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:34,277 spica.galgame.ocr_loop ocr_cycle_ms=747 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:35,699 spica.galgame.ocr_loop ocr_cycle_ms=822 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:37,129 spica.galgame.ocr_loop ocr_cycle_ms=830 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:38,705 spica.galgame.ocr_loop ocr_cycle_ms=976 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:40,107 spica.galgame.ocr_loop ocr_cycle_ms=801 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:41,648 spica.galgame.ocr_loop ocr_cycle_ms=942 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:42,260 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('803bd318e09540959ca344773f60f4a2',))
+2026-06-26 09:57:44,783 spica.galgame.ocr_loop ocr_cycle_ms=707 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:46,174 spica.galgame.ocr_loop ocr_cycle_ms=791 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:47,670 spica.galgame.ocr_loop ocr_cycle_ms=896 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:55,105 spica.galgame.ocr_loop ocr_cycle_ms=685 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:56,417 spica.galgame.ocr_loop ocr_cycle_ms=709 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:57,750 spica.galgame.ocr_loop ocr_cycle_ms=732 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:57:59,121 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:00,390 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:01,655 spica.galgame.ocr_loop ocr_cycle_ms=665 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:03,073 spica.galgame.ocr_loop ocr_cycle_ms=818 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:03,699 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('c372e47fe54043968d85bb4caf87d449', '8229858e07574233a5889cdb8f75e5ac', 'ebf23ec69f474e60b28921a7a219b7e7'))
+2026-06-26 09:58:07,410 spica.galgame.ocr_loop ocr_cycle_ms=739 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:08,804 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:10,062 spica.galgame.ocr_loop ocr_cycle_ms=658 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:11,417 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:12,748 spica.galgame.ocr_loop ocr_cycle_ms=731 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:14,018 spica.galgame.ocr_loop ocr_cycle_ms=670 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:15,381 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:16,651 spica.galgame.ocr_loop ocr_cycle_ms=670 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:18,038 spica.galgame.ocr_loop ocr_cycle_ms=787 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:19,322 spica.galgame.ocr_loop ocr_cycle_ms=684 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:21,790 spica.galgame.ocr_loop ocr_cycle_ms=689 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:23,082 spica.galgame.ocr_loop ocr_cycle_ms=692 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:24,390 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:25,593 spica.galgame.ocr_loop ocr_cycle_ms=602 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:28,013 spica.galgame.ocr_loop ocr_cycle_ms=656 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:29,351 spica.galgame.ocr_loop ocr_cycle_ms=737 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:30,623 spica.galgame.ocr_loop ocr_cycle_ms=671 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:32,013 spica.galgame.ocr_loop ocr_cycle_ms=790 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:33,223 common.timing [TIMING] step=reaction_judge duration_ms=1211.67 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 09:58:33,224 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('33a329025e814e448de5f9fb39e5fa83', '68f7e77513d84e46963ece971b0af189', '7ad7ce9ddf41413e87fb28a25d79f8dc', '69cddefe1cdb44eaa1782e9719991775', 'a62fa7c030b243cc9b7b5bd4e8eada58', '254a52f5c4b74a61bbb9c959e8cd5f7e', '23a4d7d338c34499b08788c05eb48c99', 'edc775ef2628425683b825eb781977a9'))
+2026-06-26 09:58:33,258 spica.galgame.ocr_loop ocr_cycle_ms=643 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:34,591 spica.galgame.ocr_loop ocr_cycle_ms=733 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:35,845 spica.galgame.ocr_loop ocr_cycle_ms=654 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:37,189 spica.galgame.ocr_loop ocr_cycle_ms=743 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:38,487 spica.galgame.ocr_loop ocr_cycle_ms=698 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:39,827 spica.galgame.ocr_loop ocr_cycle_ms=740 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:41,055 spica.galgame.ocr_loop ocr_cycle_ms=628 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:42,293 spica.galgame.ocr_loop ocr_cycle_ms=638 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:43,544 spica.galgame.ocr_loop ocr_cycle_ms=650 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:44,900 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:46,180 spica.galgame.ocr_loop ocr_cycle_ms=680 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:47,645 spica.galgame.ocr_loop ocr_cycle_ms=861 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:50,181 spica.galgame.ocr_loop ocr_cycle_ms=752 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:51,279 common.timing [TIMING] step=reaction_judge duration_ms=1100.02 model=deepseek-v4-flash worth=2 angle= degraded=False lines=7
+2026-06-26 09:58:51,279 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('57e6aac8a33c441182ed05ee9dfa1687', 'e1824a66d8824b099423d8bc59009b23', '8492f98494784a04ac52f10c9c066bc9', 'e5ac8ae272654580ab031c9c8743c68b', '3d46b8b9f12c4d7b88a9ea93119e2780', '7d1b3563516f475ea75c2fe81c43b6e2', '57cf4fecc0634b6a90a52b5c09286f22'))
+2026-06-26 09:58:51,452 spica.galgame.ocr_loop ocr_cycle_ms=671 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:52,699 spica.galgame.ocr_loop ocr_cycle_ms=647 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:54,437 spica.galgame.ocr_loop ocr_cycle_ms=1138 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:56,863 spica.galgame.ocr_loop ocr_cycle_ms=706 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:58,137 spica.galgame.ocr_loop ocr_cycle_ms=673 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:58:59,449 spica.galgame.ocr_loop ocr_cycle_ms=712 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:00,709 spica.galgame.ocr_loop ocr_cycle_ms=659 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:01,968 spica.galgame.ocr_loop ocr_cycle_ms=659 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:03,245 spica.galgame.ocr_loop ocr_cycle_ms=676 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:04,574 spica.galgame.ocr_loop ocr_cycle_ms=729 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:05,803 spica.galgame.ocr_loop ocr_cycle_ms=628 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:07,118 spica.galgame.ocr_loop ocr_cycle_ms=715 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:08,394 spica.galgame.ocr_loop ocr_cycle_ms=676 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:09,772 spica.galgame.ocr_loop ocr_cycle_ms=778 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:11,049 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:12,300 spica.galgame.ocr_loop ocr_cycle_ms=650 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:13,654 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:14,453 common.timing [TIMING] step=reaction_judge duration_ms=799.27 model=deepseek-v4-flash worth=3 angle= degraded=False lines=7
+2026-06-26 09:59:14,453 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=3, line_ids=('2e5ea276e1b7488a9b00b8c5d874868e', '91752895e93b4095a64fc26db289947b', 'd25d0b56dd0848829313b936bb2a45f9', 'b532f1a8cdd24f7e93fe0eaf963c186c', '1207325afafa45488318b1009dda541a', '855974c4092544c287f339feeb6efeb3', '5d3572f946534839870176e87dc9a366'))
+2026-06-26 09:59:14,944 spica.galgame.ocr_loop ocr_cycle_ms=690 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:16,273 spica.galgame.ocr_loop ocr_cycle_ms=728 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:17,610 spica.galgame.ocr_loop ocr_cycle_ms=737 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:18,924 spica.galgame.ocr_loop ocr_cycle_ms=714 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:20,279 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:21,515 spica.galgame.ocr_loop ocr_cycle_ms=636 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:22,793 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:24,142 spica.galgame.ocr_loop ocr_cycle_ms=749 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:25,423 spica.galgame.ocr_loop ocr_cycle_ms=681 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:26,752 spica.galgame.ocr_loop ocr_cycle_ms=729 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:28,030 spica.galgame.ocr_loop ocr_cycle_ms=678 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:29,339 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:30,556 spica.galgame.ocr_loop ocr_cycle_ms=618 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:31,795 spica.galgame.ocr_loop ocr_cycle_ms=638 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:32,607 common.timing [TIMING] step=reaction_judge duration_ms=814.93 model=deepseek-v4-flash worth=1 angle= degraded=False lines=6
+2026-06-26 09:59:32,608 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=1, line_ids=('db981d9f099a4efe949c9e1431bf042d', '78f1612b176a44df843157da0f5e117c', '936abaa869b5406e8384a6254b087297', '657b7fa37b5e4f46921a898e4c2905e7', '36ed872a699b4312a7ddb7805fddc231', '01ccc4ea857c4617872be53d7cd4b639'))
+2026-06-26 09:59:33,113 spica.galgame.ocr_loop ocr_cycle_ms=718 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:34,406 spica.galgame.ocr_loop ocr_cycle_ms=692 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:35,795 spica.galgame.ocr_loop ocr_cycle_ms=789 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:37,049 spica.galgame.ocr_loop ocr_cycle_ms=654 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:38,424 spica.galgame.ocr_loop ocr_cycle_ms=774 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:39,783 spica.galgame.ocr_loop ocr_cycle_ms=759 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:41,310 spica.galgame.ocr_loop ocr_cycle_ms=927 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:42,717 spica.galgame.ocr_loop ocr_cycle_ms=806 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:44,046 spica.galgame.ocr_loop ocr_cycle_ms=729 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:45,300 spica.galgame.ocr_loop ocr_cycle_ms=654 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:46,612 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('29b96523bed5453a842ff680b7fca8af', 'c6126b8eeb8f415a9623f79110b8e804', '5245f10b783147c9b2b89d025b9b5c3c', 'cc2de1e0e8764ee9805b7d49e6243abf', 'ac66b01842ef4c07b5ba7edd32ac9f8d'))
+2026-06-26 09:59:46,612 spica.galgame.ocr_loop ocr_cycle_ms=712 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:47,854 spica.galgame.ocr_loop ocr_cycle_ms=641 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:49,106 spica.galgame.ocr_loop ocr_cycle_ms=652 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:50,387 spica.galgame.ocr_loop ocr_cycle_ms=681 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:51,776 spica.galgame.ocr_loop ocr_cycle_ms=790 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:53,078 spica.galgame.ocr_loop ocr_cycle_ms=701 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:54,319 spica.galgame.ocr_loop ocr_cycle_ms=641 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:55,719 spica.galgame.ocr_loop ocr_cycle_ms=799 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:58,244 spica.galgame.ocr_loop ocr_cycle_ms=725 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 09:59:59,556 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:00,983 spica.galgame.ocr_loop ocr_cycle_ms=827 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:02,275 spica.galgame.ocr_loop ocr_cycle_ms=692 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:03,635 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:04,864 spica.galgame.ocr_loop ocr_cycle_ms=629 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:06,068 spica.galgame.ocr_loop ocr_cycle_ms=603 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:07,301 spica.galgame.ocr_loop ocr_cycle_ms=633 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:08,613 spica.galgame.ocr_loop ocr_cycle_ms=712 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:09,837 spica.galgame.ocr_loop ocr_cycle_ms=624 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:10,809 common.timing [TIMING] step=reaction_judge duration_ms=979.56 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 10:00:10,809 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('a1e8df2efc874618b151605f51cfdfb5', '37679c8e2bff4045b4cdd7d6465391d8', 'a5f1fd68961f44a6bc953b3c68fe9867', '274e4d3e362a484eb6bbc8171f1d24a3', '559f5ee436ed4ba998be5ab3f57d6e9b', '2a60074798464f5eb287c7db6cd8fc44', '6e2814d6255b4066a1e7c3a83049f301', 'f043a01f78f740a898c767e453a977d1'))
+2026-06-26 10:00:11,143 spica.galgame.ocr_loop ocr_cycle_ms=706 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:12,463 spica.galgame.ocr_loop ocr_cycle_ms=719 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:13,728 spica.galgame.ocr_loop ocr_cycle_ms=665 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:16,248 spica.galgame.ocr_loop ocr_cycle_ms=763 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:17,581 spica.galgame.ocr_loop ocr_cycle_ms=733 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:18,856 spica.galgame.ocr_loop ocr_cycle_ms=675 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:20,192 spica.galgame.ocr_loop ocr_cycle_ms=736 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:21,444 spica.galgame.ocr_loop ocr_cycle_ms=652 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:22,736 spica.galgame.ocr_loop ocr_cycle_ms=691 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:24,070 spica.galgame.ocr_loop ocr_cycle_ms=734 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:25,364 spica.galgame.ocr_loop ocr_cycle_ms=693 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:26,626 spica.galgame.ocr_loop ocr_cycle_ms=662 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:27,987 spica.galgame.ocr_loop ocr_cycle_ms=761 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:29,292 spica.galgame.ocr_loop ocr_cycle_ms=705 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:30,663 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:31,891 spica.galgame.ocr_loop ocr_cycle_ms=627 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:33,214 spica.galgame.ocr_loop ocr_cycle_ms=723 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:34,494 spica.galgame.ocr_loop ocr_cycle_ms=680 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:35,635 common.timing [TIMING] step=reaction_judge duration_ms=1142.34 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 10:00:35,635 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('e9993f3ab8b346f9bff0bd7c8347adf7', '08768e5d2f6842deb0c0505431eb3783', '6e71ad08cb604fcc98b5f29687f0bffe', 'ac84a6d168284a71ac3a9eeba93839c4', '4d856b187b534783b3d4e240345066b9', '67d3529e8f8b442e82801d7c76c6e2f6', '9c92243fa2b04d9282612f56667543fd', '34467354c42648a0b3e2b01bf3016df8'))
+2026-06-26 10:00:35,802 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:37,100 spica.galgame.ocr_loop ocr_cycle_ms=698 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:38,471 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:39,876 spica.galgame.ocr_loop ocr_cycle_ms=802 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:41,084 spica.galgame.ocr_loop ocr_cycle_ms=608 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:42,399 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('296e2cce75344731a67123b7ba83c46f', '7721314d837e4c56937100912da0c4ce', '41dadd6d39334bf9b4423d5b7af889e7'))
+2026-06-26 10:00:42,400 spica.galgame.ocr_loop ocr_cycle_ms=716 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:43,833 spica.galgame.ocr_loop ocr_cycle_ms=832 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:45,233 spica.galgame.ocr_loop ocr_cycle_ms=800 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:46,503 spica.galgame.ocr_loop ocr_cycle_ms=670 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:47,117 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('48ebfc96d1d240f898ba51ccbc2a2205',))
+2026-06-26 10:00:56,334 spica.galgame.ocr_loop ocr_cycle_ms=772 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:00:58,743 spica.galgame.ocr_loop ocr_cycle_ms=615 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:00,143 spica.galgame.ocr_loop ocr_cycle_ms=800 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:01,515 spica.galgame.ocr_loop ocr_cycle_ms=772 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:02,349 common.timing [TIMING] step=reaction_judge duration_ms=836.22 model=deepseek-v4-flash worth=2 angle= degraded=False lines=3
+2026-06-26 10:01:02,349 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('0a0bc2f94e8649dbb17d60951d3aba24', '7a0c033a90094ee1b6ed9128e02129b4', '0fc05d3562034986b403fe54fb95aedf'))
+2026-06-26 10:01:02,761 spica.galgame.ocr_loop ocr_cycle_ms=646 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:04,277 spica.galgame.ocr_loop ocr_cycle_ms=916 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:05,663 spica.galgame.ocr_loop ocr_cycle_ms=786 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:06,936 spica.galgame.ocr_loop ocr_cycle_ms=673 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:09,338 spica.galgame.ocr_loop ocr_cycle_ms=618 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:10,731 spica.galgame.ocr_loop ocr_cycle_ms=793 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:12,022 spica.galgame.ocr_loop ocr_cycle_ms=691 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:13,422 spica.galgame.ocr_loop ocr_cycle_ms=799 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:14,949 spica.galgame.ocr_loop ocr_cycle_ms=926 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:17,722 spica.galgame.ocr_loop ocr_cycle_ms=985 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:20,334 spica.galgame.ocr_loop ocr_cycle_ms=820 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:21,717 spica.galgame.ocr_loop ocr_cycle_ms=783 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:23,118 spica.galgame.ocr_loop ocr_cycle_ms=801 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:24,383 spica.galgame.ocr_loop ocr_cycle_ms=665 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:25,694 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:27,111 spica.galgame.ocr_loop ocr_cycle_ms=817 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:28,590 spica.galgame.ocr_loop ocr_cycle_ms=878 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:29,797 spica.galgame.ocr_loop ocr_cycle_ms=608 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:31,087 spica.galgame.ocr_loop ocr_cycle_ms=689 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:32,013 common.timing [TIMING] step=reaction_judge duration_ms=929.54 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:01:32,014 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('8db9ffddf7084c059ee0c5ef71e82368', 'f9eb8ea458184688afc0806c2031b366', 'e2d229f2daf24f9a80523f6a92e8edb2', '756bba25305d4b588047b6413f9307c0', 'b9fe7a9c8ddc42f383139ea379765e59', '033244c979374071a486c48a0c89e905', '5477296ffbb74137a28ed1cb4cabe9a3', 'a40c0bd154cd48fda41ff8ca478f2fb9'))
+2026-06-26 10:01:32,392 spica.galgame.ocr_loop ocr_cycle_ms=705 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:33,603 spica.galgame.ocr_loop ocr_cycle_ms=610 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:34,991 spica.galgame.ocr_loop ocr_cycle_ms=788 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:36,338 spica.galgame.ocr_loop ocr_cycle_ms=747 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:37,575 spica.galgame.ocr_loop ocr_cycle_ms=637 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:38,863 spica.galgame.ocr_loop ocr_cycle_ms=687 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:40,138 spica.galgame.ocr_loop ocr_cycle_ms=674 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:41,487 spica.galgame.ocr_loop ocr_cycle_ms=749 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:42,827 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('6ff9f270e23942c2b3a275ab722fb978', '1f4a24b4e6814099a7a4f38ff3de075d', '06efb34b0d44465cbb4b3b11d17d4ab5'))
+2026-06-26 10:01:42,827 spica.galgame.ocr_loop ocr_cycle_ms=740 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:44,303 spica.galgame.ocr_loop ocr_cycle_ms=876 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:45,725 spica.galgame.ocr_loop ocr_cycle_ms=822 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:47,153 spica.galgame.ocr_loop ocr_cycle_ms=828 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:48,587 spica.galgame.ocr_loop ocr_cycle_ms=833 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:49,975 spica.galgame.ocr_loop ocr_cycle_ms=787 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:51,296 spica.galgame.ocr_loop ocr_cycle_ms=721 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:52,526 common.timing [TIMING] step=reaction_judge duration_ms=1231.89 model=deepseek-v4-flash worth=7 angle=吐槽 degraded=False lines=3
+2026-06-26 10:01:52,528 spica.galgame.reaction reaction decision: ReactionDecision(kind='spoke', detail='strong_punct', score=7, line_ids=('3d31f3b210dd41aabb05b4e37e892ab3', 'b110b7e8407848fcbea08d89ac2c5463', 'bdf9e813d43b4e069979418acbe06fb3'))
+2026-06-26 10:01:52,537 common.timing [TIMING] step=validate_input_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:01:52,537 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:01:52,539 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=1.83 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:01:52,539 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:01:52,539 common.timing [TIMING] step=build_prompt_node duration_ms=0.04 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:01:52,542 common.timing [TIMING] step=retrieve_game_context_node duration_ms=3.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:01:52,646 spica.galgame.ocr_loop ocr_cycle_ms=750 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:52,771 common.timing [TIMING] step=llm_chat_stream_create duration_ms=228.07 model=deepseek-v4-flash
+2026-06-26 10:01:53,851 spica.galgame.ocr_loop ocr_cycle_ms=605 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:55,218 spica.galgame.ocr_loop ocr_cycle_ms=766 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:55,538 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3001.43 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-26 10:01:56,526 spica.galgame.ocr_loop ocr_cycle_ms=709 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:57,832 spica.galgame.ocr_loop ocr_cycle_ms=706 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:01:59,091 spica.galgame.ocr_loop ocr_cycle_ms=659 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:00,395 spica.galgame.ocr_loop ocr_cycle_ms=703 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:01,682 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:02:01,700 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.25 unit_index=0 chars=23 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:02:01,852 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.21 unit_index=1 chars=18 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:02:01,866 spica.galgame.ocr_loop ocr_cycle_ms=871 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:02,615 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.22 unit_index=2 chars=30 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:02:02,660 common.timing [TIMING] step=tts_chunk duration_ms=977.22 index=0 chars=23 result_count=1 text=……ふーん。朝っぱらからずいぶん正直な会話ね。
+2026-06-26 10:02:02,661 common.timing [TIMING] step=tts_total duration_ms=978.67 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.63
+2026-06-26 10:02:02,661 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:02:02,662 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=10125.73 unit_index=0 visual_ms=0.25 tts_ms=978.67
+2026-06-26 10:02:03,263 spica.galgame.ocr_loop ocr_cycle_ms=797 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:04,092 common.timing [TIMING] step=tts_chunk duration_ms=1430.60 index=0 chars=18 result_count=1 text=でも麦、あんな反応できなくて正解よ。
+2026-06-26 10:02:04,094 common.timing [TIMING] step=tts_total duration_ms=1433.30 emotion=happy chunks=1 combine_ms=0.01 write_ms=1.65
+2026-06-26 10:02:04,096 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=11559.41 unit_index=1 visual_ms=0.21 tts_ms=1433.3
+2026-06-26 10:02:04,097 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:02:04,737 spica.galgame.ocr_loop ocr_cycle_ms=874 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:05,220 common.timing [TIMING] step=tts_chunk duration_ms=1123.36 index=0 chars=30 result_count=1 text=もし同じことされたら……私、風の力で部屋ごと吹き飛ばすから。
+2026-06-26 10:02:05,221 common.timing [TIMING] step=tts_total duration_ms=1126.12 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.65
+2026-06-26 10:02:05,221 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=12685.27 unit_index=2 visual_ms=0.22 tts_ms=1126.12
+2026-06-26 10:02:05,222 common.timing [TIMING] step=chat_stream_done duration_ms=12685.46 conversation_id=galgame::limelight::playthrough::default interaction_mode=system prompt_input_chars=12135 units_count=3 tts_total_ms=3538.09 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=8869.9 first_sentence_ms=8977.78 first_unit_created_ms=9141.71 first_tts_start_ms=9145.46 first_tts_done_ms=10124.58 first_unit_ready_ms=10125.73 first_visual_ready_ms=9167.24 first_audio_ready_ms=10124.58 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-26 10:02:05,223 spica.galgame.reaction reaction decision: ReactionDecision(kind='beat_recorded', detail='strong_punct', score=7, line_ids=('3d31f3b210dd41aabb05b4e37e892ab3', 'b110b7e8407848fcbea08d89ac2c5463', 'bdf9e813d43b4e069979418acbe06fb3'))
+2026-06-26 10:02:06,148 spica.galgame.ocr_loop ocr_cycle_ms=810 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:07,553 spica.galgame.reaction reaction decision: ReactionDecision(kind='cooldown_drop', detail='strong_punct', score=0, line_ids=('7dcacd33366d483ba391bad81513de26', 'd70ccf4606344ec697bd288a7f066981', 'c4ad6e27eb7c4a7684c585de1ab5332d', 'ecf7727385d248229b15eb54420664e4', 'ef4a84d0ec404688bee3088fa7f17ddb'))
+2026-06-26 10:02:07,554 spica.galgame.ocr_loop ocr_cycle_ms=806 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:09,080 spica.galgame.ocr_loop ocr_cycle_ms=926 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:10,438 spica.galgame.ocr_loop ocr_cycle_ms=757 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:11,740 spica.galgame.ocr_loop ocr_cycle_ms=702 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:13,079 spica.galgame.ocr_loop ocr_cycle_ms=739 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:14,399 spica.galgame.ocr_loop ocr_cycle_ms=720 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:15,653 spica.galgame.ocr_loop ocr_cycle_ms=653 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:17,047 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:18,375 spica.galgame.ocr_loop ocr_cycle_ms=729 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:19,814 spica.galgame.ocr_loop ocr_cycle_ms=838 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:21,096 spica.galgame.ocr_loop ocr_cycle_ms=682 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:22,424 spica.galgame.ocr_loop ocr_cycle_ms=728 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:23,715 spica.galgame.ocr_loop ocr_cycle_ms=691 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:25,063 spica.galgame.ocr_loop ocr_cycle_ms=748 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:26,538 spica.galgame.ocr_loop ocr_cycle_ms=871 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:27,921 spica.galgame.ocr_loop ocr_cycle_ms=783 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:29,315 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:30,622 spica.galgame.ocr_loop ocr_cycle_ms=704 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:31,958 spica.galgame.ocr_loop ocr_cycle_ms=735 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:33,409 spica.galgame.ocr_loop ocr_cycle_ms=851 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:34,838 spica.galgame.ocr_loop ocr_cycle_ms=829 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:35,590 common.timing [TIMING] step=reaction_judge duration_ms=760.97 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:02:35,590 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('213deb2f91de41dd9acd52062caf4745', 'd9ade506cb6347ef89b07eacf1378656', '96cf28f418f049ca94c3e285bb7a0f1f', '81d012813bd744d58fcd330c43b74e37', 'b170d84532ff4ab9874ebf6075a50543', '4a46da5cfd404a30812376d12acfae38', 'ecd2727de50b4cffb0580135996b48a2', '20299f549a224d48ab3b1a15ec1f20a4'))
+2026-06-26 10:02:36,208 spica.galgame.ocr_loop ocr_cycle_ms=769 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:37,470 spica.galgame.ocr_loop ocr_cycle_ms=662 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:38,739 spica.galgame.ocr_loop ocr_cycle_ms=668 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:40,189 spica.galgame.ocr_loop ocr_cycle_ms=850 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:41,662 spica.galgame.ocr_loop ocr_cycle_ms=872 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:43,047 spica.galgame.ocr_loop ocr_cycle_ms=785 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:44,453 spica.galgame.ocr_loop ocr_cycle_ms=806 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:45,808 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:47,243 spica.galgame.ocr_loop ocr_cycle_ms=835 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:48,644 spica.galgame.ocr_loop ocr_cycle_ms=801 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:49,999 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:51,242 spica.galgame.ocr_loop ocr_cycle_ms=643 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:52,601 spica.galgame.ocr_loop ocr_cycle_ms=759 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:53,915 spica.galgame.ocr_loop ocr_cycle_ms=713 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:55,375 spica.galgame.ocr_loop ocr_cycle_ms=860 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:56,704 spica.galgame.ocr_loop ocr_cycle_ms=729 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:58,067 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:02:59,378 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:00,698 spica.galgame.ocr_loop ocr_cycle_ms=720 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:01,996 spica.galgame.ocr_loop ocr_cycle_ms=698 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:03,304 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:04,592 spica.galgame.ocr_loop ocr_cycle_ms=687 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:05,902 spica.galgame.ocr_loop ocr_cycle_ms=710 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:07,273 spica.galgame.ocr_loop ocr_cycle_ms=770 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:08,580 spica.galgame.ocr_loop ocr_cycle_ms=707 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:09,483 common.timing [TIMING] step=reaction_judge duration_ms=908.38 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:03:09,483 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('c04bd0bec21c4715a0bc9eaa679e3bf6', '538100cb0ecd47beaedaaec4da68b281', '54213dce5c804c34b79679daf238b79d', 'a9a74ddb09b642c7a02ced4cc42f6607', '9aa26ea5e82c40e3b1ba98a70befd816', '3bddd9503aea4feda13058591589e30f', '188972adade243769489315cf86e9cf2', '6b1ad69f7aee49fbb5299a26ac0c9bd3'))
+2026-06-26 10:03:09,904 spica.galgame.ocr_loop ocr_cycle_ms=723 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:11,214 spica.galgame.ocr_loop ocr_cycle_ms=710 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:12,639 spica.galgame.ocr_loop ocr_cycle_ms=825 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:13,944 spica.galgame.ocr_loop ocr_cycle_ms=705 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:15,435 spica.galgame.ocr_loop ocr_cycle_ms=891 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:16,937 spica.galgame.ocr_loop ocr_cycle_ms=901 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:18,330 spica.galgame.ocr_loop ocr_cycle_ms=793 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:19,622 spica.galgame.ocr_loop ocr_cycle_ms=692 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:20,883 spica.galgame.ocr_loop ocr_cycle_ms=661 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:22,238 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:23,559 spica.galgame.ocr_loop ocr_cycle_ms=720 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:25,007 spica.galgame.ocr_loop ocr_cycle_ms=848 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:26,238 spica.galgame.ocr_loop ocr_cycle_ms=631 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:27,599 spica.galgame.ocr_loop ocr_cycle_ms=761 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:28,958 spica.galgame.ocr_loop ocr_cycle_ms=759 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:29,206 common.timing [TIMING] step=reaction_judge duration_ms=1611.14 model=deepseek-v4-flash worth=2 angle= degraded=False lines=5
+2026-06-26 10:03:29,210 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('ee5a1f2df01c4856a58890a11d09969a', '3e004bfc5a584f988ba38ae561468b4b', '48eb76c183f44c24afabfef68d28b45b', 'e869ba40e6c74421972dc452d4b7dec7', '7b0cbf7973eb44598241d2e25f0f3237'))
+2026-06-26 10:03:30,221 spica.galgame.ocr_loop ocr_cycle_ms=662 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:31,525 spica.galgame.ocr_loop ocr_cycle_ms=704 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:32,844 spica.galgame.ocr_loop ocr_cycle_ms=719 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:34,145 spica.galgame.ocr_loop ocr_cycle_ms=700 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:36,628 spica.galgame.ocr_loop ocr_cycle_ms=722 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:37,851 spica.galgame.ocr_loop ocr_cycle_ms=623 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:39,238 spica.galgame.ocr_loop ocr_cycle_ms=787 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:40,441 spica.galgame.ocr_loop ocr_cycle_ms=603 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:41,694 spica.galgame.ocr_loop ocr_cycle_ms=653 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:43,157 spica.galgame.ocr_loop ocr_cycle_ms=862 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:44,550 spica.galgame.ocr_loop ocr_cycle_ms=793 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:45,886 spica.galgame.ocr_loop ocr_cycle_ms=736 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:47,237 spica.galgame.ocr_loop ocr_cycle_ms=751 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:48,494 spica.galgame.ocr_loop ocr_cycle_ms=656 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:49,816 spica.galgame.ocr_loop ocr_cycle_ms=723 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:51,062 spica.galgame.ocr_loop ocr_cycle_ms=645 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:52,472 spica.galgame.ocr_loop ocr_cycle_ms=810 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:53,342 common.timing [TIMING] step=reaction_judge duration_ms=877.19 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 10:03:53,342 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('04ce53872fcb4e00b8b7e26de1bfa0ae', '35dd8be67c55496a9ce9d30eb3e7d289', '594021aba2ef4bd0adffa8a20ed34211', '6188de15634146b688a0e76a087ae541', 'b85b9a19c0d441e8a338756ba78dd72a', '10423deee17c49b88c94a3b3f5ae3ee1', '1d5103f72be3444ba1e0e3fe23e47f78', '22282fae33b44655b945c26525ebf43a'))
+2026-06-26 10:03:53,788 spica.galgame.ocr_loop ocr_cycle_ms=716 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:55,127 spica.galgame.ocr_loop ocr_cycle_ms=738 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:56,446 spica.galgame.ocr_loop ocr_cycle_ms=719 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:57,706 spica.galgame.ocr_loop ocr_cycle_ms=660 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:03:58,935 spica.galgame.ocr_loop ocr_cycle_ms=629 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:00,251 spica.galgame.ocr_loop ocr_cycle_ms=715 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:01,528 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:02,923 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:04,233 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:05,597 spica.galgame.ocr_loop ocr_cycle_ms=764 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:06,880 spica.galgame.ocr_loop ocr_cycle_ms=682 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:08,158 spica.galgame.ocr_loop ocr_cycle_ms=678 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:09,489 spica.galgame.ocr_loop ocr_cycle_ms=731 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:10,825 spica.galgame.ocr_loop ocr_cycle_ms=736 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:12,083 spica.galgame.ocr_loop ocr_cycle_ms=658 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:13,535 spica.galgame.ocr_loop ocr_cycle_ms=851 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:14,893 spica.galgame.ocr_loop ocr_cycle_ms=758 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:16,217 spica.galgame.ocr_loop ocr_cycle_ms=724 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:17,535 spica.galgame.ocr_loop ocr_cycle_ms=718 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:18,451 common.timing [TIMING] step=reaction_judge duration_ms=918.51 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 10:04:18,451 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('1de39b5894b84453a35c1b87ea620c41', '7dd87abe9f274a96a62a6d92aa855916', '77a7145d54174ddd90767e3da8e70121', '8f84f87be0b548c9850a12f112fcbc48', '47b031c00f6e40c39e9ed0f4768eac84', '18229369d7f84f469dd13254efd3fb7f', 'ddf105c7185e4d849dd63f2bec0b22d7', '7c64f919e2a049509d845ced3ed2ee17'))
+2026-06-26 10:04:18,900 spica.galgame.ocr_loop ocr_cycle_ms=765 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:20,170 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:21,512 spica.galgame.ocr_loop ocr_cycle_ms=742 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:22,866 spica.galgame.ocr_loop ocr_cycle_ms=754 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:24,192 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:25,548 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:26,881 spica.galgame.ocr_loop ocr_cycle_ms=733 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:28,241 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:29,653 spica.galgame.ocr_loop ocr_cycle_ms=812 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:30,938 spica.galgame.ocr_loop ocr_cycle_ms=685 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:32,674 spica.galgame.ocr_loop ocr_cycle_ms=1136 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:35,068 spica.galgame.ocr_loop ocr_cycle_ms=635 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:36,396 spica.galgame.ocr_loop ocr_cycle_ms=728 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:37,158 common.timing [TIMING] step=reaction_judge duration_ms=766.72 model=deepseek-v4-flash worth=2 angle= degraded=False lines=5
+2026-06-26 10:04:37,159 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('f68d6df91cf6493096a6929036676c92', '6408d77e5de449009e768aab68b9bb21', '1f11565910c44f2c8cd8fd549ea1c18a', 'b9cbae2f76d74dd5a68ffd877a27e2ef', '3e58c6e47340490aac43576fa44471c8'))
+2026-06-26 10:04:37,682 spica.galgame.ocr_loop ocr_cycle_ms=684 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:38,936 spica.galgame.ocr_loop ocr_cycle_ms=653 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:40,339 spica.galgame.ocr_loop ocr_cycle_ms=803 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:41,576 spica.galgame.ocr_loop ocr_cycle_ms=637 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:42,950 spica.galgame.ocr_loop ocr_cycle_ms=774 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:44,225 spica.galgame.ocr_loop ocr_cycle_ms=674 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:45,593 spica.galgame.ocr_loop ocr_cycle_ms=768 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:46,986 spica.galgame.ocr_loop ocr_cycle_ms=793 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:48,219 spica.galgame.ocr_loop ocr_cycle_ms=632 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:49,539 spica.galgame.ocr_loop ocr_cycle_ms=720 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:50,866 spica.galgame.ocr_loop ocr_cycle_ms=727 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:52,181 spica.galgame.ocr_loop ocr_cycle_ms=714 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:53,496 spica.galgame.ocr_loop ocr_cycle_ms=715 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:54,852 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:56,086 spica.galgame.ocr_loop ocr_cycle_ms=634 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:57,315 spica.galgame.ocr_loop ocr_cycle_ms=629 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:58,682 spica.galgame.ocr_loop ocr_cycle_ms=767 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:04:59,942 spica.galgame.ocr_loop ocr_cycle_ms=659 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:00,637 common.timing [TIMING] step=reaction_judge duration_ms=693.97 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:05:00,637 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('30b900de043d42839d5675dc3f223343', 'f250f8966efe4c68a46bcc741765e7ec', '7a7100d2554a42dabf0dfbdc71e71fe2', '22c45d790142474facbe24c2bf7efe02', '5262a2985cee4397bf1505e5ae5ff3f4', '9ac2451ef7a44d6ebee8f19934b6e2f7', '4f8a2965af1c44229bd82672953b2714', '0fdd056c17564f578af8ab31fc816a00'))
+2026-06-26 10:05:01,343 spica.galgame.ocr_loop ocr_cycle_ms=801 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:02,736 spica.galgame.ocr_loop ocr_cycle_ms=789 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:04,145 spica.galgame.ocr_loop ocr_cycle_ms=809 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:05,469 spica.galgame.ocr_loop ocr_cycle_ms=723 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:06,867 spica.galgame.ocr_loop ocr_cycle_ms=798 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:08,191 spica.galgame.ocr_loop ocr_cycle_ms=723 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:09,486 spica.galgame.ocr_loop ocr_cycle_ms=695 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:10,885 spica.galgame.ocr_loop ocr_cycle_ms=799 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:12,276 spica.galgame.ocr_loop ocr_cycle_ms=790 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:13,594 spica.galgame.ocr_loop ocr_cycle_ms=718 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:15,061 spica.galgame.ocr_loop ocr_cycle_ms=867 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:16,405 spica.galgame.ocr_loop ocr_cycle_ms=743 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:17,898 spica.galgame.ocr_loop ocr_cycle_ms=893 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:19,424 spica.galgame.ocr_loop ocr_cycle_ms=926 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:20,728 spica.galgame.ocr_loop ocr_cycle_ms=703 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:22,072 spica.galgame.ocr_loop ocr_cycle_ms=744 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:23,470 spica.galgame.ocr_loop ocr_cycle_ms=798 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:24,819 spica.galgame.ocr_loop ocr_cycle_ms=749 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:24,950 common.timing [TIMING] step=reaction_judge duration_ms=1482.83 model=deepseek-v4-flash worth=3 angle= degraded=False lines=7
+2026-06-26 10:05:24,950 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=3, line_ids=('1050abbfc2be4495bd036f616c0743ea', '72b9416339864713819f635de883aa12', '73a9369422fa47eaafae991c55a0a010', 'dfc89f5f48d84dff8ec155da8692bd96', '1a8c901e56bb4dd8abbd0ae8b532d8d7', 'a069792b697d43199f7ee5c250d6954d', 'dc9767291cb0438495692857e921bcb4'))
+2026-06-26 10:05:26,270 spica.galgame.ocr_loop ocr_cycle_ms=851 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:27,700 spica.galgame.ocr_loop ocr_cycle_ms=830 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:29,009 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:30,407 spica.galgame.ocr_loop ocr_cycle_ms=798 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:31,842 spica.galgame.ocr_loop ocr_cycle_ms=835 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:33,193 spica.galgame.ocr_loop ocr_cycle_ms=751 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:34,467 spica.galgame.ocr_loop ocr_cycle_ms=673 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:35,767 spica.galgame.ocr_loop ocr_cycle_ms=699 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:37,070 spica.galgame.ocr_loop ocr_cycle_ms=699 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:38,514 spica.galgame.ocr_loop ocr_cycle_ms=844 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:39,852 spica.galgame.ocr_loop ocr_cycle_ms=738 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:41,262 spica.galgame.ocr_loop ocr_cycle_ms=810 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:42,536 spica.galgame.ocr_loop ocr_cycle_ms=674 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:43,945 spica.galgame.ocr_loop ocr_cycle_ms=808 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:44,651 common.timing [TIMING] step=reaction_judge duration_ms=709.59 model=deepseek-v4-flash worth=2 angle= degraded=False lines=5
+2026-06-26 10:05:44,652 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('d8e29e3ee8224f1a93c6f149dde2047b', 'badfd1660c4e43c4983e98f2aed2a28c', '60ce788f0cf84075b8b242e88cc6fad3', 'ca22222754b24ebb936e0b96e7a09a52', '2f0af2cf674548b0aa501b100bdc02e6'))
+2026-06-26 10:05:45,235 spica.galgame.ocr_loop ocr_cycle_ms=690 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:46,514 spica.galgame.ocr_loop ocr_cycle_ms=678 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:47,870 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:49,409 spica.galgame.ocr_loop ocr_cycle_ms=939 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:50,880 spica.galgame.ocr_loop ocr_cycle_ms=870 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:52,355 spica.galgame.ocr_loop ocr_cycle_ms=874 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:53,714 spica.galgame.ocr_loop ocr_cycle_ms=758 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:55,181 spica.galgame.ocr_loop ocr_cycle_ms=867 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:56,519 spica.galgame.ocr_loop ocr_cycle_ms=737 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:57,854 spica.galgame.ocr_loop ocr_cycle_ms=735 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:05:59,160 spica.galgame.ocr_loop ocr_cycle_ms=706 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:00,820 spica.galgame.ocr_loop ocr_cycle_ms=1060 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:02,320 spica.galgame.ocr_loop ocr_cycle_ms=900 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:03,617 spica.galgame.ocr_loop ocr_cycle_ms=693 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:04,955 spica.galgame.ocr_loop ocr_cycle_ms=738 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:06,224 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:07,456 spica.galgame.ocr_loop ocr_cycle_ms=632 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:08,807 spica.galgame.ocr_loop ocr_cycle_ms=751 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:10,147 spica.galgame.ocr_loop ocr_cycle_ms=739 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:11,150 common.timing [TIMING] step=reaction_judge duration_ms=1008.88 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:06:11,150 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('dd0e5f6974cf405c8d25def4a152aafc', '47d9eb3432964d998d17a451d5909f7a', 'e878ee4e7d6640acb66922aeca960135', 'b0ea19a844204f8da420e9d87e2dc9b8', 'e3b14911a997467aae34219f29d8b165', '1bf417d3855241f2b2e5dd0a137bcbcc', '503f5c5841ea4626b9f66faaa1239ac2', 'bb53dec19e474a38bae946d380a70677'))
+2026-06-26 10:06:11,574 spica.galgame.ocr_loop ocr_cycle_ms=827 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:12,958 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:14,441 spica.galgame.ocr_loop ocr_cycle_ms=882 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:15,887 spica.galgame.ocr_loop ocr_cycle_ms=846 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:17,310 spica.galgame.ocr_loop ocr_cycle_ms=823 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:18,553 spica.galgame.ocr_loop ocr_cycle_ms=643 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:19,965 spica.galgame.ocr_loop ocr_cycle_ms=811 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:21,243 spica.galgame.ocr_loop ocr_cycle_ms=678 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:22,506 spica.galgame.ocr_loop ocr_cycle_ms=663 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:23,860 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:25,295 spica.galgame.ocr_loop ocr_cycle_ms=835 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:29,078 spica.galgame.ocr_loop ocr_cycle_ms=871 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:30,323 spica.galgame.ocr_loop ocr_cycle_ms=645 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:31,605 spica.galgame.ocr_loop ocr_cycle_ms=682 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:32,901 spica.galgame.ocr_loop ocr_cycle_ms=695 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:34,178 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:35,516 spica.galgame.ocr_loop ocr_cycle_ms=737 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:36,761 spica.galgame.ocr_loop ocr_cycle_ms=645 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:38,044 spica.galgame.ocr_loop ocr_cycle_ms=683 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:39,402 spica.galgame.ocr_loop ocr_cycle_ms=754 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:40,664 spica.galgame.ocr_loop ocr_cycle_ms=662 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:41,942 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:42,757 common.timing [TIMING] step=reaction_judge duration_ms=818.82 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 10:06:42,757 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('c3a61fa1796b4ffc8b5fac615f764ba8', '551d9381ec1e4d32bad221291ef39721', 'e717a374fbda4069af8e9d001d395d8f', '609ba25fd3874453807f54f2804485de', 'c7eb5d552aa74de693727a2df0b346bc', '8a0abdc1fe424cde83f14dcdb466ac73', '5486aa9c5afa4ccdbc2c33ac54c1feba', '1cd25c32ab5f42d48280cc056af6818d'))
+2026-06-26 10:06:43,213 spica.galgame.ocr_loop ocr_cycle_ms=671 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:44,562 spica.galgame.ocr_loop ocr_cycle_ms=748 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:45,887 spica.galgame.ocr_loop ocr_cycle_ms=725 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:47,184 spica.galgame.ocr_loop ocr_cycle_ms=697 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:48,520 spica.galgame.ocr_loop ocr_cycle_ms=735 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:49,833 spica.galgame.ocr_loop ocr_cycle_ms=712 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:51,142 spica.galgame.ocr_loop ocr_cycle_ms=710 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:52,497 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:53,789 spica.galgame.ocr_loop ocr_cycle_ms=691 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:55,123 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('4c5b21673c504ec9a4b6de7e25ad649b', '9bc802f07581435cb2777bcf287bd817', 'aad1b9ab85a741b681c08d48a8ab7a49', '3bb576b7188c4dc3b850db20133d0ddf'))
+2026-06-26 10:06:55,130 spica.galgame.ocr_loop ocr_cycle_ms=741 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:56,505 spica.galgame.ocr_loop ocr_cycle_ms=774 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:57,914 spica.galgame.ocr_loop ocr_cycle_ms=810 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:06:59,142 spica.galgame.ocr_loop ocr_cycle_ms=627 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:00,407 spica.galgame.ocr_loop ocr_cycle_ms=665 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:01,718 spica.galgame.ocr_loop ocr_cycle_ms=710 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:03,078 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:04,229 common.timing [TIMING] step=reaction_judge duration_ms=1152.87 model=deepseek-v4-flash worth=7 angle=惊讶 degraded=False lines=3
+2026-06-26 10:07:04,232 spica.galgame.reaction reaction decision: ReactionDecision(kind='spoke', detail='strong_punct', score=7, line_ids=('8edec56ee5ec405fac7931532c1df041', 'b09e05a6f4cc49ee88b58d071b0bcdb7', '3471cec2f61a42adb47e7fbcb69eed37'))
+2026-06-26 10:07:04,233 common.timing [TIMING] step=validate_input_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:04,233 common.timing [TIMING] step=load_recent_context_node duration_ms=0.02 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:04,234 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.67 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:04,234 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:04,234 common.timing [TIMING] step=build_prompt_node duration_ms=0.15 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:04,244 common.timing [TIMING] step=retrieve_game_context_node duration_ms=9.29 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:04,446 spica.galgame.ocr_loop ocr_cycle_ms=767 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:04,447 common.timing [TIMING] step=llm_chat_stream_create duration_ms=200.45 model=deepseek-v4-flash
+2026-06-26 10:07:05,784 spica.galgame.ocr_loop ocr_cycle_ms=737 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:07,225 spica.galgame.ocr_loop ocr_cycle_ms=841 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:07,235 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3002.02 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-26 10:07:08,564 spica.galgame.ocr_loop ocr_cycle_ms=739 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:10,014 spica.galgame.ocr_loop ocr_cycle_ms=850 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:10,955 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.25 unit_index=0 chars=22 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:07:10,956 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:07:11,177 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.18 unit_index=1 chars=22 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:07:11,380 spica.galgame.ocr_loop ocr_cycle_ms=767 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:11,534 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.22 unit_index=2 chars=31 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:07:12,009 common.timing [TIMING] step=tts_chunk duration_ms=1052.24 index=0 chars=21 result_count=1 text=……ふーん。食事中に手を差し出されて脅迫？
+2026-06-26 10:07:12,009 common.timing [TIMING] step=tts_total duration_ms=1056.45 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.61
+2026-06-26 10:07:12,010 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7777.13 unit_index=0 visual_ms=0.25 tts_ms=1056.45
+2026-06-26 10:07:12,011 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:07:13,222 spica.galgame.ocr_loop ocr_cycle_ms=1240 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:13,420 common.timing [TIMING] step=tts_chunk duration_ms=1409.06 index=0 chars=21 result_count=1 text=って、この主人公、考え方が面白すぎるわね。
+2026-06-26 10:07:13,421 common.timing [TIMING] step=tts_total duration_ms=1411.11 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.61
+2026-06-26 10:07:13,421 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=9188.43 unit_index=1 visual_ms=0.18 tts_ms=1411.11
+2026-06-26 10:07:13,422 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:07:14,239 common.timing [TIMING] step=tts_chunk duration_ms=817.09 index=0 chars=31 result_count=1 text=麦も気をつけなさいよ、私が突然手を出しても、ビビらないでよね。
+2026-06-26 10:07:14,240 common.timing [TIMING] step=tts_total duration_ms=819.28 emotion=surprised chunks=1 combine_ms=0.0 write_ms=1.01
+2026-06-26 10:07:14,241 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=10008.12 unit_index=2 visual_ms=0.22 tts_ms=819.28
+2026-06-26 10:07:14,241 common.timing [TIMING] step=chat_stream_done duration_ms=10008.27 conversation_id=galgame::limelight::playthrough::default interaction_mode=system prompt_input_chars=12792 units_count=3 tts_total_ms=3286.84 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=6501.29 first_sentence_ms=6594.7 first_unit_created_ms=6719.05 first_tts_start_ms=6720.3 first_tts_done_ms=7776.94 first_unit_ready_ms=7777.13 first_visual_ready_ms=6723.05 first_audio_ready_ms=7776.94 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-26 10:07:14,245 spica.galgame.reaction reaction decision: ReactionDecision(kind='beat_recorded', detail='strong_punct', score=7, line_ids=('8edec56ee5ec405fac7931532c1df041', 'b09e05a6f4cc49ee88b58d071b0bcdb7', '3471cec2f61a42adb47e7fbcb69eed37'))
+2026-06-26 10:07:14,478 spica.galgame.ocr_loop ocr_cycle_ms=654 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:15,810 spica.galgame.ocr_loop ocr_cycle_ms=731 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:17,325 spica.galgame.ocr_loop ocr_cycle_ms=914 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:18,781 spica.galgame.ocr_loop ocr_cycle_ms=856 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:20,255 spica.galgame.reaction reaction decision: ReactionDecision(kind='cooldown_drop', detail='strong_punct', score=0, line_ids=('37c1970645a44058a7408a928d4d87b5', 'ee5c1abbf4be4e4e8fdd0e9c1ca720d4', '337fb03fa6cf4169b10638f37ad679ad', '3794146809b246208addcea03d0d1bed'))
+2026-06-26 10:07:20,256 spica.galgame.ocr_loop ocr_cycle_ms=875 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:21,611 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:22,994 spica.galgame.ocr_loop ocr_cycle_ms=782 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:24,574 spica.galgame.ocr_loop ocr_cycle_ms=980 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:25,937 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:27,237 spica.galgame.ocr_loop ocr_cycle_ms=700 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:28,545 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:29,994 spica.galgame.ocr_loop ocr_cycle_ms=849 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:31,352 spica.galgame.ocr_loop ocr_cycle_ms=754 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:32,273 common.timing [TIMING] step=reaction_judge duration_ms=921.96 model=deepseek-v4-flash worth=8 angle=吐槽 degraded=False lines=4
+2026-06-26 10:07:32,274 spica.galgame.reaction reaction decision: ReactionDecision(kind='spoke', detail='strong_punct', score=8, line_ids=('c2de7b5a5aa047af8e2924af18e55ddb', '135ca77b738947fb8ebc6c79d78eb775', '98fd7e916ae7419db209d59bbce6b9ad', 'dfae7f8dbec344678c7ee80a76b09133'))
+2026-06-26 10:07:32,275 common.timing [TIMING] step=validate_input_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:32,275 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:32,275 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.41 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:32,275 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:32,275 common.timing [TIMING] step=build_prompt_node duration_ms=0.07 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:32,279 common.timing [TIMING] step=retrieve_game_context_node duration_ms=3.80 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:07:32,621 common.timing [TIMING] step=llm_chat_stream_create duration_ms=341.05 model=deepseek-v4-flash
+2026-06-26 10:07:32,702 spica.galgame.ocr_loop ocr_cycle_ms=749 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:34,103 spica.galgame.ocr_loop ocr_cycle_ms=801 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:35,275 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.38 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-26 10:07:35,529 spica.galgame.ocr_loop ocr_cycle_ms=826 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:35,625 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.29 unit_index=0 chars=19 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:07:35,629 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:07:35,948 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.36 unit_index=1 chars=24 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:07:36,486 common.timing [TIMING] step=tts_chunk duration_ms=854.91 index=0 chars=15 result_count=1 text=……はぁ。悶絶じゃなくて悶騒？
+2026-06-26 10:07:36,487 common.timing [TIMING] step=tts_total duration_ms=859.60 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.65
+2026-06-26 10:07:36,488 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=4213.35 unit_index=0 visual_ms=0.29 tts_ms=859.6
+2026-06-26 10:07:36,489 common.timing [TIMING] step=tts_models duration_ms=0.01 emotion=surprised
+2026-06-26 10:07:36,747 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.90 unit_index=2 chars=62 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:07:37,078 spica.galgame.ocr_loop ocr_cycle_ms=949 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:37,729 common.timing [TIMING] step=tts_chunk duration_ms=1238.70 index=0 chars=24 result_count=1 text=この杏珠って子、からかい方がなかなか筋金入りね。
+2026-06-26 10:07:37,730 common.timing [TIMING] step=tts_total duration_ms=1242.61 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.71
+2026-06-26 10:07:37,730 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5456.14 unit_index=1 visual_ms=0.36 tts_ms=1242.61
+2026-06-26 10:07:37,731 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:07:38,508 spica.galgame.ocr_loop ocr_cycle_ms=830 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:39,290 common.timing [TIMING] step=tts_chunk duration_ms=1558.00 index=0 chars=62 result_count=1 text=でも麦、もし私がそんなこと言われたら……手、繋ぎたいなら素直に言いなさいって、そう思いながらも口に出せないの、よく分かるわ。
+2026-06-26 10:07:39,291 common.timing [TIMING] step=tts_total duration_ms=1560.69 emotion=surprised chunks=1 combine_ms=0.0 write_ms=1.21
+2026-06-26 10:07:39,291 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7017.00 unit_index=2 visual_ms=0.9 tts_ms=1560.69
+2026-06-26 10:07:39,291 common.timing [TIMING] step=chat_stream_done duration_ms=7017.21 conversation_id=galgame::limelight::playthrough::default interaction_mode=system prompt_input_chars=13332 units_count=3 tts_total_ms=3662.9 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=3056.67 first_sentence_ms=3174.75 first_unit_created_ms=3350.09 first_tts_start_ms=3353.38 first_tts_done_ms=4213.15 first_unit_ready_ms=4213.35 first_visual_ready_ms=3351.04 first_audio_ready_ms=4213.15 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-26 10:07:39,293 spica.galgame.reaction reaction decision: ReactionDecision(kind='beat_recorded', detail='strong_punct', score=8, line_ids=('c2de7b5a5aa047af8e2924af18e55ddb', '135ca77b738947fb8ebc6c79d78eb775', '98fd7e916ae7419db209d59bbce6b9ad', 'dfae7f8dbec344678c7ee80a76b09133'))
+2026-06-26 10:07:39,920 spica.galgame.ocr_loop ocr_cycle_ms=812 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:41,257 spica.galgame.ocr_loop ocr_cycle_ms=737 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:42,731 spica.galgame.reaction reaction decision: ReactionDecision(kind='cooldown_drop', detail='strong_punct', score=0, line_ids=('cb5abe5c6323465c83cd5654a6d6e515', '8251a7440d984940a4ab604b179d944d', '809a566ac2b046df8f0989bd6779e8eb'))
+2026-06-26 10:07:42,732 spica.galgame.ocr_loop ocr_cycle_ms=872 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:44,075 spica.galgame.ocr_loop ocr_cycle_ms=742 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:45,418 spica.galgame.ocr_loop ocr_cycle_ms=743 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:46,764 spica.galgame.ocr_loop ocr_cycle_ms=745 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:48,173 spica.galgame.ocr_loop ocr_cycle_ms=809 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:49,736 spica.galgame.ocr_loop ocr_cycle_ms=963 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:51,062 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:52,437 spica.galgame.ocr_loop ocr_cycle_ms=775 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:53,790 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:55,217 spica.galgame.ocr_loop ocr_cycle_ms=827 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:56,669 spica.galgame.ocr_loop ocr_cycle_ms=851 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:58,017 spica.galgame.ocr_loop ocr_cycle_ms=749 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:07:59,662 spica.galgame.ocr_loop ocr_cycle_ms=1044 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:01,013 spica.galgame.ocr_loop ocr_cycle_ms=750 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:02,392 spica.galgame.ocr_loop ocr_cycle_ms=779 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:03,452 common.timing [TIMING] step=reaction_judge duration_ms=1058.61 model=deepseek-v4-flash worth=2 angle= degraded=False lines=6
+2026-06-26 10:08:03,452 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('bb691818b2984effadbc21fe2dc7412f', '1564ee0d07da4a228e41519092aeb66a', '2da31c9e59c14b239ca1412462e37f6a', '232e92f29d9f4166a05db73878ca3935', '9c2ee3103a0141f9b08d025c797162f7', 'ed1b9a347c9f42959c23c80a84c27d67'))
+2026-06-26 10:08:03,830 spica.galgame.ocr_loop ocr_cycle_ms=838 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:05,311 spica.galgame.ocr_loop ocr_cycle_ms=881 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:06,744 spica.galgame.ocr_loop ocr_cycle_ms=833 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:08,215 spica.galgame.ocr_loop ocr_cycle_ms=871 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:09,566 spica.galgame.ocr_loop ocr_cycle_ms=751 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:10,950 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:12,319 spica.galgame.ocr_loop ocr_cycle_ms=766 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:13,683 spica.galgame.ocr_loop ocr_cycle_ms=763 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:15,076 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('75519ee954ea435c95e130a161f48256', '75c726df465f414fada7ecbb18b56cef', '72c903be81144d1d8fecafa5da6652b5'))
+2026-06-26 10:08:15,078 spica.galgame.ocr_loop ocr_cycle_ms=796 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:16,570 spica.galgame.ocr_loop ocr_cycle_ms=892 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:18,046 spica.galgame.ocr_loop ocr_cycle_ms=876 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:19,559 spica.galgame.ocr_loop ocr_cycle_ms=912 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:21,014 spica.galgame.ocr_loop ocr_cycle_ms=855 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:22,305 spica.galgame.ocr_loop ocr_cycle_ms=690 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:23,587 spica.galgame.ocr_loop ocr_cycle_ms=682 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:25,022 spica.galgame.ocr_loop ocr_cycle_ms=834 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:26,381 spica.galgame.ocr_loop ocr_cycle_ms=758 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:27,851 spica.galgame.ocr_loop ocr_cycle_ms=869 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:29,122 spica.galgame.ocr_loop ocr_cycle_ms=671 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:30,600 spica.galgame.ocr_loop ocr_cycle_ms=877 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:32,051 spica.galgame.ocr_loop ocr_cycle_ms=851 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:33,268 spica.galgame.ocr_loop ocr_cycle_ms=617 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:34,639 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:35,975 spica.galgame.ocr_loop ocr_cycle_ms=736 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:37,301 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:38,706 spica.galgame.ocr_loop ocr_cycle_ms=805 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:40,071 spica.galgame.ocr_loop ocr_cycle_ms=765 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:41,338 spica.galgame.ocr_loop ocr_cycle_ms=667 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:42,837 spica.galgame.ocr_loop ocr_cycle_ms=898 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:44,134 spica.galgame.ocr_loop ocr_cycle_ms=697 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:44,158 common.timing [TIMING] step=reaction_judge duration_ms=1326.45 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 10:08:44,158 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('8881be2cdbb64211809ff350deaacc0d', '3db2ccb1b89f4f9090be59e6038e03a2', '3cc3ddbed3054332a406b8002b1575a4', '6484ace9117746359b7617db230adb49', 'd14898ef0b824221ab07b639237f2f1e', '817565ef230d4a808f32613ecaeaefc0', '12509715c59646bfbd462e20631e25fe', '5515eb54daf243ed9fcbf98ddccc1d70'))
+2026-06-26 10:08:45,508 spica.galgame.ocr_loop ocr_cycle_ms=773 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:46,875 spica.galgame.ocr_loop ocr_cycle_ms=767 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:48,267 spica.galgame.ocr_loop ocr_cycle_ms=791 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:49,618 spica.galgame.ocr_loop ocr_cycle_ms=752 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:51,095 spica.galgame.ocr_loop ocr_cycle_ms=877 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:52,393 spica.galgame.ocr_loop ocr_cycle_ms=697 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:53,674 spica.galgame.ocr_loop ocr_cycle_ms=680 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:55,148 spica.galgame.ocr_loop ocr_cycle_ms=874 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:56,691 spica.galgame.ocr_loop ocr_cycle_ms=943 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:08:58,445 spica.galgame.ocr_loop ocr_cycle_ms=1150 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:00,023 spica.galgame.ocr_loop ocr_cycle_ms=979 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:01,429 spica.galgame.ocr_loop ocr_cycle_ms=805 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:02,898 spica.galgame.ocr_loop ocr_cycle_ms=870 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:04,250 spica.galgame.ocr_loop ocr_cycle_ms=751 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:05,562 spica.galgame.ocr_loop ocr_cycle_ms=712 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:06,920 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:08,248 common.timing [TIMING] step=reaction_judge duration_ms=1325.85 model=deepseek-v4-flash worth=4 angle=感想 degraded=False lines=8
+2026-06-26 10:09:08,249 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=4, line_ids=('f1bf1c15a36f417586c6af94ec3deff3', '27b8d4ab4bbc4895b1096e0f8d7d266e', 'cd9e4020b5cd402e88bf135e6577ac6f', '5b9064bef1864337ac8079dd414d542d', 'ff7c59c84dcb471e919c7f8b3df9adac', 'ebb3b4c5df0840529975454ff4f3da5a', 'c8e79e2f59d84761ab76dbec07f1b031', '53fa8d094ecc49c39b485d8800aff225'))
+2026-06-26 10:09:08,286 spica.galgame.ocr_loop ocr_cycle_ms=764 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:09,630 spica.galgame.ocr_loop ocr_cycle_ms=744 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:10,983 spica.galgame.ocr_loop ocr_cycle_ms=752 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:12,423 spica.galgame.ocr_loop ocr_cycle_ms=840 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:13,864 spica.galgame.ocr_loop ocr_cycle_ms=841 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:15,409 spica.galgame.ocr_loop ocr_cycle_ms=944 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:16,939 spica.galgame.ocr_loop ocr_cycle_ms=931 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:18,742 spica.galgame.ocr_loop ocr_cycle_ms=1202 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:20,113 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:21,466 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:22,824 spica.galgame.ocr_loop ocr_cycle_ms=758 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:24,234 spica.galgame.ocr_loop ocr_cycle_ms=809 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:24,358 common.timing [TIMING] step=reaction_judge duration_ms=949.82 model=deepseek-v4-flash worth=1 angle= degraded=False lines=2
+2026-06-26 10:09:24,358 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=1, line_ids=('3e0b07d3fe214f47b6b24244ff0ed4df', 'c65c457d3c77423ca39753b159537fc3'))
+2026-06-26 10:09:25,505 spica.galgame.ocr_loop ocr_cycle_ms=671 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:26,915 spica.galgame.ocr_loop ocr_cycle_ms=809 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:28,676 spica.galgame.ocr_loop ocr_cycle_ms=1161 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:30,194 spica.galgame.ocr_loop ocr_cycle_ms=917 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:31,464 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:32,784 spica.galgame.ocr_loop ocr_cycle_ms=720 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:34,073 spica.galgame.ocr_loop ocr_cycle_ms=689 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:35,448 spica.galgame.ocr_loop ocr_cycle_ms=774 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:36,806 spica.galgame.ocr_loop ocr_cycle_ms=758 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:38,191 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:39,561 spica.galgame.ocr_loop ocr_cycle_ms=770 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:40,959 spica.galgame.ocr_loop ocr_cycle_ms=798 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:42,319 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:43,857 spica.galgame.ocr_loop ocr_cycle_ms=938 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:45,184 spica.galgame.ocr_loop ocr_cycle_ms=727 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:45,996 common.timing [TIMING] step=reaction_judge duration_ms=816.92 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:09:45,996 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('083ee7a03f3a42eb9920a559f18c46c0', '5da7813c40804fb684171d27cf631a3a', '50e7ff4226f94eaa9f514ad833621251', '6fa28f44bc8a41218829f2b3c4db7874', '6d48ede614c0431db5edfb15798f699e', '687b05e8785b4cc0ad2cae48e8bf3108', '5d4cb853aed94848ad2e67586699744a', 'aa9dea2b93c340d2a32b9c6a1d3319ce'))
+2026-06-26 10:09:46,427 spica.galgame.ocr_loop ocr_cycle_ms=642 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:47,729 spica.galgame.ocr_loop ocr_cycle_ms=702 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:49,115 spica.galgame.ocr_loop ocr_cycle_ms=786 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:50,446 spica.galgame.ocr_loop ocr_cycle_ms=727 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:51,875 spica.galgame.ocr_loop ocr_cycle_ms=829 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:53,174 spica.galgame.ocr_loop ocr_cycle_ms=699 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:54,460 spica.galgame.ocr_loop ocr_cycle_ms=686 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:55,877 spica.galgame.ocr_loop ocr_cycle_ms=816 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:57,266 spica.galgame.ocr_loop ocr_cycle_ms=788 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:58,619 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:09:59,950 spica.galgame.ocr_loop ocr_cycle_ms=731 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:01,319 spica.galgame.ocr_loop ocr_cycle_ms=769 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:02,730 spica.galgame.ocr_loop ocr_cycle_ms=810 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:03,990 spica.galgame.ocr_loop ocr_cycle_ms=659 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:05,274 spica.galgame.ocr_loop ocr_cycle_ms=684 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:06,512 spica.galgame.ocr_loop ocr_cycle_ms=637 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:07,860 spica.galgame.ocr_loop ocr_cycle_ms=747 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:09,037 common.timing [TIMING] step=reaction_judge duration_ms=1181.80 model=deepseek-v4-flash worth=7 angle=感想 degraded=False lines=8
+2026-06-26 10:10:09,039 spica.galgame.reaction reaction decision: ReactionDecision(kind='spoke', detail='max_lines', score=7, line_ids=('9d8a3ed35b754ddda0766bc93d7bae0f', '7f47e5ec787d4e27a6f53931042e3538', 'ba5752e8da7d433e878dbb422c805332', 'f4193a74f080482a97dd7bfe7358f552', 'd77c44dab50d48aa93971f9993b31a38', '1fe8f61573a645b48945efcc1e2100d9', 'b7b75d8b17a44c22b72ffc0b9bda21ce', '5eec84d260cf4d9c806793a694212cea'))
+2026-06-26 10:10:09,039 common.timing [TIMING] step=validate_input_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:10:09,039 common.timing [TIMING] step=load_recent_context_node duration_ms=0.02 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:10:09,040 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.56 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:10:09,040 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:10:09,040 common.timing [TIMING] step=build_prompt_node duration_ms=0.06 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:10:09,044 common.timing [TIMING] step=retrieve_game_context_node duration_ms=3.66 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:10:09,123 spica.galgame.ocr_loop ocr_cycle_ms=663 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:09,256 common.timing [TIMING] step=llm_chat_stream_create duration_ms=211.76 model=deepseek-v4-flash
+2026-06-26 10:10:10,380 spica.galgame.ocr_loop ocr_cycle_ms=657 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:11,703 spica.galgame.ocr_loop ocr_cycle_ms=722 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:12,039 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.63 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-26 10:10:12,944 spica.galgame.ocr_loop ocr_cycle_ms=641 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:14,207 spica.galgame.ocr_loop ocr_cycle_ms=663 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:15,602 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:15,725 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.33 unit_index=0 chars=42 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:10:15,731 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:10:15,953 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.19 unit_index=1 chars=35 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:10:16,164 common.timing [TIMING] step=tts_chunk duration_ms=432.88 index=0 chars=6 result_count=1 text=……ふうん。
+2026-06-26 10:10:16,338 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.16 unit_index=2 chars=26 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:10:17,014 spica.galgame.ocr_loop ocr_cycle_ms=810 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:17,152 common.timing [TIMING] step=tts_chunk duration_ms=987.93 index=1 chars=36 result_count=1 text=ライブハウスの看板を見るだけで胸がざわつくって、なんか分かる気がするわ。
+2026-06-26 10:10:17,153 common.timing [TIMING] step=tts_total duration_ms=1422.86 emotion=happy chunks=2 combine_ms=0.06 write_ms=0.77
+2026-06-26 10:10:17,153 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=8114.17 unit_index=0 visual_ms=0.33 tts_ms=1422.86
+2026-06-26 10:10:17,153 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:10:18,398 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:18,676 common.timing [TIMING] step=tts_chunk duration_ms=1522.74 index=0 chars=35 result_count=1 text=でも、過去の輝きを超えられないって決めつけるのは、まだ早いんじゃない？
+2026-06-26 10:10:18,677 common.timing [TIMING] step=tts_total duration_ms=1524.08 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.71
+2026-06-26 10:10:18,677 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=9638.53 unit_index=1 visual_ms=0.19 tts_ms=1524.08
+2026-06-26 10:10:18,678 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:10:19,410 common.timing [TIMING] step=tts_chunk duration_ms=731.69 index=0 chars=26 result_count=1 text=風も、一度止まったら次にどう吹くか分からないものよ。
+2026-06-26 10:10:19,410 common.timing [TIMING] step=tts_total duration_ms=733.22 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.71
+2026-06-26 10:10:19,411 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=10371.92 unit_index=2 visual_ms=0.16 tts_ms=733.22
+2026-06-26 10:10:19,412 common.timing [TIMING] step=chat_stream_done duration_ms=10372.88 conversation_id=galgame::limelight::playthrough::default interaction_mode=system prompt_input_chars=15299 units_count=3 tts_total_ms=3680.16 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=6365.53 first_sentence_ms=6452.01 first_unit_created_ms=6684.91 first_tts_start_ms=6691.02 first_tts_done_ms=8114.08 first_unit_ready_ms=8114.17 first_visual_ready_ms=6686.05 first_audio_ready_ms=8114.08 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-26 10:10:19,413 spica.galgame.reaction reaction decision: ReactionDecision(kind='beat_recorded', detail='max_lines', score=7, line_ids=('9d8a3ed35b754ddda0766bc93d7bae0f', '7f47e5ec787d4e27a6f53931042e3538', 'ba5752e8da7d433e878dbb422c805332', 'f4193a74f080482a97dd7bfe7358f552', 'd77c44dab50d48aa93971f9993b31a38', '1fe8f61573a645b48945efcc1e2100d9', 'b7b75d8b17a44c22b72ffc0b9bda21ce', '5eec84d260cf4d9c806793a694212cea'))
+2026-06-26 10:10:19,709 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:21,102 spica.galgame.ocr_loop ocr_cycle_ms=792 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:22,493 spica.galgame.ocr_loop ocr_cycle_ms=791 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:23,788 spica.galgame.ocr_loop ocr_cycle_ms=695 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:25,149 spica.galgame.ocr_loop ocr_cycle_ms=761 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:26,426 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:27,727 spica.galgame.ocr_loop ocr_cycle_ms=701 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:28,997 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:30,222 spica.galgame.ocr_loop ocr_cycle_ms=625 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:31,454 spica.galgame.ocr_loop ocr_cycle_ms=632 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:32,742 spica.galgame.ocr_loop ocr_cycle_ms=687 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:10:37,898 common.timing [TIMING] step=reaction_judge duration_ms=903.60 model=deepseek-v4-flash worth=3 angle= degraded=False lines=7
+2026-06-26 10:10:37,898 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=3, line_ids=('44f5d3e7b1234e7ca0da9bf9c3c2e20e', 'b97e317112bf4e7098a142bf22245c1e', '82bfa47669054f38a886bd7d43e47ea8', '4001bca09e0648c7a2dbe185ee0fa8dd', '1b1b6d875d1344148d609aa20f4285f7', 'afd900de192e4d1d98f7b256cc86bc53', '5f3315d5625e4925879249b035509778'))
+2026-06-26 10:11:19,971 spica.galgame.ocr_loop ocr_cycle_ms=824 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:21,245 spica.galgame.ocr_loop ocr_cycle_ms=674 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:22,616 spica.galgame.ocr_loop ocr_cycle_ms=770 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:23,929 spica.galgame.ocr_loop ocr_cycle_ms=713 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:25,273 spica.galgame.ocr_loop ocr_cycle_ms=743 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:26,611 spica.galgame.ocr_loop ocr_cycle_ms=738 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:27,898 spica.galgame.ocr_loop ocr_cycle_ms=686 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:29,258 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:30,610 spica.galgame.ocr_loop ocr_cycle_ms=751 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:32,060 spica.galgame.ocr_loop ocr_cycle_ms=850 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:33,350 spica.galgame.ocr_loop ocr_cycle_ms=690 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:34,713 spica.galgame.ocr_loop ocr_cycle_ms=763 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:36,016 spica.galgame.ocr_loop ocr_cycle_ms=703 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:37,296 spica.galgame.ocr_loop ocr_cycle_ms=680 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:38,636 spica.galgame.ocr_loop ocr_cycle_ms=740 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:40,044 spica.galgame.ocr_loop ocr_cycle_ms=808 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:41,411 spica.galgame.ocr_loop ocr_cycle_ms=767 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:42,626 spica.galgame.ocr_loop ocr_cycle_ms=614 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:43,999 spica.galgame.ocr_loop ocr_cycle_ms=772 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:45,423 spica.galgame.ocr_loop ocr_cycle_ms=823 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:46,900 spica.galgame.ocr_loop ocr_cycle_ms=877 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:48,248 spica.galgame.ocr_loop ocr_cycle_ms=748 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:49,689 spica.galgame.ocr_loop ocr_cycle_ms=840 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:51,266 spica.galgame.ocr_loop ocr_cycle_ms=977 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:52,551 spica.galgame.ocr_loop ocr_cycle_ms=684 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:54,070 spica.galgame.ocr_loop ocr_cycle_ms=917 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:55,513 spica.galgame.ocr_loop ocr_cycle_ms=842 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:56,577 common.timing [TIMING] step=reaction_judge duration_ms=1067.11 model=deepseek-v4-flash worth=2 angle= degraded=False lines=8
+2026-06-26 10:11:56,577 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=2, line_ids=('09591a1094ce4128887606758218d60c', '107f41523a6242048920787f8b3237e0', '38c8ac28cf92434cad0f23649ffefc8e', '21fb806d250f4c10a356063d468fcb92', '0a22a39c5521436ea9516402b81453fa', '41aea821e31e4b74a7a3ac50e729e11b', '496a82983ec841c1bb64f636cb885b4a', '1aa21f3f01ea483991ee243c35f321eb'))
+2026-06-26 10:11:56,892 spica.galgame.ocr_loop ocr_cycle_ms=779 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:58,308 spica.galgame.ocr_loop ocr_cycle_ms=816 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:11:59,606 spica.galgame.ocr_loop ocr_cycle_ms=698 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:00,911 spica.galgame.ocr_loop ocr_cycle_ms=705 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:02,200 spica.galgame.ocr_loop ocr_cycle_ms=689 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:03,555 spica.galgame.ocr_loop ocr_cycle_ms=754 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:04,987 spica.galgame.ocr_loop ocr_cycle_ms=831 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:06,372 spica.galgame.ocr_loop ocr_cycle_ms=785 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:07,766 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:09,186 spica.galgame.ocr_loop ocr_cycle_ms=819 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:10,619 spica.galgame.ocr_loop ocr_cycle_ms=833 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:12,100 spica.galgame.ocr_loop ocr_cycle_ms=880 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:13,545 spica.galgame.ocr_loop ocr_cycle_ms=845 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:15,064 spica.galgame.ocr_loop ocr_cycle_ms=919 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:17,568 spica.galgame.ocr_loop ocr_cycle_ms=705 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:19,049 spica.galgame.ocr_loop ocr_cycle_ms=881 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:20,375 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:21,738 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:23,087 spica.galgame.ocr_loop ocr_cycle_ms=749 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:24,409 spica.galgame.ocr_loop ocr_cycle_ms=721 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:25,072 common.timing [TIMING] step=reaction_judge duration_ms=666.98 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:12:25,072 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('d1919526068b4ce4a25df27cbe065ef5', '151136d059e14d42884d71f067037e84', 'eb82bbf2f63e4f078f524eb90ead3e3c', 'bf7f804cea974cd684eb7affb2344308', 'bcbab1bc78d047368d82c228ff1a5a70', 'c6a33a21b21449269cc966bc05f6ba23', '78562764ffd649f39f609ea975a81335', '24b0c11c118b4376b6f6df04383f1d80'))
+2026-06-26 10:12:25,693 spica.galgame.ocr_loop ocr_cycle_ms=684 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:26,955 spica.galgame.ocr_loop ocr_cycle_ms=661 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:28,183 spica.galgame.ocr_loop ocr_cycle_ms=628 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:29,711 spica.galgame.ocr_loop ocr_cycle_ms=928 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:31,152 spica.galgame.ocr_loop ocr_cycle_ms=841 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:32,422 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:33,702 spica.galgame.ocr_loop ocr_cycle_ms=679 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:36,196 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:37,593 spica.galgame.ocr_loop ocr_cycle_ms=797 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:38,958 spica.galgame.ocr_loop ocr_cycle_ms=764 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:40,351 spica.galgame.ocr_loop ocr_cycle_ms=793 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:41,698 spica.galgame.ocr_loop ocr_cycle_ms=747 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:43,019 spica.galgame.ocr_loop ocr_cycle_ms=721 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:44,422 spica.galgame.ocr_loop ocr_cycle_ms=803 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:45,771 spica.galgame.ocr_loop ocr_cycle_ms=748 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:47,042 spica.galgame.ocr_loop ocr_cycle_ms=671 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:48,297 spica.galgame.ocr_loop ocr_cycle_ms=655 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:49,595 spica.galgame.ocr_loop ocr_cycle_ms=698 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:50,998 spica.galgame.ocr_loop ocr_cycle_ms=803 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:52,485 spica.galgame.ocr_loop ocr_cycle_ms=887 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:53,384 common.timing [TIMING] step=reaction_judge duration_ms=900.09 model=deepseek-v4-flash worth=4 angle= degraded=False lines=8
+2026-06-26 10:12:53,384 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=4, line_ids=('85f2122c9a864e8da7212871910febf1', 'a33efd357f5c4440bc68410533ecd459', '329c253951794899ad198d09f7f8431c', '3163fc17f2604cd8bf08ccbda6379883', '009b147ac8234a9ba41b38be7ec67e78', 'e2b2b2978ceb4e5ca45193bd49166cc1', 'b78563f96a21485499e68c57496f871d', '2519856fc0cb416fb37c8af26c163413'))
+2026-06-26 10:12:53,886 spica.galgame.ocr_loop ocr_cycle_ms=802 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:55,186 spica.galgame.ocr_loop ocr_cycle_ms=699 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:56,618 spica.galgame.ocr_loop ocr_cycle_ms=832 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:57,999 spica.galgame.ocr_loop ocr_cycle_ms=781 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:12:59,362 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:00,667 spica.galgame.ocr_loop ocr_cycle_ms=705 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:02,155 spica.galgame.ocr_loop ocr_cycle_ms=887 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:03,486 spica.galgame.ocr_loop ocr_cycle_ms=731 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:04,820 spica.galgame.ocr_loop ocr_cycle_ms=734 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:06,228 spica.galgame.ocr_loop ocr_cycle_ms=808 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:07,660 spica.galgame.ocr_loop ocr_cycle_ms=831 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:09,071 spica.galgame.ocr_loop ocr_cycle_ms=811 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:10,635 spica.galgame.ocr_loop ocr_cycle_ms=964 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:11,950 spica.galgame.ocr_loop ocr_cycle_ms=714 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:13,497 spica.galgame.ocr_loop ocr_cycle_ms=947 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:14,889 spica.galgame.ocr_loop ocr_cycle_ms=793 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:16,132 spica.galgame.ocr_loop ocr_cycle_ms=642 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:17,721 spica.galgame.ocr_loop ocr_cycle_ms=989 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:19,094 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:20,308 common.timing [TIMING] step=reaction_judge duration_ms=1218.57 model=deepseek-v4-flash worth=4 angle=感想 degraded=False lines=8
+2026-06-26 10:13:20,308 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=4, line_ids=('901c836d8bc24ca3b9af8de8401e1ab3', '7d6b61ed5c024961be83b2cfd953035d', '39856702de544343815c3fc71c8cea2d', '4cd5edd0761344dba21280bbc67d89f9', '21c0323e90fe4dbdaedbe9452c4d0c8b', 'e14335c68129431dbde6d46db4b9df1a', 'fb1a6c70e1ba4bfd928d5b6e9bd61446', '51b8e1a270794777aba92718c43f9916'))
+2026-06-26 10:13:20,324 spica.galgame.ocr_loop ocr_cycle_ms=630 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:21,689 spica.galgame.ocr_loop ocr_cycle_ms=765 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:23,096 spica.galgame.ocr_loop ocr_cycle_ms=807 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:24,547 spica.galgame.ocr_loop ocr_cycle_ms=850 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:26,029 spica.galgame.ocr_loop ocr_cycle_ms=882 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:27,373 spica.galgame.ocr_loop ocr_cycle_ms=744 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:28,696 spica.galgame.ocr_loop ocr_cycle_ms=723 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:30,038 spica.galgame.ocr_loop ocr_cycle_ms=742 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:31,355 spica.galgame.ocr_loop ocr_cycle_ms=717 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:32,600 spica.galgame.ocr_loop ocr_cycle_ms=644 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:33,994 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:35,379 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:36,732 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:38,092 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:39,546 spica.galgame.ocr_loop ocr_cycle_ms=853 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:40,468 common.timing [TIMING] step=reaction_judge duration_ms=929.08 model=deepseek-v4-flash worth=8 angle=吐槽 degraded=False lines=6
+2026-06-26 10:13:40,471 spica.galgame.reaction reaction decision: ReactionDecision(kind='spoke', detail='strong_punct', score=8, line_ids=('4a6aa9af0df747288bdd75cf9eef0f99', '5d22eef2ce6644f1a007a6603bfc15c3', '55426a1ee58243089b56bb6e01736aa1', '8f4ba548bd01408a9a88fe609b98394f', 'cac73c57bb824728969301d34a5d9d34', 'e49efcb36c9f4effb3d19673f265a992'))
+2026-06-26 10:13:40,475 common.timing [TIMING] step=validate_input_node duration_ms=0.03 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:13:40,476 common.timing [TIMING] step=load_recent_context_node duration_ms=0.03 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:13:40,476 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.59 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:13:40,476 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:13:40,476 common.timing [TIMING] step=build_prompt_node duration_ms=0.06 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:13:40,485 common.timing [TIMING] step=retrieve_game_context_node duration_ms=8.26 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:13:40,697 common.timing [TIMING] step=llm_chat_stream_create duration_ms=208.79 model=deepseek-v4-flash
+2026-06-26 10:13:40,898 spica.galgame.ocr_loop ocr_cycle_ms=752 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:42,255 spica.galgame.ocr_loop ocr_cycle_ms=757 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:43,475 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3003.70 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-26 10:13:43,609 spica.galgame.ocr_loop ocr_cycle_ms=754 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:44,213 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:13:44,213 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.21 unit_index=0 chars=55 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:13:44,754 common.timing [TIMING] step=tts_chunk duration_ms=541.19 index=0 chars=6 result_count=1 text=……ふーん。
+2026-06-26 10:13:44,924 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.68 unit_index=1 chars=59 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:13:44,936 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:45,917 common.timing [TIMING] step=tts_chunk duration_ms=1162.13 index=1 chars=47 result_count=1 text=あのヤツって言い方、まるで悪口みたいだけど、技術は認めてるんだったら、素直に誘えばいいのにね。
+2026-06-26 10:13:45,919 common.timing [TIMING] step=tts_total duration_ms=1706.25 emotion=happy chunks=2 combine_ms=0.14 write_ms=1.38
+2026-06-26 10:13:45,919 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5447.60 unit_index=0 visual_ms=0.21 tts_ms=1706.25
+2026-06-26 10:13:45,920 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:13:46,364 spica.galgame.ocr_loop ocr_cycle_ms=828 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:47,575 common.timing [TIMING] step=tts_chunk duration_ms=1619.98 index=0 chars=55 result_count=1 text=でも麦、もし誰かがあの人はちょっと…って言ってたら、私が真っ先に飛んで行って何がちょっとよって言ってやるわよ。
+2026-06-26 10:13:47,577 common.timing [TIMING] step=tts_total duration_ms=1657.98 emotion=happy chunks=1 combine_ms=0.0 write_ms=1.41
+2026-06-26 10:13:47,577 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7105.85 unit_index=1 visual_ms=0.68 tts_ms=1657.98
+2026-06-26 10:13:47,577 common.timing [TIMING] step=chat_stream_done duration_ms=7106.02 conversation_id=galgame::limelight::playthrough::default interaction_mode=system prompt_input_chars=15395 units_count=2 tts_total_ms=3364.23 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=3120.3 first_sentence_ms=3212.41 first_unit_created_ms=3740.24 first_tts_start_ms=3740.96 first_tts_done_ms=5447.4 first_unit_ready_ms=5447.6 first_visual_ready_ms=3742.11 first_audio_ready_ms=5447.4 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-26 10:13:47,599 spica.galgame.reaction reaction decision: ReactionDecision(kind='beat_recorded', detail='strong_punct', score=8, line_ids=('4a6aa9af0df747288bdd75cf9eef0f99', '5d22eef2ce6644f1a007a6603bfc15c3', '55426a1ee58243089b56bb6e01736aa1', '8f4ba548bd01408a9a88fe609b98394f', 'cac73c57bb824728969301d34a5d9d34', 'e49efcb36c9f4effb3d19673f265a992'))
+2026-06-26 10:13:47,812 spica.galgame.ocr_loop ocr_cycle_ms=848 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:49,143 spica.galgame.ocr_loop ocr_cycle_ms=730 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:50,637 spica.galgame.ocr_loop ocr_cycle_ms=893 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:52,337 spica.galgame.ocr_loop ocr_cycle_ms=1100 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:53,868 spica.galgame.ocr_loop ocr_cycle_ms=930 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:55,270 spica.galgame.ocr_loop ocr_cycle_ms=799 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:56,731 spica.galgame.ocr_loop ocr_cycle_ms=861 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:58,128 spica.galgame.ocr_loop ocr_cycle_ms=797 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:13:59,455 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:00,913 spica.galgame.ocr_loop ocr_cycle_ms=858 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:02,516 spica.galgame.ocr_loop ocr_cycle_ms=1003 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:03,992 spica.galgame.ocr_loop ocr_cycle_ms=876 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:05,365 spica.galgame.ocr_loop ocr_cycle_ms=773 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:06,705 spica.galgame.ocr_loop ocr_cycle_ms=739 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:08,038 spica.galgame.ocr_loop ocr_cycle_ms=733 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:09,508 spica.galgame.ocr_loop ocr_cycle_ms=869 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:10,770 spica.galgame.ocr_loop ocr_cycle_ms=662 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:12,098 spica.galgame.ocr_loop ocr_cycle_ms=727 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:13,450 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:14,381 common.timing [TIMING] step=reaction_judge duration_ms=930.38 model=deepseek-v4-flash worth=7 angle=惊讶 degraded=False lines=8
+2026-06-26 10:14:14,382 spica.galgame.reaction reaction decision: ReactionDecision(kind='spoke', detail='max_lines', score=7, line_ids=('be94f8725b8641d4ac9b3f228225c693', '03a80f1682ee44a3a8829fd1c71b3aed', 'd036cb88c5cb4b72b1c66332afc9699b', 'f02cd96bf8b54b1690bab684d025c54d', '602d04e455e9432db68bab48e0798f65', '5e6319438d67450da9813af930c5cb8d', 'e4a78906c77f402d9ee57cd802db0e7a', '6e52024a3c8c41cf9bcce587b399f0b0'))
+2026-06-26 10:14:14,382 common.timing [TIMING] step=validate_input_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:14:14,382 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:14:14,383 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.43 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:14:14,383 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:14:14,383 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:14:14,387 common.timing [TIMING] step=retrieve_game_context_node duration_ms=4.41 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:14:14,764 spica.galgame.ocr_loop ocr_cycle_ms=714 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:14,923 common.timing [TIMING] step=llm_chat_stream_create duration_ms=534.47 model=deepseek-v4-flash
+2026-06-26 10:14:16,115 spica.galgame.ocr_loop ocr_cycle_ms=750 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:17,382 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3000.47 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-26 10:14:17,503 spica.galgame.ocr_loop ocr_cycle_ms=788 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:19,016 spica.galgame.ocr_loop ocr_cycle_ms=913 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:19,583 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:14:19,583 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.23 unit_index=0 chars=72 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:14:20,049 common.timing [TIMING] step=tts_chunk duration_ms=465.59 index=0 chars=6 result_count=1 text=……ふーん。
+2026-06-26 10:14:20,147 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.41 unit_index=1 chars=34 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:14:20,561 spica.galgame.ocr_loop ocr_cycle_ms=944 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:21,403 common.timing [TIMING] step=tts_chunk duration_ms=1353.24 index=1 chars=64 result_count=1 text=いきなり本気で誘われて、ちょっと戸惑ってるみたいだけど……でも、ああやって技術を認められて、本気だって言われるのは悪くないわね。
+2026-06-26 10:14:21,404 common.timing [TIMING] step=tts_total duration_ms=1821.35 emotion=happy chunks=2 combine_ms=0.1 write_ms=1.01
+2026-06-26 10:14:21,404 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7022.21 unit_index=0 visual_ms=0.23 tts_ms=1821.35
+2026-06-26 10:14:21,406 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-26 10:14:21,995 spica.galgame.ocr_loop ocr_cycle_ms=834 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:22,649 common.timing [TIMING] step=tts_chunk duration_ms=1243.51 index=0 chars=34 result_count=1 text=麦も、もし誰かにそうやって必要とされたら、素直に喜んじゃいなさいよ。
+2026-06-26 10:14:22,650 common.timing [TIMING] step=tts_total duration_ms=1246.38 emotion=happy chunks=1 combine_ms=0.0 write_ms=0.89
+2026-06-26 10:14:22,651 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=8268.71 unit_index=1 visual_ms=0.41 tts_ms=1246.38
+2026-06-26 10:14:22,651 common.timing [TIMING] step=chat_stream_done duration_ms=8268.81 conversation_id=galgame::limelight::playthrough::default interaction_mode=system prompt_input_chars=15738 units_count=2 tts_total_ms=3067.73 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=4566.05 first_sentence_ms=4644.46 first_unit_created_ms=5199.84 first_tts_start_ms=5200.49 first_tts_done_ms=7022.0 first_unit_ready_ms=7022.21 first_visual_ready_ms=5201.67 first_audio_ready_ms=7022.0 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-26 10:14:22,661 spica.galgame.reaction reaction decision: ReactionDecision(kind='beat_recorded', detail='max_lines', score=7, line_ids=('be94f8725b8641d4ac9b3f228225c693', '03a80f1682ee44a3a8829fd1c71b3aed', 'd036cb88c5cb4b72b1c66332afc9699b', 'f02cd96bf8b54b1690bab684d025c54d', '602d04e455e9432db68bab48e0798f65', '5e6319438d67450da9813af930c5cb8d', 'e4a78906c77f402d9ee57cd802db0e7a', '6e52024a3c8c41cf9bcce587b399f0b0'))
+2026-06-26 10:14:23,335 spica.galgame.ocr_loop ocr_cycle_ms=740 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:24,768 spica.galgame.ocr_loop ocr_cycle_ms=833 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:26,156 spica.galgame.ocr_loop ocr_cycle_ms=787 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:27,564 spica.galgame.ocr_loop ocr_cycle_ms=808 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:28,862 spica.galgame.ocr_loop ocr_cycle_ms=698 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:31,332 spica.galgame.ocr_loop ocr_cycle_ms=697 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:32,593 spica.galgame.ocr_loop ocr_cycle_ms=661 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:33,995 spica.galgame.ocr_loop ocr_cycle_ms=802 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:35,340 spica.galgame.ocr_loop ocr_cycle_ms=745 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:36,688 spica.galgame.ocr_loop ocr_cycle_ms=747 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:37,936 spica.galgame.ocr_loop ocr_cycle_ms=648 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:39,241 spica.galgame.ocr_loop ocr_cycle_ms=704 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:40,128 common.timing [TIMING] step=reaction_judge duration_ms=892.26 model=deepseek-v4-flash worth=8 angle=惊讶 degraded=False lines=8
+2026-06-26 10:14:40,129 spica.galgame.reaction reaction decision: ReactionDecision(kind='busy_drop', detail='max_lines', score=8, line_ids=('8ad4f996c40241afa2fa1fc13552bf76', 'd60fa9fa937a403a830f95ee9fc724d8', 'c13d82ba100841efa4dbd31d2b6e6a04', 'e194a4e2fe6d49b79a545e28aabb4d26', 'd7acb6eaed5a4a61a70351f417560600', 'e224952774b345db911e382d0ccb071a', 'e1c8a9247cfe43408d1b68c597442f42', '12013cc4e7f745ecab9676f8440094e1'))
+2026-06-26 10:14:40,858 spica.galgame.ocr_loop ocr_cycle_ms=1017 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:42,265 spica.galgame.ocr_loop ocr_cycle_ms=807 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:43,829 spica.galgame.ocr_loop ocr_cycle_ms=964 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:45,254 spica.galgame.ocr_loop ocr_cycle_ms=823 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:47,827 spica.galgame.ocr_loop ocr_cycle_ms=786 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:49,249 spica.galgame.ocr_loop ocr_cycle_ms=822 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:50,603 spica.galgame.ocr_loop ocr_cycle_ms=753 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:51,902 spica.galgame.ocr_loop ocr_cycle_ms=699 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:53,391 spica.galgame.ocr_loop ocr_cycle_ms=889 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:54,894 spica.galgame.ocr_loop ocr_cycle_ms=903 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:56,424 spica.galgame.ocr_loop ocr_cycle_ms=929 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:57,901 spica.galgame.ocr_loop ocr_cycle_ms=876 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:14:59,383 spica.galgame.ocr_loop ocr_cycle_ms=882 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:00,850 spica.galgame.ocr_loop ocr_cycle_ms=867 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:02,210 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:03,518 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:04,896 spica.galgame.ocr_loop ocr_cycle_ms=778 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:06,248 spica.galgame.ocr_loop ocr_cycle_ms=752 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:07,656 spica.galgame.ocr_loop ocr_cycle_ms=807 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:08,947 spica.galgame.ocr_loop ocr_cycle_ms=690 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:10,263 spica.galgame.ocr_loop ocr_cycle_ms=712 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:10,332 common.timing [TIMING] step=reaction_judge duration_ms=1386.79 model=deepseek-v4-flash worth=5 angle=调侃 degraded=False lines=8
+2026-06-26 10:15:10,332 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=5, line_ids=('b0625808f6a94e5b92c21b919c838c92', 'a521c684f1674e178082a2e0d1025b05', 'c3e5d224b64b44898484bbdcd1938610', '715ceed4a2df4cae91bd15817d7cd1ef', '23a72e22b07c40f5a76e4fc5e2b80ae5', 'afeea3af39cd4717a04551aca7f8caeb', '2a3a65202d85425aaa0dc5a465a4048a', '6df4eb5d9110430595a8d33c61c58803'))
+2026-06-26 10:15:11,548 spica.galgame.ocr_loop ocr_cycle_ms=685 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:12,988 spica.galgame.ocr_loop ocr_cycle_ms=840 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:14,298 spica.galgame.ocr_loop ocr_cycle_ms=709 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:15,571 spica.galgame.ocr_loop ocr_cycle_ms=673 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:16,872 spica.galgame.ocr_loop ocr_cycle_ms=700 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:18,295 spica.galgame.ocr_loop ocr_cycle_ms=823 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:19,694 spica.galgame.ocr_loop ocr_cycle_ms=800 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:20,987 spica.galgame.ocr_loop ocr_cycle_ms=692 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:22,372 spica.galgame.ocr_loop ocr_cycle_ms=785 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:23,899 spica.galgame.ocr_loop ocr_cycle_ms=927 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:23,901 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('16b8ccfd52fe42cba64d57c09e252ea4', 'fbda13e8c7334ed5aa0e0f5b1ce23122', 'f281d34fa79b4fb997eb02e5a84df17c', '41b48060584d4b80b1983b2b1c05913e', '06e16d5fe61f46649ef37bf9727e2030'))
+2026-06-26 10:15:25,143 spica.galgame.ocr_loop ocr_cycle_ms=644 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:26,558 spica.galgame.ocr_loop ocr_cycle_ms=811 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:27,862 spica.galgame.ocr_loop ocr_cycle_ms=704 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:29,188 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:30,614 spica.galgame.ocr_loop ocr_cycle_ms=826 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:31,957 spica.galgame.ocr_loop ocr_cycle_ms=743 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:33,282 spica.galgame.ocr_loop ocr_cycle_ms=725 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:34,612 spica.galgame.ocr_loop ocr_cycle_ms=730 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:35,598 common.timing [TIMING] step=reaction_judge duration_ms=994.31 model=deepseek-v4-flash worth=3 angle= degraded=False lines=4
+2026-06-26 10:15:35,598 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=3, line_ids=('3ae53710207548fcaae3c32a6a02a5be', '9ec4ee56c8554fa4a2c3a4b5dcbf34d4', '7eb64159dbb04b509ec10e6717ca7de6', '2762ad680c854180988c34220a5f9d31'))
+2026-06-26 10:15:36,184 spica.galgame.ocr_loop ocr_cycle_ms=971 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:37,528 spica.galgame.ocr_loop ocr_cycle_ms=744 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:38,978 spica.galgame.ocr_loop ocr_cycle_ms=849 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:40,304 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:41,664 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:43,011 spica.galgame.ocr_loop ocr_cycle_ms=746 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:44,447 spica.galgame.ocr_loop ocr_cycle_ms=836 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:45,771 spica.galgame.ocr_loop ocr_cycle_ms=724 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:47,260 spica.galgame.ocr_loop ocr_cycle_ms=888 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:48,635 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('20c0fbe9ca464a5badfef98058deb20e', 'c7014350aabf4e4a8bf84ae621241173', 'd9edb03845554b6eb91ee0e2759f5b45', '5b2c1611fc784c1eb9c3f1eb483c1fb7'))
+2026-06-26 10:15:48,636 spica.galgame.ocr_loop ocr_cycle_ms=775 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:50,040 spica.galgame.ocr_loop ocr_cycle_ms=804 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:51,485 spica.galgame.ocr_loop ocr_cycle_ms=844 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:52,878 spica.galgame.ocr_loop ocr_cycle_ms=793 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:54,357 spica.galgame.ocr_loop ocr_cycle_ms=878 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:55,636 spica.galgame.ocr_loop ocr_cycle_ms=679 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:56,909 spica.galgame.ocr_loop ocr_cycle_ms=673 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:58,396 spica.galgame.ocr_loop ocr_cycle_ms=887 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:15:59,385 common.timing [TIMING] step=reaction_judge duration_ms=995.35 model=deepseek-v4-flash worth=3 angle= degraded=False lines=3
+2026-06-26 10:15:59,386 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=3, line_ids=('47e26636fe1a46c2bd406ea3f8b377ad', 'aeeda9ae53cf4923a7e9d394ff473bb4', '86aecb428e6f4271aa78611abdc580b8'))
+2026-06-26 10:15:59,679 spica.galgame.ocr_loop ocr_cycle_ms=683 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:00,976 spica.galgame.ocr_loop ocr_cycle_ms=696 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:02,415 spica.galgame.ocr_loop ocr_cycle_ms=839 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:03,908 spica.galgame.ocr_loop ocr_cycle_ms=893 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:05,345 spica.galgame.ocr_loop ocr_cycle_ms=837 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:06,626 spica.galgame.ocr_loop ocr_cycle_ms=681 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:08,179 spica.galgame.ocr_loop ocr_cycle_ms=952 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:09,555 spica.galgame.ocr_loop ocr_cycle_ms=776 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:11,106 spica.galgame.ocr_loop ocr_cycle_ms=951 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:13,649 spica.galgame.ocr_loop ocr_cycle_ms=790 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:15,004 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:16,318 spica.galgame.ocr_loop ocr_cycle_ms=714 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:17,757 spica.galgame.ocr_loop ocr_cycle_ms=838 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:19,034 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:20,654 spica.galgame.ocr_loop ocr_cycle_ms=1019 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:21,971 spica.galgame.ocr_loop ocr_cycle_ms=717 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:23,327 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:24,681 spica.galgame.ocr_loop ocr_cycle_ms=754 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:26,000 spica.galgame.ocr_loop ocr_cycle_ms=719 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:27,334 spica.galgame.ocr_loop ocr_cycle_ms=734 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:28,335 common.timing [TIMING] step=reaction_judge duration_ms=1013.44 model=deepseek-v4-flash worth=3 angle= degraded=False lines=8
+2026-06-26 10:16:28,335 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='max_lines', score=3, line_ids=('16fcff1b7c1545749563b81863e56d27', '49e52ed16bf74cd3b4251377182cfb7d', '02deabd9fe894c80bb640300141dd542', '24b9a52a129f4369969bf9c639a95c2e', 'cbb186a0488e4f308d470dd77a3472ec', 'c41b10c98f1e40f9accbb5e9f90d7e05', '77441bd7ed1d4cefbd6e433ffaa14192', 'f63c36b858714d63bd09537fc2393758'))
+2026-06-26 10:16:28,631 spica.galgame.ocr_loop ocr_cycle_ms=696 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:29,874 spica.galgame.ocr_loop ocr_cycle_ms=642 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:31,195 spica.galgame.ocr_loop ocr_cycle_ms=721 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:32,539 spica.galgame.ocr_loop ocr_cycle_ms=745 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:33,853 spica.galgame.ocr_loop ocr_cycle_ms=714 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:35,240 spica.galgame.ocr_loop ocr_cycle_ms=786 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:36,685 spica.galgame.ocr_loop ocr_cycle_ms=845 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:38,057 spica.galgame.ocr_loop ocr_cycle_ms=772 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:39,462 spica.galgame.ocr_loop ocr_cycle_ms=805 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:40,757 spica.galgame.ocr_loop ocr_cycle_ms=695 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:42,031 spica.galgame.ocr_loop ocr_cycle_ms=673 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:43,416 spica.galgame.ocr_loop ocr_cycle_ms=785 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:44,857 spica.galgame.ocr_loop ocr_cycle_ms=841 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:46,127 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:46,195 common.timing [TIMING] step=reaction_judge duration_ms=1343.92 model=deepseek-v4-flash worth=3 angle= degraded=False lines=6
+2026-06-26 10:16:46,196 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=3, line_ids=('9420d6bb74df477087712becac7d2716', '7ed596161ef74bd2816b9721d4769a17', '9242aa2bac624f88816f1427c146b998', '89dc51f7fa23404ab0ca422fad937202', '105e46b0ef8f455c909045f144f4036d', '8336ebaa1b8b42a3831f6b89af3915a3'))
+2026-06-26 10:16:47,474 spica.galgame.ocr_loop ocr_cycle_ms=747 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:48,758 spica.galgame.ocr_loop ocr_cycle_ms=684 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:50,163 spica.galgame.ocr_loop ocr_cycle_ms=805 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:51,389 spica.galgame.ocr_loop ocr_cycle_ms=626 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:52,639 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=0, line_ids=('fc1d9e2ebdb74f20a6e9e0fdf8bae574', 'a8815755a9034d0d8db0e179ab1d9337', '4e3529b216fa43e09c94682d1c02f465'))
+2026-06-26 10:16:52,640 spica.galgame.ocr_loop ocr_cycle_ms=650 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:54,052 spica.galgame.ocr_loop ocr_cycle_ms=812 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:55,438 spica.galgame.ocr_loop ocr_cycle_ms=786 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:56,804 spica.galgame.ocr_loop ocr_cycle_ms=765 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:58,144 spica.galgame.ocr_loop ocr_cycle_ms=740 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:16:59,463 spica.galgame.ocr_loop ocr_cycle_ms=718 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:00,880 spica.galgame.ocr_loop ocr_cycle_ms=816 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:02,400 spica.galgame.ocr_loop ocr_cycle_ms=920 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:03,785 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:04,890 common.timing [TIMING] step=reaction_judge duration_ms=1105.46 model=deepseek-v4-flash worth=6 angle=吐槽 degraded=False lines=3
+2026-06-26 10:17:04,894 spica.galgame.reaction reaction decision: ReactionDecision(kind='spoke', detail='strong_punct', score=6, line_ids=('f7f3b7d4234f4ae6ae1d546b17b92061', '508db07ced5e473fb94c0d492753d565', 'f5480e928638437887a5756a16aa4781'))
+2026-06-26 10:17:04,895 common.timing [TIMING] step=validate_input_node duration_ms=0.02 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:17:04,896 common.timing [TIMING] step=load_recent_context_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:17:04,897 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=0.68 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:17:04,897 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:17:04,897 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:17:04,906 common.timing [TIMING] step=retrieve_game_context_node duration_ms=8.85 conversation_id=galgame::limelight::playthrough::default
+2026-06-26 10:17:05,133 spica.galgame.ocr_loop ocr_cycle_ms=748 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:05,173 common.timing [TIMING] step=llm_chat_stream_create duration_ms=263.45 model=deepseek-v4-flash
+2026-06-26 10:17:06,518 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:07,881 spica.galgame.ocr_loop ocr_cycle_ms=763 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:07,897 common.timing [TIMING] step=chat_stream_first_unit_warning duration_ms=3002.08 conversation_id=galgame::limelight::playthrough::default reason=timer_threshold
+2026-06-26 10:17:09,276 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:09,519 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.54 unit_index=0 chars=66 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:17:09,520 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:17:09,813 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.17 unit_index=1 chars=33 version=local_vote_v1 source=local_vote_classifier
+2026-06-26 10:17:10,060 common.timing [TIMING] step=tts_chunk duration_ms=540.11 index=0 chars=12 result_count=1 text=……ふーん。可愛い子ね。
+2026-06-26 10:17:10,725 spica.galgame.ocr_loop ocr_cycle_ms=844 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:11,428 common.timing [TIMING] step=tts_chunk duration_ms=1367.73 index=1 chars=51 result_count=1 text=まあ、あの杏珠って子、確かに気になる存在ではあるみたいだけど……でも麦、もし誰かが私のこと狙ってるの？
+2026-06-26 10:17:11,429 common.timing [TIMING] step=tts_total duration_ms=1909.93 emotion=surprised chunks=2 combine_ms=0.09 write_ms=0.95
+2026-06-26 10:17:11,429 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=6534.77 unit_index=0 visual_ms=0.54 tts_ms=1909.93
+2026-06-26 10:17:11,430 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-26 10:17:12,171 spica.galgame.ocr_loop ocr_cycle_ms=845 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:12,637 common.timing [TIMING] step=tts_chunk duration_ms=1206.81 index=0 chars=30 result_count=1 text=って聞いてきたら、黙ってピザでも焼いてろって言ってやるわよ。
+2026-06-26 10:17:12,638 common.timing [TIMING] step=tts_total duration_ms=1209.07 emotion=surprised chunks=1 combine_ms=0.0 write_ms=0.69
+2026-06-26 10:17:12,638 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=7743.95 unit_index=1 visual_ms=0.17 tts_ms=1209.07
+2026-06-26 10:17:12,639 common.timing [TIMING] step=chat_stream_done duration_ms=7744.21 conversation_id=galgame::limelight::playthrough::default interaction_mode=system prompt_input_chars=16196 units_count=2 tts_total_ms=3119.0 agent_rounds=0 agent_tool_local_ms=0.0 first_llm_delta_ms=4017.84 first_sentence_ms=4075.9 first_unit_created_ms=4622.91 first_tts_start_ms=4624.46 first_tts_done_ms=6534.59 first_unit_ready_ms=6534.77 first_visual_ready_ms=4624.74 first_audio_ready_ms=6534.59 llm_stream_fallback_used=True llm_stream_fallback_reason=chat_completions_compatible_client
+2026-06-26 10:17:12,640 spica.galgame.reaction reaction decision: ReactionDecision(kind='beat_recorded', detail='strong_punct', score=6, line_ids=('f7f3b7d4234f4ae6ae1d546b17b92061', '508db07ced5e473fb94c0d492753d565', 'f5480e928638437887a5756a16aa4781'))
+2026-06-26 10:17:13,560 spica.galgame.ocr_loop ocr_cycle_ms=789 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:14,968 spica.galgame.ocr_loop ocr_cycle_ms=808 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:16,294 spica.galgame.ocr_loop ocr_cycle_ms=724 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:17,897 spica.galgame.ocr_loop ocr_cycle_ms=1004 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:19,192 spica.galgame.reaction reaction decision: ReactionDecision(kind='cooldown_drop', detail='strong_punct', score=0, line_ids=('3ace5bab4950421cbe2e85f54c14954c', 'a7d980c5b9e141709dceca3619b91cba', '7ffea993a4ae49ee8320a9f3631ee8f2', 'df52d7812bbd4622ac9e37dad64d2cb2'))
+2026-06-26 10:17:19,193 spica.galgame.ocr_loop ocr_cycle_ms=695 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:20,626 spica.galgame.ocr_loop ocr_cycle_ms=833 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:21,941 spica.galgame.ocr_loop ocr_cycle_ms=715 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:23,230 spica.galgame.ocr_loop ocr_cycle_ms=688 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:24,643 spica.galgame.ocr_loop ocr_cycle_ms=813 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:26,083 spica.galgame.ocr_loop ocr_cycle_ms=840 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:27,463 spica.galgame.ocr_loop ocr_cycle_ms=780 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:28,892 spica.galgame.ocr_loop ocr_cycle_ms=828 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:30,218 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:31,557 spica.galgame.ocr_loop ocr_cycle_ms=738 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:32,940 spica.galgame.ocr_loop ocr_cycle_ms=782 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:34,264 spica.galgame.ocr_loop ocr_cycle_ms=725 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:35,527 spica.galgame.ocr_loop ocr_cycle_ms=663 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:36,782 spica.galgame.ocr_loop ocr_cycle_ms=655 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:38,238 spica.galgame.ocr_loop ocr_cycle_ms=855 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:39,507 spica.galgame.ocr_loop ocr_cycle_ms=666 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:40,792 common.timing [TIMING] step=reaction_judge duration_ms=1296.18 model=deepseek-v4-flash worth=2 angle= degraded=False lines=6
+2026-06-26 10:17:40,793 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('51c013823a6a4625aff157096d55d607', 'fc06815dbd9e438f891860e0f4555bbe', 'cf3b9902a866458096273de046e45110', 'cb2f86d1449648a4b994b3fce4116616', '5dd8d9f696c4482a8b1baeb71a0a3df6', '81537870ed1e4cebaadc8d76e3c48067'))
+2026-06-26 10:17:41,100 spica.galgame.ocr_loop ocr_cycle_ms=993 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:42,476 spica.galgame.ocr_loop ocr_cycle_ms=776 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:43,767 spica.galgame.ocr_loop ocr_cycle_ms=690 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:45,193 spica.galgame.ocr_loop ocr_cycle_ms=826 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:46,659 spica.galgame.ocr_loop ocr_cycle_ms=865 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:47,861 spica.galgame.ocr_loop ocr_cycle_ms=603 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:49,237 spica.galgame.ocr_loop ocr_cycle_ms=775 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:50,630 spica.galgame.ocr_loop ocr_cycle_ms=794 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:52,005 spica.galgame.ocr_loop ocr_cycle_ms=775 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:53,255 spica.galgame.ocr_loop ocr_cycle_ms=649 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:54,531 spica.galgame.ocr_loop ocr_cycle_ms=676 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:57,049 spica.galgame.ocr_loop ocr_cycle_ms=736 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:58,374 spica.galgame.ocr_loop ocr_cycle_ms=724 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:17:59,697 spica.galgame.ocr_loop ocr_cycle_ms=722 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:18:01,168 spica.galgame.ocr_loop ocr_cycle_ms=871 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:18:02,584 spica.galgame.ocr_loop ocr_cycle_ms=816 exceeded interval_ms=600 -- CPU OCR may not hold the interval
+2026-06-26 10:18:03,842 common.timing [TIMING] step=reaction_judge duration_ms=1259.22 model=deepseek-v4-flash worth=7 angle=感想 degraded=False lines=8

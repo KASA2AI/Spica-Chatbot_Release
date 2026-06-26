@@ -22,6 +22,14 @@ class LLMConfig(BaseModel):
     provider: str = "openai_compatible"
     model: str = "gpt-4.1-mini"
     base_url: str | None = None
+    # Reasoning/thinking control for the MAIN chat+summary LLM. env REASONING_EFFORT.
+    # Values: default | none | low | medium | high.
+    #   "default" -> send NO reasoning param (provider's own default; zero-diff).
+    #   deepseek-* (thinking is BINARY): "none" disables thinking; low/medium/high
+    #     all just leave it ON (deepseek has no gradient).
+    #   gpt-*    : reasoning_effort = none/low/medium/high (a real gradient).
+    # Disabling deepseek thinking is a big latency cut (~halves first-token).
+    reasoning_effort: str = "default"
 
 
 class MemoryConfig(BaseModel):
@@ -111,7 +119,31 @@ class GalgameConfig(BaseModel):
     # scale -- the host closure also uses it as the FALLBACK threshold when a judge
     # call fails, so it must keep the lexicon scale. yaml-only (铁律 #4: no env name).
     reaction_judge_enabled: bool = False
+    # -- Reaction-judge LLM ENDPOINT (key + base_url + model). The ONLY galgame
+    # fields with env names (JUDGE_MODEL / JUDGE_BASE_URL via APP_ENV_MAP; the key
+    # is the secret JUDGE_API_KEY): the judge is a SWAPPABLE LLM endpoint, unlike
+    # galgame's yaml-only tuning knobs -- giving it env knobs is the deliberate
+    # exception. Run the judge on a SEPARATE endpoint/key so its load does not
+    # saturate the main chat/summary endpoint (the deepseek-timeout-under-load root
+    # cause). Each falls back to the main LLM independently:
+    #   model    -> reaction_judge_model or config.llm.model
+    #   base_url -> reaction_judge_base_url or config.llm.base_url
+    #   key      -> secrets.judge_api_key, unset -> judge shares the main adapter
+    # VENDOR SCOPE: any OpenAI-compatible provider (deepseek/OpenAI/... -- same
+    # chat_completions branch, validated cross-vendor). Claude/Anthropic uses the
+    # messages API (NOT OpenAI-compatible) -> would need a separate Anthropic
+    # client adapter (H1 Anthropic branch); NOT supported by this endpoint yet.
+    # RE-VALIDATE ON MODEL CHANGE: the offline selection quality was validated on
+    # deepseek-v4-flash; switching JUDGE_MODEL means re-running
+    # scripts/reaction_judge_report.py to confirm the new model's pick quality.
     reaction_judge_model: str | None = None
+    reaction_judge_base_url: str | None = None
+    # Reasoning/thinking control for the JUDGE endpoint, INDEPENDENT of the main
+    # LLM (env JUDGE_REASONING_EFFORT). Same vocabulary as llm.reasoning_effort
+    # (default | none | low | medium | high; deepseek none=thinking-off binary,
+    # gpt = effort gradient). Set "none" to make the judge fast (it was the 18s
+    # call under load); keep it on if judge pick quality needs the thinking.
+    reaction_judge_reasoning_effort: str = "default"
     reaction_reply_char_limit: int = 40  # 吐槽回复字数上限 (compose_reaction_directive)
     reaction_budget_window_seconds: float = 600.0  # 吐槽频率统计滑窗(秒)
     reaction_excerpt_line_char_limit: int = 60  # 吐槽 directive 剧情摘录单行上限

@@ -166,12 +166,12 @@ plugins: []
 galgame:
   reaction_mode: high                 # judge 已启用:normal -> worth≥7 才吐(离线验证=吐真戏)
   summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
-  ocr_interval_seconds: 0.2           # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
+  ocr_interval_seconds: 0.6        # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
   prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
   game_buffer_tail_limit: 40            # 默认 0(不截断):[CURRENT_GAME_BUFFER] 只保留最近 N 行未总结台词,防 prompt 随时长无限膨胀(更早的靠摘要兜底);只截 prompt 视图,总结器仍读全量
-  reaction_reply_char_limit: 200         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
-  reaction_budget_window_seconds: 150   # 默认 600:吐槽频率统计滑窗(秒)
-  reaction_excerpt_line_char_limit: 80 # 默认 60:吐槽 directive 剧情摘录单行字数上限
+  reaction_reply_char_limit: 100         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")。200→100:更脆、TTS 短、busy_drop 大减(200 时 ~21% beat 因她还在说上一条被挤空)
+  reaction_budget_window_seconds: 600   # 默认 600:吐槽频率统计滑窗(秒)
+  reaction_excerpt_line_char_limit: 60 # 默认 60:吐槽 directive 剧情摘录单行字数上限
   reaction_excerpt_total_char_limit: 300  # 默认 300:剧情摘录总字数上限
   # -- P5 v2 LLM judge:已启用(两步:enabled + worth 标度 reaction_table;缺第二步会狂吐)。
   #    judge 看场景窗口选"哪个 beat 值得吐"(不漏无词戏),离线已验证。judge 挂了自动回退词表打分(不沉默)。
@@ -192,8 +192,8 @@ galgame:
       cooldown_seconds: 90
     high:                                 # worth≥6:较松(离线 ~67/h raw)
       min_score: 6
-      max_per_window: 6
-      cooldown_seconds: 45
+      max_per_window: 10                   # 6→10(方案A):dense 高潮少被预算上限砍
+      cooldown_seconds: 20                 # 45→20(方案A):一吐之后冷却短点,扎堆炸点少漏(judge 仍按 worth≥6 把关)
   play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
 stt:                                     # 本地语音转文字(Plan B):faster-whisper 取代 Google STT(无网络/不卡死)。yaml-only 无 env(铁律 #4)
   backend: faster_whisper                # faster_whisper(默认,本地)| google(旧回退,仍无超时会卡,仅显式选用)

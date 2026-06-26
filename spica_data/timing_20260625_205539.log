@@ -1,0 +1,195 @@
+2026-06-25 20:55:47,716 common.timing [TIMING] step=tts_warmup duration_ms=7763.03 emotion=happy synthesize=True
+2026-06-25 20:55:47,730 spica.adapters.stt.faster_whisper loading faster-whisper model=spica_data/models/faster-whisper-large-v3-turbo device=cuda compute_type=float16 download_root=None (one-time; reused for the process lifetime)
+2026-06-25 20:55:48,341 common.timing [TIMING] step=stt_model_load duration_ms=611.60 model=spica_data/models/faster-whisper-large-v3-turbo device=cuda
+2026-06-25 20:55:48,341 spica.adapters.stt.faster_whisper faster-whisper model loaded in 612ms
+2026-06-25 20:55:48,343 common.timing [TIMING] step=stt_warmup duration_ms=626.30 model=spica_data/models/faster-whisper-large-v3-turbo
+2026-06-25 20:55:48,343 spica.adapters.stt.faster_whisper faster-whisper warmup ok in 626ms
+2026-06-25 20:55:58,580 spica.galgame.ocr_loop ocr_cycle_ms=1424 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:55:59,764 spica.galgame.ocr_loop ocr_cycle_ms=784 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:00,977 spica.galgame.ocr_loop ocr_cycle_ms=813 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:02,167 spica.galgame.ocr_loop ocr_cycle_ms=790 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:03,338 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:04,498 spica.galgame.ocr_loop ocr_cycle_ms=760 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:05,755 spica.galgame.ocr_loop ocr_cycle_ms=856 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:05,873 common.timing [TIMING] step=stt_transcribe duration_ms=190.70 chars=11 audio_ms=2240 text=我们下部玩到哪个地方了
+2026-06-25 20:56:05,876 common.timing [TIMING] step=validate_input_node duration_ms=0.07 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:05,876 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:05,883 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=6.71 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:05,883 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:05,883 common.timing [TIMING] step=build_prompt_node duration_ms=0.03 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:05,892 common.timing [TIMING] step=retrieve_game_context_node duration_ms=8.91 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:06,897 spica.galgame.ocr_loop ocr_cycle_ms=741 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:07,734 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.34 unit_index=0 chars=48 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:56:07,734 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 20:56:08,144 spica.galgame.ocr_loop ocr_cycle_ms=847 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:08,224 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.24 unit_index=1 chars=41 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:56:08,454 common.timing [TIMING] step=tts_chunk duration_ms=719.51 index=0 chars=15 result_count=1 text=ふぅん……今はライブ後の話よ。
+2026-06-25 20:56:08,588 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.20 unit_index=2 chars=27 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:56:09,135 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=3062.91 model=deepseek-v4-flash streamed=True
+2026-06-25 20:56:09,135 common.timing [TIMING] step=agent_response duration_ms=3063.10 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 20:56:09,189 common.timing [TIMING] step=tts_chunk duration_ms=734.95 index=1 chars=33 result_count=1 text=雪鷹が雄真たちのバンド勧誘を断って、大夢って店長と話してるところ。
+2026-06-25 20:56:09,192 common.timing [TIMING] step=tts_total duration_ms=1459.67 emotion=happy chunks=2 combine_ms=0.09 write_ms=3.2
+2026-06-25 20:56:09,193 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3318.64 unit_index=0 visual_ms=0.34 tts_ms=1459.67
+2026-06-25 20:56:09,193 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 20:56:09,431 spica.galgame.ocr_loop ocr_cycle_ms=885 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:10,592 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:10,689 common.timing [TIMING] step=tts_chunk duration_ms=1495.88 index=0 chars=39 result_count=1 text=ちょうどあれだけ有名なバンドに入れて、客が入らない日もあるって話してるみたい。
+2026-06-25 20:56:10,692 common.timing [TIMING] step=tts_total duration_ms=1499.74 emotion=happy chunks=1 combine_ms=0.0 write_ms=2.85
+2026-06-25 20:56:10,693 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=4818.34 unit_index=1 visual_ms=0.24 tts_ms=1499.74
+2026-06-25 20:56:10,693 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 20:56:11,730 common.timing [TIMING] step=tts_chunk duration_ms=1036.31 index=0 chars=27 result_count=1 text=、それで、次はどこからやる？また最初から全部確認する？
+2026-06-25 20:56:11,733 common.timing [TIMING] step=tts_total duration_ms=1040.62 emotion=surprised chunks=1 combine_ms=0.0 write_ms=3.39
+2026-06-25 20:56:11,737 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5862.80 unit_index=2 visual_ms=0.2 tts_ms=1040.62
+2026-06-25 20:56:11,737 common.timing [TIMING] step=chat_stream_done duration_ms=5862.95 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=14659 units_count=3 tts_total_ms=4000.03 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=1396.12 first_sentence_ms=1484.07 first_unit_created_ms=1855.1 first_tts_start_ms=1858.11 first_tts_done_ms=3318.25 first_unit_ready_ms=3318.64 first_visual_ready_ms=1859.84 first_audio_ready_ms=3318.25
+2026-06-25 20:56:11,783 spica.galgame.ocr_loop ocr_cycle_ms=790 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:12,986 spica.galgame.ocr_loop ocr_cycle_ms=803 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:14,169 spica.galgame.ocr_loop ocr_cycle_ms=782 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:15,367 spica.galgame.ocr_loop ocr_cycle_ms=798 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:16,522 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:17,670 spica.galgame.ocr_loop ocr_cycle_ms=748 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:18,844 spica.galgame.ocr_loop ocr_cycle_ms=774 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:20,034 spica.galgame.ocr_loop ocr_cycle_ms=790 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:21,250 spica.galgame.ocr_loop ocr_cycle_ms=816 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:22,502 spica.galgame.ocr_loop ocr_cycle_ms=852 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:23,717 spica.galgame.ocr_loop ocr_cycle_ms=815 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:24,895 spica.galgame.ocr_loop ocr_cycle_ms=778 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:25,893 spica.galgame.ocr_loop ocr_cycle_ms=598 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:27,050 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:28,149 spica.galgame.ocr_loop ocr_cycle_ms=699 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:29,280 spica.galgame.ocr_loop ocr_cycle_ms=731 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:30,513 spica.galgame.ocr_loop ocr_cycle_ms=833 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:31,548 spica.galgame.ocr_loop ocr_cycle_ms=635 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:32,719 spica.galgame.ocr_loop ocr_cycle_ms=771 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:33,866 spica.galgame.ocr_loop ocr_cycle_ms=746 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:35,107 spica.galgame.ocr_loop ocr_cycle_ms=841 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:36,253 spica.galgame.ocr_loop ocr_cycle_ms=746 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:37,410 spica.galgame.ocr_loop ocr_cycle_ms=757 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:38,434 spica.galgame.ocr_loop ocr_cycle_ms=623 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:39,616 spica.galgame.ocr_loop ocr_cycle_ms=782 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:40,739 spica.galgame.ocr_loop ocr_cycle_ms=723 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:41,436 common.timing [TIMING] step=stt_transcribe duration_ms=126.12 chars=9 audio_ms=2220 text=目前我最喜欢粒粒子
+2026-06-25 20:56:41,437 common.timing [TIMING] step=validate_input_node duration_ms=0.15 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:41,437 common.timing [TIMING] step=load_recent_context_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:41,445 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=7.50 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:41,445 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:41,445 common.timing [TIMING] step=build_prompt_node duration_ms=0.05 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:41,455 common.timing [TIMING] step=retrieve_game_context_node duration_ms=9.87 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:56:41,854 spica.galgame.ocr_loop ocr_cycle_ms=714 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:42,953 spica.galgame.ocr_loop ocr_cycle_ms=698 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:44,017 spica.galgame.ocr_loop ocr_cycle_ms=664 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:44,147 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.18 unit_index=0 chars=31 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:56:44,147 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 20:56:44,387 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.19 unit_index=1 chars=23 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:56:44,743 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.22 unit_index=2 chars=37 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:56:44,887 spica.galgame.ocr_loop ocr_cycle_ms=470 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:45,210 common.timing [TIMING] step=tts_chunk duration_ms=1062.49 index=0 chars=31 result_count=1 text=ふぅん……粒粒子ね。あの子、結構ストレートに来るタイプでしょ。
+2026-06-25 20:56:45,213 common.timing [TIMING] step=tts_total duration_ms=1067.10 emotion=happy chunks=1 combine_ms=0.0 write_ms=3.13
+2026-06-25 20:56:45,214 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 20:56:45,217 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3780.44 unit_index=0 visual_ms=0.18 tts_ms=1067.1
+2026-06-25 20:56:45,259 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=3802.40 model=deepseek-v4-flash streamed=True
+2026-06-25 20:56:45,259 common.timing [TIMING] step=agent_response duration_ms=3802.48 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 20:56:46,050 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:46,285 common.timing [TIMING] step=tts_chunk duration_ms=1071.76 index=0 chars=23 result_count=1 text=ライブ終わりに待ってるって時点で、もう大概よ。
+2026-06-25 20:56:46,288 common.timing [TIMING] step=tts_total duration_ms=1075.24 emotion=happy chunks=1 combine_ms=0.0 write_ms=2.9
+2026-06-25 20:56:46,289 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=happy
+2026-06-25 20:56:46,293 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=4856.45 unit_index=1 visual_ms=0.19 tts_ms=1075.24
+2026-06-25 20:56:47,196 spica.galgame.ocr_loop ocr_cycle_ms=746 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:47,336 common.timing [TIMING] step=tts_chunk duration_ms=1046.76 index=0 chars=37 result_count=1 text=でもね、麦がああいう素直な子を好きになるのは……まあ、分からなくもないわ。
+2026-06-25 20:56:47,339 common.timing [TIMING] step=tts_total duration_ms=1050.35 emotion=happy chunks=1 combine_ms=0.0 write_ms=2.99
+2026-06-25 20:56:47,339 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5903.01 unit_index=2 visual_ms=0.22 tts_ms=1050.35
+2026-06-25 20:56:47,339 common.timing [TIMING] step=chat_stream_done duration_ms=5903.18 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=15300 units_count=3 tts_total_ms=3192.69 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=1542.32 first_sentence_ms=2556.67 first_unit_created_ms=2709.13 first_tts_start_ms=2709.66 first_tts_done_ms=3776.93 first_unit_ready_ms=3780.44 first_visual_ready_ms=2710.65 first_audio_ready_ms=3776.93
+2026-06-25 20:56:47,689 common.timing [TIMING] step=reaction_judge duration_ms=6954.01 model=gpt-5.4-mini worth=2 angle= degraded=False lines=6
+2026-06-25 20:56:47,689 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=2, line_ids=('415af9e9278e4cc3b090bdc144c6d881', '96c566c19c604c18b6c7a4eae440bad3', 'd5d15c422f794eb8ae976e36c448517f', 'c92853b56dea49b08e67583610a7586e', 'acfcbd0ac8da4677812085a745c5521b', '4a33e726535347199e7368a5bc67af62'))
+2026-06-25 20:56:48,353 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:49,436 spica.galgame.ocr_loop ocr_cycle_ms=682 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:50,513 spica.galgame.ocr_loop ocr_cycle_ms=677 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:51,634 spica.galgame.ocr_loop ocr_cycle_ms=721 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:52,673 spica.galgame.ocr_loop ocr_cycle_ms=639 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:53,636 spica.galgame.ocr_loop ocr_cycle_ms=563 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:54,736 spica.galgame.ocr_loop ocr_cycle_ms=700 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:55,719 spica.galgame.ocr_loop ocr_cycle_ms=583 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:56,631 spica.galgame.ocr_loop ocr_cycle_ms=511 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:57,838 spica.galgame.ocr_loop ocr_cycle_ms=807 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:56:59,002 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:00,104 spica.galgame.ocr_loop ocr_cycle_ms=702 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:01,243 spica.galgame.ocr_loop ocr_cycle_ms=739 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:02,297 spica.galgame.ocr_loop ocr_cycle_ms=654 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:03,442 spica.galgame.ocr_loop ocr_cycle_ms=745 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:03,492 common.timing [TIMING] step=reaction_judge duration_ms=5660.15 model=gpt-5.4-mini worth=3 angle= degraded=False lines=4
+2026-06-25 20:57:03,492 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='strong_punct', score=3, line_ids=('57a2ae7be58f45ba80a9d0834266c205', 'fdb9034e524e48de9a4e518e25daeb2f', '85fec4971a9d41558ec749b4d4bea05f', '63f26848ee3d46f5b3846b915c050d73'))
+2026-06-25 20:57:04,458 spica.galgame.ocr_loop ocr_cycle_ms=616 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:05,584 spica.galgame.ocr_loop ocr_cycle_ms=726 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:06,759 spica.galgame.ocr_loop ocr_cycle_ms=775 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:07,896 spica.galgame.ocr_loop ocr_cycle_ms=736 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:08,988 spica.galgame.ocr_loop ocr_cycle_ms=692 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:09,073 common.timing [TIMING] step=stt_transcribe duration_ms=179.10 chars=10 audio_ms=2900 text=因为青梅驳马最可爱了
+2026-06-25 20:57:09,074 common.timing [TIMING] step=validate_input_node duration_ms=0.06 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:57:09,074 common.timing [TIMING] step=load_recent_context_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:57:09,080 common.timing [TIMING] step=retrieve_long_term_memory_node duration_ms=6.00 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:57:09,081 common.timing [TIMING] step=analyze_screen_attachment_node duration_ms=0.01 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:57:09,081 common.timing [TIMING] step=build_prompt_node duration_ms=0.09 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:57:09,091 common.timing [TIMING] step=retrieve_game_context_node duration_ms=10.61 conversation_id=galgame::limelight::playthrough::default
+2026-06-25 20:57:09,848 spica.galgame.ocr_loop ocr_cycle_ms=460 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:10,921 spica.galgame.ocr_loop ocr_cycle_ms=672 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:11,001 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.24 unit_index=0 chars=36 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:57:11,002 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 20:57:11,671 common.timing [TIMING] step=visual_classifier_unit duration_ms=0.33 unit_index=1 chars=62 version=local_vote_v1 source=local_vote_classifier
+2026-06-25 20:57:12,049 spica.galgame.ocr_loop ocr_cycle_ms=727 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:12,190 common.timing [TIMING] step=llm_chat_tool_probe duration_ms=3098.12 model=deepseek-v4-flash streamed=True
+2026-06-25 20:57:12,194 common.timing [TIMING] step=agent_response duration_ms=3101.33 phase=tool_probe endpoint=chat_completions model=deepseek-v4-flash use_tools=True round=1
+2026-06-25 20:57:12,228 common.timing [TIMING] step=tts_chunk duration_ms=1225.80 index=0 chars=36 result_count=1 text=ふぅん……青梅のほうが可愛い、ね。麦って、そういう幼なじみ設定に弱いの？
+2026-06-25 20:57:12,231 common.timing [TIMING] step=tts_total duration_ms=1230.22 emotion=surprised chunks=1 combine_ms=0.0 write_ms=2.94
+2026-06-25 20:57:12,231 common.timing [TIMING] step=tts_models duration_ms=0.00 emotion=surprised
+2026-06-25 20:57:12,234 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=3159.60 unit_index=0 visual_ms=0.24 tts_ms=1230.22
+2026-06-25 20:57:13,254 spica.galgame.ocr_loop ocr_cycle_ms=802 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:14,293 spica.galgame.ocr_loop ocr_cycle_ms=638 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:14,306 common.timing [TIMING] step=tts_chunk duration_ms=2074.17 index=0 chars=62 result_count=1 text=まあ、粒粒子はストレートでいい子だし、分からなくもないけど……でも、そばにいるからこそ、素直になれるってのもあるんじゃない？
+2026-06-25 20:57:14,309 common.timing [TIMING] step=tts_total duration_ms=2077.84 emotion=surprised chunks=1 combine_ms=0.0 write_ms=3.11
+2026-06-25 20:57:14,309 common.timing [TIMING] step=chat_stream_unit_ready duration_ms=5235.02 unit_index=1 visual_ms=0.33 tts_ms=2077.84
+2026-06-25 20:57:14,309 common.timing [TIMING] step=chat_stream_done duration_ms=5235.28 conversation_id=galgame::limelight::playthrough::default interaction_mode=chat prompt_input_chars=15806 units_count=2 tts_total_ms=3308.06 agent_rounds=1 agent_tool_local_ms=0.0 first_llm_delta_ms=1570.18 first_sentence_ms=1678.62 first_unit_created_ms=1925.75 first_tts_start_ms=1926.38 first_tts_done_ms=3156.86 first_unit_ready_ms=3159.6 first_visual_ready_ms=1927.25 first_audio_ready_ms=3156.86
+2026-06-25 20:57:15,100 spica.galgame.ocr_loop ocr_cycle_ms=407 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:16,179 spica.galgame.ocr_loop ocr_cycle_ms=678 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:17,313 spica.galgame.ocr_loop ocr_cycle_ms=734 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:18,367 spica.galgame.ocr_loop ocr_cycle_ms=653 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:19,220 spica.galgame.ocr_loop ocr_cycle_ms=453 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:20,398 spica.galgame.ocr_loop ocr_cycle_ms=777 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:20,617 common.timing [TIMING] step=reaction_judge duration_ms=4723.75 model=gpt-5.4-mini worth=2 angle= degraded=False lines=3
+2026-06-25 20:57:20,617 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=2, line_ids=('2656b1774672422d84760cbc08cafb0f', 'b454480755334b08a3659c035b9c30dd', '0d961fa00acd42a1984e86785f430767'))
+2026-06-25 20:57:21,467 spica.galgame.ocr_loop ocr_cycle_ms=669 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:22,679 spica.galgame.ocr_loop ocr_cycle_ms=811 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:23,795 spica.galgame.ocr_loop ocr_cycle_ms=715 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:24,951 spica.galgame.ocr_loop ocr_cycle_ms=756 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:26,089 spica.galgame.ocr_loop ocr_cycle_ms=738 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:27,201 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:28,289 spica.galgame.ocr_loop ocr_cycle_ms=688 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:29,400 spica.galgame.ocr_loop ocr_cycle_ms=711 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:30,491 spica.galgame.ocr_loop ocr_cycle_ms=691 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:31,531 spica.galgame.ocr_loop ocr_cycle_ms=639 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:32,594 spica.galgame.ocr_loop ocr_cycle_ms=663 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:33,757 spica.galgame.ocr_loop ocr_cycle_ms=762 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:34,793 spica.galgame.ocr_loop ocr_cycle_ms=636 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:36,381 spica.galgame.ocr_loop ocr_cycle_ms=417 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:37,441 spica.galgame.ocr_loop ocr_cycle_ms=660 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:38,331 spica.galgame.ocr_loop ocr_cycle_ms=490 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:39,399 spica.galgame.ocr_loop ocr_cycle_ms=668 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:40,555 spica.galgame.ocr_loop ocr_cycle_ms=755 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:41,621 spica.galgame.ocr_loop ocr_cycle_ms=667 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:42,722 spica.galgame.ocr_loop ocr_cycle_ms=701 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:43,838 spica.galgame.ocr_loop ocr_cycle_ms=716 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:44,946 spica.galgame.ocr_loop ocr_cycle_ms=708 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:46,053 spica.galgame.ocr_loop ocr_cycle_ms=706 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:46,418 common.timing [TIMING] step=reaction_judge duration_ms=5826.60 model=gpt-5.4-mini worth=1 angle= degraded=False lines=4
+2026-06-25 20:57:46,418 spica.galgame.reaction reaction decision: ReactionDecision(kind='below_threshold', detail='idle_flush', score=1, line_ids=('d125c9ebc75e42879517ecfe6fb04bb9', '5dc4eb7c22f649a8ab2598318b8c4b22', '119eff9c6fdc48c09744ab1235570112', '414ac7e92ef745e981df9e6918492ab6'))
+2026-06-25 20:57:47,163 spica.galgame.ocr_loop ocr_cycle_ms=710 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:48,208 spica.galgame.ocr_loop ocr_cycle_ms=645 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:49,356 spica.galgame.ocr_loop ocr_cycle_ms=748 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:50,428 spica.galgame.ocr_loop ocr_cycle_ms=672 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:51,558 spica.galgame.ocr_loop ocr_cycle_ms=729 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:52,630 spica.galgame.ocr_loop ocr_cycle_ms=672 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:53,749 spica.galgame.ocr_loop ocr_cycle_ms=719 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:54,855 spica.galgame.ocr_loop ocr_cycle_ms=706 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:55,869 spica.galgame.ocr_loop ocr_cycle_ms=613 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:56,681 spica.galgame.ocr_loop ocr_cycle_ms=412 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:57,772 spica.galgame.ocr_loop ocr_cycle_ms=691 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:58,837 spica.galgame.ocr_loop ocr_cycle_ms=665 exceeded interval_ms=400 -- CPU OCR may not hold the interval
+2026-06-25 20:57:59,246 spica.galgame.reaction reaction decision: ReactionDecision(kind='observe_flush', detail='playing', score=0, line_ids=('41b30cfe6e2445009918c44852d04cc7',))

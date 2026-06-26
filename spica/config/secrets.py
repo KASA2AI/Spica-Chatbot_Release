@@ -28,6 +28,12 @@ def _ensure_env_loaded() -> None:
 @dataclass(frozen=True)
 class Secrets:
     openai_api_key: str | None = None
+    # Optional separate key for the reaction-judge LLM endpoint, so its load does
+    # not saturate the main chat/summary endpoint. Vendor-neutral (any
+    # OpenAI-compatible provider; base_url/model are config: JUDGE_BASE_URL /
+    # JUDGE_MODEL). None -> the judge shares ``openai_api_key`` (zero behaviour
+    # change). Roster: JUDGE_API_KEY.
+    judge_api_key: str | None = None
 
 
 def load_secrets() -> Secrets:
@@ -41,4 +47,10 @@ def load_secrets() -> Secrets:
                 "(密钥已统一为 OPENAI_API_KEY，请从 xiaosan.env 删除该行)",
                 legacy_name,
             )
-    return Secrets(openai_api_key=os.getenv("OPENAI_API_KEY"))
+    # Both keys loaded in the SAME pass (CLAUDE.md #10): the judge adapter is built
+    # later (AppHost.initialize), reading this already-injected value -- never a
+    # construct-time os.getenv that would freeze on an empty value (the F19 trap).
+    return Secrets(
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        judge_api_key=os.getenv("JUDGE_API_KEY"),
+    )

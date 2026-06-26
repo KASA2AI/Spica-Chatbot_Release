@@ -40,13 +40,51 @@ def to_chat_completions_tools(schemas: list[dict[str, Any]]) -> list[dict[str, A
     return converted
 
 
+_GPT_EFFORTS = ("none", "low", "medium", "high")
+
+
+def _model_is_deepseek(model: str | None) -> bool:
+    return "deepseek" in (model or "").lower()
+
+
+def _model_is_gpt(model: str | None) -> bool:
+    return (model or "").lower().startswith("gpt")
+
+
+def _reasoning_chat_kwargs(model: str | None, effort: str) -> dict[str, Any]:
+    """Reasoning/thinking kwargs for a chat.completions request. {} for
+    'default'/unknown (send NOTHING -> the provider's own default, zero-diff).
+    deepseek: 'none' disables thinking (binary -- levels leave it ON). gpt:
+    reasoning_effort = none/low/medium/high (a real gradient)."""
+    if not effort or effort == "default":
+        return {}
+    if _model_is_deepseek(model):
+        return {"extra_body": {"thinking": {"type": "disabled"}}} if effort == "none" else {}
+    if _model_is_gpt(model) and effort in _GPT_EFFORTS:
+        return {"reasoning_effort": effort}
+    return {}
+
+
+def _reasoning_responses_kwargs(model: str | None, effort: str) -> dict[str, Any]:
+    """Same, for a responses.create request (gpt only -- deepseek uses chat here)."""
+    if not effort or effort == "default":
+        return {}
+    if _model_is_gpt(model) and effort in _GPT_EFFORTS:
+        return {"reasoning": {"effort": effort}}
+    return {}
+
+
 class OpenAICompatibleAdapter:
     """LLM adapter over an OpenAI-compatible client (OpenAI, DeepSeek, ...)."""
 
     name = "openai_compatible"
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, reasoning_effort: str = "default") -> None:
         self.client = client
+        # Reasoning/thinking control applied to EVERY request (deepseek thinking
+        # off / gpt effort). "default" -> no param sent (zero-diff). See
+        # _reasoning_chat_kwargs / _reasoning_responses_kwargs.
+        self._reasoning_effort = reasoning_effort
 
     def prefers_chat_completions(self) -> bool:
         return _prefers_chat_completions(self.client)
@@ -56,13 +94,15 @@ class OpenAICompatibleAdapter:
 
     def create_responses(self, **request: Any) -> Any:
         """One-shot Responses API call (synchronous tool loop / probe)."""
-        return self.client.responses.create(**request)
+        reasoning = _reasoning_responses_kwargs(request.get("model"), self._reasoning_effort)
+        return self.client.responses.create(**{**reasoning, **request})
 
     def complete_chat(self, model: str, prompt: str, state: Any) -> str:
         """One-shot Chat Completions call, returning the assistant text."""
         response = self.client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
+            **_reasoning_chat_kwargs(model, self._reasoning_effort),
         )
         _record_usage(state, response)
         choices = list(_get_attr(response, "choices", []) or [])
@@ -88,6 +128,7 @@ class OpenAICompatibleAdapter:
             model=model,
             messages=[{"role": "user", "content": prompt}],
             tools=to_chat_completions_tools(tools),
+            **_reasoning_chat_kwargs(model, self._reasoning_effort),
         )
         log_timing("llm_chat_tool_probe", elapsed_ms(probe_start_ms), model=model)
         _record_usage(state, response)
@@ -136,6 +177,7 @@ class OpenAICompatibleAdapter:
             messages=[{"role": "user", "content": prompt}],
             tools=to_chat_completions_tools(tools),
             stream=True,
+            **_reasoning_chat_kwargs(model, self._reasoning_effort),
         )
         acc: dict[int, dict[str, str]] = {}
         for chunk in stream:
@@ -165,7 +207,7 @@ class OpenAICompatibleAdapter:
 
     def iter_response_text(self, request: dict[str, Any], state: Any) -> Iterator[str]:
         """Stream assistant text deltas, with all fallbacks handled internally."""
-        return _iter_response_text(self.client, request, state)
+        return _iter_response_text(self.client, request, state, self._reasoning_effort)
 
     def complete_text(self, prompt: str, *, model: str) -> str:
         """One-shot, turn-independent completion (Phase 8 summarization). Reuses the
@@ -187,16 +229,18 @@ def _iter_response_text(
     client: Any,
     request: dict[str, Any],
     state: Any,
+    reasoning_effort: str = "default",
 ) -> Iterator[str]:
     llm_client = _client_with_retry_disabled(client, state)
     if _prefers_chat_completions(llm_client):
         state.timing["llm_stream_fallback_used"] = True
         state.timing["llm_stream_fallback_reason"] = "chat_completions_compatible_client"
-        yield from _iter_chat_completion_text(llm_client, request, state)
+        yield from _iter_chat_completion_text(llm_client, request, state, reasoning_effort=reasoning_effort)
         return
 
     stream_request = dict(request)
     stream_request["stream"] = True
+    stream_request.update(_reasoning_responses_kwargs(request.get("model"), reasoning_effort))
     stream_create_start_ms = now_ms()
     streamed_text = ""
     try:
@@ -214,7 +258,7 @@ def _iter_response_text(
         state.timing["llm_stream_fallback_used"] = True
         state.timing["llm_stream_fallback_reason"] = "stream_request_type_error"
         state.timing["llm_stream_error"] = str(exc)
-        yield _fallback_response_text(llm_client, request, state, streamed_text)
+        yield _fallback_response_text(llm_client, request, state, streamed_text, reasoning_effort)
         return
     except Exception as exc:
         state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
@@ -230,9 +274,10 @@ def _iter_response_text(
         )
         if _is_responses_api_not_found(exc) and _has_chat_completions(llm_client):
             state.timing["llm_stream_fallback_reason"] = "responses_api_not_found_chat_completions"
-            yield from _iter_chat_completion_text(llm_client, request, state, streamed_text)
+            yield from _iter_chat_completion_text(
+                llm_client, request, state, streamed_text, reasoning_effort=reasoning_effort)
             return
-        yield _fallback_response_text(llm_client, request, state, streamed_text)
+        yield _fallback_response_text(llm_client, request, state, streamed_text, reasoning_effort)
         return
 
     if hasattr(stream, "output_text"):
@@ -270,7 +315,7 @@ def _iter_response_text(
             streamed_chars=len(streamed_text),
             error=str(exc),
         )
-        yield _fallback_response_text(llm_client, request, state, streamed_text)
+        yield _fallback_response_text(llm_client, request, state, streamed_text, reasoning_effort)
 
 
 def _client_with_retry_disabled(client: Any, state: Any) -> Any:
@@ -292,11 +337,14 @@ def _fallback_response_text(
     request: dict[str, Any],
     state: Any,
     already_streamed: str = "",
+    reasoning_effort: str = "default",
 ) -> str:
     if _prefers_chat_completions(client):
-        return "".join(_iter_chat_completion_text(client, request, state, already_streamed))
+        return "".join(_iter_chat_completion_text(
+            client, request, state, already_streamed, reasoning_effort=reasoning_effort))
 
     fallback_request = {key: value for key, value in request.items() if key != "stream"}
+    fallback_request.update(_reasoning_responses_kwargs(fallback_request.get("model"), reasoning_effort))
     fallback_start_ms = now_ms()
     response = client.responses.create(**fallback_request)
     fallback_ms = elapsed_ms(fallback_start_ms)
@@ -338,11 +386,13 @@ def _iter_chat_completion_text(
     request: dict[str, Any],
     state: Any,
     already_streamed: str = "",
+    reasoning_effort: str = "default",
 ) -> Iterator[str]:
     chat_request = {
         "model": request.get("model"),
         "messages": [{"role": "user", "content": str(request.get("input") or "")}],
         "stream": True,
+        **_reasoning_chat_kwargs(request.get("model"), reasoning_effort),
     }
     chat_start_ms = now_ms()
     full_text = ""

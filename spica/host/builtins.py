@@ -30,7 +30,10 @@ def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) 
     Phase 8 plugins register into.
     """
     registry.register_llm(
-        "openai_compatible", lambda client=None: OpenAICompatibleAdapter(client)
+        "openai_compatible",
+        lambda client=None, reasoning_effort="default": OpenAICompatibleAdapter(
+            client, reasoning_effort=reasoning_effort
+        ),
     )
     for provider in (*CURRENT_GPTSOVITS_PROVIDERS, "dummy"):
         registry.register_tts(

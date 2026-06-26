@@ -37,6 +37,17 @@ from spica.config.secrets import Secrets
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def build_llm_client(api_key: str, base_url: str | None, timeout: float = 15) -> OpenAI:
+    """One OpenAI-compatible client. Shared by the main chat/summary client and the
+    reaction judge's separate-key client (so the construction stays single-sourced).
+    Construction is network-free -- a bad key fails on the first call, not here."""
+    return OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        http_client=httpx.Client(trust_env=False, timeout=timeout),
+    )
+
+
 def build_agent_services(
     config: AppConfig,
     secrets: Secrets,
@@ -49,11 +60,7 @@ def build_agent_services(
     if not api_key:
         raise ValueError("没有读取到 OPENAI_API_KEY，请检查 xiaosan.env")
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url=config.llm.base_url,
-        http_client=httpx.Client(trust_env=False, timeout=15),
-    )
+    client = build_llm_client(api_key, config.llm.base_url)
     interlocutor_name = normalize_interlocutor_name(
         config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME
     )

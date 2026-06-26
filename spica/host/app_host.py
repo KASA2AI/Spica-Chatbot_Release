@@ -60,7 +60,7 @@ from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
 from spica.runtime.context import GameTurnBinding
 from spica.runtime.jobs import ThreadJobRunner
-from spica.host.agent_assembly import build_agent_services
+from spica.host.agent_assembly import build_agent_services, build_llm_client
 from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
 from spica.host.warmup import run_warmup
@@ -247,7 +247,8 @@ class AppHost:
             )
             # Resolve and inject the LLM / memory adapters by configured name.
             self.services.llm_adapter = self.registry.resolve_llm(
-                self.config.llm.provider, client=self.services.llm_client
+                self.config.llm.provider, client=self.services.llm_client,
+                reasoning_effort=self.config.llm.reasoning_effort,
             )
             self.services.memory_adapter = self.registry.resolve_memory(
                 self.config.memory.provider,
@@ -534,7 +535,31 @@ class AppHost:
         if self.services is None or self.services.llm_adapter is None:
             return None
         model = self.config.galgame.reaction_judge_model or self.config.llm.model
-        return GalgameReactionJudge(self.services.llm_adapter, model)
+        return GalgameReactionJudge(self._judge_llm_adapter(), model)
+
+    def _judge_llm_adapter(self) -> Any:
+        """LLM adapter for the reaction judge -- its own endpoint (key + base_url),
+        so the judge's load never saturates the main chat/summary endpoint (the
+        deepseek-timeout-under-load root cause). Vendor-neutral: any OpenAI-compatible
+        provider (deepseek/OpenAI/...; NOT Claude/Anthropic, which needs a separate
+        messages-API adapter). Each knob falls back to the main LLM independently:
+          key      = secrets.judge_api_key  (unset -> share the main adapter, zero change)
+          base_url = galgame.reaction_judge_base_url or config.llm.base_url
+          (model is resolved by the caller: reaction_judge_model or config.llm.model)
+        Construction is network-free, so a bad key/url cannot break startup -- it
+        surfaces on the first judge call, which the host scorer catches and degrades
+        to the lexicon gate."""
+        judge_key = self.secrets.judge_api_key if self.secrets else None
+        if not judge_key:
+            logger.info("reaction judge: no JUDGE_API_KEY -> sharing the main LLM key/endpoint")
+            return self.services.llm_adapter
+        base_url = self.config.galgame.reaction_judge_base_url or self.config.llm.base_url
+        client = build_llm_client(judge_key, base_url)
+        logger.info("reaction judge: separate endpoint (JUDGE_API_KEY, base_url=%s)", base_url)
+        return self.registry.resolve_llm(
+            self.config.llm.provider, client=client,
+            reasoning_effort=self.config.galgame.reaction_judge_reasoning_effort,
+        )
 
     def _new_stt_adapter(self) -> Any | None:
         """Plan B local STT. None unless backend == "faster_whisper" (the "google"

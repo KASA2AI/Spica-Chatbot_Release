@@ -88,7 +88,10 @@ def _resolve_pass(mode: str) -> dict:
     app_config = manager.load()
 
     domains: dict = {"app": app_config.model_dump()}
-    domains["secrets"] = {"openai_api_key": secrets.openai_api_key}
+    domains["secrets"] = {
+        "openai_api_key": secrets.openai_api_key,
+        "judge_api_key": secrets.judge_api_key,  # hashed by _SECRET_KEY_RE (api_key)
+    }
 
     # P0b step 3: screen/song/plugins go through the SAME carrier switch
     # production uses (legacy file present -> whole old chain; absent ->

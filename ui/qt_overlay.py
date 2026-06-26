@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QTimer, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
 from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QMessageBox, QWidget
 
@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 
 
 class OverlayWindow(QWidget):
+    # Marshal a worker-thread (reaction-engine) system-turn start onto the GUI
+    # thread -- see _start_system_turn. Qt signals must be class attributes.
+    _system_turn_requested = Signal(object)  # carries a ProactiveTurnRequest
+
     def __init__(self) -> None:
         super().__init__(None)
         self.setWindowTitle("Spica Overlay")
@@ -159,6 +163,13 @@ class OverlayWindow(QWidget):
             is_busy=self._is_proactive_busy,
             start_turn=self._start_system_turn,
             input_gate=ReactionVoiceDuckGate(self.voice_input_controller),
+        )
+        # Reaction (worker-thread) system-turn starts hop to the GUI thread via this
+        # queued signal. Explicit QueuedConnection + bound method (NOT a lambda)
+        # avoids the AutoConnection/closure -> DirectConnection regression documented
+        # in galgame_controller._run. Song starts on the GUI thread (direct call).
+        self._system_turn_requested.connect(
+            self._start_system_turn_gui, Qt.QueuedConnection
         )
         self.song_controller = SongController(
             parent=self,
@@ -938,8 +949,25 @@ class OverlayWindow(QWidget):
         return self._is_conversation_busy() or self._is_user_speaking()
 
     def _start_system_turn(self, request: Any) -> None:
-        """P3 arbiter start callback: launch the system turn and park the
-        full-duplex restore point on the stream's completion."""
+        """P3 arbiter start callback. Invoked EITHER on the GUI thread (song, via
+        QMediaPlayer.mediaStatusChanged) OR on the reaction-engine WORKER thread
+        (galgame reaction). All the Qt widget/QTimer/QThread work lives in
+        _start_system_turn_gui and MUST run on the GUI thread, so a worker-thread
+        call is marshalled there via a queued signal -- driving Qt from the worker
+        thread was the 2026-06-26 libQt6Gui general-protection-fault. The hop is
+        non-blocking on purpose: a BlockingQueued hop to our OWN thread (the song
+        path) would deadlock, and try_speak's bool ("started" == "not busy") never
+        depended on the turn having actually started, so the async hop changes no
+        accounting -- _in_flight is reconciled by notify_turn_finished as before."""
+        if QThread.currentThread() is self.thread():
+            self._start_system_turn_gui(request)
+        else:
+            self._system_turn_requested.emit(request)
+
+    def _start_system_turn_gui(self, request: Any) -> None:
+        """The real system-turn launch -- ALWAYS on the GUI thread (direct call
+        from _start_system_turn when already on the GUI thread, or via the queued
+        _system_turn_requested signal when started from a worker thread)."""
         if self.chat_stream_controller is None:
             return
         self.chat_stream_controller.start_system_turn(request)

@@ -301,7 +301,7 @@ max_tool_rounds: 3
 
 ### app.yaml 的 `screen:` 节
 
-控制本地 screen pipeline（旧载体 `config/screen_vision_config.json` 已迁入 app.yaml，仅存 `.migrated` 回滚备份）：
+控制本地 screen pipeline（旧载体 `config/screen_vision_config.json` 已迁入 app.yaml，`.migrated` 回滚备份已清理）：
 
 - `provider`: 当前为 `moondream_local`。
 - `device`: 当前设计为 `cuda`。

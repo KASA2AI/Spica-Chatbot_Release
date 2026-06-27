@@ -27,6 +27,14 @@ spica_data/diffs/
 spica_data/voice/
 spica_data/output_wav_test/
 
+# Local faster-whisper model weights (1.6GB binary; download separately, not in repo)
+spica_data/models/faster-whisper-large-v3-turbo/model.bin
+
+# Per-run debug artifacts (stdout dumps / timing / crash logs)
+spica_data/run_*.out
+spica_data/timing_*.log
+spica_data/timing_*.crash.txt
+
 # Upstream engines / vendored deps (accessed only via wrappers)
 agent_tools/function_tools/song/Applio/
 agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/*

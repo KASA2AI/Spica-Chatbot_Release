@@ -21,6 +21,11 @@ class OverlayConfig:
     character_label_height_scale: float = 1.12
     overlay_initial_height_scale: float = 1.08
     character_max_height_ratio: float = 1.08
+    # Her-voice (chat/TTS) playback volume, linear 0.0-1.0. Default 0.86 == the
+    # historical AudioController hardcode, so an absent key is byte-identical to old
+    # behaviour. UNLIKE the other (load-only / hand-edited) fields, this one is
+    # written back by save_overlay_config_value when the user moves the slider.
+    spica_voice_volume: float = 0.86
 
 
 def load_overlay_config(path: Path | None = None) -> OverlayConfig:
@@ -81,7 +86,42 @@ def load_overlay_config(path: Path | None = None) -> OverlayConfig:
             0.96,
             1.15,
         ),
+        spica_voice_volume=_config_float(
+            raw,
+            "spica_voice_volume",
+            defaults.spica_voice_volume,
+            0.0,
+            1.0,
+        ),
     )
+
+
+def save_overlay_config_value(key: str, value: Any, path: Path | None = None) -> bool:
+    """Merge-safe write of a SINGLE overlay-config key, preserving every other
+    (hand-edited) key in the file. This is the ONLY writer of overlay_config.json --
+    every other field stays load-only (see load_overlay_config); only the voice volume
+    is persisted this way. Never raises: on a missing file it writes a fresh object, on
+    an unreadable/corrupt file it skips the write (so a file we cannot parse is left
+    intact rather than clobbered), and a failed write degrades to session-only. Returns
+    True only when the value was actually persisted."""
+    config_path = path or CONFIG_PATH
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("not_object")
+    except FileNotFoundError:
+        raw = {}
+    except Exception as exc:
+        logger.warning("event=overlay_config_save_skip path=%s reason=%s", config_path, exc)
+        return False
+
+    raw[key] = value
+    try:
+        config_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return True
+    except Exception as exc:
+        logger.warning("event=overlay_config_save_failed path=%s reason=%s", config_path, exc)
+        return False
 
 
 def _config_float(raw: dict[str, Any], key: str, fallback: float, minimum: float, maximum: float) -> float:

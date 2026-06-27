@@ -22,7 +22,7 @@ from ui.controllers.interaction_controller import InteractionController
 from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.controllers.voice_input_controller import ReactionVoiceDuckGate, VoiceInputController
-from ui.overlay_config import OverlayConfig, load_overlay_config
+from ui.overlay_config import OverlayConfig, load_overlay_config, save_overlay_config_value
 from ui.widgets.window_picker_dialog import WindowPickerDialog
 from ui.workers.companion_action_worker import CompanionActionWorker
 from ui.workers.screenshot_worker import ScreenshotWorker
@@ -114,6 +114,7 @@ class OverlayWindow(QWidget):
         self.character_label_height_scale = self.overlay_config.character_label_height_scale
         self.overlay_initial_height_scale = self.overlay_config.overlay_initial_height_scale
         self.character_max_height_ratio = self.overlay_config.character_max_height_ratio
+        self.spica_voice_volume = self.overlay_config.spica_voice_volume
         self._last_layout_log_state: tuple[Any, ...] | None = None
         self.settings_panel: SettingsPanel | None = None
         self.screenshot_selector: ScreenshotSelectionOverlay | None = None
@@ -150,6 +151,8 @@ class OverlayWindow(QWidget):
             default_speed=self.overlay_config.default_typewriter_speed,
         )
         self.audio_controller = AudioController(self)
+        # Apply the persisted her-voice volume at startup (default 0.86 == unchanged).
+        self.audio_controller.set_chat_volume(self.spica_voice_volume)
 
         self.input_panel = InputPanel(self)
         self.input_panel.send_requested.connect(self.send_message)
@@ -1090,6 +1093,7 @@ class OverlayWindow(QWidget):
             self.settings_panel.scale_changed.connect(self.set_character_scale)
             self.settings_panel.overall_scale_changed.connect(self.set_overall_scale)
             self.settings_panel.typing_speed_changed.connect(self.set_typewriter_speed)
+            self.settings_panel.voice_volume_changed.connect(self.set_spica_voice_volume)
             self.settings_panel.apply_scale(self.ui_scale)
             self.settings_panel.hide()
 
@@ -1100,6 +1104,7 @@ class OverlayWindow(QWidget):
         self.settings_panel.set_scale(self.character_scale)
         self.settings_panel.set_overall_scale(self.ui_scale)
         self.settings_panel.set_typing_speed(self.typewriter_controller.typewriter_speed)
+        self.settings_panel.set_voice_volume(self.spica_voice_volume)
         self.settings_panel.setVisible(not self.settings_panel.isVisible())
         self._layout_overlay()
 
@@ -1134,6 +1139,14 @@ class OverlayWindow(QWidget):
 
     def set_typewriter_speed(self, speed: float) -> None:
         self.typewriter_controller.set_speed(speed)
+
+    def set_spica_voice_volume(self, volume: float) -> None:
+        """Apply her-voice volume live (settings slider, GUI thread) and persist it
+        merge-safely to overlay_config.json so it survives a restart. Linear 0.0-1.0;
+        only the chat/TTS output is affected (song keeps its own level)."""
+        self.spica_voice_volume = max(0.0, min(1.0, float(volume)))
+        self.audio_controller.set_chat_volume(self.spica_voice_volume)
+        save_overlay_config_value("spica_voice_volume", self.spica_voice_volume)
 
     def _start_corner_resize(self, event: QMouseEvent) -> None:
         self.drag_offset = None

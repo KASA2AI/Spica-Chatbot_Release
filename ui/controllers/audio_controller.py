@@ -29,6 +29,12 @@ class _PreloadedAudio:
 class AudioController(QObject):
     def __init__(self, parent: QObject) -> None:
         super().__init__(parent)
+        # Playback volume for HER VOICE (the chat/TTS audio path: normal chat +
+        # galgame reaction + song-finished report). Linear 0.0-1.0; 0.86 is the
+        # historical hardcoded value, kept as the default so behaviour is unchanged
+        # until the user moves the "Spica 语音音量" slider. Song playback uses a
+        # SEPARATE output (_song_audio_output) and is intentionally not governed here.
+        self._chat_volume = 0.86
         self._chat_media_player = None
         self._chat_audio_output = None
         self._chat_token: AudioToken | None = None
@@ -40,6 +46,31 @@ class AudioController(QObject):
         self._song_token: AudioToken | None = None
         self._song_on_finished: Callable[[], None] | None = None
         self._song_on_error: Callable[[str], None] | None = None
+
+    def set_chat_volume(self, volume: float) -> None:
+        """Set HER VOICE playback volume (linear 0.0-1.0). Stored so every future chat
+        output is created at this level (play_chat_audio / preload_chat_audio), AND
+        applied immediately to the currently playing output plus EVERY preloaded one,
+        so a change in the settings panel takes effect mid-playback without a restart.
+        Song playback (_song_audio_output) is a separate output and is left untouched.
+        GUI-thread only -- called from startup and the settings panel, never a worker."""
+        try:
+            v = float(volume)
+        except (TypeError, ValueError):
+            return
+        v = max(0.0, min(1.0, v))
+        self._chat_volume = v
+        if self._chat_audio_output is not None:
+            try:
+                self._chat_audio_output.setVolume(v)
+            except Exception:
+                pass
+        for preloaded in self._preloaded_chat.values():
+            if preloaded.audio_output is not None:
+                try:
+                    preloaded.audio_output.setVolume(v)
+                except Exception:
+                    pass
 
     def play_chat_audio(self, audio_path: Any, token: AudioToken, on_finished: Callable[[], None]) -> bool:
         self.release_chat_audio()
@@ -81,7 +112,7 @@ class AudioController(QObject):
 
         logger.debug("event=preload_miss owner=chat token_id=%s path=%s", token.id, path)
         self._chat_audio_output = QAudioOutput(self)
-        self._chat_audio_output.setVolume(0.86)
+        self._chat_audio_output.setVolume(self._chat_volume)
         self._chat_media_player = QMediaPlayer(self)
         self._set_player_token(self._chat_media_player, token)
         self._chat_media_player.setAudioOutput(self._chat_audio_output)
@@ -111,7 +142,7 @@ class AudioController(QObject):
         media_player = None
         try:
             audio_output = QAudioOutput(self)
-            audio_output.setVolume(0.86)
+            audio_output.setVolume(self._chat_volume)
             media_player = QMediaPlayer(self)
             media_player.setAudioOutput(audio_output)
             media_player.setSource(QUrl.fromLocalFile(str(path)))

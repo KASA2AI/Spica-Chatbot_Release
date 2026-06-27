@@ -24,6 +24,7 @@ class SettingsPanel(QFrame):
     scale_changed = Signal(float)
     overall_scale_changed = Signal(float)
     typing_speed_changed = Signal(float)
+    voice_volume_changed = Signal(float)  # linear 0.0-1.0 (slider shows 0-100%)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -155,11 +156,38 @@ class SettingsPanel(QFrame):
         typing_layout.addWidget(self.typing_speed_slider, 1)
         typing_layout.addWidget(self.typing_speed_spin)
 
+        volume_row = QWidget(self)
+        volume_row.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        volume_layout = QHBoxLayout(volume_row)
+        volume_layout.setContentsMargins(0, 0, 0, 0)
+        volume_layout.setSpacing(8)
+
+        # Slider + spin both in PERCENT (0-100%); the emitted signal is linear 0.0-1.0
+        # (v1 linear mapping -- value/100). Default seeds to 86% == the historical
+        # AudioController volume, so opening settings shows the current level.
+        self.voice_volume_slider = QSlider(Qt.Orientation.Horizontal, volume_row)
+        self.voice_volume_slider.setRange(0, 100)
+        self.voice_volume_slider.setSingleStep(5)
+        self.voice_volume_slider.setPageStep(10)
+
+        self.voice_volume_spin = QDoubleSpinBox(volume_row)
+        self.voice_volume_spin.setRange(0, 100)
+        self.voice_volume_spin.setSingleStep(5)
+        self.voice_volume_spin.setDecimals(0)
+        self.voice_volume_spin.setSuffix("%")
+
+        self.voice_volume_slider.valueChanged.connect(self._voice_volume_slider_changed)
+        self.voice_volume_spin.valueChanged.connect(self._voice_volume_spin_changed)
+
+        volume_layout.addWidget(self.voice_volume_slider, 1)
+        volume_layout.addWidget(self.voice_volume_spin)
+
         form.addRow("用户名", self.name_input)
         form.addRow("服装", self.costume_box)
         form.addRow("立绘缩放", scale_row)
         form.addRow("整体缩放", overall_row)
         form.addRow("文字速度", typing_row)
+        form.addRow("Spica 语音音量", volume_row)
         layout.addLayout(form)
         self.apply_scale(1.0)
 
@@ -247,6 +275,29 @@ class SettingsPanel(QFrame):
         self.typing_speed_slider.setValue(round(value * 100))
         self.typing_speed_slider.blockSignals(False)
         self.typing_speed_changed.emit(float(value))
+
+    def set_voice_volume(self, volume: float) -> None:
+        """Seed the slider/spin from a linear 0.0-1.0 volume (shown as 0-100%). No
+        signal emission (blocked) -- this is initialisation, not a user edit."""
+        percent = round(max(0.0, min(1.0, float(volume))) * 100)
+        self.voice_volume_slider.blockSignals(True)
+        self.voice_volume_spin.blockSignals(True)
+        self.voice_volume_slider.setValue(percent)
+        self.voice_volume_spin.setValue(percent)
+        self.voice_volume_slider.blockSignals(False)
+        self.voice_volume_spin.blockSignals(False)
+
+    def _voice_volume_slider_changed(self, value: int) -> None:
+        self.voice_volume_spin.blockSignals(True)
+        self.voice_volume_spin.setValue(value)
+        self.voice_volume_spin.blockSignals(False)
+        self.voice_volume_changed.emit(value / 100)
+
+    def _voice_volume_spin_changed(self, value: float) -> None:
+        self.voice_volume_slider.blockSignals(True)
+        self.voice_volume_slider.setValue(round(value))
+        self.voice_volume_slider.blockSignals(False)
+        self.voice_volume_changed.emit(value / 100)
 
     def apply_scale(self, scale: float) -> None:
         radius = scaled_px(14, scale)

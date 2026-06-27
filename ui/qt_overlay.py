@@ -40,6 +40,12 @@ DEBUG_NORMAL_WINDOW = False
 MIN_WINDOW_SIZE = QSize(460, 360)
 CHARACTER_HIT_ALPHA_THRESHOLD = 8
 CHARACTER_HIT_MARGIN = 7
+# Voice-mode visualisation (display-only): how long the recognized whole sentence
+# lingers in the input box before it is cleared. The turn auto-submits immediately
+# regardless, so this governs ONLY when the box returns to normal -- long enough to
+# read, always shorter than the gap before the next utterance (her reply + rearm +
+# the user speaking again). See OverlayWindow._on_voice_recognized_text.
+_VOICE_TRANSCRIPT_LINGER_MS = 1200
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +88,11 @@ class OverlayWindow(QWidget):
         self.interaction_controller: InteractionController | None = None
         self.startup_warmup_worker: StartupWarmupWorker | None = None
         self.screenshot_worker: ScreenshotWorker | None = None
+        # Display-only mirror of the last STT whole sentence written into the input
+        # box (voice-mode visualisation). Tracked so the linger timer clears ONLY our
+        # own preview -- never a user draft or a newer sentence. See
+        # _on_voice_recognized_text / _clear_voice_transcript.
+        self._voice_transcript_shown: str | None = None
         # STABLE conversation id (FINDINGS #16): the Initial-release uuid4 here
         # siloed every long-term memory under spica::<per-launch-uuid>, making
         # character memory amnesiac across restarts. "default" aligns with
@@ -194,7 +205,11 @@ class OverlayWindow(QWidget):
             screen_attachment_provider=lambda: self.pending_screen_attachment,
             consume_screen_attachment=self.consume_pending_screenshot,
         )
-        self.voice_input_controller.set_on_recognized_text(self.interaction_controller.handle_user_text)
+        # Voice visualisation seam: intercept the recognized whole sentence at the
+        # single stable on_recognized_text indirection point to mirror it into the
+        # input box (display-only) BEFORE the unchanged auto-submit. Runs on the GUI
+        # thread (recognized is delivered queued from the worker), so it is widget-safe.
+        self.voice_input_controller.set_on_recognized_text(self._on_voice_recognized_text)
         self.song_controller.set_stop_conversation_for_song(self.interaction_controller.stop_conversation_for_song)
 
         self.window_controls = WindowControls(self)
@@ -783,6 +798,42 @@ class OverlayWindow(QWidget):
         self.input_panel.input.clear()
         if self.interaction_controller is not None:
             self.interaction_controller.handle_user_text(message)
+
+    def _on_voice_recognized_text(self, text: str) -> None:
+        """Voice-mode visualisation (display-only): mirror the recognized whole
+        sentence into the input box, then hand off to the UNCHANGED auto-submit path.
+
+        Wired in place of ``interaction_controller.handle_user_text`` at the single
+        ``on_recognized_text`` indirection point (set in __init__). ``handle_user_text``
+        is ALWAYS called with the same ``text`` -- the preview is purely additive and
+        never alters submit semantics (hard constraint #1). ``text`` arrives already
+        stripped and voice-mode-gated from ``VoiceInputController.handle_recognized``.
+
+        The preview is skipped (never clobbered) when the box holds a user draft, and
+        only overwrites a stale preview of our own. It is cleared after a brief linger."""
+        if self._is_voice_mode_active():
+            current = self.input_panel.input.text().strip()
+            if not current or current == self._voice_transcript_shown:
+                self.input_panel.set_voice_transcript(text)
+                self._voice_transcript_shown = text
+                QTimer.singleShot(_VOICE_TRANSCRIPT_LINGER_MS, self._clear_voice_transcript)
+        if self.interaction_controller is not None:
+            self.interaction_controller.handle_user_text(text)
+
+    def _clear_voice_transcript(self) -> None:
+        """Clear the lingering voice preview -- but ONLY if the box still holds the
+        exact sentence we wrote, so a user draft or a newer recognized sentence typed
+        in the meantime is never wiped. Defensive no-op if the widget is already gone
+        (window closed before the linger fired)."""
+        shown = self._voice_transcript_shown
+        self._voice_transcript_shown = None
+        if shown is None:
+            return
+        try:
+            if self.input_panel.input.text() == shown:
+                self.input_panel.clear_voice_transcript()
+        except RuntimeError:
+            pass  # underlying QLineEdit already destroyed
 
     def toggle_screenshot_selection(self) -> None:
         if self.pending_screen_attachment is not None:

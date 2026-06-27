@@ -168,6 +168,20 @@ class InputPanel(QFrame):
         self.voice_button.blockSignals(False)
         self.voice_button.setToolTip("关闭语音模式" if active else "语音模式")
 
+    def set_voice_transcript(self, text: str) -> None:
+        """Display-only: mirror the recognized whole sentence into the input box
+        while voice mode auto-submits it (driven by
+        ``OverlayWindow._on_voice_recognized_text``). This is NOT an editable draft --
+        the voice path never reads it back; it is cleared after a brief linger. A thin
+        wrapper so the visualisation has a testable seam without poking ``input`` from
+        the overlay."""
+        self.input.setText(text)
+
+    def clear_voice_transcript(self) -> None:
+        """Clear the lingering voice transcript preview, returning the box to its
+        placeholder. Pairs with :meth:`set_voice_transcript`."""
+        self.input.clear()
+
     def set_screenshot_pending(self, active: bool) -> None:
         self.screenshot_button.blockSignals(True)
         self.screenshot_button.setChecked(active)

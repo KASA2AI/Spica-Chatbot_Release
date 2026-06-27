@@ -121,6 +121,10 @@ pip install SpeechRecognition PyAudio pyusb
 
 如果要运行 GPT-SoVITS，还需要按你的 GPT-SoVITS 版本安装其依赖。发布仓库不会包含 GPT-SoVITS vendor 目录内容。
 
+> **外置大文件（不在仓库内，需单独下载）**：
+> - 语音识别权重 `spica_data/models/faster-whisper-large-v3-turbo/model.bin`（约 1.6GB，已 gitignore）。从 HuggingFace `Systran/faster-whisper-large-v3-turbo` 下载 `model.bin` 放入该目录即可（同目录的 `config.json` / `tokenizer.json` 等小文件已随仓库提供）。
+> - GPT-SoVITS vendor 引擎目录同样不在仓库内，见上一段。
+
 ### 2. 准备环境变量
 
 在仓库根目录创建 `xiaosan.env`：

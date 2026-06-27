@@ -375,7 +375,7 @@ class ChatStreamController(QObject):
             if message == "tool:watch_game_screen":
                 self.typewriter_controller.start("Spica正在查看屏幕...", interval_ms=55)
                 return
-            self.typewriter_controller.start("正在处理工具...", interval_ms=55)
+            self.typewriter_controller.start("...", interval_ms=55)
 
     def _handle_stream_unit_text_ready(self, data: dict[str, Any]) -> None:
         index = self._stream_unit_index_from_data(data)

@@ -1079,8 +1079,15 @@ class OverlayWindow(QWidget):
             busy,
             voice_enabled=(not busy or self._is_voice_mode_active()),
             # A: typeable while she speaks (turn active); locked only while a mic
-            # segment is in flight, so a send cannot race the segment into a double turn.
-            input_enabled=not self._is_recording(),
+            # segment is in flight AND voice mode is on, so a send cannot race the
+            # segment into a double turn. The voice-mode guard is essential: toggling
+            # voice OFF leaves the in-flight worker briefly running, but stop() bumps
+            # voice_session_id so its finished->handle_finished early-returns without
+            # re-enabling the box; without this guard the text input stayed permanently
+            # disabled after a voice on/off toggle. With voice off a lingering worker's
+            # result is discarded (session-id / voice_mode_active gated) -- no double
+            # turn to guard -- so the box must stay usable.
+            input_enabled=not (self._is_recording() and self._is_voice_mode_active()),
         )
         if self.screenshot_worker is not None and self.screenshot_worker.isRunning():
             self.input_panel.screenshot_button.setEnabled(False)

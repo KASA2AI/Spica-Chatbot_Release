@@ -161,10 +161,55 @@ def test_set_busy_input_enabled_tracks_recording(qapp):
     window._is_recording = lambda: False
     window.set_busy(True)
     assert window.input_panel.input.isEnabled()
-    # mic segment in flight -> input locked
+    # mic segment in flight IN VOICE MODE -> input locked (double-turn窄缝)
+    window.voice_input_controller.voice_mode_active = True
     window._is_recording = lambda: True
     window.set_busy(True)
     assert not window.input_panel.input.isEnabled()
+    # voice mode OFF but a lingering worker still "recording" -> input MUST stay usable.
+    # The recording lock only guards the voice-mode double-turn race; with voice off the
+    # worker's result is discarded, so the box must not be held disabled (regression:
+    # a voice on/off toggle used to leave it permanently disabled).
+    window.voice_input_controller.voice_mode_active = False
+    window.set_busy(True)
+    assert window.input_panel.input.isEnabled()
+    window.close()
+
+
+def test_voice_toggle_off_re_enables_text_input(qapp):
+    # Regression (user-reported): enabling then disabling voice mode left the chat box
+    # permanently unusable. Cause: stop() bumps voice_session_id and the in-flight
+    # worker is still running when stop() calls set_busy (input locked), then the
+    # worker's finished -> handle_finished early-returns on the now-stale session id,
+    # so the re-enable never runs. Fix: the recording lock is voice-mode-gated.
+    window = _window()
+    window._is_song_busy = lambda: False
+    window.chat_stream_controller = _FakeCSC()
+    vc = window.voice_input_controller
+
+    class _FakeWorker:
+        def __init__(self):
+            self._run = True
+
+        def isRunning(self):
+            return self._run
+
+        def requestInterruption(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+    vc.speech_worker = _FakeWorker()  # voice ON, worker actively listening
+    vc.voice_mode_active = True
+    vc.voice_session_id = 1
+
+    vc.stop()  # user toggles voice OFF while the worker is still running
+    assert window.input_panel.input.isEnabled(), "text input disabled right after stop()"
+
+    vc.speech_worker._run = False
+    vc.handle_finished(1)  # stale worker finishes (old session id -> early return)
+    assert window.input_panel.input.isEnabled(), "text input stayed disabled after toggle"
     window.close()
 
 

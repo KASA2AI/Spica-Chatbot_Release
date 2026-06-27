@@ -38,6 +38,23 @@ def test_transcribe_falls_back_to_google_only_when_unwired(qapp, monkeypatch):
     assert worker._transcribe(b"\x00\x00") == "google text"
 
 
+def test_run_passes_resolved_end_silence_to_recorder(qapp, monkeypatch):
+    # The configured trailing-silence threshold must actually reach the recorder:
+    # RESPEAKER_END_SILENCE_SECONDS -> resolve_end_silence_seconds() -> the record call.
+    import hardware.respeaker.speech_worker as sw
+
+    captured = {}
+    monkeypatch.setattr(
+        sw, "record_respeaker_channel0_hardware_vad",
+        lambda **kw: (captured.update(kw), b"")[1],  # empty PCM -> run() returns after the call
+    )
+    monkeypatch.setenv("RESPEAKER_END_SILENCE_SECONDS", "1.3")
+
+    SpeechWorker(stt_port=None).run()
+
+    assert captured["end_silence_seconds"] == 1.3
+
+
 def test_apphost_builds_stt_adapter_only_for_faster_whisper():
     from spica.config.schema import AppConfig, SttConfig
     from spica.host.app_host import AppHost

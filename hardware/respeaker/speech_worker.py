@@ -6,6 +6,7 @@ from .audio import (
     ReSpeakerNoSpeechError,
     ReSpeakerRecordingCancelled,
     record_respeaker_channel0_hardware_vad,
+    resolve_end_silence_seconds,
 )
 
 
@@ -55,6 +56,7 @@ class SpeechWorker(QThread):
             pcm = record_respeaker_channel0_hardware_vad(
                 should_stop=self.isInterruptionRequested,
                 on_speech_start=self._mark_capturing,
+                end_silence_seconds=resolve_end_silence_seconds(),
             )
             if self.isInterruptionRequested():
                 return

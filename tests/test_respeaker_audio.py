@@ -158,5 +158,42 @@ class ReSpeakerAudioTests(unittest.TestCase):
                 self.assertEqual(_find_tuning_py(), tuning_path)
 
 
+class EndSilenceResolutionTests(unittest.TestCase):
+    """The endpoint trailing-silence threshold: raised default + RESPEAKER_* knob.
+
+    The recording LOOP logic is unchanged (test_hardware_vad_records_* still pin it);
+    these pin only the new tunable: a higher default so slow speech / mid-sentence
+    pauses are not cut off, overridable per-machine via RESPEAKER_END_SILENCE_SECONDS.
+    """
+
+    def test_default_is_raised_to_0_9(self):
+        # Intentional value change from the old hardcoded 0.55 (documented in the dump).
+        self.assertEqual(respeaker_audio.DEFAULT_END_SILENCE_SECONDS, 0.9)
+
+    def test_function_default_uses_the_constant(self):
+        import inspect
+
+        default = inspect.signature(
+            respeaker_audio.record_respeaker_channel0_hardware_vad
+        ).parameters["end_silence_seconds"].default
+        self.assertEqual(default, respeaker_audio.DEFAULT_END_SILENCE_SECONDS)
+
+    def test_resolve_unset_returns_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RESPEAKER_END_SILENCE_SECONDS", None)
+            self.assertEqual(respeaker_audio.resolve_end_silence_seconds(), 0.9)
+
+    def test_resolve_reads_env_override(self):
+        with patch.dict(os.environ, {"RESPEAKER_END_SILENCE_SECONDS": "1.25"}):
+            self.assertEqual(respeaker_audio.resolve_end_silence_seconds(), 1.25)
+
+    def test_resolve_falls_back_on_invalid_or_nonpositive(self):
+        for bad in ("", "abc", "-1", "0"):
+            with patch.dict(os.environ, {"RESPEAKER_END_SILENCE_SECONDS": bad}):
+                self.assertEqual(
+                    respeaker_audio.resolve_end_silence_seconds(), 0.9, msg=f"value={bad!r}"
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

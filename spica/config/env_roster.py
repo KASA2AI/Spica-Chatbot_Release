@@ -85,6 +85,11 @@ RESPEAKER_ENV_MAP: dict[str, str] = {
     "tuning_path": "RESPEAKER_TUNING_PATH",
     "require_hardware_vad": "RESPEAKER_REQUIRE_HARDWARE_VAD",
     "input_device_index": "RESPEAKER_INPUT_DEVICE_INDEX",
+    # Trailing-silence (seconds) the hardware-VAD loop waits before declaring the
+    # utterance finished. Raise it if slow speech / mid-sentence pauses get cut off;
+    # lower it if she feels slow to respond after you stop. Coerced in
+    # hardware/respeaker/audio.py (default DEFAULT_END_SILENCE_SECONDS).
+    "end_silence_seconds": "RESPEAKER_END_SILENCE_SECONDS",
 }
 
 # -- legacy: present in xiaosan.env history, consumed by NOTHING since B2

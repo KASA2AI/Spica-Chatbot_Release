@@ -16,6 +16,14 @@ SAMPLE_WIDTH = 2
 DEFAULT_CHUNK_FRAMES = 320
 RESPEAKER_DEVICE_KEYWORDS = ("respeaker", "seeed", "2886")
 
+# Trailing silence (seconds) before the hardware-VAD loop declares the utterance
+# finished. Raised from the original 0.55 so a slow speaker / a mid-sentence pause /
+# a re-stressed syllable is not cut off mid-phrase. Tunable per-machine via
+# RESPEAKER_END_SILENCE_SECONDS (resolve_end_silence_seconds); 0.7-1.4 is a sane band
+# (lower -> snappier finalize but more clipping; higher -> never clips but waits
+# longer after you stop before she responds).
+DEFAULT_END_SILENCE_SECONDS = 0.9
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,6 +37,24 @@ class ReSpeakerNoSpeechError(ReSpeakerAudioError):
 
 class ReSpeakerRecordingCancelled(ReSpeakerAudioError):
     pass
+
+
+def resolve_end_silence_seconds() -> float:
+    """Resolve the trailing-silence endpoint threshold from the config layer.
+
+    Reads RESPEAKER_END_SILENCE_SECONDS via ``respeaker_env_overrides()`` (the only
+    sanctioned env path -- never ``os.getenv`` here) and coerces it to a positive
+    float; an unset / blank / non-numeric / non-positive value falls back to
+    ``DEFAULT_END_SILENCE_SECONDS``. Consumer-side coercion, matching the raw-string
+    contract of ``respeaker_env_overrides``."""
+    raw = respeaker_env_overrides()["end_silence_seconds"]
+    if raw is None:
+        return DEFAULT_END_SILENCE_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_END_SILENCE_SECONDS
+    return value if value > 0 else DEFAULT_END_SILENCE_SECONDS
 
 
 def record_respeaker_channel0(seconds: float = 8.0) -> bytes:
@@ -64,7 +90,7 @@ def record_respeaker_channel0(seconds: float = 8.0) -> bytes:
 def record_respeaker_channel0_hardware_vad(
     max_seconds: float = 8.0,
     start_timeout: float = 4.0,
-    end_silence_seconds: float = 0.55,
+    end_silence_seconds: float = DEFAULT_END_SILENCE_SECONDS,
     min_speech_seconds: float = 0.20,
     pre_roll_seconds: float = 0.25,
     vad_poll_seconds: float = 0.02,

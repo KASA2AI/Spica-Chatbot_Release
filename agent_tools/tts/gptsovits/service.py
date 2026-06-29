@@ -1,8 +1,6 @@
 import json
 import logging
-import os
 import re
-import sys
 import threading
 import uuid
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
@@ -10,10 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from spica.config.runtime_env import (
-    prime_vendored_runtime_cache_env,
-    strip_proxy_env_for_vendored_runtime,
-)
+# A2: the vendored inference import + sys.path/cwd/env-prime glue moved to
+# spica.local_runtime.tts (model_imports + GptSovitsV2ProDriver). service.py no
+# longer touches inference_webui directly -- it only swaps the inference source.
 from spica.conversation.text_normalizer import normalize_square_brackets_for_speech
 from agent_tools.config_io import read_config_file
 from common.timing import elapsed_ms, log_timing, now_ms
@@ -50,16 +47,6 @@ class _VendorLogBridge:
         self._buffer = ""
 
 
-@contextmanager
-def pushd(path: Path):
-    old_cwd = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(old_cwd)
-
-
 class GPTSoVITSTool:
     """Required local tool that turns a Japanese reply into Spica voice audio."""
 
@@ -74,14 +61,9 @@ class GPTSoVITSTool:
         self.output_dir = Path()
         self.static_url_prefix = ""
 
-        self._i18n = None
-        self._change_gpt_weights = None
-        self._change_sovits_weights = None
-        self._get_tts_wav = None
-        self._module_ready = False
-        self._loaded_gpt_path: str | None = None
-        self._loaded_sovits_path: str | None = None
-        self._loaded_languages: tuple[str, str] | None = None
+        # A2: the vendored inference lives behind GptSovitsV2ProDriver (lazy-built).
+        # The loaded-weight cache + i18n moved into the driver.
+        self._driver: Any | None = None
 
         self.reload_config(force=True)
 
@@ -132,19 +114,18 @@ class GPTSoVITSTool:
                     self.config.get("warmup_synthesize", False) if synthesize is None else synthesize
                 )
 
+                driver = self._ensure_driver()
                 with self._vendor_output():
-                    self._lazy_import()
-                with self._vendor_output(), pushd(self.gptsovits_root):
                     self._ensure_models(gpt_model_path, sovits_model_path, ref_language, target_language)
                     if should_synthesize:
                         warmup_text = str(self.config.get("warmup_text") or "はい。")
                         list(
-                            self._get_tts_wav(
+                            driver.synthesize_chunks(
                                 ref_wav_path=str(sample["ref_audio_path"]),
                                 prompt_text=sample["prompt_text"],
-                                prompt_language=self._i18n(ref_language),
+                                prompt_language=driver.i18n(ref_language),
                                 text=warmup_text,
-                                text_language=self._i18n(target_language),
+                                text_language=driver.i18n(target_language),
                                 top_p=1,
                                 temperature=1,
                                 inp_refs=None,
@@ -226,11 +207,10 @@ class GPTSoVITSTool:
             text_chunks = self._split_tts_text(text, params)
             chunk_audio_items = []
 
-            with self._vendor_output():
-                self._lazy_import()
+            driver = self._ensure_driver()
             import soundfile as sf
 
-            with self._vendor_output(), pushd(self.gptsovits_root):
+            with self._vendor_output():
                 model_start_ms = now_ms()
                 self._ensure_models(gpt_model_path, sovits_model_path, ref_language, target_language)
                 log_timing("tts_models", elapsed_ms(model_start_ms), emotion=emotion_key)
@@ -238,12 +218,12 @@ class GPTSoVITSTool:
                 chunk_timings = []
                 for index, chunk in enumerate(text_chunks):
                     chunk_start_ms = now_ms()
-                    synthesis_result = self._get_tts_wav(
+                    synthesis_result = driver.synthesize_chunks(
                         ref_wav_path=str(sample["ref_audio_path"]),
                         prompt_text=sample["prompt_text"],
-                        prompt_language=self._i18n(ref_language),
+                        prompt_language=driver.i18n(ref_language),
                         text=chunk,
-                        text_language=self._i18n(target_language),
+                        text_language=driver.i18n(target_language),
                         top_p=params["top_p"],
                         temperature=params["temperature"],
                         inp_refs=params["inp_refs"],
@@ -355,68 +335,16 @@ class GPTSoVITSTool:
         default_emotion = self.config.get("default_emotion", "happy")
         return aliases.get(value, value if value in emotions else default_emotion)
 
-    def _lazy_import(self) -> None:
-        if self._module_ready:
-            return
+    def _ensure_driver(self):
+        """A2: lazily build the GptSovitsV2ProDriver -- the controlled vendored-import
+        boundary. Replaces the old inline ``_lazy_import``; the sys.path / cwd /
+        env-prime glue now lives in ``spica.local_runtime.tts.model_imports`` (service
+        no longer touches inference_webui directly)."""
+        if self._driver is None:
+            from spica.local_runtime.tts import GptSovitsV2ProDriver
 
-        self._configure_runtime_cache_dirs()
-        strip_proxy_env_for_vendored_runtime()
-
-        package_dir = self.gptsovits_root / "GPT_SoVITS"
-        import_paths = [
-            str(self.gptsovits_root),
-            str(package_dir),
-            str(package_dir / "eres2net"),
-        ]
-        for import_path in reversed(import_paths):
-            if import_path in sys.path:
-                sys.path.remove(import_path)
-            sys.path.insert(0, import_path)
-
-        self._drop_conflicting_module("tools", [self.gptsovits_root])
-        self._drop_conflicting_module("utils", [package_dir])
-
-        with pushd(self.gptsovits_root):
-            from tools.i18n.i18n import I18nAuto
-            from GPT_SoVITS.inference_webui import change_gpt_weights, change_sovits_weights, get_tts_wav
-            self._i18n = I18nAuto()
-
-        self._change_gpt_weights = change_gpt_weights
-        self._change_sovits_weights = change_sovits_weights
-        self._get_tts_wav = get_tts_wav
-        self._module_ready = True
-
-    def _configure_runtime_cache_dirs(self) -> None:
-        # P0b step 1: the shim body lives in spica/config/runtime_env.py (env
-        # mutation is a config-layer privilege); the CALL SITE and timing here
-        # are unchanged -- see the FINDINGS #19 constraint in that module.
-        prime_vendored_runtime_cache_env()
-
-    def _drop_conflicting_module(self, module_name: str, allowed_roots: list[Path]) -> None:
-        module = sys.modules.get(module_name)
-        if module is None:
-            return
-
-        roots = [root.resolve() for root in allowed_roots]
-        paths = []
-        module_file = getattr(module, "__file__", None)
-        if module_file:
-            paths.append(Path(module_file).resolve())
-        module_search_paths = getattr(module, "__path__", [])
-        paths.extend(Path(path).resolve() for path in module_search_paths)
-
-        if paths and any(self._is_under_any_root(path, roots) for path in paths):
-            return
-        del sys.modules[module_name]
-
-    def _is_under_any_root(self, path: Path, roots: list[Path]) -> bool:
-        for root in roots:
-            try:
-                path.relative_to(root)
-                return True
-            except ValueError:
-                continue
-        return False
+            self._driver = GptSovitsV2ProDriver(self.gptsovits_root)
+        return self._driver
 
     def _ensure_models(
         self,
@@ -425,24 +353,15 @@ class GPTSoVITSTool:
         ref_language: str,
         target_language: str,
     ) -> None:
-        force_reload = bool(self.config.get("reload_model_each_request", False))
-        gpt_path = str(gpt_model_path)
-        sovits_path = str(sovits_model_path)
-        language_pair = (ref_language, target_language)
-
-        if force_reload or self._loaded_gpt_path != gpt_path:
-            self._change_gpt_weights(gpt_path=gpt_path)
-            self._loaded_gpt_path = gpt_path
-
-        if force_reload or self._loaded_sovits_path != sovits_path or self._loaded_languages != language_pair:
-            for _ in self._change_sovits_weights(
-                sovits_path=sovits_path,
-                prompt_language=self._i18n(ref_language),
-                text_language=self._i18n(target_language),
-            ):
-                pass
-            self._loaded_sovits_path = sovits_path
-            self._loaded_languages = language_pair
+        # Load-once caching (by path + language pair) now lives inside the driver.
+        driver = self._ensure_driver()
+        driver.load(
+            gpt_path=str(gpt_model_path),
+            sovits_path=str(sovits_model_path),
+            prompt_language=driver.i18n(ref_language),
+            text_language=driver.i18n(target_language),
+            force=bool(self.config.get("reload_model_each_request", False)),
+        )
 
     def _emotion_sample(self, emotion: str) -> dict[str, Any]:
         emotions = self.config.get("emotions", {})

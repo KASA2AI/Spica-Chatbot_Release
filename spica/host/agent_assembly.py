@@ -31,42 +31,70 @@ from spica.adapters.game_memory import GameMemorySqliteAdapter
 from spica.adapters.game_launcher import LinuxDesktopGameLauncher
 from spica.adapters.window_locator import LinuxX11WindowLocator
 from spica.adapters.screen_capture import MssScreenCapture
-from spica.adapters.ocr import RapidOcrAdapter, RapidOcrOrtAdapter
-from spica.config.schema import AppConfig
+from spica.adapters.ocr import RapidOcrAdapter, RapidOcrOrtAdapter, RapidOcrTrtEpAdapter
+from spica.config.schema import AppConfig, TrtOcrConfig
 from spica.config.secrets import Secrets
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LOGGER = logging.getLogger(__name__)
 
 
-def build_ocr_adapter(provider: str = "rapidocr", fallback_provider: str | None = "rapidocr"):
+def _build_rapidocr_trt_ep(trt_config: TrtOcrConfig | None) -> RapidOcrTrtEpAdapter:
+    """Construct the (lazy) TRT-EP adapter, resolving the engine-cache dir to an
+    absolute path against the repo root (§3.3: no env / no cwd; pathlib, §13).
+
+    Per-stage ``profiles`` are intentionally NOT wired yet (passed as None): they
+    are the deferred sub-step that follows the real-machine shape probe (D3). The
+    adapter is lazy, so this builds NO engine here."""
+    cfg = trt_config or TrtOcrConfig()
+    cache_dir = Path(cfg.engine_cache_dir)
+    if not cache_dir.is_absolute():
+        cache_dir = _REPO_ROOT / cache_dir
+    if cfg.profiles:
+        _LOGGER.info(
+            "ocr.trt.profiles set but per-stage TRT profiles are a deferred sub-step "
+            "(post-probe); relying on the ORT engine cache this cut."
+        )
+    return RapidOcrTrtEpAdapter(
+        fp16=cfg.fp16,
+        engine_cache_dir=str(cache_dir),
+        timing_cache=cfg.timing_cache,
+        profiles=None,
+        device_id=cfg.device_id,
+    )
+
+
+def build_ocr_adapter(
+    provider: str = "rapidocr",
+    fallback_provider: str | None = "rapidocr",
+    *,
+    trt_config: TrtOcrConfig | None = None,
+):
     """Select the OCR ``OCRPort`` implementation by provider name (LOCAL_RUNTIME_PLAN
     §2.3 / §11). The SINGLE source of OCR provider selection -- the same returned
     adapter drives BOTH paths (galgame loop here via ``ocr_adapter``; inspect_screen
     via the path-B install hook in app_host), so they never fork (§2.2).
 
     Default ``rapidocr`` returns ``RapidOcrAdapter()`` -- byte-identical to before.
-    Unknown / reserved-but-not-live names (e.g. ``rapidocr_trt_ep``, the step-2 TRT
-    EP) fall back to ``fallback_provider`` with a warning, so a mis-set config
-    degrades gracefully instead of crashing startup. The default is NOT switched
-    away from ``rapidocr`` this cut -- that needs a parity report (§6.1)."""
+    ``rapidocr_ort`` (cut 1) and ``rapidocr_trt_ep`` (cut 2, ORT TensorRT EP) are
+    experimental and LAZY (no engine built here). Unknown names fall back to
+    ``fallback_provider`` with a warning, so a mis-set config degrades gracefully
+    instead of crashing startup. The default is NOT switched away from ``rapidocr``
+    this cut -- that needs a parity + benchmark report (§6.1)."""
     name = (provider or "rapidocr").strip()
-    builders = {
-        "rapidocr": RapidOcrAdapter,
-        "rapidocr_ort": RapidOcrOrtAdapter,
-        # "rapidocr_trt_ep": reserved for step 2 (ORT TensorRT EP). Not live yet;
-        # selecting it falls back below until the engine-cache path is implemented.
-    }
-    builder = builders.get(name)
-    if builder is None:
-        if fallback_provider and fallback_provider != name:
-            _LOGGER.warning(
-                "unknown/unavailable OCR provider %r; falling back to %r", name, fallback_provider
-            )
-            return build_ocr_adapter(fallback_provider, fallback_provider=None)
-        _LOGGER.warning("unknown OCR provider %r and no fallback; using rapidocr", name)
+    if name == "rapidocr":
         return RapidOcrAdapter()
-    return builder()
+    if name == "rapidocr_ort":
+        return RapidOcrOrtAdapter()
+    if name == "rapidocr_trt_ep":
+        return _build_rapidocr_trt_ep(trt_config)
+    if fallback_provider and fallback_provider != name:
+        _LOGGER.warning(
+            "unknown/unavailable OCR provider %r; falling back to %r", name, fallback_provider
+        )
+        return build_ocr_adapter(fallback_provider, fallback_provider=None, trt_config=trt_config)
+    _LOGGER.warning("unknown OCR provider %r and no fallback; using rapidocr", name)
+    return RapidOcrAdapter()
 
 
 def build_llm_client(api_key: str, base_url: str | None, timeout: float = 15) -> OpenAI:
@@ -136,7 +164,9 @@ def build_agent_services(
         # = byte-identical). The SAME adapter is installed into the path-B hook in
         # app_host so galgame OCR and inspect_screen never fork (LOCAL_RUNTIME_PLAN §2.2).
         screen_capture_adapter=MssScreenCapture(),
-        ocr_adapter=build_ocr_adapter(config.ocr.provider, config.ocr.fallback_provider),
+        ocr_adapter=build_ocr_adapter(
+            config.ocr.provider, config.ocr.fallback_provider, trt_config=config.ocr.trt
+        ),
         config={
             "model": config.llm.model,
             "character_profile": character_profile,

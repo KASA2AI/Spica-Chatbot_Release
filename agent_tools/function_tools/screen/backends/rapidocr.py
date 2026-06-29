@@ -25,12 +25,31 @@ def ocr_image(image: Any) -> dict[str, Any]:
     OCR is best-effort: dependency, image decoding, and inference failures are
     returned as an empty result with an error payload so screen analysis can
     continue through Moondream.
-    """
 
+    Thin caller over ``recognize_with_engine`` bound to the process-global engine
+    provider + ``_INFER_LOCK`` -- byte-identical to the pre-extraction behaviour
+    (the extraction lets the local_runtime TRT runtime reuse the same
+    prepare/parse/error path with a DIFFERENT engine + lock, LOCAL_RUNTIME_PLAN
+    cut 2 / D2).
+    """
+    return recognize_with_engine(_get_engine, image, _INFER_LOCK)
+
+
+def recognize_with_engine(engine_provider: Any, image: Any, lock: Any) -> dict[str, Any]:
+    """Prepare -> (locked) infer -> parse -> ``{engine, raw_text, blocks, error}``.
+
+    The shared OCR body, parametrized over the engine + its inference lock.
+    ``engine_provider`` is a zero-arg callable returning the engine, resolved INSIDE
+    the protected block so an engine-load failure (e.g. missing rapidocr dependency,
+    a ``ScreenToolError``) is caught here -- matching the pre-extraction ``ocr_image``
+    that acquired the engine inside its try. Used by ``ocr_image`` (global CUDA
+    engine via ``_get_engine`` + ``_INFER_LOCK``) and by the local_runtime TRT
+    runtime (its own engine + lock). Best-effort: never raises -- failures come back
+    as an empty result + error payload."""
     try:
         prepared = _prepare_image(image)
-        engine = _get_engine()
-        with _INFER_LOCK:  # serialize inference across all OCR paths (Phase 7)
+        engine = engine_provider()
+        with lock:  # serialize inference on THIS engine
             raw_result = engine(prepared)
         blocks = _parse_blocks(raw_result)
         return {

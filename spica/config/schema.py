@@ -296,8 +296,28 @@ class SttConfig(BaseModel):
     download_root: str | None = None
 
 
+class TrtOcrConfig(BaseModel):
+    """ORT TensorRT EP options for the ``rapidocr_trt_ep`` provider (cut 2).
+
+    yaml-only / injected (铁律 #4 + §3.3: nothing here is read from env; the host
+    resolves ``engine_cache_dir`` to an absolute path and passes it down)."""
+
+    # D4: fp32 is the cut-2 default -- verify the TRT integration mechanism (engine
+    # builds, cache hits, fallback, speedup, parity) with one variable before turning
+    # on fp16. fp16 stays configurable as the step-2 follow-up.
+    fp16: bool = False
+    # Repo-relative; the host resolves to an absolute path. Gitignored (§7.3).
+    engine_cache_dir: str = "artifacts/trt"
+    timing_cache: bool = True
+    # Explicit TRT min/opt/max shape profiles, filled ONLY if the real-machine shape
+    # probe shows many shapes (D3). Empty -> rely on ORT's per-shape engine cache.
+    # Shape: {"det": {"min": "x:1x3x32x32", "opt": ..., "max": ...}, "rec": {...}}.
+    profiles: dict[str, dict[str, str]] = Field(default_factory=dict)
+    device_id: int = 0
+
+
 class OcrConfig(BaseModel):
-    """OCR provider selection (LOCAL_RUNTIME_PLAN cut 1, §5).
+    """OCR provider selection (LOCAL_RUNTIME_PLAN cut 1/2, §5).
 
     Governs BOTH OCR paths from one place so they never fork onto different
     engines (§2.2): path A (galgame loop, via ``services.ocr_adapter``) and path B
@@ -315,13 +335,15 @@ class OcrConfig(BaseModel):
     registered P3 cleanup, NOT this cut.
 
     PARITY GATE (§6.1): the default stays ``rapidocr`` until a parity report
-    clears switching it. ``rapidocr_ort`` is selectable (experimental) now;
-    ``fallback_provider`` is the retreat kept until real-machine parity passes."""
+    clears switching it. ``rapidocr_ort`` / ``rapidocr_trt_ep`` are selectable
+    (experimental); ``fallback_provider`` is the retreat kept until real-machine
+    parity passes."""
 
-    # "rapidocr" (default/fallback) | "rapidocr_ort" (experimental, this cut)
-    # | "rapidocr_trt_ep" (reserved -- step 2, not yet live).
+    # "rapidocr" (default/fallback) | "rapidocr_ort" (experimental, cut 1)
+    # | "rapidocr_trt_ep" (experimental, cut 2 -- ORT TensorRT EP).
     provider: str = "rapidocr"
     fallback_provider: str = "rapidocr"
+    trt: TrtOcrConfig = Field(default_factory=TrtOcrConfig)
 
 
 class AppConfig(BaseModel):

@@ -8,7 +8,7 @@ instead of crashing startup.
 
 import unittest
 
-from spica.adapters.ocr import RapidOcrAdapter, RapidOcrOrtAdapter
+from spica.adapters.ocr import RapidOcrAdapter, RapidOcrOrtAdapter, RapidOcrTrtEpAdapter
 from spica.host.agent_assembly import build_ocr_adapter
 
 
@@ -27,10 +27,24 @@ class BuildOcrAdapterTest(unittest.TestCase):
         self.assertIsInstance(adapter, RapidOcrOrtAdapter)
         self.assertEqual(adapter.name, "rapidocr_ort")
 
-    def test_reserved_trt_ep_falls_back_to_rapidocr(self):
-        # rapidocr_trt_ep is reserved for step 2 (not live) -> graceful fallback.
-        adapter = build_ocr_adapter("rapidocr_trt_ep", fallback_provider="rapidocr")
-        self.assertIsInstance(adapter, RapidOcrAdapter)
+    def test_rapidocr_trt_ep_builds_lazy_adapter(self):
+        # cut 2: rapidocr_trt_ep now builds the (LAZY) TRT-EP adapter -- no engine
+        # built here, so this is CI-safe (no GPU / TRT).
+        adapter = build_ocr_adapter("rapidocr_trt_ep")
+        self.assertIsInstance(adapter, RapidOcrTrtEpAdapter)
+        self.assertEqual(adapter.name, "rapidocr_trt_ep")
+        self.assertIsNone(adapter._runtime)  # lazy: nothing built
+
+    def test_rapidocr_trt_ep_resolves_cache_dir_to_absolute(self):
+        from spica.config.schema import TrtOcrConfig
+
+        adapter = build_ocr_adapter(
+            "rapidocr_trt_ep", trt_config=TrtOcrConfig(engine_cache_dir="artifacts/trt")
+        )
+        # repo-relative -> absolute (no env / no cwd dependence, §3.3).
+        self.assertTrue(adapter._cfg["engine_cache_dir"].endswith("artifacts/trt"))
+        self.assertTrue(adapter._cfg["engine_cache_dir"].startswith("/"))
+        self.assertFalse(adapter._cfg["fp16"])  # D4: fp32 default
 
     def test_unknown_provider_falls_back(self):
         adapter = build_ocr_adapter("totally_unknown", fallback_provider="rapidocr")

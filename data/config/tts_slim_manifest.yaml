@@ -1,0 +1,128 @@
+# TTS slim runtime prune manifest (LOCAL_RUNTIME_PLAN B1 / Form A).
+#
+# Data-driven spec for build_tts_slim.py (NOT YET WRITTEN). Separates a shared,
+# character-agnostic `runtime_base` from per-character `character_packs`, so a new
+# character only adds a pack and never rebuilds the base. The slim output is a
+# build artifact -- gitignored, NEVER committed. The original vendored tree is the
+# source (never modified) and stays as the fallback.
+#
+# keep/exclude semantics: a file is copied iff it matches a `keep` glob AND no
+# `exclude` glob (exclude wins). `**` spans path segments; `*` stays within one.
+# The keep-list is load-path-CONFIRMED (B1 step1 strace + torch.load instrumentation).
+version: 1
+
+# ja_only: the Japanese inference path did NOT load the Chinese (G2PWModel) /
+# English (cmudict) g2p assets, so they are excluded. Supporting zh/en later
+# REQUIRES regenerating the keep-list and restoring those text assets.
+language_profile: ja_only
+
+# The original vendored tree -- SOURCE only, never modified by the build.
+source_vendored_root: agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50
+
+runtime_base:
+  keep:
+    - "config.py"
+    - "GPT_SoVITS/**/*.py"
+    - "tools/i18n/**"
+    - "GPT_SoVITS/text/ja_userdic/**"
+    - "GPT_SoVITS/text/opencpop-strict.txt"
+    - "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/**"
+    - "GPT_SoVITS/pretrained_models/chinese-hubert-base/**"
+    - "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt"
+    - "GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin"
+  exclude:
+    - "**/__pycache__/**"
+    - "logs/**"
+    - "runtime/**"
+    - "tools/asr/**"
+    - "tools/uvr5/**"
+    - "tools/AP_BWE_main/**"
+    - "GPT_SoVITS/pretrained_models/gsv-v4-pretrained/**"
+    - "GPT_SoVITS/pretrained_models/models--nvidia--bigvgan*/**"
+    - "GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/**"
+    - "GPT_SoVITS/pretrained_models/v2Pro/**"
+    - "GPT_SoVITS/pretrained_models/s2Gv3.pth"
+    - "GPT_SoVITS/pretrained_models/s1v3.ckpt"
+    - "GPT_SoVITS/pretrained_models/s2G488k.pth"
+    - "GPT_SoVITS/pretrained_models/s2D488k.pth"
+    - "GPT_SoVITS/text/G2PWModel*"
+    - "GPT_SoVITS/text/cmudict*"
+    - "GPT_SoVITS/text/engdict*"
+    - "GPT_SoVITS/text/namedict*"
+    - "webui.py"
+    - "api*.py"
+    - "*.ipynb"
+    - "dataset/**"
+    - "docs/**"
+    - "Docker/**"
+    - "TEMP/**"
+    - "output/**"
+    - "SoVITS_weights*/**"
+    - "GPT_weights*/**"
+
+# Third-party attribution: copy these into the slim runtime; the build report
+# lists copied vs missing for each model dir in `expect_license_for`.
+licenses:
+  keep:
+    - "LICENSE*"
+    - "README*"
+    - "NOTICE*"
+    - "COPYING*"
+    - "GPT_SoVITS/pretrained_models/*/LICENSE*"
+    - "GPT_SoVITS/pretrained_models/*/README*"
+    - "GPT_SoVITS/pretrained_models/*/*.md"
+  expect_license_for:
+    - "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large"
+    - "GPT_SoVITS/pretrained_models/chinese-hubert-base"
+    - "GPT_SoVITS/pretrained_models/sv"
+    - "GPT_SoVITS/pretrained_models/fast_langdetect"
+
+character_packs:
+  spcia:
+    version: v2ProPlus
+    gpt_weight: GPT_weights_v2ProPlus/spcia-e25.ckpt
+    sovits_weight: SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth
+    # tts.yaml is the source of truth for emotion/reference/prompt; the build reads
+    # it, copies the actual ref wav + prompt files INTO the pack, and generates a
+    # self-contained character.yaml with paths relative to the pack root (so the
+    # pack runs after relocation, NOT bound to dev-machine spica_data paths).
+    config_source: data/config/tts.yaml
+
+# Paths the runtime WRITES at run time -> the slim base root must be writable.
+writable_paths:
+  - path: "./weight.json"
+    written_by: "change_gpt_weights / change_sovits_weights"
+    risk: P0
+    note: >-
+      slim base root must be writable. A read-only install (Program Files / /opt /
+      app bundle) will FAIL. Future: redirect weight.json to a user-data/cache dir
+      or pre-generate it and avoid the runtime write. NOT migrated in B1.
+
+# Created by the runtime on use (not copied by the build).
+generated_files:
+  - "weight.json"
+  - "TEMP/ja/**"
+
+# Not vendored -- the slim runtime still needs these from the (separate) Python env.
+# Shedding torch/transformers is B2 (ONNX), out of B1 scope.
+env_dependencies:
+  - "pyopenjtalk"
+  - "torch"
+  - "transformers"
+  - "librosa"
+  - "soundfile"
+
+validation:
+  comparator: audio_diff
+  samples: "4_ja_x_4_emotion"
+  waveform_rmse_max: 0.001
+  len_ratio_dev_max: 0.0
+  baseline: original_vendored
+  expected_size_gb: 1.4
+
+# Build safety: the slim output MUST be under a gitignored path; the build asserts
+# `git check-ignore <out>` passes and refuses to run otherwise.
+output:
+  default_dir: artifacts/tts_slim
+  must_be_gitignored: true
+  size_cap_gb: 3.0

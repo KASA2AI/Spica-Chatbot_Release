@@ -10,6 +10,8 @@ xiaosan.env
 
 # Local scratch / debug scripts
 temp.py
+# Scratch dir (ad-hoc test inputs / OCR benchmark frames -- never committed)
+temp/
 
 # IDE / tooling caches
 .idea/

@@ -8,6 +8,7 @@ Injected FAKE callables -- NO vendored model / GPU / model_imports (§6.5). Pins
 """
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -77,16 +78,52 @@ class TtsDriverContractTest(unittest.TestCase):
         drv.load(force=True, **kw)
         self.assertEqual(rec.gpt_calls, ["g.ckpt", "g.ckpt"])
 
-    def test_cwd_restored_when_vendored_call_raises(self):
+    def test_synthesize_does_not_change_cwd(self):
+        # A3: synthesize_chunks must NOT pushd -- get_tts_wav runs at the ORIGINAL cwd
+        # (no call-time cwd dependency on Linux). root != cwd so a pushd would show.
+        seen = {}
+
+        def fake(**kwargs):
+            seen["cwd"] = os.getcwd()
+            yield (32000, np.zeros(4, dtype=np.int16))
+
+        with tempfile.TemporaryDirectory() as root:
+            drv, _ = _driver(root, get_tts=fake)
+            before = os.getcwd()
+            list(drv.synthesize_chunks(text="x"))
+            self.assertEqual(seen["cwd"], before)  # ran WITHOUT pushd to root
+            self.assertEqual(os.getcwd(), before)
+
+    def test_cwd_unchanged_when_synthesize_raises(self):
+        # A3: even on a vendored exception, synthesize never touches cwd (no pushd).
         def boom(**kwargs):
             raise RuntimeError("vendored boom")
             yield  # noqa: unreachable -- make it a generator
 
-        drv, _ = _driver(self.root, get_tts=boom)
-        before = os.getcwd()
-        with self.assertRaises(RuntimeError):
-            list(drv.synthesize_chunks(text="x"))
-        self.assertEqual(os.getcwd(), before)  # protected pushd restored cwd
+        with tempfile.TemporaryDirectory() as root:
+            drv, _ = _driver(root, get_tts=boom)
+            before = os.getcwd()
+            with self.assertRaises(RuntimeError):
+                list(drv.synthesize_chunks(text="x"))
+            self.assertEqual(os.getcwd(), before)
+
+    def test_load_pushes_cwd_during_call(self):
+        # A3 contrast: load MUST still pushd (change_*_weights' cwd-relative
+        # ./weight.json) -- cwd is the root DURING the call, restored after.
+        seen = {}
+
+        class _CwdRecorder(_Recorder):
+            def change_gpt(self, *, gpt_path):
+                seen["gpt_cwd"] = os.getcwd()
+                super().change_gpt(gpt_path=gpt_path)
+
+        with tempfile.TemporaryDirectory() as root:
+            drv, _ = _driver(root, rec=_CwdRecorder())
+            before = os.getcwd()
+            drv.load(gpt_path="g", sovits_path="s", prompt_language="ja", text_language="ja")
+            self.assertNotEqual(seen["gpt_cwd"], before)  # load DID pushd
+            self.assertEqual(seen["gpt_cwd"], os.path.realpath(root))  # ...to the root
+            self.assertEqual(os.getcwd(), before)  # restored after
 
     def test_i18n_passthrough(self):
         drv, _ = _driver(self.root)

@@ -5,10 +5,11 @@ Wraps the vendored ``change_*_weights`` / ``get_tts_wav`` (imported once via
 touching ``inference_webui`` glue directly. The vendored MODEL CLASSES do the
 work -- this is NOT a get_tts_wav rewrite and NOT a model-def copy (D1). v2pro only.
 
-The pushd around load/synthesize is the A3 residual (the vendored code does
-cwd-relative loads): a PROTECTED context manager that always restores cwd, held
-only while the vendored call runs (synthesis is materialized inside the block, not
-across yields).
+A3: synthesize is now cwd-FREE (get_tts_wav has no call-time cwd dependency on
+Linux). pushd remains ONLY on ``load`` (change_*_weights' cwd-relative
+``./weight.json``) and in ``model_imports`` (import-time BERT/cnhubert/sv/now_dir
+loads) -- both one-time, NOT the hot path. Fully removing them is a separate task
+(would require patching vendored code).
 """
 
 from __future__ import annotations
@@ -66,7 +67,11 @@ class GptSovitsV2ProDriver:
         """Load GPT + SoVITS weights, caching by path (+ language pair for SoVITS) --
         same change-once semantics as the old ``service._ensure_models``."""
         change_gpt_weights, change_sovits_weights, _, _ = self._resolve_funcs()
-        with self._lock, pushd(self._root):  # A3 residual: vendored cwd-relative model loads
+        # A3: load KEEPS pushd. change_*_weights read+write "./weight.json" -- a
+        # cwd-RELATIVE path hardcoded in the vendored inference_webui -- at call time,
+        # so cwd must be the gptsovits root here (one-time, NOT the hot path).
+        # Eliminating it would require patching vendored code: out of A3 scope.
+        with self._lock, pushd(self._root):
             if force or self._loaded_gpt != gpt_path:
                 change_gpt_weights(gpt_path=gpt_path)
                 self._loaded_gpt = gpt_path
@@ -83,9 +88,17 @@ class GptSovitsV2ProDriver:
 
     def synthesize_chunks(self, **kwargs: Any) -> Iterator[tuple[int, Any]]:
         """Run the vendored ``get_tts_wav`` for ONE chunk, returning an iterator of
-        ``(sample_rate, audio_ndarray)``. Materialized INSIDE the pushd block so cwd
-        is restored before the caller iterates (no context held across yields)."""
+        ``(sample_rate, audio_ndarray)``.
+
+        A3: NO pushd here -- the cwd-dependency audit found ``get_tts_wav`` has NO
+        call-time cwd dependency on Linux: the sv/vocoder paths are frozen at
+        import-pushd time (``sv.py``'s ``os.getcwd()`` / ``now_dir``), BERT + cnhubert
+        are resident in memory, the text frontend's cwd-relative code is Windows-only
+        (``os.name == "nt"``), and the gpt/sovits checkpoints are absolute. Dropping
+        the per-chunk pushd decouples the hot path from cwd; it is gated by
+        ``verify_tts_parity --mode driver`` (vendored-direct vs driver-backed must stay
+        <= the A1/A2 noise floor, else revert this one line)."""
         _, _, get_tts_wav, _ = self._resolve_funcs()
-        with self._lock, pushd(self._root):  # A3 residual
+        with self._lock:
             results = list(get_tts_wav(**kwargs))
         return iter(results)

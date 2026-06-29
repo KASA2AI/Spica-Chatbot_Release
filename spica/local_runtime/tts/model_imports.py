@@ -104,6 +104,11 @@ def import_gptsovits_inference(gptsovits_root: str | Path) -> tuple[Any, Any, An
     _drop_conflicting_module("tools", [root])
     _drop_conflicting_module("utils", [package_dir])
 
+    # A3: import-pushd KEPT. inference_webui's MODULE-level code loads BERT (relative
+    # bert_path), cnhubert (relative cnhubert_base_path), reads ./weight.json, and
+    # captures now_dir / sv_path via os.getcwd() -- all cwd-relative AT IMPORT. Fully
+    # removing this needs absolute bert/cnhubert env injection: a separate task (the
+    # A3 cut only decouples the synthesize hot path; see driver.synthesize_chunks).
     with pushd(root):
         from tools.i18n.i18n import I18nAuto
         from GPT_SoVITS.inference_webui import (

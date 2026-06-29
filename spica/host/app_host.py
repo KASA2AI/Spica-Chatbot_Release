@@ -245,6 +245,17 @@ class AppHost:
                 visual_tool=self.visual_tool,
                 character_package=self.character_package,
             )
+            # cut 1 (LOCAL_RUNTIME_PLAN §2.2): unify the two OCR paths. Path A
+            # (galgame) already holds services.ocr_adapter; install that SAME object
+            # into path B (inspect_screen analyzer) so a non-default provider covers
+            # both. Default rapidocr -> NOT installed -> path B keeps the legacy
+            # ocr_image (byte-identical), so the default chain is untouched.
+            if self.config.ocr.provider != "rapidocr":
+                from agent_tools.function_tools.screen.backends.ocr_runtime import (
+                    set_active_ocr_provider,
+                )
+
+                set_active_ocr_provider(self.services.ocr_adapter)
             # Resolve and inject the LLM / memory adapters by configured name.
             self.services.llm_adapter = self.registry.resolve_llm(
                 self.config.llm.provider, client=self.services.llm_client,

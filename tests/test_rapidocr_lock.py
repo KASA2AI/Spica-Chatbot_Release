@@ -54,10 +54,14 @@ class RapidOcrLockTest(unittest.TestCase):
 
     def test_inspect_screen_path_uses_the_same_locked_ocr_image(self):
         from agent_tools.function_tools.screen import analyzer
+        from agent_tools.function_tools.screen.backends import ocr_runtime
 
-        # analyzer (inspect_screen) imported ocr_image from the backend, so it is the
-        # SAME function object whose body holds _INFER_LOCK -> both paths serialize.
-        self.assertIs(analyzer.ocr_image, backend.ocr_image)
+        # cut 1: analyzer (inspect_screen) now routes OCR through the run_ocr seam
+        # (path-B unification). With no provider installed (the rapidocr default),
+        # run_ocr falls back to the SAME backend.ocr_image whose body holds
+        # _INFER_LOCK -> both OCR paths still serialize on the shared _ENGINE.
+        self.assertIs(analyzer.run_ocr, ocr_runtime.run_ocr)
+        self.assertIs(ocr_runtime.ocr_image, backend.ocr_image)
 
 
 if __name__ == "__main__":

@@ -54,7 +54,7 @@ def test_analyze_screen_image_local_uses_local_moondream_backend(monkeypatch):
     manager = FakeMoondreamManager()
     monkeypatch.setattr("agent_tools.function_tools.screen.analyzer.get_moondream_manager", lambda config: manager)
     monkeypatch.setattr(
-        "agent_tools.function_tools.screen.analyzer.ocr_image",
+        "agent_tools.function_tools.screen.analyzer.run_ocr",
         lambda image: {
             "engine": "rapidocr",
             "raw_text": "OCR SHOULD NOT ENTER MOONDREAM PROMPT",
@@ -94,7 +94,7 @@ def test_analyze_screen_image_local_outputs_visual_summary_and_visible_text(monk
     manager = FakeMoondreamManager(text="local visual summary")
     monkeypatch.setattr("agent_tools.function_tools.screen.analyzer.get_moondream_manager", lambda config: manager)
     monkeypatch.setattr(
-        "agent_tools.function_tools.screen.analyzer.ocr_image",
+        "agent_tools.function_tools.screen.analyzer.run_ocr",
         lambda image: {
             "engine": "rapidocr",
             "raw_text": "File Edit View",
@@ -129,7 +129,7 @@ def test_analyze_screen_png_local_decodes_png_bytes(monkeypatch):
     manager = FakeMoondreamManager(text="png visual summary")
     monkeypatch.setattr("agent_tools.function_tools.screen.analyzer.get_moondream_manager", lambda config: manager)
     monkeypatch.setattr(
-        "agent_tools.function_tools.screen.analyzer.ocr_image",
+        "agent_tools.function_tools.screen.analyzer.run_ocr",
         lambda image: {"engine": "rapidocr", "raw_text": "PNG TEXT", "blocks": [], "error": None},
     )
     buffer = BytesIO()
@@ -154,7 +154,7 @@ def test_analyze_screen_attachment_decodes_png_and_uses_region_mode(monkeypatch)
     manager = FakeMoondreamManager(text="region visual summary")
     monkeypatch.setattr("agent_tools.function_tools.screen.analyzer.get_moondream_manager", lambda config: manager)
     monkeypatch.setattr(
-        "agent_tools.function_tools.screen.analyzer.ocr_image",
+        "agent_tools.function_tools.screen.analyzer.run_ocr",
         lambda image: {"engine": "rapidocr", "raw_text": "Region OCR", "blocks": [], "error": None},
     )
     buffer = BytesIO()
@@ -202,7 +202,7 @@ def test_analyze_screen_attachment_decodes_png_and_uses_region_mode(monkeypatch)
 def test_analyze_screen_image_local_records_moondream_failure_without_losing_ocr(monkeypatch):
     monkeypatch.setattr("agent_tools.function_tools.screen.analyzer.get_moondream_manager", lambda config: FailingMoondreamManager())
     monkeypatch.setattr(
-        "agent_tools.function_tools.screen.analyzer.ocr_image",
+        "agent_tools.function_tools.screen.analyzer.run_ocr",
         lambda image: {"engine": "rapidocr", "raw_text": "OCR survives", "blocks": [], "error": None},
     )
 
@@ -225,7 +225,7 @@ def test_analyze_screen_image_local_keeps_moondream_result_when_ocr_fails(monkey
     manager = FakeMoondreamManager(text="visual answer")
     monkeypatch.setattr("agent_tools.function_tools.screen.analyzer.get_moondream_manager", lambda config: manager)
     monkeypatch.setattr(
-        "agent_tools.function_tools.screen.analyzer.ocr_image",
+        "agent_tools.function_tools.screen.analyzer.run_ocr",
         lambda image: {
             "engine": "rapidocr",
             "raw_text": "",

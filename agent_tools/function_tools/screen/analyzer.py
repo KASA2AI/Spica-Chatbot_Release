@@ -5,7 +5,7 @@ from io import BytesIO
 from time import perf_counter
 from typing import Any
 
-from agent_tools.function_tools.screen.backends.rapidocr import ocr_image
+from agent_tools.function_tools.screen.backends.ocr_runtime import run_ocr
 from agent_tools.function_tools.screen.config import (
     ScreenPipelineConfig,
     load_screen_config,
@@ -56,7 +56,10 @@ def analyze_screen_image_local(
         if config.ocr_enabled:
             ocr_started = perf_counter()
             try:
-                ocr_result = ocr_image(pil_image)
+                # Path B収口 (§2.2): route through the unifying seam, not the bare
+                # ocr_image -- so a provider swap covers inspect_screen too. Default
+                # (no provider installed) falls back to ocr_image, byte-identical.
+                ocr_result = run_ocr(pil_image)
             except Exception as exc:
                 ocr_result = {
                     "engine": "rapidocr",

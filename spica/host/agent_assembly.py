@@ -10,6 +10,7 @@ INVARIANT (CLAUDE.md #1 + #4): Qt-free; secrets come from the secrets loader.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import httpx
@@ -30,11 +31,42 @@ from spica.adapters.game_memory import GameMemorySqliteAdapter
 from spica.adapters.game_launcher import LinuxDesktopGameLauncher
 from spica.adapters.window_locator import LinuxX11WindowLocator
 from spica.adapters.screen_capture import MssScreenCapture
-from spica.adapters.ocr import RapidOcrAdapter
+from spica.adapters.ocr import RapidOcrAdapter, RapidOcrOrtAdapter
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+_LOGGER = logging.getLogger(__name__)
+
+
+def build_ocr_adapter(provider: str = "rapidocr", fallback_provider: str | None = "rapidocr"):
+    """Select the OCR ``OCRPort`` implementation by provider name (LOCAL_RUNTIME_PLAN
+    §2.3 / §11). The SINGLE source of OCR provider selection -- the same returned
+    adapter drives BOTH paths (galgame loop here via ``ocr_adapter``; inspect_screen
+    via the path-B install hook in app_host), so they never fork (§2.2).
+
+    Default ``rapidocr`` returns ``RapidOcrAdapter()`` -- byte-identical to before.
+    Unknown / reserved-but-not-live names (e.g. ``rapidocr_trt_ep``, the step-2 TRT
+    EP) fall back to ``fallback_provider`` with a warning, so a mis-set config
+    degrades gracefully instead of crashing startup. The default is NOT switched
+    away from ``rapidocr`` this cut -- that needs a parity report (§6.1)."""
+    name = (provider or "rapidocr").strip()
+    builders = {
+        "rapidocr": RapidOcrAdapter,
+        "rapidocr_ort": RapidOcrOrtAdapter,
+        # "rapidocr_trt_ep": reserved for step 2 (ORT TensorRT EP). Not live yet;
+        # selecting it falls back below until the engine-cache path is implemented.
+    }
+    builder = builders.get(name)
+    if builder is None:
+        if fallback_provider and fallback_provider != name:
+            _LOGGER.warning(
+                "unknown/unavailable OCR provider %r; falling back to %r", name, fallback_provider
+            )
+            return build_ocr_adapter(fallback_provider, fallback_provider=None)
+        _LOGGER.warning("unknown OCR provider %r and no fallback; using rapidocr", name)
+        return RapidOcrAdapter()
+    return builder()
 
 
 def build_llm_client(api_key: str, base_url: str | None, timeout: float = 15) -> OpenAI:
@@ -100,8 +132,11 @@ def build_agent_services(
         game_launcher_adapter=LinuxDesktopGameLauncher(),
         window_locator_adapter=LinuxX11WindowLocator(),
         # Phase 6: galgame screen capture (mss) + OCR (RapidOCR bridge, shared engine).
+        # cut 1: OCR provider selected by config via the factory (default rapidocr
+        # = byte-identical). The SAME adapter is installed into the path-B hook in
+        # app_host so galgame OCR and inspect_screen never fork (LOCAL_RUNTIME_PLAN §2.2).
         screen_capture_adapter=MssScreenCapture(),
-        ocr_adapter=RapidOcrAdapter(),
+        ocr_adapter=build_ocr_adapter(config.ocr.provider, config.ocr.fallback_provider),
         config={
             "model": config.llm.model,
             "character_profile": character_profile,

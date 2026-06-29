@@ -296,6 +296,34 @@ class SttConfig(BaseModel):
     download_root: str | None = None
 
 
+class OcrConfig(BaseModel):
+    """OCR provider selection (LOCAL_RUNTIME_PLAN cut 1, §5).
+
+    Governs BOTH OCR paths from one place so they never fork onto different
+    engines (§2.2): path A (galgame loop, via ``services.ocr_adapter``) and path B
+    (inspect_screen, via the path-B install hook) are wired from this one
+    ``provider`` by ``build_ocr_adapter``.
+
+    yaml-only (铁律 #4: no env names -- nothing added to env_roster).
+
+    SCOPE NOTE -- distinct from ``screen.ocr_engine``:
+      * ``screen.ocr_engine`` is a DESCRIPTIVE label recorded inside the
+        screen-pipeline observation (which engine produced visible_text);
+      * ``ocr.provider`` SELECTS the actual ``OCRPort`` implementation for both
+        paths.
+    They overlap today (both default ``"rapidocr"``). Consolidating the two is
+    registered P3 cleanup, NOT this cut.
+
+    PARITY GATE (§6.1): the default stays ``rapidocr`` until a parity report
+    clears switching it. ``rapidocr_ort`` is selectable (experimental) now;
+    ``fallback_provider`` is the retreat kept until real-machine parity passes."""
+
+    # "rapidocr" (default/fallback) | "rapidocr_ort" (experimental, this cut)
+    # | "rapidocr_trt_ep" (reserved -- step 2, not yet live).
+    provider: str = "rapidocr"
+    fallback_provider: str = "rapidocr"
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
@@ -304,6 +332,7 @@ class AppConfig(BaseModel):
     galgame: GalgameConfig = Field(default_factory=GalgameConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
     screen: ScreenConfig = Field(default_factory=ScreenConfig)
+    ocr: OcrConfig = Field(default_factory=OcrConfig)
     # P0b step 3 (D-3a): the song section is intentionally UNTYPED -- it is the
     # override dict layered over song/config.py's DEFAULT_CONFIG by the same
     # deep-merge engine the legacy json used (voices are an open name->config

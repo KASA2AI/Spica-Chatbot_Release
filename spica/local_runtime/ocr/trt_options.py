@@ -88,6 +88,73 @@ def build_ep_list(
     ]
 
 
+# ---- per-stage EP routing (cut 2.1) -------------------------------------------
+# Diagnosis: det/rec build clean TRT engines; cls (ch_ppocr_mobile_v2.0_cls) fails
+# TRT engine build even on a single static shape ("different constant values /
+# contradictory kMIN/kMAX" -- a cls GRAPH issue), so cls is routed to CUDA. Only a
+# POSITIVELY identified det/rec stage gets TRT; anything unrecognized stays on CUDA
+# (conservative -- a renamed rapidocr model never silently lands on TRT).
+
+# The stage each provider list runs on when TRT genuinely loaded (the verification
+# target). cls is intentionally CUDA, NOT a failure.
+EXPECTED_STAGE_PROVIDER = {"det": "trt", "rec": "trt", "cls": "cuda"}
+
+
+def classify_stage(model_path: str) -> str:
+    """Map a RapidOCR model path to ``"det" | "cls" | "rec" | "unknown"`` by file name.
+
+    Basename-only (a parent dir must never trigger a match), lowercased. Unknown is
+    the safe default -> CUDA (never TRT) for anything we don't positively recognize."""
+    name = str(model_path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if "det" in name:
+        return "det"
+    if "cls" in name:
+        return "cls"
+    if "rec" in name:
+        return "rec"
+    return "unknown"
+
+
+def ep_list_for_stage(
+    model_path: str,
+    *,
+    trt_options: dict[str, Any],
+    cuda_options: dict[str, Any],
+    cpu_options: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Per-stage provider list (cut 2.1): det/rec -> [TRT, CUDA, CPU]; cls/unknown ->
+    [CUDA, CPU] (no TRT). The CPU floor is ORT's implicit last resort, not a success
+    path (the verification flags any stage that lands on CPU)."""
+    cuda = (CUDA_EP, dict(cuda_options))
+    cpu = (CPU_EP, dict(cpu_options))
+    if classify_stage(model_path) in ("det", "rec"):
+        return [(TRT_EP, dict(trt_options)), cuda, cpu]
+    return [cuda, cpu]
+
+
+def classify_load_status(stage_providers: dict[str, str]) -> tuple[bool, str | None]:
+    """Verify TRT genuinely loaded -- NOT just that it was requested (CLAUDE.md: no
+    silent CUDA masquerading as TRT success). ``stage_providers`` is the ACTUAL EP
+    each session runs on (``{"det": "trt"|"cuda"|..., "rec": ..., "cls": ...}``).
+
+    OK iff det AND rec are on ``trt`` (cls=cuda is EXPECTED, never a failure). When a
+    TRT-expected stage fell back, returns a clear diagnostic distinguishing an
+    env/load problem from the expected cls routing."""
+    bad = [
+        f"{stage}={stage_providers.get(stage)!r}"
+        for stage in ("det", "rec")
+        if stage_providers.get(stage) != "trt"
+    ]
+    if bad:
+        return False, (
+            f"TensorRT EP not active for {', '.join(bad)} (expected 'trt') -- TRT EP failed to "
+            f"load or build and fell back. Check libnvinfer.so.10 / tensorrt_libs are installed "
+            f"and preloaded (or on LD_LIBRARY_PATH). NOTE: cls=cuda is expected (cls is routed to "
+            f"CUDA by design)."
+        )
+    return True, None
+
+
 @dataclass
 class EngineBuildResult:
     engine: Any

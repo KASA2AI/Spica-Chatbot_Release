@@ -53,3 +53,5 @@ artifacts/benchmarks/
 *.engine
 *.plan
 *.timing.cache
+# ORT TensorRT EP subgraph dumps (trt_dump_subgraphs writes these to CWD during diagnostics)
+TensorrtExecutionProvider_*.onnx

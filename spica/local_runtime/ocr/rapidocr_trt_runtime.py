@@ -23,6 +23,7 @@ anything).
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import logging
 from pathlib import Path
 from threading import RLock
@@ -31,13 +32,94 @@ from typing import Any
 from spica.local_runtime.errors import LOCAL_RUNTIME_INFERENCE_FAILED, LocalRuntimeError
 from spica.local_runtime.ocr.trt_options import (
     build_engine_with_fallback,
-    build_ep_list,
     build_trt_provider_options,
+    classify_load_status,
     default_cpu_options,
     default_cuda_options,
+    ep_list_for_stage,
 )
 
 _LOGGER = logging.getLogger(__name__)
+_LIBS_PRELOADED = False
+
+
+def _ctypes_load_all(so_paths) -> int:
+    loaded = 0
+    for path in so_paths:
+        try:
+            ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+            loaded += 1
+        except OSError:
+            continue  # a lib that won't load is skipped; the rest still help
+    return loaded
+
+
+def preload_inference_libs() -> None:
+    """Pull CUDA + TensorRT shared libs into the process GLOBAL symbol table so ORT's
+    CUDA and TensorRT execution providers resolve libnvinfer / libcudnn / libcublas
+    WITHOUT the user setting LD_LIBRARY_PATH -- the self-contained / distributable
+    path (D1). External LD_LIBRARY_PATH stays only as a documented fallback.
+
+    Pure in-process ctypes preload -- NO env reads (CLAUDE.md #4 / §3.3). BEST-EFFORT:
+    a missing package / a CDLL failure is skipped silently (NOT fatal) -- the
+    post-construction ``classify_load_status`` check reports the resulting fallback,
+    so we never silently pretend TRT loaded. Runs once per process. Mirrors the
+    backend's CUDA preload, extended with the TensorRT libs."""
+    global _LIBS_PRELOADED
+    if _LIBS_PRELOADED:
+        return
+    _LIBS_PRELOADED = True  # mark first: a partial/failed scan must not retry every build
+    total = 0
+    try:  # CUDA libs from the pip nvidia-* namespace packages (cudnn/cublas/cuda_runtime)
+        import nvidia
+
+        for base in (Path(p) for p in (getattr(nvidia, "__path__", None) or [])):
+            try:
+                total += _ctypes_load_all(sorted(base.glob("*/lib/*.so*")))
+            except OSError:
+                continue
+    except Exception:  # noqa: BLE001 -- no nvidia packages -> CUDA EP unavailable, reported later
+        pass
+    try:  # TensorRT libs from the pip tensorrt_libs package; load core libnvinfer first
+        import tensorrt_libs
+
+        tdir = Path(tensorrt_libs.__file__).parent
+        for soname in ("libnvinfer.so.10", "libnvinfer_plugin.so.10", "libnvonnxparser.so.10"):
+            total += _ctypes_load_all([tdir / soname])
+    except Exception:  # noqa: BLE001 -- no tensorrt_libs -> TRT EP unavailable, reported later
+        pass
+    if total:
+        _LOGGER.info("preloaded %d CUDA/TensorRT shared libs for rapidocr_trt_ep", total)
+
+
+def _label_provider(providers: list[str]) -> str:
+    """ORT drops a provider from ``get_providers()`` when it fails to load/build, so
+    membership is a reliable signal of what actually runs (trt | cuda | cpu)."""
+    if "TensorrtExecutionProvider" in providers:
+        return "trt"
+    if "CUDAExecutionProvider" in providers:
+        return "cuda"
+    if "CPUExecutionProvider" in providers:
+        return "cpu"
+    return providers[0] if providers else "unknown"
+
+
+def detect_stage_providers(engine: Any) -> dict[str, str]:
+    """The ACTUAL EP each of det/cls/rec runs on -- read from the three real sessions,
+    NOT from ``get_available_providers()`` (which lists TRT even when libnvinfer can't
+    load). Target after a good build: ``{"det":"trt","rec":"trt","cls":"cuda"}``."""
+    accessors = {
+        "det": lambda e: e.text_det.infer.session,
+        "cls": lambda e: e.text_cls.infer.session,
+        "rec": lambda e: e.text_rec.session.session,
+    }
+    out: dict[str, str] = {}
+    for stage, get_session in accessors.items():
+        try:
+            out[stage] = _label_provider(list(get_session(engine).get_providers()))
+        except Exception:  # noqa: BLE001 -- rapidocr internal layout drift -> unknown
+            out[stage] = "unknown"
+    return out
 
 
 def make_trt_session_class(
@@ -47,20 +129,32 @@ def make_trt_session_class(
 ) -> type:
     """A ``OrtInferSession`` subclass that builds its session with TRT -> CUDA -> CPU.
 
-    Only ``_get_ep_list`` is overridden (the one method that picks providers); every
-    other behaviour -- preprocessing, ``__call__``, metadata, char list -- is
-    inherited, so the recognized output is RapidOCR's, just on a different EP.
-    rapidocr is imported here (lazily) so this module stays light at import time."""
+    Only ``_get_ep_list`` is overridden (the one method that picks providers), and it
+    routes PER STAGE (cut 2.1): det/rec get TRT, cls gets CUDA (cls fails TRT engine
+    build -- a cls graph issue). Every other behaviour -- preprocessing, ``__call__``,
+    metadata, char list -- is inherited, so the output is RapidOCR's, just on a
+    different EP. rapidocr is imported here (lazily) so this module stays light."""
     from rapidocr_onnxruntime.utils.infer_engine import OrtInferSession
 
-    ep_list = build_ep_list(trt_options, cuda_options=cuda_options, cpu_options=cpu_options)
-
     class _TrtOrtInferSession(OrtInferSession):
+        def __init__(self, config):  # type: ignore[override]
+            # Stash the model path BEFORE super().__init__ (it calls _get_ep_list),
+            # so _get_ep_list can route by stage (det/cls/rec) from the model file.
+            self._model_path = config.get("model_path", "")
+            super().__init__(config)
+
         def _get_ep_list(self):  # type: ignore[override]
-            # Keep the parent's verify-providers bookkeeping consistent.
-            self.use_cuda = self._check_cuda()
+            self.use_cuda = self._check_cuda()  # parent verify-providers bookkeeping
             self.use_directml = False
-            return [(name, dict(opts)) for name, opts in ep_list]
+            return [
+                (name, dict(opts))
+                for name, opts in ep_list_for_stage(
+                    self._model_path,
+                    trt_options=trt_options,
+                    cuda_options=cuda_options,
+                    cpu_options=cpu_options,
+                )
+            ]
 
     return _TrtOrtInferSession
 
@@ -146,32 +240,35 @@ class RapidOcrTrtEpRuntime:
             profiles=profiles,
             device_id=device_id,
         )
+        # D1: make libnvinfer / CUDA libs loadable IN-PROCESS (self-contained, env-free)
+        # BEFORE building, so the TRT EP genuinely loads without external LD_LIBRARY_PATH.
+        preload_inference_libs()
         result = build_engine_with_fallback(
             primary_factory=lambda: self._build_rapidocr(use_trt=True),
             fallback_factory=lambda: self._build_rapidocr(use_trt=False),
             warmup=self._warmup,
             on_fallback=lambda exc: _LOGGER.warning(
-                "TRT EP init/build failed (%s: %s); falling back to CUDA EP",
+                "rapidocr_trt_ep build raised (%s: %s); rebuilt on plain CUDA",
                 type(exc).__name__,
                 exc,
             ),
         )
         self._engine = result.engine
-        # build_path = which factory won (my explicit TRT->CUDA fallback). used_providers
-        # = the ACTUAL EP the session runs on (ORT may have fallen back to CUDA INSIDE a
-        # "successful" TRT build when libnvinfer is missing -- detect, don't assume).
-        self.build_path = result.used
+        self.build_path = result.used  # which factory won (hard-failure safety net)
+        # Per-stage ACTUAL provider -- the truth (ORT silently drops TRT to CUDA when
+        # libnvinfer is missing; "the build didn't throw" does NOT mean TRT ran).
+        self.stage_providers = detect_stage_providers(self._engine)
+        # used_providers: back-compat summary (det's provider; "trt" when TRT is live).
         self.used_providers = detect_active_provider(self._engine)
-        if self.used_providers != "trt":
-            _LOGGER.warning(
-                "rapidocr_trt_ep is NOT running on TensorRT (actual=%s, build_path=%s) -- "
-                "check TensorRT libs (libnvinfer) are installed; OCR proceeds on the fallback EP",
-                self.used_providers,
-                self.build_path,
+        ok, diagnostic = classify_load_status(self.stage_providers)
+        if not ok:
+            # det/rec expected on TRT but fell back -> a genuine load/build problem, NOT
+            # the expected cls=cuda. Surface it loudly; do NOT pretend TRT succeeded.
+            _LOGGER.warning("%s (stage_providers=%s)", diagnostic, self.stage_providers)
+        else:
+            _LOGGER.info(
+                "rapidocr_trt_ep ready: stage_providers=%s (fp16=%s)", self.stage_providers, fp16
             )
-        _LOGGER.info(
-            "rapidocr_trt_ep engine ready (actual_provider=%s, fp16=%s)", self.used_providers, fp16
-        )
 
     def _build_rapidocr(self, *, use_trt: bool) -> Any:
         from rapidocr_onnxruntime import RapidOCR

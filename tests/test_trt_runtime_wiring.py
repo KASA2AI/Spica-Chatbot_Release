@@ -118,19 +118,50 @@ class TrtSessionPatchTest(unittest.TestCase):
                 hasattr(module, attr), f"{module_name}.{attr} missing -- rapidocr API drift"
             )
 
-    def test_trt_session_class_get_ep_list_orders_trt_cuda_cpu(self):
+    def test_trt_session_class_routes_per_stage(self):
+        # cut 2.1: the patched session class routes by model_path -- det/rec get TRT,
+        # cls gets CUDA-only (no TRT). Built via __new__ + _model_path so no real
+        # InferenceSession / GPU is needed.
         pytest.importorskip("rapidocr_onnxruntime")
         from spica.local_runtime.ocr.rapidocr_trt_runtime import make_trt_session_class
         from spica.local_runtime.ocr.trt_options import CPU_EP, CUDA_EP, TRT_EP
 
-        cls = make_trt_session_class(
-            {"trt_engine_cache_enable": True}, {"device_id": 0}, {"x": "y"}
+        cls = make_trt_session_class({"trt": 1}, {"device_id": 0}, {"x": "y"})
+
+        det = cls.__new__(cls)
+        det.cfg_use_cuda = False  # _check_cuda short-circuits without a GPU
+        det._model_path = "/m/ch_PP-OCRv4_det_infer.onnx"
+        self.assertEqual([n for n, _ in det._get_ep_list()], [TRT_EP, CUDA_EP, CPU_EP])
+
+        clsm = cls.__new__(cls)
+        clsm.cfg_use_cuda = False
+        clsm._model_path = "/m/ch_ppocr_mobile_v2.0_cls_infer.onnx"
+        self.assertEqual([n for n, _ in clsm._get_ep_list()], [CUDA_EP, CPU_EP])  # no TRT
+
+
+class DetectStageProvidersTest(unittest.TestCase):
+    def test_reads_all_three_sessions(self):
+        from types import SimpleNamespace
+
+        from spica.local_runtime.ocr.rapidocr_trt_runtime import detect_stage_providers
+
+        def sess(providers):
+            return SimpleNamespace(session=SimpleNamespace(get_providers=lambda: providers))
+
+        engine = SimpleNamespace(
+            text_det=SimpleNamespace(infer=sess(["TensorrtExecutionProvider", "CUDAExecutionProvider"])),
+            text_cls=SimpleNamespace(infer=sess(["CUDAExecutionProvider", "CPUExecutionProvider"])),
+            text_rec=SimpleNamespace(session=sess(["TensorrtExecutionProvider", "CUDAExecutionProvider"])),
         )
-        inst = cls.__new__(cls)  # bypass __init__ -> no real InferenceSession built
-        inst.cfg_use_cuda = False  # _check_cuda short-circuits without a GPU
-        ep_list = inst._get_ep_list()
-        self.assertEqual([name for name, _ in ep_list], [TRT_EP, CUDA_EP, CPU_EP])
-        self.assertFalse(inst.use_directml)
+        self.assertEqual(
+            detect_stage_providers(engine), {"det": "trt", "cls": "cuda", "rec": "trt"}
+        )
+
+    def test_unknown_on_broken_engine(self):
+        from spica.local_runtime.ocr.rapidocr_trt_runtime import detect_stage_providers
+
+        got = detect_stage_providers(object())
+        self.assertEqual(got, {"det": "unknown", "cls": "unknown", "rec": "unknown"})
 
 
 if __name__ == "__main__":

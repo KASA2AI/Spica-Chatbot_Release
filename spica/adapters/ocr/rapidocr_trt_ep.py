@@ -73,6 +73,13 @@ class RapidOcrTrtEpAdapter:
 
     def warmup(self) -> str:
         """Build + warm the engine now (surfaces TRT build / fallback at a chosen
-        time -- e.g. a script or, later, host startup). Returns the used providers
-        (``"trt"`` | ``"cuda"``)."""
+        time -- e.g. a script or, later, host startup). Returns the back-compat
+        summary provider (``"trt"`` | ``"cuda"``); see ``stage_providers`` for the
+        per-stage detail (det/rec/cls)."""
         return self._ensure_runtime().used_providers
+
+    @property
+    def stage_providers(self) -> dict[str, str] | None:
+        """Per-stage actual EP (``{"det":"trt","rec":"trt","cls":"cuda"}`` when good),
+        or None if the runtime hasn't been built yet."""
+        return self._runtime.stage_providers if self._runtime is not None else None

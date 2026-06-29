@@ -79,6 +79,10 @@ def main() -> int:
     new = _build_new_adapter(args.new, cache_dir, args.fp16)
     if hasattr(new, "warmup"):
         new.warmup()  # surface TRT build / fallback before timing
+    stage_providers = getattr(new, "stage_providers", None)
+    if stage_providers is not None:
+        # cut 2.1: must distinguish det/cls/rec -- target {det:trt, rec:trt, cls:cuda}.
+        print(f"stage_providers: {stage_providers}")
 
     report = run_parity(
         reference,

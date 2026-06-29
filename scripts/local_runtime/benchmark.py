@@ -67,6 +67,7 @@ def _bench_trt(images, cache_dir: Path, fp16: bool, cold: bool) -> dict:
     return {
         "provider": "trt",
         "used_providers": runtime.used_providers,
+        "stage_providers": runtime.stage_providers,  # cut 2.1: {det,rec,cls} actual EP
         "fp16": fp16,
         "cold": cold,
         "init_ms": round(init_ms, 3),
@@ -113,7 +114,7 @@ def main() -> int:
         print(
             f"{key:9} init={r['init_ms']:>9.1f}ms  per_image_mean={r['per_image_ms_mean']:>8.2f}ms  "
             f"batch={r['batch_total_ms']:>9.1f}ms"
-            + (f"  used={r.get('used_providers')}" if "used_providers" in r else "")
+            + (f"  stages={r.get('stage_providers')}" if r.get("stage_providers") else "")
         )
     print(f"report: {out_path}")
     return 0

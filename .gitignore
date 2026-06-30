@@ -52,6 +52,7 @@ artifacts/onnx/
 artifacts/trt/
 artifacts/parity/
 artifacts/benchmarks/
+artifacts/tts_slim/
 *.engine
 *.plan
 *.timing.cache

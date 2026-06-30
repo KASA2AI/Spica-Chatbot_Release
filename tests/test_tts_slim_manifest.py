@@ -133,6 +133,21 @@ class PathSafetyTest(unittest.TestCase):
         self.assertFalse(is_safe_rel("../etc/passwd"))
         self.assertFalse(is_safe_rel("/abs/path"))
         self.assertFalse(is_safe_rel("a/../../b"))
+        self.assertFalse(is_safe_rel("a\x00b"))  # embedded NUL
+
+    def test_safe_rel_rejects_windows_and_unc(self):
+        for bad in (
+            r"C:\windows\system32",   # drive-absolute, backslash
+            "C:/windows",             # drive-absolute, forward slash
+            "c:relative",             # drive-relative
+            "D:\\x",                  # another drive
+            r"\\server\share\x",      # UNC, backslash
+            "//server/share/x",       # UNC, forward slash
+        ):
+            self.assertFalse(is_safe_rel(bad), bad)
+        # a colon NOT at the drive position is a legal POSIX filename -> allowed.
+        self.assertTrue(is_safe_rel("dir/file:name.txt"))
+        self.assertTrue(is_safe_rel("GPT_SoVITS/text/ja_userdic/userdict.csv"))
 
     def test_within_containment(self):
         self.assertTrue(is_within("/out/base/x", "/out"))

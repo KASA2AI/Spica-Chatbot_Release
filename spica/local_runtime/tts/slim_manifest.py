@@ -147,16 +147,33 @@ def plan_includes(rel_paths: Iterable[str], manifest: dict[str, Any]) -> dict[st
 # ---- path safety (no escape, containment, size cap, symlinks) ----------------
 
 def is_safe_rel(rel: str) -> bool:
-    """A manifest-relative path that cannot escape its root: not absolute, no ``..``
-    segment, no NUL."""
-    if not rel or rel.startswith("/") or "\x00" in rel:
+    """A manifest-relative path that cannot escape its root, regardless of host OS.
+
+    Rejects: empty, embedded NUL, POSIX-absolute (``/x``), UNC (``\\\\server\\share``
+    / ``//server/share``), Windows drive paths -- absolute ``C:\\x`` / ``C:/x`` AND
+    drive-relative ``C:x`` -- and any ``..`` segment. A drive letter is detected
+    cross-platform (``os.path.isabs`` is host-dependent and would miss ``C:\\`` on
+    Linux). The build adds a realpath containment check on top of this (defense in
+    depth -- see ``is_within`` / build_tts_slim)."""
+    if not rel or "\x00" in rel:
         return False
-    return ".." not in rel.replace("\\", "/").split("/")
+    norm = rel.replace("\\", "/")
+    if norm.startswith("/"):  # POSIX-absolute, or UNC (\\server -> //server)
+        return False
+    if len(rel) >= 2 and rel[0].isalpha() and rel[1] == ":":  # C:\ , C:/ , C: , C:x
+        return False
+    return ".." not in norm.split("/")
 
 
 def is_within(child: str, root: str) -> bool:
-    """``child`` resolves inside ``root`` (normalized, no realpath -- the build does
-    realpath; this is the pure containment check)."""
+    """Pure normalized containment: ``child`` lies inside ``root`` after ``normpath``
+    (NO symlink resolution).
+
+    CONSTRAINT: any caller acting on real filesystem paths (``build_tts_slim``) MUST
+    ``os.path.realpath`` BOTH ``child`` and ``root`` BEFORE calling this -- normpath
+    alone does not resolve a symlink that points outside ``root``, so a symlinked
+    output dir could escape. The build's ``test_source_target_realpath_containment``
+    locks that the realpath is applied first."""
     c = os.path.normpath(child)
     r = os.path.normpath(root)
     return c == r or c.startswith(r + os.sep)

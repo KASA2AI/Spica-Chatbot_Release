@@ -1,0 +1,228 @@
+"""DRY-RUN planner for the TTS slim build (LOCAL_RUNTIME_PLAN B1 step2, CI-pure).
+
+Exercises ``scripts.local_runtime.build_tts_slim.plan_build`` against a SYNTHETIC
+fake vendored tree + synthetic tts.yaml dict -- NO real GPT-SoVITS, model, GPU,
+torch or transformers, and NO real copy (the planner is dry-run only). Covers the
+would-copy list, bloat exclusion, the character pack (weights + ref wav/prompt),
+the size cap, the gitignore gate, source/target realpath containment, target
+escape rejection, and the no-output-dir-created invariant.
+"""
+
+import copy
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts.local_runtime.build_tts_slim import BuildAbort, plan_build
+from spica.local_runtime.tts.slim_manifest import load_manifest
+
+REAL_MANIFEST = Path(__file__).resolve().parents[1] / "data" / "config" / "tts_slim_manifest.yaml"
+
+# Files at the manifest's real keep paths (so the real keep/exclude globs apply).
+BASE_FILES = {
+    "config.py": b"x=1\n",
+    "GPT_SoVITS/inference_webui.py": b"# infer\n",
+    "GPT_SoVITS/module/models.py": b"# models\n",
+    "GPT_SoVITS/text/opencpop-strict.txt": b"strict\n",
+    "GPT_SoVITS/text/ja_userdic/userdict.csv": b"a,b\n",
+    "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin": b"R" * 100,
+    "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/LICENSE": b"MIT\n",
+    "GPT_SoVITS/pretrained_models/chinese-hubert-base/config.json": b"{}\n",
+    "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt": b"S" * 50,
+    "GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin": b"L" * 50,
+    "tools/i18n/i18n.py": b"# i18n\n",
+    "LICENSE": b"top-level license\n",
+}
+BLOAT_FILES = {
+    "logs/spcia/checkpoint.ckpt": b"B" * 1000,
+    "runtime/python.exe": b"B" * 1000,
+    "tools/asr/model.bin": b"B" * 1000,
+    "tools/uvr5/weights.pth": b"B" * 1000,
+    "GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth": b"B" * 1000,
+    "GPT_SoVITS/pretrained_models/s1v3.ckpt": b"B" * 1000,
+    "webui.py": b"# webui\n",
+    "api_v2.py": b"# api\n",
+    "x.ipynb": b"{}\n",
+    "GPT_SoVITS/module/__pycache__/models.cpython-311.pyc": b"B" * 100,
+}
+WEIGHT_FILES = {
+    "GPT_weights_v2ProPlus/spcia-e25.ckpt": b"G" * 200,
+    "SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth": b"V" * 200,
+}
+
+FAKE_TTS = {
+    "ref_language": "日文",
+    "target_language": "日文",
+    "emotions": {
+        "happy": {
+            "ref_audio_path": "../../spica_data/voice/happy/happy.wav",
+            "prompt_text_path": "../../spica_data/voice/happy/prompt.txt",
+            "inp_refs_path": "../../spica_data/voice/happy/refs",
+        },
+        "angry": {
+            "ref_audio_path": "../../spica_data/voice/angry/angry.wav",
+            "prompt_text": "怒ってる",
+        },
+    },
+}
+
+
+def _write_tree(root: Path, files: dict[str, bytes]) -> None:
+    for rel, data in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+
+
+class DryRunPlanTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.src = self.repo / "vendored"
+        _write_tree(self.src, {**BASE_FILES, **BLOAT_FILES, **WEIGHT_FILES})
+        # ref wav/prompt live under repo/spica_data so the "../../spica_data/..."
+        # paths resolve relative to config_dir (= repo/data/config), like production.
+        for emo in ("happy", "angry"):
+            d = self.repo / "spica_data" / "voice" / emo
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"{emo}.wav").write_bytes(b"W" * 80)
+            (d / "prompt.txt").write_bytes(b"prompt\n")
+        self.config_dir = self.repo / "data" / "config"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.out = self.repo / "out" / "tts_slim"  # intentionally does NOT exist
+        self.manifest = load_manifest(REAL_MANIFEST)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _plan(self, **over):
+        kw = dict(
+            source_root=str(self.src),
+            manifest=self.manifest,
+            tts_yaml=FAKE_TTS,
+            config_dir=str(self.config_dir),
+            output_dir=str(self.out),
+            character="spcia",
+            check_ignore=lambda p: True,
+        )
+        kw.update(over)
+        return plan_build(**kw)
+
+    # -- would-copy list ------------------------------------------------------
+    def test_would_copy_includes_base_keep(self):
+        targets = {e["target"] for e in self._plan()["would_copy"]}
+        for good in (
+            "config.py",
+            "GPT_SoVITS/inference_webui.py",
+            "GPT_SoVITS/module/models.py",
+            "tools/i18n/i18n.py",
+            "GPT_SoVITS/text/opencpop-strict.txt",
+            "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin",
+            "GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
+        ):
+            self.assertIn(good, targets)
+        base = [e for e in self._plan()["would_copy"] if e["category"] in ("base", "license")]
+        self.assertTrue(all(e["exists"] for e in base))
+
+    def test_bloat_not_in_plan(self):
+        targets = {e["target"] for e in self._plan()["would_copy"]}
+        for bad in (
+            "logs/spcia/checkpoint.ckpt",
+            "runtime/python.exe",
+            "tools/asr/model.bin",
+            "tools/uvr5/weights.pth",
+            "webui.py",
+            "api_v2.py",
+            "x.ipynb",
+            "GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth",
+            "GPT_SoVITS/pretrained_models/s1v3.ckpt",
+            "GPT_SoVITS/module/__pycache__/models.cpython-311.pyc",
+            # weights are character-pack files, never base targets:
+            "GPT_weights_v2ProPlus/spcia-e25.ckpt",
+            "SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth",
+        ):
+            self.assertNotIn(bad, targets)
+
+    # -- character pack -------------------------------------------------------
+    def test_character_pack_weights_and_refs_in_plan(self):
+        by_target = {e["target"]: e for e in self._plan()["would_copy"]}
+        self.assertEqual(by_target["characters/spcia/GPT_weights/spcia-e25.ckpt"]["category"], "character_gpt")
+        self.assertEqual(
+            by_target["characters/spcia/SoVITS_weights/spcia_e12_s1932.pth"]["category"], "character_sovits"
+        )
+        for ref in (
+            "characters/spcia/reference/happy/happy.wav",
+            "characters/spcia/reference/happy/prompt.txt",
+            "characters/spcia/reference/angry/angry.wav",
+        ):
+            self.assertIn(ref, by_target)
+            self.assertEqual(by_target[ref]["category"], "character_reference")
+            self.assertTrue(by_target[ref]["exists"])  # resolved against config_dir
+
+    def test_character_config_preview_is_portable(self):
+        blob = json.dumps(self._plan()["character_config_preview"], ensure_ascii=False)
+        self.assertNotIn("..", blob)
+        self.assertNotIn("/home", blob)
+        self.assertNotIn("spica_data", blob)
+
+    def test_inp_refs_surfaced_as_unpacked(self):
+        unpacked = self._plan()["unpacked_inp_refs"]
+        self.assertTrue(any(u["emotion"] == "happy" for u in unpacked))
+
+    def test_missing_ref_recorded_not_aborted(self):
+        tts = {"emotions": {"happy": {"ref_audio_path": "../../spica_data/voice/happy/NOPE.wav"}}}
+        report = self._plan(tts_yaml=tts)
+        self.assertTrue(any("NOPE.wav" in m["source"] for m in report["missing_sources"]))
+
+    def test_license_status_in_report(self):
+        licenses = self._plan()["licenses"]
+        self.assertIn(
+            "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large", licenses["copied"]
+        )
+        self.assertIn("GPT_SoVITS/pretrained_models/chinese-hubert-base", licenses["missing"])
+
+    # -- guards ---------------------------------------------------------------
+    def test_size_cap_aborts(self):
+        tiny = copy.deepcopy(self.manifest)
+        tiny["output"]["size_cap_gb"] = 1e-9  # ~1 byte -> any real file exceeds it
+        with self.assertRaises(BuildAbort):
+            self._plan(manifest=tiny)
+
+    def test_output_must_be_gitignored(self):
+        with self.assertRaises(BuildAbort):
+            self._plan(check_ignore=lambda p: False)
+        # mockable pass-through:
+        self.assertTrue(self._plan(check_ignore=lambda p: True)["dry_run"])
+
+    def test_invalid_manifest_raises(self):
+        with self.assertRaises(ValueError):
+            self._plan(manifest={"version": 1})
+
+    def test_source_target_realpath_containment(self):
+        # (a) output dir that, AFTER realpath, lands inside the source tree via a
+        #     symlink -> must abort. normpath alone would not catch this; realpath does.
+        link = self.repo / "sneaky"
+        link.symlink_to(self.src)            # sneaky -> vendored
+        with self.assertRaises(BuildAbort):
+            self._plan(output_dir=str(link / "slim"))  # realpath -> vendored/slim
+        # (b) source inside output -> must abort.
+        with self.assertRaises(BuildAbort):
+            self._plan(output_dir=str(self.src.parent))  # output = repo, src under it
+
+    def test_target_escape_rejected(self):
+        # a malicious emotion key would build a "reference/../escape/..." target.
+        evil = {"emotions": {"../escape": {"ref_audio_path": "../../spica_data/voice/happy/happy.wav"}}}
+        with self.assertRaises(BuildAbort):
+            self._plan(tts_yaml=evil)
+
+    def test_dry_run_creates_no_output_dir(self):
+        self.assertFalse(self.out.exists())
+        self.assertFalse((self.repo / "out").exists())
+        self._plan()
+        self.assertFalse(self.out.exists())          # output dir not created
+        self.assertFalse((self.repo / "out").exists())  # nor its parent
+
+
+if __name__ == "__main__":
+    unittest.main()

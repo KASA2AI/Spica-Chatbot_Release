@@ -26,8 +26,10 @@ import argparse
 import json
 import os
 import posixpath
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -38,6 +40,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from spica.local_runtime.tts.slim_manifest import (  # noqa: E402
+    assemble_build_report,
     build_character_config,
     character_reference_files,
     collect_files,
@@ -49,6 +52,7 @@ from spica.local_runtime.tts.slim_manifest import (  # noqa: E402
     load_manifest,
     matches_any,
     output_is_gitignored,
+    sha256_of,
     should_include,
     unmatched_keep_globs,
     validate_manifest,
@@ -146,20 +150,24 @@ def plan_build(
     lic_keep = manifest["licenses"]["keep"]
 
     would: list[dict[str, Any]] = []
+    license_rels: list[str] = []  # un-prefixed source rels, for license_status matching
 
     # ---- runtime base + licenses (enumerated from the source tree) -----------
+    # Layout: base/license -> base/<rel> ; character pack -> characters/<name>/... .
+    # This physically splits the shared runtime_base from per-character packs.
     all_rels = collect_files(src_real, follow_symlinks=False)
     for rel in all_rels:
         if matches_any(rel, base_exclude):
             continue  # exclude wins, for both base and license matches
         if matches_any(rel, lic_keep):
             category = "license"
+            license_rels.append(rel)
         elif should_include(rel, base_keep, base_exclude):
             category = "base"
         else:
             continue
         full = os.path.join(src_real, rel)
-        would.append(_entry(category, full, rel, size_bytes=os.path.getsize(full), exists=True))
+        would.append(_entry(category, full, "base/" + rel, size_bytes=os.path.getsize(full), exists=True))
 
     # BLOCKING: every required base keep glob must match >=1 source file. A critical
     # load-path asset matching nothing means the slim runtime is broken -> abort.
@@ -233,7 +241,7 @@ def plan_build(
     # above). A returned report therefore has no holes.
     licenses = license_status(
         manifest["licenses"]["expect_license_for"],
-        [e["target"] for e in would if e["category"] == "license"],
+        license_rels,  # un-prefixed rels (targets carry a base/ prefix)
     )
     inp_refs_packed = sum(1 for e in would if e["category"] == "character_inp_refs")
 
@@ -308,12 +316,115 @@ def _print_summary(report: dict[str, Any]) -> None:
     print(f"  inp_refs packed: {report['inp_refs_packed']} files")
 
 
+def execute_build(
+    *,
+    source_root: str,
+    manifest: dict[str, Any],
+    tts_yaml: dict[str, Any],
+    config_dir: str,
+    output_dir: str,
+    character: str,
+    check_ignore: Callable[[str], bool],
+) -> tuple[dict[str, Any], str]:
+    """REAL build: plan (runs ALL guards) -> copy every would-copy file into an atomic
+    staging dir (sibling of the output, same filesystem) with per-file sha256 -> emit a
+    self-contained character.yaml + build_report.json -> ``os.rename`` staging to the
+    final output (atomic). ANY error rolls back (rmtree staging); the final dir is only
+    created by the final rename, so a failure never leaves a partial output. Refuses to
+    clobber an existing output. Returns (build_report, output_abs)."""
+    plan = plan_build(
+        source_root=source_root, manifest=manifest, tts_yaml=tts_yaml,
+        config_dir=config_dir, output_dir=output_dir, character=character,
+        check_ignore=check_ignore,
+    )
+    out_real = os.path.realpath(output_dir)
+    if os.path.exists(out_real):
+        raise BuildAbort(f"output dir already exists, refusing to clobber: {out_real}  (rm it to rebuild)")
+    parent = os.path.dirname(out_real) or "."
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix="." + os.path.basename(out_real) + ".staging-", dir=parent)
+    staging_real = os.path.realpath(staging)
+    try:
+        files_report: list[dict[str, Any]] = []
+        for e in plan["would_copy"]:
+            dst = os.path.normpath(os.path.join(staging_real, e["target"]))
+            if not is_within(dst, staging_real):  # defense in depth (targets are is_safe_rel already)
+                raise BuildAbort(f"refusing to copy outside staging: {e['target']}")
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(e["source"], dst)  # copies content (follows symlinked sources), preserves mtime
+            files_report.append({
+                "category": e["category"],
+                "source": e["source"],
+                "target": e["target"],
+                "size_bytes": os.path.getsize(dst),
+                "sha256": sha256_of(dst),
+            })
+
+        # self-contained, pack-relative character.yaml (generated, not copied).
+        char_yaml_rel = posixpath.join("characters", character, "character.yaml")
+        char_yaml_dst = os.path.join(staging_real, char_yaml_rel)
+        os.makedirs(os.path.dirname(char_yaml_dst), exist_ok=True)
+        with open(char_yaml_dst, "w", encoding="utf-8") as f:
+            yaml.safe_dump(plan["character_config_preview"], f, allow_unicode=True, sort_keys=False)
+
+        total_bytes = sum(f["size_bytes"] for f in files_report)
+        base_bytes = sum(f["size_bytes"] for f in files_report if f["category"] in ("base", "license"))
+        size_cap_gb = manifest["output"]["size_cap_gb"]
+        within_cap = within_size_cap(total_bytes, size_cap_gb)
+        if not within_cap:  # re-check on actually-copied bytes
+            raise BuildAbort(f"built size {total_bytes / 1024 ** 3:.2f} GB exceeds cap {size_cap_gb} GB")
+
+        report = assemble_build_report(
+            manifest=manifest, character=character, files=files_report, licenses=plan["licenses"],
+            totals={
+                "file_count": len(files_report), "total_bytes": total_bytes,
+                "total_gb": round(total_bytes / 1024 ** 3, 4),
+                "base_bytes": base_bytes, "character_bytes": total_bytes - base_bytes,
+                "size_cap_gb": size_cap_gb, "within_cap": within_cap,
+            },
+        )
+        report["inp_refs_packed"] = plan["inp_refs_packed"]
+        report["generated"] = [char_yaml_rel, "build_report.json",
+                               "weight.json  (runtime-written at load -- P0, base root must be writable)"]
+        with open(os.path.join(staging_real, "build_report.json"), "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+
+        os.rename(staging_real, out_real)  # atomic publish (same filesystem)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)  # rollback: leave no partial output
+        raise
+    return report, out_real
+
+
+def _print_build_summary(report: dict[str, Any], out_real: str) -> None:
+    t = report["totals"]
+    print(f"[build] character={report['character']} -> {out_real}")
+    by_cat: dict[str, list[int]] = {}
+    for f in report["files"]:
+        agg = by_cat.setdefault(f["category"], [0, 0])
+        agg[0] += 1
+        agg[1] += f["size_bytes"]
+    for cat in sorted(by_cat):
+        n, b = by_cat[cat]
+        print(f"  {cat:20s} {n:5d} files  {b / 1024 ** 2:10.1f} MB")
+    print(
+        f"  TOTAL {t['file_count']} files  {t['total_gb']} GB  "
+        f"(base {t['base_bytes'] / 1024 ** 2:.1f} MB + char {t['character_bytes'] / 1024 ** 2:.1f} MB; "
+        f"cap {t['size_cap_gb']} GB within={t['within_cap']})"
+    )
+    print(f"  inp_refs packed: {report['inp_refs_packed']} files")
+    if report["licenses"]["missing"]:
+        print(f"  WARNING missing license for: {report['licenses']['missing']}")
+    print(f"  writable_paths: {report['writable_paths']}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="GPT-SoVITS slim runtime DRY-RUN planner (B1).")
+    ap = argparse.ArgumentParser(description="GPT-SoVITS slim runtime builder (B1): dry-run plan, or --build.")
     ap.add_argument("--manifest", default=DEFAULT_MANIFEST)
     ap.add_argument("--character", default=None, help="pack name (default: the sole pack)")
     ap.add_argument("--source", default=None, help="override source_vendored_root")
-    ap.add_argument("--output", default=None, help="override output.default_dir")
+    ap.add_argument("--output", "--out", default=None, help="override output.default_dir")
+    ap.add_argument("--build", action="store_true", help="REAL build (copy files). Default: dry-run plan only.")
     ap.add_argument("--json", action="store_true", help="also print the full report JSON")
     args = ap.parse_args(argv)
 
@@ -340,16 +451,30 @@ def main(argv: list[str] | None = None) -> int:
     tts_yaml = _load_yaml_mapping(config_source)
     config_dir = str(Path(config_source).parent)
 
+    common = dict(
+        source_root=source_root,
+        manifest=manifest,
+        tts_yaml=tts_yaml,
+        config_dir=config_dir,
+        output_dir=output_dir,
+        character=character,
+        check_ignore=_git_check_ignore(_REPO_ROOT),
+    )
+
+    if args.build:
+        try:
+            report, out_real = execute_build(**common)
+        except BuildAbort as exc:
+            print(f"BUILD ABORTED: {exc}", file=sys.stderr)
+            return 1
+        _print_build_summary(report, out_real)
+        print(f"  build_report: {os.path.join(out_real, 'build_report.json')}")
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+
     try:
-        report = plan_build(
-            source_root=source_root,
-            manifest=manifest,
-            tts_yaml=tts_yaml,
-            config_dir=config_dir,
-            output_dir=output_dir,
-            character=character,
-            check_ignore=_git_check_ignore(_REPO_ROOT),
-        )
+        report = plan_build(**common)
     except BuildAbort as exc:
         print(f"BUILD ABORTED: {exc}", file=sys.stderr)
         return 1

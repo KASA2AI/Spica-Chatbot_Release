@@ -9,12 +9,15 @@ escape rejection, and the no-output-dir-created invariant.
 """
 
 import copy
+import hashlib
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.local_runtime.build_tts_slim import BuildAbort, plan_build
+from scripts.local_runtime.build_tts_slim import BuildAbort, execute_build, plan_build
 from spica.local_runtime.tts.slim_manifest import load_manifest
 
 REAL_MANIFEST = Path(__file__).resolve().parents[1] / "data" / "config" / "tts_slim_manifest.yaml"
@@ -75,7 +78,10 @@ def _write_tree(root: Path, files: dict[str, bytes]) -> None:
         p.write_bytes(data)
 
 
-class DryRunPlanTest(unittest.TestCase):
+class _SlimFixture(unittest.TestCase):
+    """Synthetic fake vendored tree + spica_data refs. Shared by the dry-run and
+    real-build suites (no test_ methods here, so it contributes no tests itself)."""
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self._tmp.name)
@@ -115,21 +121,37 @@ class DryRunPlanTest(unittest.TestCase):
         kw.update(over)
         return plan_build(**kw)
 
+    def _build(self, **over):
+        kw = dict(
+            source_root=str(self.src), manifest=self.manifest, tts_yaml=FAKE_TTS,
+            config_dir=str(self.config_dir), output_dir=str(self.out),
+            character="spcia", check_ignore=lambda p: True,
+        )
+        kw.update(over)
+        return execute_build(**kw)
+
+    def _staging_leftovers(self):
+        parent = self.repo / "out"
+        return list(parent.glob(".tts_slim.staging-*")) if parent.exists() else []
+
+
+class DryRunPlanTest(_SlimFixture):
     # -- would-copy list ------------------------------------------------------
     def test_would_copy_includes_base_keep(self):
         targets = {e["target"] for e in self._plan()["would_copy"]}
-        for good in (
-            "config.py",
-            "GPT_SoVITS/inference_webui.py",
-            "GPT_SoVITS/module/models.py",
-            "tools/i18n/i18n.py",
-            "GPT_SoVITS/text/opencpop-strict.txt",
-            "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin",
-            "GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
+        for good in (  # base/license live under base/ in the slim layout
+            "base/config.py",
+            "base/GPT_SoVITS/inference_webui.py",
+            "base/GPT_SoVITS/module/models.py",
+            "base/tools/i18n/i18n.py",
+            "base/GPT_SoVITS/text/opencpop-strict.txt",
+            "base/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin",
+            "base/GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
         ):
             self.assertIn(good, targets)
         base = [e for e in self._plan()["would_copy"] if e["category"] in ("base", "license")]
         self.assertTrue(all(e["exists"] for e in base))
+        self.assertTrue(all(e["target"].startswith("base/") for e in base))
 
     def test_bloat_not_in_plan(self):
         targets = {e["target"] for e in self._plan()["would_copy"]}
@@ -313,6 +335,75 @@ class DryRunPlanTest(unittest.TestCase):
         self._plan()
         self.assertFalse(self.out.exists())          # output dir not created
         self.assertFalse((self.repo / "out").exists())  # nor its parent
+
+
+class ExecuteBuildTest(_SlimFixture):
+    """Real copy into a SYNTHETIC out dir (no real models). Reuses the fake tree."""
+
+    def test_execute_build_materializes_pack(self):
+        report, out = self._build()
+        out = Path(out)
+        self.assertTrue(out.is_dir())
+        # base/license under base/ ; character pack under characters/spcia/
+        self.assertTrue((out / "base" / "config.py").is_file())
+        self.assertTrue((out / "base" / "GPT_SoVITS" / "inference_webui.py").is_file())
+        self.assertTrue((out / "characters" / "spcia" / "GPT_weights" / "spcia-e25.ckpt").is_file())
+        self.assertTrue((out / "characters" / "spcia" / "SoVITS_weights" / "spcia_e12_s1932.pth").is_file())
+        self.assertTrue((out / "characters" / "spcia" / "reference" / "happy" / "happy.wav").is_file())
+        self.assertTrue((out / "characters" / "spcia" / "reference" / "happy" / "refs" / "r0.wav").is_file())
+        # generated, self-contained
+        self.assertTrue((out / "characters" / "spcia" / "character.yaml").is_file())
+        self.assertTrue((out / "build_report.json").is_file())
+        self.assertEqual(report["inp_refs_packed"], 4)
+        self.assertEqual(self._staging_leftovers(), [])  # staging consumed by the rename
+
+    def test_execute_build_sha256_matches_copied_files(self):
+        report, out = self._build()
+        out = Path(out)
+        self.assertTrue(report["files"])
+        for f in report["files"]:
+            data = (out / f["target"]).read_bytes()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), f["sha256"], f["target"])
+            self.assertEqual(len(data), f["size_bytes"], f["target"])
+
+    def test_execute_build_character_yaml_is_relocatable(self):
+        _, out = self._build()
+        import yaml
+        cfg = yaml.safe_load((Path(out) / "characters" / "spcia" / "character.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(cfg["emotions"]["happy"]["inp_refs_path"], "reference/happy/refs")
+        blob = json.dumps(cfg, ensure_ascii=False)
+        for forbidden in ("/home", "spica_data", "..", str(self.repo)):
+            self.assertNotIn(forbidden, blob)
+
+    def test_execute_build_refuses_existing_output(self):
+        self.out.mkdir(parents=True)  # pre-existing -> must refuse to clobber
+        with self.assertRaises(BuildAbort):
+            self._build()
+
+    def test_execute_build_no_partial_on_missing_dependency(self):
+        # missing weight -> plan aborts BEFORE any copy -> no output, no staging.
+        (self.src / "GPT_weights_v2ProPlus" / "spcia-e25.ckpt").unlink()
+        with self.assertRaises(BuildAbort):
+            self._build()
+        self.assertFalse(self.out.exists())
+        self.assertEqual(self._staging_leftovers(), [])
+
+    def test_execute_build_rolls_back_on_copy_error(self):
+        # force a failure partway through copying -> staging removed, no partial output.
+        real_copy = shutil.copy2
+        state = {"n": 0}
+
+        def boom(src, dst, *a, **k):
+            state["n"] += 1
+            if state["n"] == 3:
+                raise OSError("simulated copy failure")
+            return real_copy(src, dst, *a, **k)
+
+        with patch("scripts.local_runtime.build_tts_slim.shutil.copy2", side_effect=boom):
+            with self.assertRaises(OSError):
+                self._build()
+        self.assertFalse(self.out.exists())           # final never published
+        self.assertEqual(self._staging_leftovers(), [])  # rollback cleaned staging
 
 
 if __name__ == "__main__":

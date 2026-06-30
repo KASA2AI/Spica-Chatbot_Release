@@ -12,6 +12,7 @@ keep/exclude semantics: a file is INCLUDED iff it matches a ``keep`` glob AND no
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import os
 import posixpath
@@ -144,6 +145,16 @@ def plan_includes(rel_paths: Iterable[str], manifest: dict[str, Any]) -> dict[st
     return {"included": sorted(included), "excluded": sorted(excluded)}
 
 
+def unmatched_keep_globs(rel_paths: Iterable[str], keep: Iterable[str], exclude: Iterable[str]) -> list[str]:
+    """The ``keep`` globs that match NO (non-excluded) path -- i.e. a declared base
+    asset is absent from the source. Each keep glob is treated as REQUIRED: every glob
+    in ``runtime_base.keep`` is a load-path-confirmed critical asset, so a glob matching
+    nothing means the slim runtime would be broken and the build must abort. (licenses
+    are NOT required -- a missing license is only a warning.)"""
+    rels = list(rel_paths)
+    return [g for g in keep if not any(should_include(r, [g], exclude) for r in rels)]
+
+
 # ---- path safety (no escape, containment, size cap, symlinks) ----------------
 
 def is_safe_rel(rel: str) -> bool:
@@ -237,22 +248,69 @@ def build_character_config(pack_spec: dict[str, Any], tts_yaml: dict[str, Any]) 
             entry["prompt_text"] = spec["prompt_text"]
         elif spec.get("prompt_text_path"):
             entry["prompt_text_path"] = f"reference/{emotion}/" + posixpath.basename(spec["prompt_text_path"])
+        # inp_refs is a DECLARED + actively-used v2ProPlus dependency (glob'd +
+        # fused via sv_emb). It lives in a DEDICATED refs/ subdir, kept separate
+        # from the primary ref so the runtime's glob(refs/*.wav) matches only these.
+        if spec.get("inp_refs_path"):
+            entry["inp_refs_path"] = f"reference/{emotion}/refs"
         if spec.get("ref_language"):
             entry["ref_language"] = spec["ref_language"]
         config["emotions"][emotion] = entry
     return config
 
 
-def character_reference_files(tts_yaml: dict[str, Any]) -> list[tuple[str, str]]:
-    """(source_ref_path, pack_relative_target) for every ref wav / prompt the build
-    must copy INTO the pack so it is self-contained."""
-    out: list[tuple[str, str]] = []
+def character_reference_files(tts_yaml: dict[str, Any]) -> list[dict[str, str]]:
+    """{source, pack-relative target, category} for the PRIMARY ref wav + prompt of
+    each emotion -- copied INTO the pack so it is self-contained. category is always
+    'character_reference'. The per-emotion inp_refs wavs are enumerated separately
+    (they need a directory listing -- see ``enumerate_audio_files`` +
+    ``inp_refs_entries``) and tagged 'character_inp_refs'."""
+    out: list[dict[str, str]] = []
     for emotion, spec in (tts_yaml.get("emotions") or {}).items():
         for key in ("ref_audio_path", "prompt_text_path"):
             src = spec.get(key)
             if src:
-                out.append((src, f"reference/{emotion}/" + posixpath.basename(src)))
+                out.append({
+                    "source": src,
+                    "target": f"reference/{emotion}/" + posixpath.basename(src),
+                    "category": "character_reference",
+                })
     return out
+
+
+# inp_refs (multi-reference fusion): the vendored get_tts_wav globs the inp_refs dir
+# for these audio extensions (lower- AND upper-case). Single source of truth so the
+# slim planner enumerates EXACTLY what the runtime will load.
+INP_REFS_AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac")
+
+
+def enumerate_audio_files(directory: str) -> list[str]:
+    """List audio files in ``directory`` the SAME way the vendored get_tts_wav globs
+    an inp_refs dir: each ext, lower- AND upper-case, NON-recursive. Returns absolute
+    paths, de-duplicated (case-insensitive FS) and sorted. No ``glob.escape`` -- mirrors
+    get_tts_wav exactly (which does not escape); inp_refs dir paths are bracket-free."""
+    found: set[str] = set()
+    for ext in INP_REFS_AUDIO_EXTS:
+        for pattern in (f"*{ext}", f"*{ext.upper()}"):
+            for path in glob.glob(os.path.join(directory, pattern)):
+                if os.path.isfile(path):
+                    found.add(os.path.abspath(path))
+    return sorted(found)
+
+
+def inp_refs_entries(emotion: str, wav_paths: Iterable[str]) -> list[dict[str, str]]:
+    """Map enumerated inp_refs wavs to pack targets under the emotion's DEDICATED
+    ``refs/`` subdir -- physically separate from the primary ref so the runtime's
+    ``glob(reference/<emotion>/refs/*.wav)`` matches exactly these and never the
+    primary ref. category = 'character_inp_refs'."""
+    return [
+        {
+            "source": w,
+            "target": f"reference/{emotion}/refs/" + posixpath.basename(w),
+            "category": "character_inp_refs",
+        }
+        for w in wav_paths
+    ]
 
 
 # ---- license status + build report -------------------------------------------

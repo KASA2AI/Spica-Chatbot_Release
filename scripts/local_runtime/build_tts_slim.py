@@ -41,6 +41,8 @@ from spica.local_runtime.tts.slim_manifest import (  # noqa: E402
     build_character_config,
     character_reference_files,
     collect_files,
+    enumerate_audio_files,
+    inp_refs_entries,
     is_safe_rel,
     is_within,
     license_status,
@@ -48,6 +50,7 @@ from spica.local_runtime.tts.slim_manifest import (  # noqa: E402
     matches_any,
     output_is_gitignored,
     should_include,
+    unmatched_keep_globs,
     validate_manifest,
     within_size_cap,
 )
@@ -111,6 +114,13 @@ def plan_build(
     gitignored; source missing / not a dir; source & output contain each other
     (realpath-resolved -- symlink safe); a target escapes the output root; estimated
     size over the manifest size cap.
+
+    DEPENDENCY-MISSING IS LOUD: every declared + actively-used dependency that is
+    absent aborts the dry-run (no "successful plan" with a hole). Blocking deps:
+    each ``runtime_base.keep`` glob must match >=1 source file; character gpt+sovits
+    weights; each emotion's primary ref_audio_path + prompt_text_path (inline
+    prompt_text needs no file); inp_refs dir (declared-but-missing / empty). Missing
+    licenses remain a WARNING only.
     """
     validate_manifest(manifest)
 
@@ -138,7 +148,8 @@ def plan_build(
     would: list[dict[str, Any]] = []
 
     # ---- runtime base + licenses (enumerated from the source tree) -----------
-    for rel in collect_files(src_real, follow_symlinks=False):
+    all_rels = collect_files(src_real, follow_symlinks=False)
+    for rel in all_rels:
         if matches_any(rel, base_exclude):
             continue  # exclude wins, for both base and license matches
         if matches_any(rel, lic_keep):
@@ -150,24 +161,54 @@ def plan_build(
         full = os.path.join(src_real, rel)
         would.append(_entry(category, full, rel, size_bytes=os.path.getsize(full), exists=True))
 
+    # BLOCKING: every required base keep glob must match >=1 source file. A critical
+    # load-path asset matching nothing means the slim runtime is broken -> abort.
+    unmatched = unmatched_keep_globs(all_rels, base_keep, base_exclude)
+    if unmatched:
+        raise BuildAbort(f"required base asset glob(s) matched no source file: {unmatched}")
+
     # ---- character pack: weights + reference wav/prompt (self-contained) -----
     pack = manifest["character_packs"][character]
     pack_root = posixpath.join("characters", character)
 
-    def _add_pack(category: str, src_abs: str, pack_rel: str) -> None:
+    def _add_pack(category: str, src_abs: str, pack_rel: str, *, required: bool = True) -> None:
         target = posixpath.join(pack_root, pack_rel)
         exists = os.path.isfile(src_abs)
+        if required and not exists:  # BLOCKING: declared + used dependency absent
+            raise BuildAbort(f"missing required {category} source: {src_abs}")
         size = os.path.getsize(src_abs) if exists else 0
         would.append(_entry(category, src_abs, target, size_bytes=size, exists=exists))
 
     # Weights live in the vendored tree but are EXCLUDED from base; the pack pulls
-    # the specific character weight explicitly.
+    # the specific character weight explicitly. Both are REQUIRED.
     _add_pack("character_gpt", os.path.join(src_real, pack["gpt_weight"]),
-              "GPT_weights/" + posixpath.basename(pack["gpt_weight"]))
+              "GPT_weights/" + posixpath.basename(pack["gpt_weight"]), required=True)
     _add_pack("character_sovits", os.path.join(src_real, pack["sovits_weight"]),
-              "SoVITS_weights/" + posixpath.basename(pack["sovits_weight"]))
-    for raw_src, pack_rel in character_reference_files(tts_yaml):
-        _add_pack("character_reference", _resolve_ref(raw_src, config_dir), pack_rel)
+              "SoVITS_weights/" + posixpath.basename(pack["sovits_weight"]), required=True)
+    # primary ref wav + prompt (one level under reference/<emotion>/). character_reference_files
+    # yields ref_audio_path + prompt_text_path only (inline prompt_text -> no file). Both REQUIRED.
+    for ref in character_reference_files(tts_yaml):
+        _add_pack(ref["category"], _resolve_ref(ref["source"], config_dir), ref["target"], required=True)
+    # inp_refs: a DECLARED + actively-used v2ProPlus dependency -- get_tts_wav globs
+    # the refs dir and fuses each wav via sv_emb into vq_model.decode. LOUD FAILURE
+    # if declared-but-missing / declared-but-empty (never a silent defer). Packed
+    # under a dedicated reference/<emotion>/refs/ subdir to preserve glob isolation.
+    for emotion, spec in (tts_yaml.get("emotions") or {}).items():
+        raw = spec.get("inp_refs_path")
+        if not raw:
+            continue
+        refs_dir = _resolve_ref(raw, config_dir)
+        if not os.path.isdir(refs_dir):
+            raise BuildAbort(
+                f"inp_refs_path declared for emotion '{emotion}' but directory is missing: {refs_dir}"
+            )
+        wavs = enumerate_audio_files(refs_dir)
+        if not wavs:
+            raise BuildAbort(
+                f"inp_refs_path directory for emotion '{emotion}' has no audio files: {refs_dir}"
+            )
+        for ref in inp_refs_entries(emotion, wavs):
+            _add_pack(ref["category"], ref["source"], ref["target"])
 
     # ---- target safety + containment (defense in depth) ----------------------
     for e in would:
@@ -187,19 +228,14 @@ def plan_build(
         )
 
     # ---- report --------------------------------------------------------------
-    missing = [
-        {"category": e["category"], "source": e["source"], "target": e["target"]}
-        for e in would if not e["exists"]
-    ]
+    # No missing_sources field: every base/license file is enumerated-from-source
+    # (exists), and every character dependency is REQUIRED (a miss already aborted
+    # above). A returned report therefore has no holes.
     licenses = license_status(
         manifest["licenses"]["expect_license_for"],
         [e["target"] for e in would if e["category"] == "license"],
     )
-    unpacked_inp_refs = [
-        {"emotion": emo, "path": spec.get("inp_refs_path")}
-        for emo, spec in (tts_yaml.get("emotions") or {}).items()
-        if spec.get("inp_refs_path")
-    ]
+    inp_refs_packed = sum(1 for e in would if e["category"] == "character_inp_refs")
 
     return {
         "dry_run": True,
@@ -221,11 +257,10 @@ def plan_build(
             "weight.json  (runtime-written at load -- P0, base root must be writable)",
         ],
         "character_config_preview": build_character_config(pack, tts_yaml),
-        "licenses": licenses,
-        "missing_sources": missing,
-        # inp_refs are extra per-emotion reference dirs; NOT packed in this cut (the
-        # pack is incomplete without them). Surfaced honestly rather than silently.
-        "unpacked_inp_refs": unpacked_inp_refs,
+        "licenses": licenses,  # licenses.missing is a WARNING only -- never blocking
+        # inp_refs is a real v2ProPlus inference dependency -- packed into the pack
+        # (loud failure upstream if declared-but-missing/empty), never deferred.
+        "inp_refs_packed": inp_refs_packed,
         "writable_paths": [f"{w['path']} ({w['risk']})" for w in manifest.get("writable_paths", [])],
         "parity": "PENDING",
     }
@@ -268,14 +303,9 @@ def _print_summary(report: dict[str, Any]) -> None:
         f"  TOTAL {t['file_count']} files  {t['total_gb']} GB  "
         f"(cap {t['size_cap_gb']} GB, within={t['within_cap']})"
     )
-    if report["missing_sources"]:
-        print(f"  WARNING {len(report['missing_sources'])} missing source(s):")
-        for m in report["missing_sources"]:
-            print(f"    - [{m['category']}] {m['source']}")
     if report["licenses"]["missing"]:
         print(f"  WARNING missing license for: {report['licenses']['missing']}")
-    if report["unpacked_inp_refs"]:
-        print(f"  NOTE {len(report['unpacked_inp_refs'])} inp_refs dir(s) NOT packed (deferred this cut)")
+    print(f"  inp_refs packed: {report['inp_refs_packed']} files")
 
 
 def main(argv: list[str] | None = None) -> int:

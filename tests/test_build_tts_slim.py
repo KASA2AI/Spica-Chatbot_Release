@@ -88,6 +88,12 @@ class DryRunPlanTest(unittest.TestCase):
             d.mkdir(parents=True, exist_ok=True)
             (d / f"{emo}.wav").write_bytes(b"W" * 80)
             (d / "prompt.txt").write_bytes(b"prompt\n")
+        # happy declares inp_refs_path -> populate its dedicated refs/ subdir with wavs
+        # (FAKE_TTS gives only happy an inp_refs_path; angry has none).
+        happy_refs = self.repo / "spica_data" / "voice" / "happy" / "refs"
+        happy_refs.mkdir(parents=True, exist_ok=True)
+        for i in range(4):
+            (happy_refs / f"r{i}.wav").write_bytes(b"I" * (120 + i))
         self.config_dir = self.repo / "data" / "config"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.out = self.repo / "out" / "tts_slim"  # intentionally does NOT exist
@@ -161,19 +167,54 @@ class DryRunPlanTest(unittest.TestCase):
             self.assertTrue(by_target[ref]["exists"])  # resolved against config_dir
 
     def test_character_config_preview_is_portable(self):
-        blob = json.dumps(self._plan()["character_config_preview"], ensure_ascii=False)
+        preview = self._plan()["character_config_preview"]
+        blob = json.dumps(preview, ensure_ascii=False)
         self.assertNotIn("..", blob)
         self.assertNotIn("/home", blob)
         self.assertNotIn("spica_data", blob)
+        # inp_refs_path is pack-relative (dedicated refs/ subdir).
+        self.assertEqual(preview["emotions"]["happy"]["inp_refs_path"], "reference/happy/refs")
 
-    def test_inp_refs_surfaced_as_unpacked(self):
-        unpacked = self._plan()["unpacked_inp_refs"]
-        self.assertTrue(any(u["emotion"] == "happy" for u in unpacked))
+    def test_inp_refs_packed_into_pack(self):
+        report = self._plan()
+        by_target = {e["target"]: e for e in report["would_copy"]}
+        for i in range(4):
+            t = f"characters/spcia/reference/happy/refs/r{i}.wav"
+            self.assertIn(t, by_target)
+            self.assertEqual(by_target[t]["category"], "character_inp_refs")
+            self.assertTrue(by_target[t]["exists"])
+        self.assertEqual(report["inp_refs_packed"], 4)
+        self.assertNotIn("unpacked_inp_refs", report)  # the deferred field is gone
 
-    def test_missing_ref_recorded_not_aborted(self):
-        tts = {"emotions": {"happy": {"ref_audio_path": "../../spica_data/voice/happy/NOPE.wav"}}}
-        report = self._plan(tts_yaml=tts)
-        self.assertTrue(any("NOPE.wav" in m["source"] for m in report["missing_sources"]))
+    def test_inp_refs_subdir_isolation(self):
+        by_target = {e["target"] for e in self._plan()["would_copy"]}
+        # primary ref sits one level under reference/happy/ ; inp_refs under refs/.
+        self.assertIn("characters/spcia/reference/happy/happy.wav", by_target)
+        self.assertIn("characters/spcia/reference/happy/refs/r0.wav", by_target)
+        # primary ref NOT inside refs/ ; inp_refs NOT at the primary level.
+        self.assertNotIn("characters/spcia/reference/happy/refs/happy.wav", by_target)
+        self.assertNotIn("characters/spcia/reference/happy/r0.wav", by_target)
+        # glob reference/happy/refs/*.wav would hit exactly the 4 inp_refs, never primary.
+        in_refs = [t for t in by_target if t.startswith("characters/spcia/reference/happy/refs/")]
+        self.assertEqual(len(in_refs), 4)
+
+    def test_inp_refs_missing_dir_is_loud_failure(self):
+        tts = {"emotions": {"happy": {
+            "ref_audio_path": "../../spica_data/voice/happy/happy.wav",
+            "inp_refs_path": "../../spica_data/voice/happy/NOPE_REFS",  # declared but absent
+        }}}
+        with self.assertRaises(BuildAbort):
+            self._plan(tts_yaml=tts)
+
+    def test_inp_refs_empty_dir_is_loud_failure(self):
+        empty = self.repo / "spica_data" / "voice" / "happy" / "emptyrefs"
+        empty.mkdir(parents=True, exist_ok=True)  # exists but has no audio
+        tts = {"emotions": {"happy": {
+            "ref_audio_path": "../../spica_data/voice/happy/happy.wav",
+            "inp_refs_path": "../../spica_data/voice/happy/emptyrefs",
+        }}}
+        with self.assertRaises(BuildAbort):
+            self._plan(tts_yaml=tts)
 
     def test_license_status_in_report(self):
         licenses = self._plan()["licenses"]
@@ -181,6 +222,56 @@ class DryRunPlanTest(unittest.TestCase):
             "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large", licenses["copied"]
         )
         self.assertIn("GPT_SoVITS/pretrained_models/chinese-hubert-base", licenses["missing"])
+
+    # -- loud failure: every declared + used dependency missing -> blocking --------
+    def test_missing_gpt_weight_is_loud_failure(self):
+        (self.src / "GPT_weights_v2ProPlus" / "spcia-e25.ckpt").unlink()
+        with self.assertRaises(BuildAbort):
+            self._plan()
+
+    def test_missing_sovits_weight_is_loud_failure(self):
+        (self.src / "SoVITS_weights_v2ProPlus" / "spcia_e12_s1932.pth").unlink()
+        with self.assertRaises(BuildAbort):
+            self._plan()
+
+    def test_missing_primary_ref_is_loud_failure(self):
+        # FLIP of the old "recorded not aborted": a missing primary ref now aborts.
+        tts = {"emotions": {"happy": {"ref_audio_path": "../../spica_data/voice/happy/NOPE.wav"}}}
+        with self.assertRaises(BuildAbort):
+            self._plan(tts_yaml=tts)
+
+    def test_missing_prompt_text_path_is_loud_failure(self):
+        tts = {"emotions": {"happy": {
+            "ref_audio_path": "../../spica_data/voice/happy/happy.wav",        # exists
+            "prompt_text_path": "../../spica_data/voice/happy/NOPE_PROMPT.txt",  # absent
+        }}}
+        with self.assertRaises(BuildAbort):
+            self._plan(tts_yaml=tts)
+
+    def test_inline_prompt_text_needs_no_file(self):
+        # ref exists + INLINE prompt_text (no prompt_text_path, no inp_refs) -> succeeds,
+        # and no prompt file is required/added.
+        tts = {"emotions": {"happy": {
+            "ref_audio_path": "../../spica_data/voice/happy/happy.wav",
+            "prompt_text": "はい。",
+        }}}
+        targets = {e["target"] for e in self._plan(tts_yaml=tts)["would_copy"]}
+        self.assertIn("characters/spcia/reference/happy/happy.wav", targets)
+        self.assertFalse(any(t.endswith("/prompt.txt") for t in targets))
+
+    def test_base_required_glob_missing_is_loud_failure(self):
+        # remove a load-path-confirmed base asset -> its keep glob matches nothing.
+        (self.src / "GPT_SoVITS" / "pretrained_models" / "fast_langdetect" / "lid.176.bin").unlink()
+        with self.assertRaises(BuildAbort):
+            self._plan()
+
+    def test_license_missing_is_warning_not_blocking(self):
+        # the fake tree has a LICENSE only under chinese-roberta; hubert/sv/fast_langdetect
+        # have none -> licenses.missing is populated but the plan still SUCCEEDS.
+        report = self._plan()
+        self.assertTrue(report["licenses"]["missing"])  # warning present
+        self.assertTrue(report["dry_run"])              # not blocking
+        self.assertNotIn("missing_sources", report)     # the silent-defer field is gone
 
     # -- guards ---------------------------------------------------------------
     def test_size_cap_aborts(self):

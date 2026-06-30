@@ -19,6 +19,8 @@ from spica.local_runtime.tts.slim_manifest import (
     build_character_config,
     character_reference_files,
     collect_files,
+    enumerate_audio_files,
+    inp_refs_entries,
     is_safe_rel,
     is_within,
     license_status,
@@ -27,6 +29,7 @@ from spica.local_runtime.tts.slim_manifest import (
     plan_includes,
     sha256_of,
     should_include,
+    unmatched_keep_globs,
     validate_manifest,
     within_size_cap,
 )
@@ -126,6 +129,16 @@ class KeepExcludeTest(unittest.TestCase):
         self.assertFalse(should_include("a/b/c.py", keep=["a/*.py"], exclude=[]))  # * not across /
         self.assertTrue(should_include("a/b/c.py", keep=["a/**/*.py"], exclude=[]))
 
+    def test_unmatched_keep_globs(self):
+        rels = ["config.py", "GPT_SoVITS/x.py", "tools/i18n/i18n.py"]
+        keep = ["config.py", "GPT_SoVITS/**/*.py", "tools/i18n/**", "GPT_SoVITS/text/opencpop-strict.txt"]
+        # the opencpop glob matches nothing in rels -> reported as the only unmatched.
+        self.assertEqual(unmatched_keep_globs(rels, keep, []), ["GPT_SoVITS/text/opencpop-strict.txt"])
+        # everything present -> none unmatched.
+        self.assertEqual(unmatched_keep_globs(rels + ["GPT_SoVITS/text/opencpop-strict.txt"], keep, []), [])
+        # a file present but EXCLUDED does not satisfy its keep glob.
+        self.assertEqual(unmatched_keep_globs(["a/b.py"], ["a/**/*.py"], ["a/**"]), ["a/**/*.py"])
+
 
 class PathSafetyTest(unittest.TestCase):
     def test_safe_rel_rejects_escape(self):
@@ -196,6 +209,7 @@ FAKE_TTS = {
         "happy": {
             "ref_audio_path": "../../spica_data/voice/happy/あそこ.wav",
             "prompt_text_path": "../../spica_data/voice/happy/prompt.txt",
+            "inp_refs_path": "../../spica_data/voice/happy/refs",
             "ref_language": "日文",
         },
         "angry": {
@@ -219,8 +233,11 @@ class CharacterPackTest(unittest.TestCase):
         self.assertEqual(cfg["sovits_model_path"], "SoVITS_weights/spcia_e12_s1932.pth")
         self.assertEqual(cfg["emotions"]["happy"]["ref_audio_path"], "reference/happy/あそこ.wav")
         self.assertEqual(cfg["emotions"]["happy"]["prompt_text_path"], "reference/happy/prompt.txt")
+        # inp_refs_path: dedicated refs/ subdir, pack-relative, separate from primary ref.
+        self.assertEqual(cfg["emotions"]["happy"]["inp_refs_path"], "reference/happy/refs")
         self.assertEqual(cfg["emotions"]["angry"]["ref_audio_path"], "reference/angry/x.wav")
         self.assertEqual(cfg["emotions"]["angry"]["prompt_text"], "怒ってる")
+        self.assertNotIn("inp_refs_path", cfg["emotions"]["angry"])  # none declared -> absent
 
     def test_character_config_has_no_dev_machine_paths(self):
         import json
@@ -231,10 +248,37 @@ class CharacterPackTest(unittest.TestCase):
         self.assertNotIn("spica_data", blob)
 
     def test_character_reference_files_to_copy(self):
-        refs = dict(character_reference_files(FAKE_TTS))
-        self.assertEqual(refs["../../spica_data/voice/happy/あそこ.wav"], "reference/happy/あそこ.wav")
-        self.assertEqual(refs["../../spica_data/voice/happy/prompt.txt"], "reference/happy/prompt.txt")
+        refs = {e["source"]: e for e in character_reference_files(FAKE_TTS)}
+        self.assertEqual(refs["../../spica_data/voice/happy/あそこ.wav"]["target"], "reference/happy/あそこ.wav")
+        self.assertEqual(refs["../../spica_data/voice/happy/prompt.txt"]["target"], "reference/happy/prompt.txt")
         self.assertIn("/home/san/ai_code/Spica-Chatbot/spica_data/voice/angry/x.wav", refs)
+        # covers ONLY primary ref + prompt; inp_refs (a directory) never leaks in here.
+        self.assertTrue(all(e["category"] == "character_reference" for e in character_reference_files(FAKE_TTS)))
+        self.assertNotIn("../../spica_data/voice/happy/refs", refs)
+
+    def test_enumerate_audio_files_mirrors_glob(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "a.wav").write_bytes(b"1")
+            (root / "b.WAV").write_bytes(b"2")          # upper-case ext
+            (root / "c.flac").write_bytes(b"3")
+            (root / "note.txt").write_bytes(b"x")        # non-audio -> excluded
+            (root / "sub").mkdir()
+            (root / "sub" / "deep.wav").write_bytes(b"4")  # non-recursive -> excluded
+            got = enumerate_audio_files(str(root))
+            names = sorted(Path(p).name for p in got)
+            self.assertEqual(names, ["a.wav", "b.WAV", "c.flac"])
+            self.assertTrue(all(Path(p).is_absolute() for p in got))
+
+    def test_inp_refs_entries_isolation(self):
+        entries = inp_refs_entries("happy", ["/x/r1.wav", "/x/r2.wav"])
+        self.assertEqual(
+            [e["target"] for e in entries],
+            ["reference/happy/refs/r1.wav", "reference/happy/refs/r2.wav"],
+        )
+        self.assertTrue(all(e["category"] == "character_inp_refs" for e in entries))
+        # inp_refs always land under the refs/ subdir -> isolated from the primary ref.
+        self.assertTrue(all("/refs/" in e["target"] for e in entries))
 
 
 class BuildReportTest(unittest.TestCase):
@@ -254,14 +298,21 @@ class BuildReportTest(unittest.TestCase):
                 "target": "characters/spcia/GPT_weights/spcia-e25.ckpt",
                 "size_bytes": 162703200,
                 "sha256": "abc123",
-            }
+            },
+            {  # inp_refs entry: schema carries it with category + sha256 (real build fills sha)
+                "category": "character_inp_refs",
+                "source": "/home/x/spica_data/voice/happy/refs/r1.wav",
+                "target": "characters/spcia/reference/happy/refs/r1.wav",
+                "size_bytes": 549646,
+                "sha256": "def456",
+            },
         ]
         report = assemble_build_report(
             manifest=manifest,
             character="spcia",
             files=files,
             licenses={"copied": ["a/bert"], "missing": ["a/sv"]},
-            totals={"total_bytes": 162703200},
+            totals={"total_bytes": 163252846},
         )
         self.assertEqual(report["parity"], "PENDING")
         self.assertEqual(report["language_profile"], "ja_only")
@@ -269,6 +320,11 @@ class BuildReportTest(unittest.TestCase):
         self.assertIn("category", report["files"][0])
         self.assertEqual(report["licenses"]["missing"], ["a/sv"])
         self.assertTrue(any("weight.json" in w and "(P0)" in w for w in report["writable_paths"]))
+        # build_report schema covers inp_refs: category + per-file sha256.
+        inp = [f for f in report["files"] if f["category"] == "character_inp_refs"]
+        self.assertEqual(len(inp), 1)
+        self.assertEqual(inp[0]["sha256"], "def456")
+        self.assertEqual(inp[0]["target"], "characters/spcia/reference/happy/refs/r1.wav")
 
 
 if __name__ == "__main__":

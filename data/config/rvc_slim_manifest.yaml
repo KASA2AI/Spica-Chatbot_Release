@@ -1,0 +1,95 @@
+# RVC (Applio) slim runtime prune manifest (RVC Slim Step1 / Form A).
+#
+# Data-driven spec for build_rvc_slim.py (dry-run only this cut). Mirrors the TTS B1
+# slim manifest: a shared character-agnostic `runtime_base` + per-character packs, so
+# a new voice only adds a pack and never rebuilds the base. The slim output is a build
+# artifact -- gitignored, NEVER committed. The original Applio tree is the read-only
+# source (never modified) and stays the fallback.
+#
+# keep/exclude semantics (same engine as TTS B1): a file is copied iff it matches a
+# `keep` glob AND no `exclude` glob (exclude wins). `**` spans path segments; `*` stays
+# within one. `keep` is a WHITELIST -- anything not matched by keep is simply not copied
+# (so the 11G of training/scratch under logs/ etc. is dropped without needing to list it).
+#
+# The keep/required lists are from the RVC Isolation Step1 load-path + import-graph
+# evidence (strace model loads + sys.modules diff): the inference path imports core.py +
+# rvc/{configs,infer,lib} + rvc/train/process/{model_blender,model_information} (the two
+# train-dir files pulled in by a MODULE-LEVEL import -- the TTS-B1 trap), and loads
+# contentvec + rmvpe + the character model/index. No pretrained vocoder file is loaded
+# (HiFi-GAN is code + baked into the RVC .pth), so rvc/models/pretraineds/** is dropped.
+schema_version: 1
+
+runtime_name: applio_rvc
+language_profile: song_cover_only
+
+source:
+  applio_root: agent_tools/function_tools/song/Applio
+
+output:
+  root: artifacts/rvc_slim
+  gitignored: true
+  size_cap_gb: 1.5
+
+runtime_base:
+  keep:
+    - "core.py"
+    - "rvc/configs/config.py"
+    - "rvc/configs/*.json"                       # 24000/32000/40000/48000.json (read at infer)
+    - "rvc/infer/**/*.py"
+    - "rvc/lib/**/*.py"                           # utils + algorithm + predictors + tools + platform/zluda
+    - "rvc/lib/tools/tts_voices.json"             # read at module import
+    - "rvc/train/process/model_blender.py"        # module-level import (train dir, but load-bearing)
+    - "rvc/train/process/model_information.py"    # module-level import (train dir, but load-bearing)
+    - "rvc/models/embedders/contentvec/**"        # pytorch_model.bin + config.json (hubert/contentvec)
+    - "rvc/models/predictors/rmvpe.pt"            # default f0 method
+  exclude:
+    - "**/__pycache__/**"
+    - "**/*.pyc"
+  # NOTE: training/scratch/webui (logs/*/sliced_audios, logs/*/{G,D}_*.pth, epoch
+  # checkpoints, rvc/models/pretraineds/**, rvc/models/predictors/fcpe.pt, rvc/train/**
+  # except process/model_{blender,information}.py, tabs/**, assets/**, app.py, the dev
+  # `spica/` scratch dir) are NOT in `keep` -> dropped by the whitelist, NOT listed here.
+  # We do NOT add a broad `rvc/train/**` exclude: it would shadow the two required
+  # train/process files and the planner would abort (required-shadowed-by-exclude).
+
+# Character pack: the trained voice = model .pth + faiss index. Lives in the Applio tree
+# but is EXCLUDED from base (not matched by keep) and pulled explicitly here, per-character.
+character_packs:
+  spica:
+    model: logs/spica/spica_200e_57000s.pth
+    index: logs/spica/spica.index
+
+# Declared-required + actively-used: missing OR shadowed-by-exclude OR not-covered-by-keep
+# => the dry-run ABORTS (loud failure, no "successful plan" with a hole).
+required:
+  - "core.py"
+  - "rvc/configs/config.py"
+  - "rvc/infer/infer.py"
+  - "rvc/infer/pipeline.py"
+  - "rvc/lib/utils.py"
+  - "rvc/lib/predictors/RMVPE.py"
+  - "rvc/lib/predictors/f0.py"
+  - "rvc/train/process/model_blender.py"
+  - "rvc/train/process/model_information.py"
+  - "rvc/models/embedders/contentvec/pytorch_model.bin"
+  - "rvc/models/predictors/rmvpe.pt"
+
+# Third-party attribution (warning-only, never blocking).
+licenses:
+  keep:
+    - "LICENSE*"
+    - "README*"
+    - "NOTICE*"
+  expect_license_for:
+    - "rvc/models/embedders/contentvec"
+    - "rvc/models/predictors"
+
+# A pruned slim that imports clean is NOT proven until an import-graph preflight runs
+# (original Applio import vs rvc_slim import). Deferred to the next cut; the planner
+# surfaces it as PENDING so it is never silently skipped.
+import_preflight:
+  status: PENDING
+
+# slim-vs-original wav-to-wav audio_diff parity is the final gate (next cut).
+parity:
+  status: PENDING

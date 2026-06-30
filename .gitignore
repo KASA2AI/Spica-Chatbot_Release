@@ -53,6 +53,7 @@ artifacts/trt/
 artifacts/parity/
 artifacts/benchmarks/
 artifacts/tts_slim/
+artifacts/rvc_slim/
 *.engine
 *.plan
 *.timing.cache

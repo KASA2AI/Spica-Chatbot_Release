@@ -35,12 +35,17 @@ BASE_FILES = {
     "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt": b"S" * 50,
     "GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin": b"L" * 50,
     "tools/i18n/i18n.py": b"# i18n\n",
+    "tools/__init__.py": b"",
+    "tools/assets.py": b"css=''\n",        # module-level import target (B1 step4 fix)
+    "tools/my_utils.py": b"# utils\n",
+    "tools/audio_sr.py": b"# sr\n",
     "LICENSE": b"top-level license\n",
 }
 BLOAT_FILES = {
     "logs/spcia/checkpoint.ckpt": b"B" * 1000,
     "runtime/python.exe": b"B" * 1000,
     "tools/asr/model.bin": b"B" * 1000,
+    "tools/asr/funasr.py": b"# asr\n",   # a .py UNDER tools/asr -> tools/*.py must NOT reach it
     "tools/uvr5/weights.pth": b"B" * 1000,
     "GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth": b"B" * 1000,
     "GPT_SoVITS/pretrained_models/s1v3.ckpt": b"B" * 1000,
@@ -147,6 +152,9 @@ class DryRunPlanTest(_SlimFixture):
             "base/GPT_SoVITS/text/opencpop-strict.txt",
             "base/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin",
             "base/GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
+            "base/tools/assets.py",      # top-level tools modules (B1 step4 fix)
+            "base/tools/my_utils.py",
+            "base/tools/__init__.py",
         ):
             self.assertIn(good, targets)
         base = [e for e in self._plan()["would_copy"] if e["category"] in ("base", "license")]
@@ -166,6 +174,9 @@ class DryRunPlanTest(_SlimFixture):
             "GPT_SoVITS/pretrained_models/v2Pro/s2Gv2ProPlus.pth",
             "GPT_SoVITS/pretrained_models/s1v3.ckpt",
             "GPT_SoVITS/module/__pycache__/models.cpython-311.pyc",
+            # a .py under a heavy subdir must NOT be reached by tools/*.py:
+            "base/tools/asr/funasr.py",
+            "tools/asr/funasr.py",
             # weights are character-pack files, never base targets:
             "GPT_weights_v2ProPlus/spcia-e25.ckpt",
             "SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth",

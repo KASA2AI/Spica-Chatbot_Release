@@ -89,6 +89,10 @@ class KeepExcludeTest(unittest.TestCase):
             "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt",
             "GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
             "tools/i18n/i18n.py",
+            "tools/__init__.py",     # top-level tools modules (B1 step4 fix)
+            "tools/assets.py",       # module-level import in inference_webui:128
+            "tools/my_utils.py",     # module-level import in module/data_utils.py:11
+            "tools/audio_sr.py",
         ]
         plan = plan_includes(keep, self.m)
         self.assertEqual(plan["excluded"], [], f"unexpectedly excluded: {plan['excluded']}")
@@ -98,8 +102,11 @@ class KeepExcludeTest(unittest.TestCase):
             "logs/spcia/checkpoint.ckpt",
             "runtime/python.exe",
             "tools/asr/model.bin",
+            "tools/asr/funasr.py",        # a .py UNDER a heavy subdir: tools/*.py must NOT reach it
             "tools/uvr5/weights.pth",
+            "tools/uvr5/vr.py",
             "tools/AP_BWE_main/x.pth",
+            "tools/denoise-model/x.bin",
             "GPT_SoVITS/pretrained_models/gsv-v4-pretrained/s2Gv4.pth",
             "GPT_SoVITS/pretrained_models/models--nvidia--bigvgan_v2_24khz/x.bin",
             "GPT_SoVITS/pretrained_models/gsv-v2final-pretrained/s2G2333k.pth",

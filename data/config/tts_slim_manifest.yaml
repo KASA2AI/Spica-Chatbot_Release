@@ -23,6 +23,12 @@ runtime_base:
   keep:
     - "config.py"
     - "GPT_SoVITS/**/*.py"
+    # tools/*.py = top-level tools modules the inference imports at MODULE level
+    # (assets.py -> inference_webui:128, my_utils.py -> module/data_utils.py:11, plus
+    # __init__.py / audio_sr.py). NOT tools/** -- the heavy subdirs (asr/uvr5/
+    # AP_BWE_main) stay excluded below. (B1 step4 parity caught tools/assets.py was
+    # pruned: a module-level import invisible to step1's file-open load-trace.)
+    - "tools/*.py"
     - "tools/i18n/**"
     - "GPT_SoVITS/text/ja_userdic/**"
     - "GPT_SoVITS/text/opencpop-strict.txt"

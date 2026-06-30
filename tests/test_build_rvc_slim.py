@@ -8,12 +8,18 @@ no-output-dir-created invariant.
 """
 
 import copy
+import hashlib
+import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.local_runtime.build_rvc_slim import BuildAbort, plan_build
+from scripts.local_runtime.build_rvc_slim import BuildAbort, execute_build, import_check, plan_build
 from spica.local_runtime.rvc.slim_manifest import load_manifest
+
+_PASS_RUNNER = lambda base: (True, None)  # noqa: E731  fake import preflight for synthetic build tests
 
 REAL_MANIFEST = Path(__file__).resolve().parents[1] / "data" / "config" / "rvc_slim_manifest.yaml"
 
@@ -61,7 +67,10 @@ def _write(root: Path, files: dict[str, bytes]) -> None:
         p.write_bytes(data)
 
 
-class RvcDryRunTest(unittest.TestCase):
+class _RvcFixture(unittest.TestCase):
+    """Synthetic fake Applio tree. Shared by the dry-run and true-build suites (no
+    test_ methods here -> contributes no tests itself)."""
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self._tmp.name)
@@ -79,6 +88,18 @@ class RvcDryRunTest(unittest.TestCase):
         kw.update(over)
         return plan_build(**kw)
 
+    def _build(self, **over):
+        kw = dict(source_root=str(self.src), manifest=self.manifest, output_dir=str(self.out),
+                  character="spica", check_ignore=lambda p: True, import_check_runner=_PASS_RUNNER)
+        kw.update(over)
+        return execute_build(**kw)
+
+    def _staging_leftovers(self):
+        parent = self.repo / "out"
+        return list(parent.glob(".rvc_slim.staging-*")) if parent.exists() else []
+
+
+class RvcDryRunTest(_RvcFixture):
     # -- would-copy whitelist -------------------------------------------------
     def test_must_keeps_in_plan(self):
         targets = {e["target"] for e in self._plan()["would_copy"]}
@@ -170,6 +191,84 @@ class RvcDryRunTest(unittest.TestCase):
         self._plan()
         self.assertFalse(self.out.exists())
         self.assertFalse((self.repo / "out").exists())
+
+
+class RvcExecuteBuildTest(_RvcFixture):
+    """Real copy into a SYNTHETIC out dir (no real models / no real import preflight)."""
+
+    def test_materializes_pack(self):
+        report, out = self._build()
+        out = Path(out)
+        self.assertTrue(out.is_dir())
+        self.assertTrue((out / "base" / "core.py").is_file())
+        self.assertTrue((out / "base" / "rvc" / "infer" / "infer.py").is_file())
+        self.assertTrue((out / "base" / "rvc" / "models" / "embedders" / "contentvec" / "pytorch_model.bin").is_file())
+        self.assertTrue((out / "base" / "rvc" / "models" / "predictors" / "rmvpe.pt").is_file())
+        self.assertTrue((out / "characters" / "spica" / "model" / "spica_200e_57000s.pth").is_file())
+        self.assertTrue((out / "characters" / "spica" / "index" / "spica.index").is_file())
+        self.assertTrue((out / "build_report.json").is_file())
+        self.assertEqual(report["parity"]["status"], "PENDING")
+        self.assertEqual(report["import_preflight"]["status"], "PASS")  # fake runner
+        self.assertEqual(self._staging_leftovers(), [])
+
+    def test_sha256_matches_copied_files(self):
+        report, out = self._build()
+        out = Path(out)
+        self.assertTrue(report["files"])
+        for f in report["files"]:
+            data = (out / f["target"]).read_bytes()
+            self.assertEqual(hashlib.sha256(data).hexdigest(), f["sha256"], f["target"])
+            self.assertEqual(len(data), f["size_bytes"], f["target"])
+
+    def test_refuses_clobber_unless_force(self):
+        self.out.mkdir(parents=True)
+        with self.assertRaises(BuildAbort):
+            self._build()
+        # --force overwrites
+        report, out = self._build(force=True)
+        self.assertTrue((Path(out) / "base" / "core.py").is_file())
+
+    def test_rolls_back_on_copy_error(self):
+        real_copy = shutil.copy2
+        state = {"n": 0}
+
+        def boom(src, dst, *a, **k):
+            state["n"] += 1
+            if state["n"] == 3:
+                raise OSError("simulated copy failure")
+            return real_copy(src, dst, *a, **k)
+
+        with patch("scripts.local_runtime.build_rvc_slim.shutil.copy2", side_effect=boom):
+            with self.assertRaises(OSError):
+                self._build()
+        self.assertFalse(self.out.exists())
+        self.assertEqual(self._staging_leftovers(), [])
+
+    def test_import_preflight_fail_recorded(self):
+        report, out = self._build(import_check_runner=lambda base: (False, "ModuleNotFoundError: No module named 'rvc.lib.foo'"))
+        self.assertEqual(report["import_preflight"]["status"], "FAIL")
+        self.assertIn("rvc.lib.foo", report["import_preflight"]["error"])
+        # build still published the artifact + FAIL report (for inspection/fix).
+        self.assertTrue((Path(out) / "build_report.json").is_file())
+
+    # -- import_check unit (injectable importer; no real torch/RVC) ------------
+    def test_import_check_ok(self):
+        ok, detail = import_check("/slim/base", importer=lambda root: None)
+        self.assertTrue(ok)
+        self.assertIsNone(detail)
+
+    def test_import_check_missing_module_names_it(self):
+        def missing(root):
+            raise ModuleNotFoundError("No module named 'rvc.lib.tools.assets'", name="rvc.lib.tools.assets")
+
+        ok, detail = import_check("/slim/base", importer=missing)
+        self.assertFalse(ok)
+        self.assertIn("rvc.lib.tools.assets", detail)
+
+    def test_import_check_other_error_blocks(self):
+        ok, detail = import_check("/slim/base", importer=lambda root: (_ for _ in ()).throw(RuntimeError("cuda boom")))
+        self.assertFalse(ok)
+        self.assertIn("RuntimeError", detail)
 
 
 if __name__ == "__main__":

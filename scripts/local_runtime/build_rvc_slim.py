@@ -20,11 +20,14 @@ ENV NAMES (§3.3): reads NONE.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import posixpath
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,6 +42,7 @@ from spica.local_runtime.tts.slim_manifest import (  # noqa: E402  reuse tested 
     load_manifest,
     matches_any,
     output_is_gitignored,
+    sha256_of,
     should_include,
     unmatched_keep_globs,
     within_size_cap,
@@ -161,6 +165,154 @@ def plan_build(
     )
 
 
+# ---- import preflight --------------------------------------------------------
+
+def _default_rvc_importer(root: str) -> None:
+    """Replicate rvc.py::_load_core against the slim base: put base on sys.path and
+    exec core.py (triggers the whole RVC inference module-level import chain). Any
+    missing module-level dependency surfaces here -- the TTS-B1 `tools.assets` lesson."""
+    root = os.path.abspath(root)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    core_path = os.path.join(root, "core.py")
+    spec = importlib.util.spec_from_file_location("rvc_slim_core_check", core_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load core.py: {core_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+
+def import_check(root: str, importer: Callable[[str], None] | None = None) -> tuple[bool, str | None]:
+    """Import the RVC inference entry from ``root`` (this process is the fresh
+    subprocess). Returns (ok, detail); on a missing module reports the module name,
+    not a stack. ``importer`` is injectable for tests (default = real core.py exec)."""
+    if importer is None:
+        importer = _default_rvc_importer
+    try:
+        importer(root)
+        return True, None
+    except ModuleNotFoundError as exc:
+        return False, f"ModuleNotFoundError: No module named {exc.name!r}" if exc.name else f"ModuleNotFoundError: {exc}"
+    except Exception as exc:  # any import-time failure blocks parity
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _subprocess_import_runner(base_root: str) -> tuple[bool, str | None]:
+    """Run import_check in a FRESH subprocess (the real preflight) so torch / the
+    Applio module tree never pollute the build / pytest process sys.modules/sys.path."""
+    # -B: never write .pyc -- otherwise importing the staged modules would create
+    # __pycache__ in the slim base (after the copy/report, before the rename), leaking
+    # untracked files into the artifact and violating the manifest __pycache__ exclude.
+    result = subprocess.run(
+        [sys.executable, "-B", os.path.abspath(__file__), "--import-root", base_root],
+        capture_output=True, text=True, timeout=900,
+    )
+    for line in reversed(result.stdout.strip().splitlines()):
+        try:
+            payload = json.loads(line)
+            return bool(payload["ok"]), payload.get("detail")
+        except Exception:
+            continue
+    return False, f"import-check subprocess failed (rc={result.returncode}): {result.stderr.strip()[-300:]}"
+
+
+# ---- true build (copy + sha256 + build_report + atomic publish) ---------------
+
+def execute_build(
+    *,
+    source_root: str,
+    manifest: dict[str, Any],
+    output_dir: str,
+    character: str,
+    check_ignore: Callable[[str], bool],
+    force: bool = False,
+    import_check_runner: Callable[[str], tuple[bool, str | None]] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """REAL build: plan (all guards) -> copy into an atomic staging dir with per-file
+    sha256 -> run the import preflight against staging/base (subprocess) -> write
+    build_report.json -> ``os.rename`` staging to the final output. ANY error rolls back
+    (rmtree staging); the final dir appears only at the rename. Refuses to clobber an
+    existing output unless ``force``. Returns (build_report, output_abs)."""
+    plan = plan_build(
+        source_root=source_root, manifest=manifest, output_dir=output_dir,
+        character=character, check_ignore=check_ignore,
+    )
+    out_real = os.path.realpath(output_dir)
+    if os.path.exists(out_real):
+        if not force:
+            raise BuildAbort(f"output dir already exists, refusing to clobber (use --force): {out_real}")
+        shutil.rmtree(out_real)
+    parent = os.path.dirname(out_real) or "."
+    os.makedirs(parent, exist_ok=True)
+    staging = tempfile.mkdtemp(prefix="." + os.path.basename(out_real) + ".staging-", dir=parent)
+    staging_real = os.path.realpath(staging)
+    try:
+        files_report: list[dict[str, Any]] = []
+        for e in plan["would_copy"]:
+            dst = os.path.normpath(os.path.join(staging_real, e["target"]))
+            if not is_within(dst, staging_real):
+                raise BuildAbort(f"refusing to copy outside staging: {e['target']}")
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(e["source"], dst)  # content copy (follows symlinked sources), preserves mtime
+            files_report.append({
+                "category": e["category"], "source": e["source"], "target": e["target"],
+                "size_bytes": os.path.getsize(dst), "sha256": sha256_of(dst),
+            })
+
+        total_bytes = sum(f["size_bytes"] for f in files_report)
+        size_cap_gb = manifest["output"]["size_cap_gb"]
+        within_cap = within_size_cap(total_bytes, size_cap_gb)
+        if not within_cap:
+            raise BuildAbort(f"built size {total_bytes / 1024 ** 3:.2f} GB exceeds cap {size_cap_gb} GB")
+        categories: dict[str, dict[str, int]] = {}
+        for f in files_report:
+            agg = categories.setdefault(f["category"], {"files": 0, "bytes": 0})
+            agg["files"] += 1
+            agg["bytes"] += f["size_bytes"]
+
+        # import preflight against the staged base (fresh subprocess; never pollutes us).
+        runner = import_check_runner or _subprocess_import_runner
+        ok, detail = runner(os.path.join(staging_real, "base"))
+
+        report = {
+            "schema_version": manifest["schema_version"],
+            "runtime_name": manifest["runtime_name"],
+            "character": character,
+            "source_root": os.path.realpath(source_root),
+            "output_root": out_real,
+            "totals": {
+                "file_count": len(files_report), "total_bytes": total_bytes,
+                "total_gb": round(total_bytes / 1024 ** 3, 4),
+                "size_cap_gb": size_cap_gb, "within_cap": within_cap,
+            },
+            "categories": categories,
+            "files": files_report,
+            "import_preflight": {"status": "PASS" if ok else "FAIL", "error": detail},
+            "parity": {"status": "PENDING"},
+        }
+        with open(os.path.join(staging_real, "build_report.json"), "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2, ensure_ascii=False)
+
+        os.rename(staging_real, out_real)  # atomic publish (same filesystem)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)  # rollback: leave no partial output
+        raise
+    return report, out_real
+
+
+def _print_build_summary(report: dict[str, Any], out_real: str) -> None:
+    t = report["totals"]
+    print(f"[build] runtime={report['runtime_name']} character={report['character']} -> {out_real}")
+    for cat in sorted(report["categories"]):
+        c = report["categories"][cat]
+        print(f"  {cat:24s} {c['files']:5d} files  {c['bytes'] / 1024 ** 2:10.1f} MB")
+    print(f"  TOTAL {t['file_count']} files  {t['total_gb']} GB  (cap {t['size_cap_gb']} GB, within={t['within_cap']})")
+    ip = report["import_preflight"]
+    print(f"  import_preflight: {ip['status']}" + (f"  ({ip['error']})" if ip.get("error") else ""))
+    print(f"  parity: {report['parity']['status']}")
+
+
 # ---- CLI ---------------------------------------------------------------------
 
 def _git_check_ignore(repo_root: Path) -> Callable[[str], bool]:
@@ -195,18 +347,22 @@ def _print_summary(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="RVC (Applio) slim runtime DRY-RUN planner (Step1).")
+    ap = argparse.ArgumentParser(description="RVC (Applio) slim runtime planner / builder (Step2A).")
     ap.add_argument("--manifest", default=DEFAULT_MANIFEST)
     ap.add_argument("--character", default=None, help="pack name (default: the sole pack)")
     ap.add_argument("--source", default=None, help="override source.applio_root")
     ap.add_argument("--output", "--out", default=None, help="override output.root")
-    ap.add_argument("--build", action="store_true", help="(NOT implemented in Step1 -- aborts)")
+    ap.add_argument("--build", action="store_true", help="REAL build (copy files). Default: dry-run plan only.")
+    ap.add_argument("--force", action="store_true", help="with --build: overwrite an existing output dir.")
+    ap.add_argument("--import-root", default=None, help="(internal) import-preflight a slim base in this fresh process.")
     ap.add_argument("--json", action="store_true", help="also print the full report JSON")
     args = ap.parse_args(argv)
 
-    if args.build:
-        print("error: --build is not implemented in RVC Slim Step1 (dry-run planner only).", file=sys.stderr)
-        return 2
+    # internal: the import-preflight subprocess entry.
+    if args.import_root:
+        ok, detail = import_check(args.import_root)
+        print(json.dumps({"ok": ok, "detail": detail}))
+        return 0 if ok else 1
 
     manifest = load_manifest(_abspath(args.manifest, _REPO_ROOT))
     validate_manifest(manifest)
@@ -224,16 +380,26 @@ def main(argv: list[str] | None = None) -> int:
 
     source_root = _abspath(args.source or manifest["source"]["applio_root"], _REPO_ROOT)
     output_dir = _abspath(args.output or manifest["output"]["root"], _REPO_ROOT)
+    common = dict(source_root=source_root, manifest=manifest, output_dir=output_dir,
+                  character=character, check_ignore=_git_check_ignore(_REPO_ROOT))
+
+    if args.build:
+        try:
+            report, out_real = execute_build(**common, force=args.force)
+        except BuildAbort as exc:
+            print(f"BUILD ABORTED: {exc}", file=sys.stderr)
+            return 1
+        _print_build_summary(report, out_real)
+        print(f"  build_report: {os.path.join(out_real, 'build_report.json')}")
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0 if report["import_preflight"]["status"] == "PASS" else 1
 
     try:
-        report = plan_build(
-            source_root=source_root, manifest=manifest, output_dir=output_dir,
-            character=character, check_ignore=_git_check_ignore(_REPO_ROOT),
-        )
+        report = plan_build(**common)
     except BuildAbort as exc:
         print(f"BUILD ABORTED: {exc}", file=sys.stderr)
         return 1
-
     _print_summary(report)
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))

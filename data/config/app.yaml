@@ -121,6 +121,9 @@ screen:
   infer_timeout_sec: 30
   log_timing: true
   debug_save_images: false
+ocr:
+  provider: rapidocr_ort
+  fallback_provider: rapidocr
 song:
   enabled: true
   generated_root: static/generated_song

@@ -107,7 +107,7 @@
 # --- migrated by migrate_config_p0b ---
 screen:
   enabled: true
-  provider: moondream_local
+  provider: moondream_hf
   model_id: vikhyatk/moondream2
   revision: '2025-06-21'
   device: cuda

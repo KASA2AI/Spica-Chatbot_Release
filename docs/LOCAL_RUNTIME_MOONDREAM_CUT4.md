@@ -1,7 +1,7 @@
 # Moondream local_runtime 隔离（Cut 4）收尾文档
 
 > 父规划：`docs/LOCAL_RUNTIME_PLAN.md`。姊妹文档：`docs/LOCAL_RUNTIME_TTS_SLIM_B1.md`（GPT-SoVITS）、`docs/LOCAL_RUNTIME_RVC_SLIM_B1.md`（Applio/RVC）；OCR 两刀（rapidocr_ort / rapidocr_trt_ep）为同型前例。
-> **状态：Cut 4 完成。`moondream_hf` provider 已实现，真机 parity PASS（BIT_IDENTICAL）。默认未切，仍是 `moondream_local`；legacy `MoondreamBackend` 保留为 fallback。**
+> **状态：Cut 4 完成。`moondream_hf` provider 已实现，真机 parity PASS（BIT_IDENTICAL）。Runtime Cutover Rehearsal Step 1 已把 repo production default 切到 `moondream_hf`；schema built-in default 仍是 `moondream_local`，legacy `MoondreamBackend` 保留为 fallback。**
 > 未做：ONNX / TensorRT / Photon / 换模型 / Windows / env / installer（见 §7）。
 
 关键文件：
@@ -126,7 +126,7 @@ python -m pytest tests/test_layering.py tests/test_no_getenv.py tests/test_resol
 ## 5. 明确未做事项（不在本刀范围）
 
 ```
-不切默认（生产仍 moondream_local）
+Cut 4 当时不切默认（已由 §8 的 Runtime Cutover Rehearsal Step 1 切到 moondream_hf）
 不删 legacy MoondreamBackend
 ONNX / TensorRT / Photon（不做）
 Windows dependency spike（不做）
@@ -140,7 +140,7 @@ TTS / RVC / song（不碰）
 ## 6. 风险 / 挂账
 
 1. **install hook 是进程全局态**：`moondream_runtime.py` 的 `_ACTIVE_MOONDREAM_PROVIDER` 为模块级全局（与 OCR 缝同型）。测试/脚本用完必须 `reset_active_moondream_provider()`（现有测试与 parity worker 已遵守此纪律）。
-2. **切默认 / 删 legacy 需另立刀**：`moondream_hf` 已过 parity，但切 `screen.provider` 默认值、删 legacy backend 属行为面变更，需单独 plan → 确认 → 实现 → 验收。
+2. **删 legacy 需另立刀**：`moondream_hf` 已过 parity，`screen.provider` 默认值已由 §8 单独切换；删除 legacy backend 仍属行为面变更，需单独 plan → 确认 → 实现 → 验收。
 3. **真正下半场**（Windows dependency spike、可复现 env、切默认、删 vendored、installer）均不在本刀范围，见 `docs/LOCAL_RUNTIME_PLAN.md` 后续章节，各自立项。
 
 ---
@@ -150,3 +150,10 @@ TTS / RVC / song（不碰）
 > **Moondream Cut 4 is complete when the `moondream_hf` provider loads the verbatim `from_pretrained` path from `spica/local_runtime/vision/`, the default `moondream_local` path is byte-level zero-diff through the seam, and real-machine parity (legacy vs hf, same image/prompt/seed, full production path) passes.**
 
 三条均已满足（§2 零 diff 默认 + 缝测试、§3 真机 BIT_IDENTICAL、§4 全量/守卫绿）。**Moondream Cut 4 完成——LOCAL_RUNTIME_PLAN 四刀（OCR / TTS / RVC / Moondream）全部收齐。**
+
+## 8. Runtime Cutover Rehearsal Step 1
+
+- `data/config/app.yaml` 的 live `screen.provider` 已切到 `moondream_hf`，repo production default 会在 host initialize 时安装 `MoondreamHfProvider`。
+- `ScreenConfig.provider` 的 schema built-in default 保持 `moondream_local`：无配置文件 / 极限回滚场景仍落 legacy seam。
+- `moondream_local` 和 legacy `MoondreamBackend` 继续保留；显式配置 `moondream_local` 时 host 不安装 provider，manager seam 仍走 legacy fallback。
+- 未移动旧源码；未做 OCR / TTS / RVC / Windows / installer。

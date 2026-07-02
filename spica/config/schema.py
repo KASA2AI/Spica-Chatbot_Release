@@ -331,16 +331,21 @@ class OcrConfig(BaseModel):
         screen-pipeline observation (which engine produced visible_text);
       * ``ocr.provider`` SELECTS the actual ``OCRPort`` implementation for both
         paths.
-    They overlap today (both default ``"rapidocr"``). Consolidating the two is
-    registered P3 cleanup, NOT this cut.
+    ``screen.ocr_engine`` still defaults to the visible-text label
+    ``"rapidocr"``. ``ocr.provider`` has two layers of defaulting: this schema
+    built-in stays ``"rapidocr"`` for no-file / extreme rollback; the repo
+    production default now comes from ``data/config/app.yaml`` and is
+    ``"rapidocr_ort"``. Consolidating the label and provider knobs is registered
+    P3 cleanup, NOT this cut.
 
-    PARITY GATE (§6.1): the default stays ``rapidocr`` until a parity report
-    clears switching it. ``rapidocr_ort`` / ``rapidocr_trt_ep`` are selectable
-    (experimental); ``fallback_provider`` is the retreat kept until real-machine
-    parity passes."""
+    CUTOVER STATUS (§6.1): ``rapidocr_ort`` is the repo production default for
+    the Path A+B provider-seam rehearsal. ``fallback_provider`` and the schema
+    built-in default remain ``rapidocr``. ``rapidocr_trt_ep`` remains
+    experimental until cache/prewarm + real galgame parity clear the cold-cache
+    risk."""
 
-    # "rapidocr" (default/fallback) | "rapidocr_ort" (experimental, cut 1)
-    # | "rapidocr_trt_ep" (experimental, cut 2 -- ORT TensorRT EP).
+    # "rapidocr" (schema default/fallback) | "rapidocr_ort" (repo default, cut 1)
+    # | "rapidocr_trt_ep" (experimental cut 2 -- ORT TensorRT EP).
     provider: str = "rapidocr"
     fallback_provider: str = "rapidocr"
     trt: TrtOcrConfig = Field(default_factory=TrtOcrConfig)

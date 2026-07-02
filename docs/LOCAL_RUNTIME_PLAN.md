@@ -89,9 +89,9 @@ TRT 是**手段**，不是目的。本阶段的奖品是**「摆脱 vendored 第
 
 ### 2.3 装配点（既定，不再列为开放问题）
 
-galgame OCR 的 provider 装配点是**确定的**：`spica/host/agent_assembly.py::build_agent_services()`，当前**硬编码** `RapidOcrAdapter`。
+galgame OCR 的 provider 装配点是**确定的**：`spica/host/agent_assembly.py::build_agent_services()`，当前经 `build_ocr_adapter(...)` 按 typed config 选择 `OCRPort` adapter。
 
-**第一刀的落点**：在 `agent_assembly.py`（或等价位置）新增 `build_ocr_adapter(...)` 工厂（或等价 factory），按配置 provider 名选择实现，**默认 `rapidocr`，旧行为逐字节零 diff**。新 provider（`rapidocr_ort` 等）经此 factory 接入。**（CC 实现前 grep 核实该函数名与硬编码点仍准确。）**
+**第一刀的落点（已落地）**：在 `agent_assembly.py` 新增 `build_ocr_adapter(...)` 工厂，按配置 provider 名选择实现。schema built-in default 仍是 `rapidocr`（无配置文件 / 极限回滚 fallback），repo production default 已由 `data/config/app.yaml` 切到 `rapidocr_ort`，`fallback_provider` 仍是 `rapidocr`。新 provider（`rapidocr_ort` / `rapidocr_trt_ep`）均经此 factory 接入。**（进入后续刀前 grep 核实函数名与配置坐标仍准确。）**
 
 ### 2.4 关键认知
 
@@ -156,15 +156,15 @@ adapter 落点不变：新实现的薄壳 adapter 仍在 `spica/adapters/<kind>/
 
 - 现有 provider 名**保持原样**，作为 fallback：TTS = `gptsovits_current`；OCR = `rapidocr`（即现有 `RapidOcrAdapter`，进入前 grep 核实）；STT = `faster_whisper`。
 - 新实现注册**新 provider 名**，与旧并存，app.yaml 切换。命名约定（英文）：
-  - `rapidocr_ort` —— ONNX Runtime（CPU/CUDA EP）。**第一刀的主交付**（runtime 抽离 + 统一两条路径）。
-  - `rapidocr_trt_ep` —— ONNX Runtime 的 TensorRT Execution Provider。**第一刀的第二步增强，不一次承诺完整可用**（§11.1）。
+  - `rapidocr_ort` —— ONNX Runtime（CPU/CUDA EP）。**第一刀的主交付**；现已是 repo production OCR default，用来演练 provider seam / Path A+B 默认切换（不代表 OCR runtime dependency reduction 已彻底完成）。
+  - `rapidocr_trt_ep` —— ONNX Runtime 的 TensorRT Execution Provider。**第一刀的第二步增强，仍 experimental**（§11.1）；真机 preflight 可用，但 cold cache / first new shape build 接近 70 秒，暂缓切默认。
   - `gptsovits_trt` —— GPT-SoVITS 新 runtime（TRT 稳定段 + ONNX RT 自回归段）。
   - `moondream_hf` —— Moondream 原样隔离（仍拖 transformers）。
 - **fallback 配置形态**（落点见各刀，示意）：
   ```yaml
   ocr:
-    provider: rapidocr_ort           # 先 ort；trt_ep 稳定后再切
-    fallback_provider: rapidocr      # 真机 parity 过前不删旧
+    provider: rapidocr_ort           # repo production default；trt_ep 暂缓
+    fallback_provider: rapidocr      # legacy fallback 保留
   ```
 - **命名即契约**：provider 名一旦写进 manifest / 配置 / 测试，不随意改名（改名属搬目录类高危，`CLAUDE.md` 铁律 #10）。
 
@@ -195,6 +195,8 @@ parity 报告是上述 ①②③④ 的唯一 gate。报告不存在或不达标
 ```
 
 **与旧版的区别（重要）**：旧版写「没有 parity 报告不准**注册**新 provider」，这卡死了流程（要跑新实现才能出报告）。修订版把 gate 从「注册」挪到「**切默认 / 删旧 / 移 fallback / 让生产默认走新实现**」——注册一个 experimental provider 本身无害（它不被默认选中），真正危险的是「让生产默认走没验证过的实现」和「删掉退路」。锁后者，放开前者。
+
+**当前 OCR 状态（Runtime Cutover Rehearsal Step 3 / 3.1）**：`rapidocr_ort` 已通过默认切换 rehearsal，repo production default 为 `ocr.provider: rapidocr_ort`，`ocr.fallback_provider: rapidocr`。schema built-in default 仍保持 `OcrConfig().provider == "rapidocr"`，用于无配置文件 / 极限回滚。`rapidocr_trt_ep` 仍 experimental；虽已确认可实际跑 TensorRT EP，但 cold cache / first new shape build 接近 70 秒，需 cache/prewarm strategy 与真实 galgame parity 后再评估默认切换。
 
 ### 6.2 harness 设计（模型无关核心 + 可插拔比较器）
 
@@ -321,7 +323,7 @@ LOCAL_RUNTIME_PARITY_FAILED
 
 | 模型 | 现状实现 | 适合 TRT？ | 本阶段处置 | 刀序 |
 |---|---|---|---|---|
-| **RapidOCR** | `rapidocr_onnxruntime`（**已是 ONNX**），有 `_INFER_LOCK` 全局推理锁 + CUDA lib preload；**两条调用路径**（§2.2） | 中（ORT 的 TRT EP 即可） | **第一刀**。**先 `rapidocr_ort`（runtime 抽离 + 统一两条路径）为主，`rapidocr_trt_ep` 为第二步增强**。跳过最难的「导出」步（本身就是 ONNX）；高频主路径；输出文本，parity 最易验；风险最低（退回 ORT CPU/CUDA 可跑）。**拿它跑通整条机制**。 | 1 |
+| **RapidOCR** | `rapidocr_onnxruntime`（**已是 ONNX**），有 `_INFER_LOCK` 全局推理锁 + CUDA lib preload；**两条调用路径**（§2.2） | 中（ORT 的 TRT EP 即可） | **第一刀**。`rapidocr_ort` 已切为 repo production OCR default，用于 provider seam / Path A+B default cutover rehearsal；legacy `rapidocr` 仍是 fallback。`rapidocr_trt_ep` 为第二步增强且仍 experimental，因 cold cache / first new shape build 约 70 秒，暂缓默认切换。 | 1 |
 | **GPT-SoVITS TTS** | 直接 import vendored `GPT_SoVITS.inference_webui`，改 `sys.path` + pushd | 部分（vocoder/decoder 适合；**AR semantic 段难**：动态长度 / 采样 / KV cache） | **第二刀**，且**分段**：阶段 A 脱 vendor 不 TRT（在 `local_runtime` 重写最小推理图，输出 parity 一致）→ 阶段 B 分模块导 ONNX → 阶段 C 只 TRT 稳定段（vocoder/decoder），**AR 段停在 ONNX RT**。最高价值、最难。 | 2 |
 | **faster-whisper STT** | `spica/adapters/stt/faster_whisper.py` + `SttConfig`（**已抽离**，模型常驻 / 懒加载 / 单 worker） | **不建议** | **大概率零代码改动**。CTranslate2 已是优化 runtime，性价比高于自导 Whisper 到 TRT。本阶段只**确认它在概念上纳入 local_runtime 伞下**（保持 CTranslate2 不动），可能仅文档登记。**注意：此模型的抽离前几轮已完成（STT 端点判定调参那条线就在它上面），勿当成待做项重做。** | 3（确认 no-op） |
 | **Moondream 屏幕理解** | `transformers.AutoModelForCausalLM` + `trust_remote_code=True`（VLM，自定义前向在 HF 仓库 remote code 里） | **难** | **最后一刀**。第一阶段**先不 TRT、连 ONNX 都先别碰**：原样包成 `moondream_hf` runtime 隔离掉，接受它暂时仍拖 transformers。**它是低频用**（选项定位 / 画面判断），拖的依赖不值得第一阶段研究级精力去拔。**TRT 与否的最终决定，延到它这一刀、实际去 HF 仓库看 `modeling_*.py` 自定义前向逻辑多少再拍板**（大概率结论：隔离 + 不 TRT；可选评估换更易导出的小 VLM）。 | 4 |
@@ -355,14 +357,14 @@ LOCAL_RUNTIME_PARITY_FAILED
 1. `spica/local_runtime/` 新家建起（`device.py` / `errors.py` / `manifest.py` / `parity/` + `ocr/` 落地）。`device.py` 探测**禁 os.getenv**（§3.3）。
 2. **`.gitignore` 加 artifact 规则**（§7.3）。
 3. **parity harness 搭起并自验**（合成数据，两个相同 stub provider ≈0 差异，证明基建对）——**先于**新 runtime 接入。
-4. **新增 `build_ocr_adapter(...)` factory**（在 `agent_assembly.py` 或等价处），按 provider 名选择，**默认 `rapidocr`，旧行为零 diff**（§2.3）。
+4. **新增 `build_ocr_adapter(...)` factory**（在 `agent_assembly.py`），按 provider 名选择；schema/factory fallback default 保持 `rapidocr`，repo production default 由 `data/config/app.yaml` 选择 `rapidocr_ort`（§2.3）。
 5. **统一两条 OCR 路径**（§2.2 红线 #9）：
    - 路径 A（galgame）：经新 factory 选 provider。
    - 路径 B（inspect_screen / `analyzer.py` 直 `import ocr_image`）：**把它的 OCR 调用也收到 `OCRPort` / 新 factory 后面**，不再直连底层。**inspect_screen 的对外行为不变**（只是 OCR 调用换了内部来源），其余 screen analyzer 逻辑（VLM 定位 / 画面判断）不动。
-6. **`rapidocr_ort`（ONNX Runtime）作为第一刀主交付**：把 RapidOCR 推理抽进 `local_runtime/ocr/rapidocr_runtime.py`，新 adapter 戴 `OCRPort` 帽子，经 factory 接入，注册为 experimental provider。
+6. **`rapidocr_ort`（ONNX Runtime）作为第一刀主交付**：把 RapidOCR 推理抽进 `local_runtime/ocr/rapidocr_runtime.py`，新 adapter 戴 `OCRPort` 帽子，经 factory 接入；现已作为 repo production default 覆盖 Path A+B 的默认链路。
 7. **parity 验证**：固定参考集（CI 合成 / 真机真图分离），跑旧 `rapidocr` vs 新 `rapidocr_ort`，逐字比对 + 耗时，报告归档。
-8. **`rapidocr_trt_ep`（TRT EP）第二步增强**：在 `rapidocr_ort` 稳定且 parity 过后，再挂 ORT 的 TensorRT EP（engine cache + timing cache，大概率不手动 `trtexec`）。**不在第一刀一上来就承诺 TRT EP 完整可用**。
-9. **切默认的 gate**：只有 parity 报告达标，才把生产默认从 `rapidocr` 切到 `rapidocr_ort`（或之后的 `rapidocr_trt_ep`）；**旧 `rapidocr` 保留 fallback**（§6.1 / 红线 #4/#5）。
+8. **`rapidocr_trt_ep`（TRT EP）第二步增强**：已完成真机 preflight，但 cold cache / first new shape build 接近 70 秒；在 cache/prewarm strategy 与真实 galgame parity 过关前，**不切默认**。
+9. **切默认的 gate**：`rapidocr_ort` 的 repo production default cutover 已完成；之后若考虑 `rapidocr_trt_ep`，仍需单独 parity / latency / cache gate。**旧 `rapidocr` 保留 fallback**（§6.1 / 红线 #4/#5）。
 10. 构建脚本（`rapidocr_build.py` / `scripts/local_runtime/*`）按**跨平台写法**（§13）。
 
 ### 11.2 本刀不碰
@@ -410,7 +412,7 @@ LOCAL_RUNTIME_PARITY_FAILED
 
 | 子阶段 | 内容 | 关键交付 | gate |
 |---|---|---|---|
-| **2.1 OCR（第一刀）** | parity harness 搭起 + 统一两条 OCR 路径 + RapidOCR 抽进 `rapidocr_ort`（TRT EP 第二步） | `local_runtime/{device,errors,manifest,parity,ocr}` + `build_ocr_adapter` factory（默认 rapidocr 零 diff）+ 路径 B 收进 port + 新 adapter（戴 `OCRPort`）+ `.gitignore` artifact 规则 + 构建脚本（跨平台写法）+ fallback 配置 | parity 报告达标才切默认 / 才动 fallback |
+| **2.1 OCR（第一刀）** | parity harness 搭起 + 统一两条 OCR 路径 + RapidOCR 抽进 `rapidocr_ort`（TRT EP 第二步） | `local_runtime/{device,errors,manifest,parity,ocr}` + `build_ocr_adapter` factory（schema fallback default 仍 rapidocr）+ 路径 B 收进 port + 新 adapter（戴 `OCRPort`）+ `.gitignore` artifact 规则 + 构建脚本（跨平台写法）+ fallback 配置；repo production default 已切 `rapidocr_ort` | `rapidocr_ort` default cutover 已完成；`rapidocr_trt_ep` 默认需另过 cache/prewarm/parity gate |
 | **2.2 GPT-SoVITS（第二刀）** | 阶段 A 脱 vendor 不 TRT → B 分模块导 ONNX → C 只 TRT 稳定段 | `local_runtime/tts/*` + `gptsovits_trt` provider + parity（mel/waveform）；收尾处理 `runtime_env.py` 退役 + 裸 pytest 限制 | 每子阶段各自 parity 过 |
 | **2.3 faster-whisper（第三刀）** | 确认 no-op，纳入概念伞 | 文档登记，保持 CTranslate2 不动 | 确认无行为变化 |
 | **2.4 Moondream（第四刀）** | 原样隔离成 `moondream_hf`，TRT 与否当刀再决 | `local_runtime/vision/*` + `moondream_hf` provider；隔离 transformers 依赖 | 隔离后行为 parity 一致 |

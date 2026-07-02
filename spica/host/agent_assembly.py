@@ -76,12 +76,14 @@ def build_ocr_adapter(
     adapter drives BOTH paths (galgame loop here via ``ocr_adapter``; inspect_screen
     via the path-B install hook in app_host), so they never fork (§2.2).
 
-    Default ``rapidocr`` returns ``RapidOcrAdapter()`` -- byte-identical to before.
-    ``rapidocr_ort`` (cut 1) and ``rapidocr_trt_ep`` (cut 2, ORT TensorRT EP) are
-    experimental and LAZY (no engine built here). Unknown names fall back to
+    Schema/factory fallback ``rapidocr`` returns ``RapidOcrAdapter()`` and remains
+    the no-file / extreme-rollback path. The repo production default is supplied
+    by ``data/config/app.yaml`` and now selects ``rapidocr_ort`` for the Path A+B
+    default-cutover rehearsal. ``rapidocr_trt_ep`` (cut 2, ORT TensorRT EP) remains
+    experimental and LAZY (no engine built here); it needs cache/prewarm + real
+    galgame parity before any default switch. Unknown names fall back to
     ``fallback_provider`` with a warning, so a mis-set config degrades gracefully
-    instead of crashing startup. The default is NOT switched away from ``rapidocr``
-    this cut -- that needs a parity + benchmark report (§6.1)."""
+    instead of crashing startup."""
     name = (provider or "rapidocr").strip()
     if name == "rapidocr":
         return RapidOcrAdapter()
@@ -193,10 +195,11 @@ def build_agent_services(
         # Phase 5: galgame launch + window-binding adapters (linux/Bottles path).
         game_launcher_adapter=LinuxDesktopGameLauncher(),
         window_locator_adapter=LinuxX11WindowLocator(),
-        # Phase 6: galgame screen capture (mss) + OCR (RapidOCR bridge, shared engine).
-        # cut 1: OCR provider selected by config via the factory (default rapidocr
-        # = byte-identical). The SAME adapter is installed into the path-B hook in
-        # app_host so galgame OCR and inspect_screen never fork (LOCAL_RUNTIME_PLAN §2.2).
+        # Phase 6: galgame screen capture (mss) + OCR. The OCR provider is selected
+        # by resolved config via the factory: repo default rapidocr_ort, schema /
+        # fallback default rapidocr. The SAME adapter is installed into the path-B
+        # hook in app_host so galgame OCR and inspect_screen never fork
+        # (LOCAL_RUNTIME_PLAN §2.2).
         screen_capture_adapter=MssScreenCapture(),
         ocr_adapter=build_ocr_adapter(
             config.ocr.provider, config.ocr.fallback_provider, trt_config=config.ocr.trt

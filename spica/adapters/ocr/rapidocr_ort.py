@@ -1,4 +1,4 @@
-"""RapidOCR ONNX-Runtime adapter (LOCAL_RUNTIME_PLAN §5 / §11) -- experimental.
+"""RapidOCR ONNX-Runtime adapter (LOCAL_RUNTIME_PLAN §5 / §11).
 
 Wears the EXISTING ``spica/ports/OCRPort`` (NO second port layer, §3.1). A thin
 bridge over ``spica.local_runtime.ocr.RapidOcrOrtRuntime``: shape-maps the
@@ -6,9 +6,11 @@ runtime's dict result into ``OcrResult`` exactly as ``RapidOcrAdapter`` does, so
 both providers are drop-in interchangeable behind the ``build_ocr_adapter``
 factory.
 
-Registered as an EXPERIMENTAL provider (``name = "rapidocr_ort"``). It is NOT the
-production default this cut: the default stays ``rapidocr`` until a parity report
-clears the gate (§6.1). Best-effort -- never raises into a turn.
+Registered as provider ``rapidocr_ort``. Runtime Cutover Rehearsal step 3 made it
+the repo production OCR default through ``data/config/app.yaml`` while the schema
+built-in fallback remains ``rapidocr``. This is a provider-seam / Path A+B default
+cutover rehearsal; it does NOT by itself mean OCR runtime dependency reduction is
+fully complete. Best-effort -- never raises into a turn.
 """
 
 from __future__ import annotations

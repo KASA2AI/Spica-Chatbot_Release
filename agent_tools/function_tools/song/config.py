@@ -34,13 +34,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "rvc": {
         "voice_model": "spica",
-        # cut 3 Phase 1A: RVC execution seam. Default in_process = byte-identical to
-        # before (legacy in-process Applio load); subprocess isolates the Applio
-        # import tree out of the caller process. worker_python None -> the current
+        # cut 3: RVC execution seam. Default subprocess (Phase 1B) isolates the
+        # Applio import tree (~4472 modules) out of the caller process; in_process
+        # is the byte-identical legacy fallback. worker_python None -> the current
         # interpreter (Phase 2 points it at an independent RVC env). These are
         # siblings of voices (NOT voice params), so _voice_config / _rvc_params are
-        # untouched. Flipping the default to subprocess is Phase 1B.
-        "execution_mode": "in_process",
+        # untouched.
+        "execution_mode": "subprocess",
         "worker_python": None,
         "voices": {
             "spica": {

@@ -198,10 +198,9 @@ class SongPipeline:
         if not request.prefer_cache or not rvc_path.exists():
             tmp_vocal = self.dirs["tmp"] / f"{uuid.uuid4().hex}_vocal.wav"
             prepared_vocal = trim_audio_file(vocal_path, tmp_vocal, request.max_duration_sec)
-            # cut 3 Phase 1A: dispatch through the RVC execution seam. Default
-            # execution_mode in_process = the legacy in-process call (byte-identical);
-            # subprocess isolates the Applio import tree out of this process. Flipping
-            # the default to subprocess is Phase 1B (separate review).
+            # cut 3: dispatch through the RVC execution seam. Default execution_mode
+            # is subprocess (Phase 1B) -- isolates the Applio import tree out of this
+            # process; in_process is the byte-identical legacy fallback.
             rvc_section = self.config.get("rvc", {})
             from spica.local_runtime.rvc.driver import run_rvc
             try:

@@ -101,6 +101,18 @@ REACTION_JUDGE_WINDOW_LINES = 24
 _LEXICON_FALLBACK_PASS_SCORE = 1000
 
 
+def _install_ocr_runtime_provider(config: AppConfig, services: Any) -> None:
+    from agent_tools.function_tools.screen.backends.ocr_runtime import (
+        reset_active_ocr_provider,
+        set_active_ocr_provider,
+    )
+
+    if config.ocr.provider != "rapidocr":
+        set_active_ocr_provider(services.ocr_adapter)
+    else:
+        reset_active_ocr_provider()
+
+
 class AppHost:
     """Owns the backend services and wires them together at startup."""
 
@@ -254,12 +266,7 @@ class AppHost:
             # into path B (inspect_screen analyzer) so a non-default provider covers
             # both. Default rapidocr -> NOT installed -> path B keeps the legacy
             # ocr_image (byte-identical), so the default chain is untouched.
-            if self.config.ocr.provider != "rapidocr":
-                from agent_tools.function_tools.screen.backends.ocr_runtime import (
-                    set_active_ocr_provider,
-                )
-
-                set_active_ocr_provider(self.services.ocr_adapter)
+            _install_ocr_runtime_provider(self.config, self.services)
             # cut 4 (LOCAL_RUNTIME_PLAN: Moondream): same install-hook shape for the
             # screen-vision backend. Default moondream_local -> factory returns None
             # -> NOT installed -> the manager seam calls the legacy

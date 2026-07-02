@@ -151,13 +151,32 @@ def test_envelope_launch_failure(tmp_path, monkeypatch):
     assert "could not launch worker" in str(exc.value) and "FileNotFoundError" in str(exc.value)
 
 
-def test_envelope_nonzero_exit_no_result(tmp_path, monkeypatch):
-    monkeypatch.setattr(rvc_driver.subprocess, "run",
-                        lambda argv, **k: _proc(1, stderr="Traceback: ImportError applio core"))
+def test_envelope_nonzero_exit_overrides_ok_result(tmp_path, monkeypatch):
+    # the blocker: a worker that writes ok=true + the wav but exits non-zero must
+    # NOT be trusted -- the non-zero exit is a failure regardless of result.json.
+    def fake_ok_but_nonzero(argv, **kwargs):
+        req = _read_req(argv)
+        Path(req["output_vocal_path"]).write_bytes(b"RIFFfakewav")  # wav present
+        Path(req["result_path"]).write_text(
+            json.dumps({"ok": True, "output_path": req["output_vocal_path"]}), encoding="utf-8")
+        return _proc(7, stdout="stdout tail here", stderr="stderr tail here")  # ...then crashed
+
+    monkeypatch.setattr(rvc_driver.subprocess, "run", fake_ok_but_nonzero)
     with pytest.raises(RuntimeError) as exc:
         run_rvc(execution_mode="subprocess", **_base_kwargs(tmp_path / "rvc.wav"))
     msg = str(exc.value)
-    assert "no result.json produced" in msg and "returncode=1" in msg and "applio core" in msg
+    assert "worker exited non-zero" in msg and "returncode=7" in msg
+    assert "result_path" in msg and "wav_exists" in msg
+    assert "stdout tail here" in msg and "stderr tail here" in msg
+
+
+def test_envelope_zero_exit_but_no_result(tmp_path, monkeypatch):
+    # exited 0 yet wrote no result.json -> still a unified failure
+    monkeypatch.setattr(rvc_driver.subprocess, "run",
+                        lambda argv, **k: _proc(0, stderr="returned 0 but wrote nothing"))
+    with pytest.raises(RuntimeError) as exc:
+        run_rvc(execution_mode="subprocess", **_base_kwargs(tmp_path / "rvc.wav"))
+    assert "no result.json produced" in str(exc.value)
 
 
 def test_envelope_partial_result_json_not_naked_jsondecode(tmp_path, monkeypatch):
@@ -174,14 +193,14 @@ def test_envelope_partial_result_json_not_naked_jsondecode(tmp_path, monkeypatch
 
 def test_envelope_result_ok_false(tmp_path, monkeypatch):
     def fake_ok_false(argv, **kwargs):
-        req = _read_req(argv)
+        req = _read_req(argv)  # exited 0, but the result explicitly says not-ok
         Path(req["result_path"]).write_text(json.dumps({"ok": False}), encoding="utf-8")
-        return _proc(3, stderr="partial failure")
+        return _proc(0, stderr="worker self-reported failure")
 
     monkeypatch.setattr(rvc_driver.subprocess, "run", fake_ok_false)
     with pytest.raises(RuntimeError) as exc:
         run_rvc(execution_mode="subprocess", **_base_kwargs(tmp_path / "rvc.wav"))
-    assert "worker reported failure" in str(exc.value) and "returncode=3" in str(exc.value)
+    assert "worker reported failure" in str(exc.value)
 
 
 def test_envelope_ok_true_but_wav_missing(tmp_path, monkeypatch):

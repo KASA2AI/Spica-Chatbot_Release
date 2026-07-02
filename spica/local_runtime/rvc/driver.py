@@ -155,8 +155,15 @@ def _run_subprocess(
     except Exception as exc:  # e.g. worker_python not found -> could not launch
         raise _fail("could not launch worker", detail=f"{type(exc).__name__}: {exc}") from exc
 
+    # A non-zero exit is a failure REGARDLESS of what result.json claims -- never
+    # trust an "ok" result from a worker that then crashed / exited non-zero. This
+    # is checked BEFORE reading result.json so a stray ok result can't mask it.
+    if proc.returncode != 0:
+        raise _fail("worker exited non-zero", returncode=proc.returncode,
+                    stdout=proc.stdout, stderr=proc.stderr)
+
     if not result_path.exists():
-        raise _fail("no result.json produced", returncode=proc.returncode,
+        raise _fail("no result.json produced (worker exited 0)", returncode=proc.returncode,
                     stdout=proc.stdout, stderr=proc.stderr)
 
     try:

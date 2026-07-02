@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any
 
 from agent_tools.function_tools.screen.backends.moondream import MoondreamBackend, MoondreamResult
+from agent_tools.function_tools.screen.backends.moondream_runtime import load_moondream_backend
 from agent_tools.function_tools.screen.config import ScreenPipelineConfig, load_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
 
@@ -90,7 +91,11 @@ class MoondreamModelManager:
             try:
                 self._validate_config()
                 self._assert_cuda_available()
-                backend = MoondreamBackend.load(self._config)
+                # LOCAL_RUNTIME_PLAN cut 4: route the backend load through the
+                # provider seam. No provider installed (default moondream_local)
+                # -> calls MoondreamBackend.load(self._config) EXACTLY (zero-diff);
+                # moondream_hf installed -> the isolated MoondreamHfBackend.
+                backend = load_moondream_backend(self._config)
             except ScreenToolError as exc:
                 self._mark_error(exc, stage="load")
                 raise
@@ -171,10 +176,15 @@ class MoondreamModelManager:
             return self._backend
 
     def _validate_config(self) -> None:
-        if self._config.provider != "moondream_local":
+        # LOCAL_RUNTIME_PLAN cut 4: the manager seam serves BOTH the legacy
+        # moondream_local backend AND the isolated moondream_hf provider, so it
+        # accepts either provider name. The narrow per-backend provider check
+        # (legacy MoondreamBackend.load / MoondreamHfBackend.load) still pins which
+        # backend each value routes to -- this only widens the manager gate.
+        if self._config.provider not in ("moondream_local", "moondream_hf"):
             raise ScreenToolError(
                 "SCREEN_CONFIG_INVALID",
-                f"screen provider 必须是 moondream_local，当前是 {self._config.provider!r}。",
+                f"screen provider 必须是 moondream_local 或 moondream_hf，当前是 {self._config.provider!r}。",
             )
         if self._config.device != "cuda":
             raise ScreenToolError(

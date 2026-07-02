@@ -159,3 +159,25 @@ def test_global_manager_is_singleton_per_config_signature(monkeypatch):
     assert first is second
     assert third is not first
     clear_moondream_manager()
+
+
+# cut 4: the manager seam serves BOTH the legacy backend and the isolated
+# moondream_hf provider, so _validate_config accepts either provider name (the
+# narrow per-backend gate still pins which backend each value routes to).
+def test_validate_config_allows_moondream_local(monkeypatch):
+    install_fake_runtime(monkeypatch)
+    MoondreamModelManager(make_config(provider="moondream_local"))._validate_config()  # no raise
+
+
+def test_validate_config_allows_moondream_hf(monkeypatch):
+    install_fake_runtime(monkeypatch)
+    MoondreamModelManager(make_config(provider="moondream_hf"))._validate_config()  # no raise
+
+
+def test_validate_config_rejects_unknown_provider(monkeypatch):
+    install_fake_runtime(monkeypatch)
+    manager = MoondreamModelManager(make_config(provider="remote_api"))
+    with pytest.raises(ScreenToolError) as raised:
+        manager._validate_config()
+    assert raised.value.code == "SCREEN_CONFIG_INVALID"
+    assert "moondream_hf" in raised.value.message  # message names both accepted providers

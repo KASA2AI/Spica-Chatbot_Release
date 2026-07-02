@@ -32,6 +32,7 @@ from spica.adapters.game_launcher import LinuxDesktopGameLauncher
 from spica.adapters.window_locator import LinuxX11WindowLocator
 from spica.adapters.screen_capture import MssScreenCapture
 from spica.adapters.ocr import RapidOcrAdapter, RapidOcrOrtAdapter, RapidOcrTrtEpAdapter
+from spica.local_runtime.vision import MoondreamHfProvider
 from spica.config.schema import AppConfig, TrtOcrConfig
 from spica.config.secrets import Secrets
 
@@ -95,6 +96,39 @@ def build_ocr_adapter(
         return build_ocr_adapter(fallback_provider, fallback_provider=None, trt_config=trt_config)
     _LOGGER.warning("unknown OCR provider %r and no fallback; using rapidocr", name)
     return RapidOcrAdapter()
+
+
+def build_moondream_provider(
+    provider: str = "moondream_local",
+    fallback_provider: str | None = "moondream_local",
+):
+    """Select the Moondream screen-vision provider by name (LOCAL_RUNTIME_PLAN cut 4).
+
+    The SINGLE source of Moondream provider selection. Unlike ``build_ocr_adapter``
+    (which always returns an adapter), this returns a PROVIDER-or-None: the default
+    ``moondream_local`` returns ``None`` so the host installs NOTHING and the manager
+    seam (``load_moondream_backend``) calls the legacy ``MoondreamBackend.load``
+    byte-for-byte (the zero-diff default, P0). ``moondream_hf`` returns the isolated
+    ``MoondreamHfProvider`` (the relocated runtime). Unknown names fall back to
+    ``fallback_provider`` with a warning -> ``None`` -> legacy, so a mis-set config
+    degrades to the safe default instead of crashing startup.
+
+    The default is NOT switched away from ``moondream_local`` this cut -- that needs
+    a parity report (legacy vs hf)."""
+    name = (provider or "moondream_local").strip()
+    if name == "moondream_local":
+        return None  # default: NOT installed -> manager seam calls legacy MoondreamBackend.load
+    if name == "moondream_hf":
+        return MoondreamHfProvider()
+    if fallback_provider and fallback_provider != name:
+        _LOGGER.warning(
+            "unknown/unavailable Moondream provider %r; falling back to %r", name, fallback_provider
+        )
+        return build_moondream_provider(fallback_provider, fallback_provider=None)
+    _LOGGER.warning(
+        "unknown Moondream provider %r and no fallback; using legacy moondream_local", name
+    )
+    return None
 
 
 def build_llm_client(api_key: str, base_url: str | None, timeout: float = 15) -> OpenAI:

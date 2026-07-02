@@ -60,7 +60,11 @@ from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
 from spica.runtime.context import GameTurnBinding
 from spica.runtime.jobs import ThreadJobRunner
-from spica.host.agent_assembly import build_agent_services, build_llm_client
+from spica.host.agent_assembly import (
+    build_agent_services,
+    build_llm_client,
+    build_moondream_provider,
+)
 from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
 from spica.host.warmup import run_warmup
@@ -256,6 +260,20 @@ class AppHost:
                 )
 
                 set_active_ocr_provider(self.services.ocr_adapter)
+            # cut 4 (LOCAL_RUNTIME_PLAN: Moondream): same install-hook shape for the
+            # screen-vision backend. Default moondream_local -> factory returns None
+            # -> NOT installed -> the manager seam calls the legacy
+            # MoondreamBackend.load (byte-identical, the zero-diff default). A
+            # non-default provider (moondream_hf) is built + installed once here.
+            # screen_config is the SAME resolved instance inspect_screen / watch
+            # query through, so the install decision matches what the manager sees.
+            moondream_provider = build_moondream_provider(self.screen_config.provider)
+            if moondream_provider is not None:
+                from agent_tools.function_tools.screen.backends.moondream_runtime import (
+                    set_active_moondream_provider,
+                )
+
+                set_active_moondream_provider(moondream_provider)
             # Resolve and inject the LLM / memory adapters by configured name.
             self.services.llm_adapter = self.registry.resolve_llm(
                 self.config.llm.provider, client=self.services.llm_client,

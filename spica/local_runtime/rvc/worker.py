@@ -16,11 +16,12 @@ Contract (Phase 1A):
   request.json keys: rvc_module_path, input_vocal_path, output_vocal_path,
     model_path, index_path, applio_root, result_path, seed (optional),
     params{...} (the pipeline's ``_rvc_params`` dict, forwarded VERBATIM).
-  On SUCCESS: writes ``result_path`` (``{ok: true, output_path, side}``) as the
-    LAST action. That file is the ATOMIC success signal -- it exists ONLY when
-    inference completed. Any failure leaves NO result file (and a non-zero exit +
-    stderr traceback). The parent NEVER judges success by the wav alone, since a
-    crash can leave a half-written wav.
+  On SUCCESS: ATOMICALLY publishes ``result_path`` (``{ok: true, output_path,
+    side}``) via a temp file + ``os.replace`` as the LAST action -- so a partial
+    write can never masquerade as success. That file is the ONLY success signal;
+    ANY failure (bad module load, infer exception, ...) leaves NO result file and
+    a non-zero exit + stderr traceback. The parent NEVER judges success by the
+    wav alone (a crash can leave a half-written wav).
 
 Applio / core print logs + tqdm bars to stdout, so the result MUST NOT be a bare
 stdout JSON (it would be interleaved with that noise). Hence the result file.
@@ -31,6 +32,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -63,9 +65,11 @@ def main(argv: list[str] | None = None) -> int:
 
     req = json.loads(Path(args.request).read_text(encoding="utf-8"))
     result_path = Path(req["result_path"])
-    # Never trust a stale success signal from a prior run.
-    if result_path.exists():
-        result_path.unlink()
+    tmp_path = result_path.with_name(result_path.name + ".tmp")
+    # Never trust a stale success signal (or a half-written tmp) from a prior run.
+    for stale in (result_path, tmp_path):
+        if stale.exists():
+            stale.unlink()
 
     _maybe_seed(req.get("seed"))
     infer_spica_vocal = _load_infer(req["rvc_module_path"])
@@ -78,11 +82,13 @@ def main(argv: list[str] | None = None) -> int:
         **(req.get("params") or {}),
     )
 
-    # SUCCESS SIGNAL -- written LAST, reached ONLY when inference returned.
-    result_path.write_text(
+    # SUCCESS SIGNAL -- reached ONLY when inference returned. Written atomically:
+    # a partial/crashed write leaves the .tmp, never a usable result.json.
+    tmp_path.write_text(
         json.dumps({"ok": True, "output_path": str(output), "side": "subprocess"}, ensure_ascii=False),
         encoding="utf-8",
     )
+    os.replace(tmp_path, result_path)
     return 0
 
 

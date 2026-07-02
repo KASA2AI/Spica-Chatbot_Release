@@ -9,10 +9,17 @@
 Phase 1A ships the seam with the default kept at ``in_process`` (zero behaviour
 change). Flipping the default to ``subprocess`` is Phase 1B (separate review).
 
-Success of a subprocess run is judged by the worker's ``result.json`` (exists +
-``ok``), NEVER by the output wav alone -- a crash can leave a half-written wav.
-On failure ``run_rvc`` raises with the worker exit code, a stderr tail, the
-result path, and whether the wav exists.
+``execution_mode`` is validated -- an unknown / mistyped value raises rather than
+silently falling back to in-process, so a bad app.yaml override can never lose
+the isolation silently once the default flips.
+
+EVERY subprocess failure path (timeout, launch error, non-zero exit, missing /
+unparseable / partial result.json, ``ok=false``, ``ok=true`` but the wav is
+missing) is funneled into ONE structured ``RuntimeError`` carrying the worker
+returncode (or the timeout / exception type), ``timeout_sec``, ``result_path``,
+``wav_exists``, and stdout / stderr tails -- so a real-machine failure is
+diagnosable from the message alone. Success is judged by result.json (exists,
+parseable, ``ok is True``) AND the output wav existing -- never the wav alone.
 """
 
 from __future__ import annotations
@@ -22,6 +29,8 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+_VALID_MODES = ("in_process", "subprocess")
 
 _WORKER = Path(__file__).resolve().parent / "worker.py"
 # repo_root/spica/local_runtime/rvc/driver.py -> parents[3] == repo root
@@ -45,7 +54,12 @@ def run_rvc(
     **params: Any,
 ) -> str:
     """Run RVC inference; return the output wav path. See module docstring."""
-    if execution_mode != "subprocess":
+    if execution_mode not in _VALID_MODES:
+        raise ValueError(
+            f"invalid RVC execution_mode {execution_mode!r}; "
+            f"expected one of {_VALID_MODES} (no silent fallback)"
+        )
+    if execution_mode == "in_process":
         # Legacy default -- in-process, byte-identical to before the seam.
         from agent_tools.function_tools.song.rvc import infer_spica_vocal
 
@@ -72,6 +86,10 @@ def run_rvc(
     )
 
 
+def _tail(text: str | None) -> str:
+    return (text or "").strip()[-800:]
+
+
 def _run_subprocess(
     *,
     input_vocal_path: str,
@@ -88,9 +106,24 @@ def _run_subprocess(
     out.parent.mkdir(parents=True, exist_ok=True)
     req_path = out.with_name(out.name + ".rvc_request.json")
     result_path = out.with_name(out.name + ".rvc_result.json")
-    for stale in (req_path, result_path):
+    tmp_result = out.with_name(result_path.name + ".tmp")
+    # No stale request / (partial) result / tmp may survive into this run.
+    for stale in (req_path, result_path, tmp_result):
         if stale.exists():
             stale.unlink()
+
+    timeout = timeout_sec or DEFAULT_TIMEOUT_SEC
+
+    def _fail(reason: str, *, returncode: Any = None, stdout: str = "", stderr: str = "", detail: str = "") -> RuntimeError:
+        wav_exists = Path(output_vocal_path).exists()
+        return RuntimeError(
+            f"RVC subprocess worker failed: {reason} "
+            f"(returncode={returncode}, timeout_sec={timeout}, "
+            f"result_path={result_path}, wav_exists={wav_exists})"
+            + (f"\ndetail: {detail}" if detail else "")
+            + f"\nstdout tail:\n{_tail(stdout)}"
+            + f"\nstderr tail:\n{_tail(stderr)}"
+        )
 
     request = {
         "rvc_module_path": str(_RVC_MODULE),
@@ -106,26 +139,40 @@ def _run_subprocess(
     req_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
 
     python = worker_python or sys.executable
-    proc = subprocess.run(
-        [python, "-B", str(_WORKER), "--request", str(req_path)],
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec or DEFAULT_TIMEOUT_SEC,
-    )
+    try:
+        proc = subprocess.run(
+            [python, "-B", str(_WORKER), "--request", str(req_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _fail(
+            "timed out", returncode="timeout",
+            stdout=exc.stdout or "", stderr=exc.stderr or "",
+            detail=f"TimeoutExpired after {timeout}s",
+        ) from exc
+    except Exception as exc:  # e.g. worker_python not found -> could not launch
+        raise _fail("could not launch worker", detail=f"{type(exc).__name__}: {exc}") from exc
 
-    wav_exists = Path(output_vocal_path).exists()
-    stderr_tail = (proc.stderr or "").strip()[-800:]
     if not result_path.exists():
-        raise RuntimeError(
-            "RVC subprocess worker produced no result.json "
-            f"(exit={proc.returncode}, wav_exists={wav_exists}, result={result_path}). "
-            f"stderr tail:\n{stderr_tail}"
-        )
-    result = json.loads(result_path.read_text(encoding="utf-8"))
-    if not result.get("ok"):
-        raise RuntimeError(
-            "RVC subprocess worker reported failure "
-            f"(exit={proc.returncode}, wav_exists={wav_exists}, result={result}). "
-            f"stderr tail:\n{stderr_tail}"
-        )
-    return str(result.get("output_path") or output_vocal_path)
+        raise _fail("no result.json produced", returncode=proc.returncode,
+                    stdout=proc.stdout, stderr=proc.stderr)
+
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError, OSError) as exc:
+        raise _fail("result.json is unparseable / partial", returncode=proc.returncode,
+                    stdout=proc.stdout, stderr=proc.stderr,
+                    detail=f"{type(exc).__name__}: {exc}") from exc
+
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        raise _fail("worker reported failure", returncode=proc.returncode,
+                    stdout=proc.stdout, stderr=proc.stderr, detail=f"result={result}")
+
+    output_path = str(result.get("output_path") or output_vocal_path)
+    if not Path(output_path).exists():
+        raise _fail("worker reported ok but the output wav is missing",
+                    returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr,
+                    detail=f"output_path={output_path}")
+    return output_path

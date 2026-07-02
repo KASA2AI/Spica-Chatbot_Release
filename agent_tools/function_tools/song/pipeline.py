@@ -13,7 +13,6 @@ from agent_tools.function_tools.song.config import ensure_song_dirs, load_song_c
 from agent_tools.function_tools.song.mixer import mix_vocal_with_instrumental, trim_audio_file
 from agent_tools.function_tools.song.models import CancellationToken, SongJobCancelled, SongJobResult, SongRequest
 from agent_tools.function_tools.song.netease import download_audio, extension_from_url, get_audio_url, search_best_song
-from agent_tools.function_tools.song.rvc import infer_spica_vocal
 from agent_tools.function_tools.song.separator import separate_vocals
 
 
@@ -199,13 +198,21 @@ class SongPipeline:
         if not request.prefer_cache or not rvc_path.exists():
             tmp_vocal = self.dirs["tmp"] / f"{uuid.uuid4().hex}_vocal.wav"
             prepared_vocal = trim_audio_file(vocal_path, tmp_vocal, request.max_duration_sec)
+            # cut 3 Phase 1A: dispatch through the RVC execution seam. Default
+            # execution_mode in_process = the legacy in-process call (byte-identical);
+            # subprocess isolates the Applio import tree out of this process. Flipping
+            # the default to subprocess is Phase 1B (separate review).
+            rvc_section = self.config.get("rvc", {})
+            from spica.local_runtime.rvc.driver import run_rvc
             try:
-                infer_spica_vocal(
+                run_rvc(
                     input_vocal_path=str(prepared_vocal),
                     output_vocal_path=str(rvc_path),
                     model_path=str(model_path),
                     index_path=index_path,
                     applio_root=str(self.config["applio_root"]),
+                    execution_mode=str(rvc_section.get("execution_mode") or "in_process"),
+                    worker_python=rvc_section.get("worker_python"),
                     **rvc_params,
                 )
             finally:

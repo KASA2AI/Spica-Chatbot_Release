@@ -186,7 +186,7 @@ class SongController(QObject):
             if self.ui_state.state == SongState.PREPARING:
                 self._set_state(SongState.READY)
             if gate.user_paused:
-                self.set_song_status("🎤 已就绪——说「继续」开始")
+                self.set_song_status("🎤 清好嗓了～说「继续」开唱")
                 self.focus_input()
             self._log_playback_gate(reason=f"{reason}_blocked")
             return False
@@ -265,7 +265,7 @@ class SongController(QObject):
             prelude_required=prelude_required, reason="song_request_start"
         )
         self.set_busy(False)
-        self.set_song_status("🎤 准备唱歌中…")
+        self.set_song_status("🎤 spica 正在清嗓…")
         self.song_worker = SongWorker(request, job_id, self, config=self.song_config)
         self.song_worker.progress.connect(self.handle_song_progress)
         self.song_worker.completed.connect(self.handle_song_ready)
@@ -286,7 +286,7 @@ class SongController(QObject):
         if self.ui_state.state not in {SongState.PREPARING, SongState.READY}:
             return
         if self.ui_state.playback_gate.user_paused:
-            self.set_song_status("🎤 已就绪——说「继续」开始")
+            self.set_song_status("🎤 清好嗓了～说「继续」开唱")
             return
         self._maybe_play_ready_song(reason="prelude_done")
 
@@ -304,7 +304,7 @@ class SongController(QObject):
         self._reset_playback_gate_to_idle(reason="cancel")
         self.set_busy(False)
         if clear_status:
-            self.set_song_status("")
+            self.set_song_status("那就不唱了")
         if had_song and self.voice_mode_active_provider():
             self.schedule_voice_recording(500)
 
@@ -314,12 +314,12 @@ class SongController(QObject):
                 return
             self._set_state(SongState.PAUSED)
             self.set_busy(False)
-            self.set_song_status("⏸ 已暂停——说「继续」接着唱")
+            self.set_song_status("⏸ 那我换口气～说「继续」接着唱")
             self.focus_input()
             return
         if self.ui_state.state == SongState.PREPARING:
             self._update_playback_gate(reason="pause_preparing", user_paused=True)
-            self.set_song_status("🎤 准备中（暂停待命）——说「继续」播放")
+            self.set_song_status("🎤 那我先换口气～说「继续」播放")
             self.focus_input()
 
     def resume(self) -> None:

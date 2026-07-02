@@ -137,7 +137,7 @@ class ControlFastPathTest(unittest.TestCase):
         controller._set_state(SongState.PLAYING)
         self.assertTrue(controller.try_handle_control_text("暂停"))
         self.assertEqual(controller.ui_state.state, SongState.PAUSED)
-        self.assertIn("⏸ 已暂停——说「继续」接着唱", statuses)
+        self.assertIn("⏸ 那我换口气～说「继续」接着唱", statuses)
         self.assertTrue(controller.try_handle_control_text("继续"))
         self.assertEqual(controller.ui_state.state, SongState.PLAYING)
 

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": True,
     "generated_root": "static/generated_song",
-    "applio_root": "agent_tools/function_tools/song/Applio",
+    "applio_root": "artifacts/rvc_slim/base",
     "search": {
         "limit": 20,
         "bitrate": 320000,
@@ -44,8 +44,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "worker_python": None,
         "voices": {
             "spica": {
-                "model_path": "agent_tools/function_tools/song/Applio/logs/spica/spica_200e_57000s.pth",
-                "index_path": "agent_tools/function_tools/song/Applio/logs/spica/spica.index",
+                "model_path": "artifacts/rvc_slim/characters/spica/model/spica_200e_57000s.pth",
+                "index_path": "artifacts/rvc_slim/characters/spica/index/spica.index",
                 "f0_method": "rmvpe",
                 "transpose": 0,
                 "index_rate": 0.75,

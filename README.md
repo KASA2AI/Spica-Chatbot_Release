@@ -137,22 +137,17 @@ MODEL=gpt-4.1-mini
 
 `OPENAI_API_KEY` 由 `spica.config.secrets.load_secrets()` 读取。`OPENAI_BASE_URL`、`MODEL` 和其他可调参数由 `ConfigManager` 映射到 `AppConfig`。
 
-### 3. 准备 GPT-SoVITS
+### 3. 准备 TTS 运行时（GPT-SoVITS slim）
 
-默认 TTS 配置在 `data/config/tts.yaml`，默认 vendor 根目录是：
-
-```text
-agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50
-```
-
-发布仓库里这个目录是空占位。使用前需要把匹配的 GPT-SoVITS v2Pro / nvidia50 版本放进去，并确认配置中的权重路径存在：
+默认 TTS 配置在 `data/config/tts.yaml`。**当前默认运行时是裁剪后的 slim 产物**，不再是仓内 39G vendored 大树：
 
 ```text
-GPT_weights_v2ProPlus/spcia-e25.ckpt
-SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth
+artifacts/tts_slim/          # base + characters/spcia（gitignored 本地产物）
 ```
 
-如果你的模型文件名或目录不同，修改 `data/config/tts.yaml` 的：
+`tts.yaml` 的 `gptsovits_root` / `gpt_model_path` / `sovits_model_path` 已指向 `artifacts/tts_slim`。slim 由 `scripts/local_runtime/build_tts_slim.py` 从一份 GPT-SoVITS v2Pro 源树构建（源树保存在仓外、不随仓分发）。emotion 参考音频（`emotions.*.ref_audio_path` 等）仍在 `spica_data/voice`，与 slim/vendored 无关。跨平台可复现安装方式在打包阶段确定，见 `docs/LOCAL_RUNTIME_CUTOVER_REVIEW.md`。
+
+如需回退到 vendored 大树，或你的模型文件名/目录不同，修改 `data/config/tts.yaml` 的：
 
 - `gptsovits_root`
 - `gpt_model_path`
@@ -436,7 +431,7 @@ capture_full_screen -> RapidOCR -> Moondream local -> screen observation JSON ->
 
 配置在 `data/config/app.yaml` 的 `song:` 节（旧载体 `song_config.json` 已迁入，仅存 `.migrated` 回滚备份），缺失字段会用 `agent_tools.function_tools.song.config.DEFAULT_CONFIG` 补齐。
 
-发布仓库不会包含 `agent_tools/function_tools/song/Applio`，使用点歌翻唱前需要本地补齐 Applio、RVC 模型和相关依赖。
+**当前默认 RVC 运行时是 slim 产物 `artifacts/rvc_slim`**（base + characters/spica，gitignored 本地产物），由 `scripts/local_runtime/build_rvc_slim.py` 从 Applio 工程构建（Applio 源树保存在仓外、不随仓分发）。`data/config/app.yaml` 的 `song.applio_root` / `model_path` / `index_path` 已指向 `artifacts/rvc_slim`；点歌翻唱前需本地有 `artifacts/rvc_slim`（分发/安装方式见打包阶段 / `docs/LOCAL_RUNTIME_CUTOVER_REVIEW.md`）。
 
 ## 语音输入
 
@@ -473,6 +468,7 @@ capture_full_screen -> RapidOCR -> Moondream local -> screen observation JSON ->
 - `spica_data/`
 - `agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/`
 - `agent_tools/function_tools/song/Applio/`
+- `artifacts/`（`tts_slim` / `rvc_slim` 等本地 runtime 产物、parity/benchmark 输出）
 - `static/generated_voice/*`
 - `static/generated_song/*`
 

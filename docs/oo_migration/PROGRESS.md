@@ -237,3 +237,45 @@
   P1 拦下后已修（§12 补闭合 fence、删悬空 fence），全文件 24 fence 成对、`git diff --check` 干净
 - 遗留/偏差：无新增；Phase 5+ 未执行（薄委托未删、cutover patch 目标未迁、`test_no_dict_config`
   未扩）。
+
+## Phase 5 — deps 单轨化（stages/memory_commit 禁区版）（已收口）
+- 日期：2026-07-03
+- commit：`7a352d1ac748b90986494890b300259c1a70a732`（前置 plan amendment：`521f882`——
+  白名单补 4 个 memory 族测试缺口 + 5-c2「删委托」改「转长寿 facade」+ 守卫行级临时豁免 +
+  `test_responses_probe_shape` 保值等价注记）
+- 实际修改文件（与修订版白名单完全一致，11 件，零超出）：
+  - 生产 5 件：`spica/runtime/deps.py`（`recent` / `llm_ready` / `available_tool_schema_count`
+    三字段 + bridge 灌入，getattr 防御式读取保持旧 `or` 短路对最小 fake 的惰性语义）、
+    `stages.py`（`:148` recent、call_llm_node deps-first + `if not deps.llm_ready:`、count、
+    `_tts_adapter_name` 收 deps、build_visual/synthesize → `deps.visual`/`deps.tts`，两处过时
+    「transitional carrier」注释同步修正）、`memory_commit.py`（`deps.recent`）、
+    `orchestrator.py`（`deps.visual`）、`tool_round.py`（**仅** count 一点）；
+  - 测试 6 件：`test_llm_client_not_configured.py`（新，5-c0 特征测试：错误路径 code+message
+    经真实同步链钉死）、`test_no_dict_config.py`（5-c2 守卫加强）、4 个 memory 族测试
+    （仅 `recent=` 注入，断言零改动）
+- 测试：
+  - `python -m pytest tests -q` → 1152 passed, 1 warning, 108 subtests passed
+    （= 1150 基线 + 1 特征测试 + 1 守卫豁免存活性用例）
+  - targeted：`test_no_dict_config` + `test_moondream_default_cutover` → 8 passed（cutover
+    零改动 gate）；golden_streaming/golden_sync/turn_contract/pipeline_smoke/chat_tool_round/
+    watch/responses_probe_shape → 60 passed, 10 subtests；memory 族 + c0 → 30 passed
+- exit conditions 逐条：① stages/memory_commit 禁区 AST `services.` 属性读均 `[]` ✓；
+  ② `tool_round.py` 的 `services.llm_client` 仅剩 line 36（归 Phase 7-c2）✓；
+  ③ `test_no_dict_config` 加强至 8 攻击面、ALLOWLIST 三件（visual_job/tts_job 注明 D1 永久
+  facade 载体）、`(tool_round.py, 36, llm_client)` **行级**临时豁免（重审 P1 把 file+attr 级
+  收紧为行级：同文件新增第二个读必红；存活性用例反向钉「豁免所指节点消失必红」）✓；
+  ④ Phase 4 五薄委托原样保留、`test_moondream_default_cutover` 零改动全绿 ✓
+- 双轨表变化：**D1 大幅收窄**——stages/memory_commit 禁区清零；orchestrator/tool_round 仅剩
+  计划内遗留（`tool_round.py:36-37` llm_client 归 7-c2；`orchestrator.py:121` /
+  `sync_chain.py:43` logger 为 observer 注入链既有参数，禁扩散）；**D4 停钟/改记**由
+  `521f882` amendment 落定（长寿 facade，Phase 5 未删除委托，删除不再排期）
+- 实施中拦截记录（如实）：`from_services` 初版无条件读三属性，打红白名单外
+  `test_turn_deps.py`（5 failures）——根因是旧代码 `or` 短路使属性对最小 fake 惰性；在白名单内
+  的 `deps.py` 以 getattr 修复（与相邻 `game_memory` 先例同形，生产值逐字节不变），
+  `test_turn_deps` 零改动回绿
+- 遗留/偏差：
+  1. `tool_round.py:36-37` llm_client 判空 + 守卫行级豁免 → Phase 7-c2 同 commit 结清并删豁免
+     （存活性用例强制）；
+  2. `orchestrator.py:121` / `sync_chain.py:43` `services.logger` 留 D1 observer 注入链；
+  3. `visual_job.py` / `tts_job.py` 为 D1 永久 facade 载体（ALLOWLIST 注明，文件未改）；
+  4. Phase 6a+ 未执行（D3 时钟未起跳）。

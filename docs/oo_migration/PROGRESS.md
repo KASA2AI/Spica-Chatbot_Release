@@ -37,3 +37,36 @@
      归 Phase 2 的 MemoryScopeStrategy 转绿，届时摘 xfail；
   2. 计划书 `MIGRATION_PLAN.md` §Current Approval State 表未同步（不在 Phase 0D 白名单内，
      留待后续获批窗口或人工同步）。
+
+## Phase 1 — galgame prompt_sections 出走 stages（已收口）
+- 日期：2026-07-03
+- commit：`da8f29b47384ddaaae132542fd63a65cbfb79733`
+- 实际修改文件：`spica/galgame/prompt_sections.py`（新增）、`spica/runtime/stages.py`、
+  `tests/test_layering.py`、`CLAUDE.md`（仅 galgame 布局清单两行；文末 Agent skills hunk 为
+  unrelated WIP，经 `git apply --cached` 单 hunk 选择性 stage 排除在 commit 外）、
+  `docs/DEVELOPMENT_GUARDRAILS.md`——与计划白名单完全一致，零超出
+- 测试：
+  - `python -m pytest tests/test_game_prompt_golden.py -q` → 4 passed
+  - `python -m pytest tests/test_retrieve_game_context_node.py tests/test_game_context_in_chain.py
+    tests/test_current_line_injection.py tests/test_layering.py -q` → 30 passed, 18 subtests passed
+  - `python -m pytest tests -q` → 1117 passed, 1 xfailed, 1 warning, 108 subtests passed
+  parity gate：Phase 0 `test_game_prompt_golden.py` active/offline full-section golden 字节等价（零 diff）
+- 旧 seam 归零验证：
+  - `stages.py` 中 `_section` / `_format_progress` / `_format_summaries` / `_format_buffer` /
+    `_format_relations` / `_format_choices` / `_format_beats` / `_build_game_context_sections` /
+    `_should_inject_companion` / `_COMPANION_INTENT` / `_GAME_CONTEXT_ACTIVE_SUMMARY_LIMIT` 已全部迁出；
+  - `retrieve_game_context_node`、gate（`_game_context_mode` / `_resolve_game_target` / `_parse_*` /
+    `_GALGAME_CONVERSATION_PREFIX` / `_OFFLINE_COMMAND_INTENTS`）与 `analyze_screen_attachment`
+    patch 点仍在 `stages.py`；
+  - `prompt_sections.py` import 白名单经 AST 审计恰为 `json` / `typing.Any` /
+    `DEFAULT_INTERLOCUTOR_NAME`（审查曾拦下多余的 `from __future__ import annotations`，已删）。
+- 文档更新：`CLAUDE.md`（§2 galgame 布局加 `prompt_sections.py`）与
+  `docs/DEVELOPMENT_GUARDRAILS.md`（§9 落点说明 + 必读清单）已随 Phase 1 commit 同 commit 更新；
+  本条目与 README 状态板由收口文档回写补记
+- 双轨表变化：无
+- 依赖边声明：本 phase 诞生 runtime → galgame 首条 import 边
+  （`stages.py` → `spica.galgame.prompt_sections`）；模块级无环论证——`spica/galgame/__init__` 只
+  re-export 纯数据 models、`prompt_sections` 不回指 `spica.runtime`——由
+  `test_layering::test_spica_packages_import_cleanly`（15 包 import）gate 常驻覆盖
+- 遗留/偏差：`CLAUDE.md` 文末 Agent skills hunk 是 unrelated WIP，未包含在 Phase 1 commit；
+  Phase 2 未执行

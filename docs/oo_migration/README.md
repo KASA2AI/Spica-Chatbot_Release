@@ -22,7 +22,7 @@
 
 | Phase | 名称 | 前置 | 触发条件 | 状态 | 收口 commit | 备注 |
 |---|---|---|---|---|---|---|
-| 0 | Characterization 保护面（只加测试） | — | 推荐立即批准（ready for approval） | 未批准 | — | 提示词见计划书 §Phase 0 Implementation Prompt |
+| 0 | Characterization 保护面（只加测试） | — | 推荐立即批准（ready for approval） | 已收口 | `336811f33c0dca6e39a1eaf6d2b22606ea7f15d9` | 2026-07-03 收口：4 个新增测试文件；全量 gate `python -m pytest tests -q` → 1117 passed, 1 xfailed, 1 warning, 108 subtests passed；golden 单测连跑两遍均 4 passed 一致。详见 `PROGRESS.md` |
 | 0D | Phase 0 文档收口（微 phase） | 0 收口 | Phase 0 收口后 | 未批准 | — | 纯文档；回写本状态板 + PROGRESS |
 | 1 | galgame prompt_sections 出走 stages | 0 | 批准 | 未批准 | — | 拍板顺序 0→1→2→3 |
 | 2 | CharacterScope + scoped recent + MemoryScopeStrategy | 0（排在 1 后） | 批准 | 未批准 | — | 全计划唯一主动行为变更 |

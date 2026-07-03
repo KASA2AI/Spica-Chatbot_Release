@@ -81,6 +81,7 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 | 类型化上下文 | `spica/runtime/context.py::TurnContext` |
 | 注入依赖 | `spica/runtime/deps.py::TurnDeps` |
 | turn stages | `spica/runtime/stages.py` |
+| prompt 上下文 contributor | `spica/runtime/prompt_context.py`（Protocol）+ `spica/galgame/context_contributor.py`（galgame gate；经 `deps.context_contributors` 注册：None → galgame auto-fill、`()` 关闭；通用 node `contribute_context_node` 别名 `retrieve_game_context_node` 永久保留——OO 迁移 Phase 3） |
 | prompt 组装 | `spica/conversation/prompt_builder.py::build_spica_prompt`（`[LONG_TERM_MEMORY]` 段在此） |
 | 记忆端口 | `spica/ports/memory.py` → `MemoryScope(character_id, user_id, conversation_id)` + `MemoryPort` |
 | 记忆 adapter | `spica/adapters/memory/sqlite.py`（按 `character_id::conversation_id` 命名空间隔离） |
@@ -154,7 +155,7 @@ song（B2 后）的正确形态：点歌经主 LLM 的 `sing_song` function call
 galgame 的正确做法：
 
 - `GalgameCompanionSession` 负责 session 状态、OCR loop、stable line、buffer、进度状态、游戏记忆读写、选项事件。
-- 需要回复时，**仍然调用 `ChatEngine`、仍然走 `run_turn`**，通过新增的 gated stage `retrieve_game_context_node` 把游戏上下文注入 prompt。
+- 需要回复时，**仍然调用 `ChatEngine`、仍然走 `run_turn`**，经 PromptContextContributor 把游戏上下文注入 prompt（OO 迁移 Phase 3：galgame gate 在 `spica/galgame/context_contributor.py`，通用 node `contribute_context_node` 的别名 `retrieve_game_context_node` 永久保留）。
 - **禁止**：galgame 自己拼 prompt、自己调 LLM、为判断「是否注入游戏上下文」单独跑一次 LLM 分类（那等于第二条 LLM 路径）。gate 只能用显式 `interaction_mode` / `conversation_id` 命名空间 / active session / command intent / 关键词启发式。
 
 ---

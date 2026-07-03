@@ -29,9 +29,9 @@ from spica.runtime.stages import (
     build_response_node,
     build_visual_node,
     call_llm_node,
+    contribute_context_node,
     load_recent_context_node,
     parse_reply_node,
-    retrieve_game_context_node,
     retrieve_long_term_memory_node,
     synthesize_tts_node,
     validate_input_node,
@@ -48,7 +48,7 @@ def run_voice_pipeline(ctx: TurnContext, services: AgentServices) -> TurnContext
     ctx = build_prompt_node(ctx, services, deps)
     # B3: gated galgame context injection (same insertion point as the streaming
     # orchestrator). `none` is a byte-level no-op; keeps the two chains isomorphic.
-    ctx = retrieve_game_context_node(ctx, services, deps)
+    ctx = contribute_context_node(ctx, services, deps)
     ctx = call_llm_node(ctx, services, deps)
     ctx = parse_reply_node(ctx, services, deps)
     # Unified with the streaming path (Phase 6D): one memory-commit component,

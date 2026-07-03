@@ -93,6 +93,10 @@ TRANSFORM_LAYER_FILES = [
     # stages.py; they stay a pure transform layer (scan domain EXTENDED, never
     # narrowed).
     SPICA_ROOT / "galgame" / "prompt_sections.py",
+    # OO migration Phase 3: the contributor protocol + the galgame gate moved out
+    # of stages.py; both stay pure transform layers (scan domain EXTENDED).
+    SPICA_ROOT / "runtime" / "prompt_context.py",
+    SPICA_ROOT / "galgame" / "context_contributor.py",
     *sorted((SPICA_ROOT / "conversation").rglob("*.py")),
 ]
 

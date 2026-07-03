@@ -102,8 +102,8 @@ docs/**                            # 文档
 │    → 工具：schema + handler → register_tool(effect=read|write|act)
 │      write/act 的执行权限放 host 闭包。（playbook §4/§5）
 ├─ 要把某些上下文喂进 prompt？
-│    → 写 gated stage（仿 retrieve_game_context_node），gate 用请求字段判断，不跑第二次 LLM。
-│      绝不自己拼 prompt。（playbook §6/§19）
+│    → 写 contributor（domain 内新文件 + deps/assembly 注册，仿 spica/galgame/context_contributor.py），
+│      gate 用请求字段判断，不跑第二次 LLM。绝不自己拼 prompt。（playbook §6/§19）
 ├─ 让她主动说话（事件触发）？
 │    → 发 ProactiveTurnRequest → ProactiveTurnArbiter → stream_system_turn → run_turn。（playbook §7/§9）
 ├─ galgame 相关（OCR/选项/总结/反应/履历）？
@@ -174,9 +174,10 @@ docs/**                            # 文档
    on_window_lost/on_choice_detected/on_user_reported_choice/on_summary_finished）。不碰它私有字段。
 2. OCR 相关：串行「完成后等待」，复用 RapidOCR 单例 + _INFER_LOCK，不双加载模型。
 3. 总结/问答读不可变 snapshot（锁内切 list），不持有可变 buffer 引用。
-4. 要把游戏上下文进 prompt：扩 retrieve_game_context_node 的注入（prompt 段落构建自 OO 迁移
-   Phase 1 起在 spica/galgame/prompt_sections.py；gate + node 仍在 stages.py），gate 用请求字段，
-   不跑第二次 LLM。
+4. 要把游戏上下文进 prompt：经 PromptContextContributor（OO 迁移 Phase 3：galgame gate 在
+   spica/galgame/context_contributor.py，prompt 段落构建在 prompt_sections.py，通用 node
+   contribute_context_node——别名 retrieve_game_context_node 永久保留——在 stages.py），
+   gate 用请求字段，不跑第二次 LLM。
 5. OCR 文本绝不进 recent memory / 绝不直接成用户消息。游戏数据写 game_memory 独立库。
 必读：spica/galgame/{session,ocr_loop,summarizer,companion_controller,prompt_sections}.py、
       spica/runtime/stages.py(gate)、spica/ports/game_memory.py、spica/adapters/game_memory/sqlite.py

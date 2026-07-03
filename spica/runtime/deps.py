@@ -58,6 +58,24 @@ class TurnDeps:
     # Placeholder: per-turn concurrency still flows via run_turn's exec_strategy
     # param in C3a; a later stage makes this the source of truth.
     exec_strategy: ExecStrategy = field(default_factory=Inline)
+    # OO migration Phase 3: prompt-context contributors consumed by
+    # stages.contribute_context_node. None -> the galgame COMPATIBILITY auto-fill
+    # below (a shim that never grows a second entry); explicit () = injection
+    # off; future domains must register their FULL tuple explicitly via assembly
+    # (including the galgame contributor), never rely on the auto-fill.
+    context_contributors: tuple[Any, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.context_contributors is None:
+            # Function-level lazy import: deps.py keeps ZERO module-level galgame
+            # edges (the cycle risk), and every direct TurnDeps(...) test
+            # construction keeps working unchanged (the P1-1 auto-fill ruling).
+            # NOT conditioned on game_memory: a missing port is handled by the
+            # contributor's sections() no-op, which preserves today's span/timing
+            # semantics for active turns (Phase 0 golden #2(d)).
+            from spica.galgame.context_contributor import galgame_contributor
+
+            object.__setattr__(self, "context_contributors", (galgame_contributor,))
 
     @classmethod
     def from_services(cls, services: Any, app_config: AppConfig) -> "TurnDeps":

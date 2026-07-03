@@ -28,11 +28,6 @@ from spica.conversation.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_s
 from spica.conversation.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from spica.conversation.text_normalizer import normalize_square_brackets_for_speech
 from spica.conversation.time_context import build_local_time_context
-# OO migration Phase 1: the galgame DISPLAY half (section formatting) lives in the
-# domain package; the gate + node stay here. First runtime -> galgame import edge;
-# acyclic because spica/galgame/__init__ re-exports pure models only and
-# prompt_sections imports nothing from spica.runtime (test_layering guards it).
-from spica.galgame.prompt_sections import _build_game_context_sections
 from spica.runtime.services import AgentServices
 from common.timing import elapsed_ms, now_ms
 from agent_tools.function_tools.screen.analyzer import (
@@ -55,19 +50,12 @@ from spica.runtime.context import (
 )
 from spica.runtime.deps import TurnDeps
 from spica.runtime.observer import NoopTurnObserver
-from spica.runtime.scope import MemoryScopeStrategy, character_scope_from_config
+from spica.runtime.scope import MemoryScopeStrategy
 
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
-
-# -- galgame gated context injection (Phase 3) -------------------------------
-_GALGAME_CONVERSATION_PREFIX = "galgame::"
-_OFFLINE_COMMAND_INTENTS = frozenset(
-    {"ask_last_progress", "ask_game_progress", "ask_character_relation"}
-)
-
 
 # Stages take (ctx, services, deps). deps may be None for direct (dict-config)
 # callers (the compat sync chain / tests); stages that need config or a port
@@ -307,113 +295,81 @@ def build_prompt_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
     return ctx
 
 
-# B3: gated stage inserted AFTER build_prompt, BEFORE the LLM call. The gate is
-# pure request-field logic (NEVER an LLM call -- CLAUDE.md #1.3). The `none` branch
-# is a byte-level no-op (it never opens an observer span, so it does not even touch
-# ctx.timing) -- that is what keeps a plain chat turn's prompt + ctx identical.
-# Injection mirrors _inject_screen_observation: append sections to the already-built
-# prompt string; build_prompt_node / prompt_builder are untouched.
+# B3 / Phase 3: gated context injection inserted AFTER build_prompt, BEFORE the
+# LLM call. The node is GENERIC (OO migration Phase 3): each registered
+# PromptContextContributor's ``mode(request)`` gate is pure request-field logic
+# (NEVER an LLM call -- CLAUDE.md #1.3). All-"none" turns are a byte-level no-op
+# (no span opened, ctx.timing untouched) -- that is what keeps a plain chat
+# turn's prompt + ctx identical. Injection mirrors _inject_screen_observation:
+# append sections to the already-built prompt string; build_prompt_node /
+# prompt_builder are untouched. The galgame gate/target logic lives in
+# spica/galgame/context_contributor.py; the section builders in
+# spica/galgame/prompt_sections.py.
 
 
-def _game_context_mode(request: Any) -> str:
-    gcr = getattr(request, "game_context_request", None)
-    conversation_id = getattr(request, "conversation_id", "") or ""
-    if (
-        getattr(request, "interaction_mode", "chat") == "galgame"
-        or conversation_id.startswith(_GALGAME_CONVERSATION_PREFIX)
-        or (gcr is not None and getattr(gcr, "mode", None) == "active")
-    ):
-        return "active"
-    if getattr(request, "command_intent", None) in _OFFLINE_COMMAND_INTENTS or (
-        gcr is not None and getattr(gcr, "mode", None) == "offline"
-    ):
-        return "offline"
-    return "none"
+def contribute_context_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
+    """Generic gated prompt-context injection (OO migration Phase 3).
 
-
-def _parse_game_id_from_conversation(conversation_id: str) -> str | None:
-    if not conversation_id.startswith(_GALGAME_CONVERSATION_PREFIX):
-        return None
-    parts = conversation_id.split("::")
-    return parts[1] if len(parts) >= 2 and parts[1] else None
-
-
-def _parse_playthrough_from_conversation(conversation_id: str) -> str | None:
-    parts = conversation_id.split("::")
-    if len(parts) >= 4 and parts[2] == "playthrough" and parts[3]:
-        return parts[3]
-    return None
-
-
-def _resolve_game_target(
-    request: Any, game_memory: Any, mode: str
-) -> tuple[str | None, str, str | None]:
-    gcr = getattr(request, "game_context_request", None)
-    conversation_id = getattr(request, "conversation_id", "") or ""
-    game_id = getattr(gcr, "game_id", None) if gcr is not None else None
-    if not game_id:
-        game_id = _parse_game_id_from_conversation(conversation_id)
-    playthrough_id = getattr(gcr, "playthrough_id", None) if gcr is not None else None
-    if not playthrough_id:
-        playthrough_id = _parse_playthrough_from_conversation(conversation_id) or "default"
-    # B1: the live session id rides on the typed gate request (the companion
-    # controller stamps it into the published binding). Absent on the manual/debug
-    # conversation-id path -> CURRENT_LINE is simply not read for that turn.
-    session_id = getattr(gcr, "session_id", None) if gcr is not None else None
-    if not game_id and mode == "offline":
-        last = game_memory.last_played_game()
-        if last is not None:
-            game_id = last.game_id
-            playthrough_id = last.active_playthrough_id or "default"
-    return game_id, playthrough_id, session_id
-
-
-def retrieve_game_context_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
-    """Gated galgame context injection (B3).
-
-    NOT decorated with @node_timer on purpose: the ``none`` branch must be a
-    byte-level no-op, and opening an observer span would write ``ctx.timing`` --
-    so the gate is checked BEFORE any span. The gate is pure request-field logic;
-    it never runs an LLM (CLAUDE.md #1.3). Injection is best-effort: a game_memory
-    read failure logs a warning and injects nothing, never failing the turn.
+    NOT decorated with @node_timer on purpose: the all-"none" branch must be a
+    byte-level no-op, so gates run BEFORE any span. Single-contributor era keeps
+    the HISTORICAL span/timing name ``retrieve_game_context_node`` (three timing
+    assertions pin it; multi-contributor telemetry is a Phase 8 design question).
+    Best-effort throughout: a contributor whose ``mode()`` raises is treated as
+    "none" (WARNING); a failing ``sections()`` logs a WARNING and injects
+    nothing -- injection never fails the turn.
     """
-    mode = _game_context_mode(ctx.request)
-    if mode == "none" or ctx.error is not None:
-        # Byte-level no-op: no span opened, no ctx mutation, prompt untouched.
+    if ctx.error is not None:
+        # Prior-error turns return untouched WITHOUT resolving deps/services --
+        # the pre-Phase-3 node never bridged deps on this path (alias compat;
+        # pinned by test_prompt_context_contributors.PriorErrorCompatTest).
         return ctx
     deps = deps or TurnDeps.from_legacy_services(services)
-    observer = deps.observer if deps is not None else NoopTurnObserver()
-    with observer.span("retrieve_game_context_node", conversation_id=ctx.request.conversation_id):
-        game_memory = getattr(deps, "game_memory", None)
-        if game_memory is None or ctx.prompt is None:
-            return ctx
+    active: list[tuple[Any, str]] = []
+    for contributor in deps.context_contributors or ():
         try:
-            game_id, playthrough_id, session_id = _resolve_game_target(ctx.request, game_memory, mode)
-            if not game_id:
-                return ctx
-            # Phase 2: identity is resolved HERE (live, per turn) and passed down --
-            # prompt_sections must not know about defaults or import spica.runtime.
-            sections = _build_game_context_sections(
-                mode, game_memory, ctx.request, deps, game_id, playthrough_id, session_id,
-                character_scope_from_config(deps.config),
-            )
-        except Exception as exc:  # noqa: BLE001 -- best-effort: never fail the turn
-            # Hard rule (Phase 3): do NOT silently swallow. Surface the failure on
-            # the logging layer so a broken game_memory is diagnosable, not just
-            # "Spica can't answer progress" with no trace.
+            mode = contributor.mode(ctx.request)
+        except Exception:  # noqa: BLE001 -- a broken gate must not break plain chat
             logger.warning(
-                "retrieve_game_context_node: game context read failed "
-                "(mode=%s, conversation_id=%s): %s",
-                mode,
-                ctx.request.conversation_id,
-                exc,
+                "contribute_context_node: contributor %s mode() failed; treated as none",
+                getattr(contributor, "name", repr(contributor)),
                 exc_info=True,
             )
+            continue
+        if mode in ("active", "offline"):
+            active.append((contributor, mode))
+    if not active:
+        # Byte-level no-op: no span opened, no ctx mutation, prompt untouched.
+        return ctx
+    observer = deps.observer
+    with observer.span("retrieve_game_context_node", conversation_id=ctx.request.conversation_id):
+        if ctx.prompt is None:
             return ctx
+        sections: list[str] = []
+        for contributor, mode in active:
+            try:
+                sections.extend(contributor.sections(ctx, deps, mode))
+            except Exception as exc:  # noqa: BLE001 -- best-effort: never fail the turn
+                # Do NOT silently swallow: surface the failure on the logging layer
+                # so a broken domain read is diagnosable.
+                logger.warning(
+                    "contribute_context_node: context read failed "
+                    "(contributor=%s, mode=%s, conversation_id=%s): %s",
+                    getattr(contributor, "name", repr(contributor)),
+                    mode,
+                    ctx.request.conversation_id,
+                    exc,
+                    exc_info=True,
+                )
         if sections:
             base = str(ctx.prompt.prompt_input or "")
             ctx.prompt = PromptBundle(prompt_input="\n\n".join([base] + sections))
     return ctx
+
+
+# PERMANENT compatibility alias (D2): direct importers/callers -- orchestrator
+# history, the frozen sync chain lineage and four test files -- keep working
+# forever. Must stay a PURE ASSIGNMENT (guarded by AST test); never re-def.
+retrieve_game_context_node = contribute_context_node
 
 
 @node_timer

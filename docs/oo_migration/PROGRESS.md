@@ -279,3 +279,51 @@
   2. `orchestrator.py:121` / `sync_chain.py:43` `services.logger` 留 D1 observer 注入链；
   3. `visual_job.py` / `tts_job.py` 为 D1 永久 facade 载体（ALLOWLIST 注明，文件未改）；
   4. Phase 6a+ 未执行（D3 时钟未起跳）。
+
+## Phase 6a — TextModel + BoundModel + summarizer/judge 收编（已收口）
+- 日期：2026-07-03
+- commit：`22505421c37d2b33344791b2f2ae43fabc3b94d8`（前置 plan amendment：`00d4852`——四轮累积：
+  6a/6b 白名单按 Phase 4/5 后真实代码重校准（assemblies/reaction.py + test_app_host.py 入白名单）+
+  docs 逐文件点名 + v2 契约判据层级/`complete_text` 兼容垫禁令 + 顶部状态表回填）
+- 实际修改文件（与修订版白名单完全一致，13 件，零超出）：
+  - 新增 3 件：`spica/ports/model.py`（TextModel Protocol + frozen `BoundModel(adapter, model)`，
+    公开字段，无 `complete_text` 兼容垫）、`tests/test_text_model_contract.py`（Group A：client 层
+    fake 驱动真实 adapter 的 complete Responses/Chat 双路径 + stream 无 tools shape；Group B：最小
+    TextModel fake 的绑定/model 注入/禁兼容垫双向结构钉）、`tests/test_no_new_v1_llm_consumers.py`
+    （D3 弱守卫：AST 扫 spica/galgame + spica/host 禁 LLMPort/v1 五方法族，存量白名单**空集**，
+    liveness 8 形态自测 + v2 面反例 3 形态）；
+  - 修改 10 件：`openai_compatible.py`（只增 v2 `complete`/`stream`，内部复用 v1 路径）、
+    `summarizer.py` / `reaction_judge.py`（构造签名 `(llm, model)` → `(bound: BoundModel)`，调用点
+    `self._bound.complete(prompt)`，LLMPort import 删除）、`app_host.py`（`_new_summarizer` 手工组
+    BoundModel + 五处薄委托 docstring「deleted in Phase 5-c2」→「长寿 facade（D4 停钟）」纯注释修正）、
+    `assemblies/reaction.py`（`new_reaction_judge` 组 BoundModel——adapter 仍经
+    `host._judge_llm_adapter()`，patch-validity pin 不变；模块 docstring 同步修正；
+    `judge_llm_adapter()` fallback 树零改动）、`test_app_host.py`（仅 dangling recovery fake 改
+    adapter 侧 `complete(self, prompt, *, model)`）、`test_galgame_summarizer.py` /
+    `test_reaction_judge.py`（fake 改形 + 构造包 BoundModel + `_llm`/`_model` 私有断言改
+    `._bound.adapter`/`._bound.model`，断言语义逐条不变）、`CLAUDE.md`（§2 表加模型 port v2 一行；
+    Agent skills WIP hunk 经 `git apply --cached` 单 hunk 选择性 stage 排除在 commit 外）、
+    `docs/DEVELOPMENT_GUARDRAILS.md`（§10 模板加第 5 条 TextModel/BoundModel 注记）
+- 测试：
+  - targeted：summarizer+judge 全族 39 passed；app_host+契约+弱守卫+cutover 26 passed, 14 subtests；
+    golden 三件 + turn_contract 16 passed, 4 subtests（字节不变）
+  - `python -m pytest tests -q` → 1163 passed, 1 warning, 122 subtests passed
+    （= 1152 基线 + 11 新用例【契约 7 + 守卫 4】；subtests 108 + 14【参数化 3 + liveness 8 +
+    反例 3】，加法闭合，零 fail/skip/xfail）
+- 旧 seam 归零验证：`rg -n "LLMPort|complete_text" spica/galgame/summarizer.py
+  spica/galgame/reaction_judge.py` → 零命中；弱守卫空白名单常驻；
+  forbidden 五件零 diff：`git diff --stat -- spica/runtime/tool_round.py
+  spica/runtime/orchestrator.py spica/runtime/stages.py spica/ports/llm.py
+  spica/runtime/deps.py` → 空（probe 族未迁，`stages.py:434,444` 博物馆未碰——D3 范围纪律自证）
+- facade / patch 有效性：`test_moondream_default_cutover.py` **零改动 gate 通过**；
+  PatchValidityTest sentinel 改经 `judge._bound.adapter` 必达（拦截语义不变，仅字段路径随
+  BoundModel 形状调整）；`_new_summarizer`/`_new_reaction_judge`/`_judge_llm_adapter` 方法名与
+  构建路径全部保留
+- 文档更新：CLAUDE.md §2 + GUARDRAILS §10（与代码同 commit，迁移原则 3(d)）；docstring 附带清理
+  6 处逐行点名（app_host `:385,:390,:434,:447,:451` + assemblies/reaction `:14-16`），diff 自证
+  纯注释零可执行变更
+- 双轨表变化：**D3 开钟**——自 Phase 6a 收口起跳：≤2 个已批生产 phase 内必须完成 Phase 7；
+  6b 可与 Phase 7 对调，不占 D3 时钟
+- 遗留/偏差：无新增；Phase 7 前生产链（orchestrator/tool_round）照旧 v1（计划内）；
+  6b 的「施工前必须裁决」（ModelRouter vs `_judge_llm_adapter` patch-validity，方案 A/B/C）
+  仍待批准前裁决。

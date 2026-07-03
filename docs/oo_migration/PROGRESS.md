@@ -327,3 +327,66 @@
 - 遗留/偏差：无新增；Phase 7 前生产链（orchestrator/tool_round）照旧 v1（计划内）；
   6b 的「施工前必须裁决」（ModelRouter vs `_judge_llm_adapter` patch-validity，方案 A/B/C）
   仍待批准前裁决。
+
+## Phase 7 — ToolCallingModel 生产链 flip（已收口）
+- 日期：2026-07-03
+- commit（分段节奏 c0 → review → c1 → review → c2 → review，各自独立可 revert）：
+  - **7-c0** `d791550685a96b348d9bf6a6306e5eee0e5d3333`（test-only）：新增
+    `tests/test_stream_probe_edges.py`——三类特征 v1 下先绿（mid-stream error 实测信封
+    `[status, error]`/无 done/浮出 fallback 异常/两次 create；followup cancel 工具恰一次/
+    recent 零 append/流停在检查点；STREAM_RESET preamble 不进 answer 也不进 recent），
+    全部 client 级 fake 驱动真实链；
+  - **7-c1** `fbc6084dbdb59b26991f331028f9e1bcf49a71f8`：orchestrator 终答流
+    `deps.llm.iter_response_text(request, ctx)` → `deps.model.stream(prompt, ctx)`（request
+    dict 组装移入 adapter，字节同形）；`TurnDeps.model` 字段 + `__post_init__` auto-fill
+    （显式传入不覆盖、`replace()` 身份保持、非 readiness 判据）；新增
+    `tests/test_turn_deps_model.py` 五契约；
+  - **7-c2** `c7a9e2bc76e91b49b79bc4cc0ff78809ad820b84`：tool_round 探针/followup/chain 全部
+    经 `deps.model.probe / probe_stream / stream`（Optional-return 家族信号；lazy
+    ToolProbeStream 构造零 client I/O；usage 禁双记账——Responses 经 result.usage 由 runtime
+    obs 记、chat 留 adapter 内 `_record_usage`）；`tool_round.py:36` `services.llm_client`
+    判空改 `deps.llm_ready`（文案字节不变）；**llm_ready 终局语义** = adapter OR client
+    （adapter-only ready，双无才 not ready——契约两用例 + 5-c0 零改动重释为「无任何 LLM
+    capability」）；`test_no_dict_config` TEMP_EXEMPT 清空（存活性用例转自动再武装）；
+    新守卫 `tests/test_no_v1_llm_in_runtime.py`（十名禁面）+ 弱守卫升八方法族 +
+    `tests/test_tool_calling_model_contract.py`（11 契约）；CLAUDE §2 / GUARDRAILS §10 改向；
+  - **c2 后守卫加固** `57b900a5ca1cccbcd7f860c4fd315031a6224150`（三轮 review 累积）：
+    v1 载体禁面全谱——`deps.llm` 精确属性读（`deps.config.llm.model` 零误伤）、`LLMPort`
+    裸名、`.LLMPort` 任意别名属性、`import spica.ports.llm` / `from spica.ports.llm import`
+    / `from spica.ports import LLMPort|llm` 三层 import；守卫 5 passed, 35 subtests
+    （liveness：十名方法 10 + 载体正向 12 + 合法反例 13）；
+    `ports/model.py` / `openai_compatible.py` docstring 后 Phase 7 语义校正（纯字符串）。
+- 前置 plan amendments：`03d3961`（Phase 7 施工单重校准：十名禁面/lazy I/O/usage 禁双记/
+  Optional-return/ProviderTraits 转 on-demand/分段节奏）+ `c9bae59`（readiness 终局语义 +
+  scripts 扫描盲区制度化；同批 `f66a8b6` 修复 reaction_judge_report 6a 断裂）。
+- 测试：
+  - 全量 `python -m pytest tests -q` → **1191 passed, 1 warning, 160 subtests passed**
+    （链路：1168 → c1 +5 → c2 +17/subtests+19 → 加固 +1/subtests+19【1190/141 → 1191/160】，
+    逐段对账）；
+  - targeted 全绿：ToolCalling/TextModel/turn_deps 契约、runtime v1 守卫（5 passed,
+    35 subtests）、c0 stream probe edges（零语义漂移）、chat_tool_round / tool_chain_rounds /
+    cancellation / no_comment / turn_contract / golden_streaming / golden_sync /
+    Phase 0 #3（`test_responses_probe_shape` 零修改）。
+- 旧 seam 归零验证：
+  - `orchestrator.py` + `tool_round.py` 十名方法禁面 **零 AST 命中**（守卫常驻）；
+  - v1 载体禁面同零：`deps.llm` / `LLMPort` / `.LLMPort` / 全部 import 形态；
+  - `services.llm_client` 于 orchestrator/tool_round **归零**（`deps.py` bridge 合法保留）；
+  - `test_no_dict_config` TEMP_EXEMPT = 空集；
+  - 冻结区未迁自证：`stages.py`（`call_llm_node` 永久 v1 博物馆，不扫不迁）/ `sync_chain.py` /
+    `test_responses_probe_shape.py` 零 diff；
+  - 树外扫描（scripts/ui/hardware/agent_tools）：`reaction_judge_report.py` 已由 `f66a8b6`
+    修复为 BoundModel 形态；`verify_watch_chain.py:38,226` 读 adapter 模块级私有
+    `_prefers_chat_completions` 为诊断脚本**显名豁免**（adapter v1 面永久保留）。
+- 文档更新：CLAUDE.md §2 模型 port v2 行改向「生产链已 v2」+ 双守卫指名（hunk 选择性 stage
+  排除 Agent skills WIP）；GUARDRAILS §10 第 5 条删「与 Phase 7 前生产链」半句 + runtime
+  十名禁面注记；`ports/model.py` / `openai_compatible.py` 模块 docstring 后 Phase 7 语义。
+- 双轨表变化：**D3 停钟**——自 Phase 6a 收口起跳，Phase 7 在时钟内完成（6a 后第 1 个已批
+  生产 phase，≤2 约束满足）。「非 OpenAI provider = 只写一个 v2 adapter」承诺闭环达成。
+- 遗留/偏差（全部非阻塞，显名记账）：
+  1. `orchestrator.py:10,:109` 两处 docstring/注释性 `deps.llm` 提及（AST 不可见、守卫不红），
+     归后续 doc cleanup 轮；
+  2. `verify_watch_chain.py` 诊断脚本读 `_prefers_chat_completions`——显名豁免，永久合法；
+  3. `reaction_judge_report.py` 默认模型逻辑与生产 judge 疑似历史分歧（脚本
+     `summary_model or llm.model` vs 生产 `reaction_judge_model or llm.model`）——非 Phase 7
+     范畴，另立项裁决；
+  4. Phase 6b 仍未批准/可选（D3 已停钟，不受时钟约束；批准前须先裁决「施工前必须裁决」小节）。

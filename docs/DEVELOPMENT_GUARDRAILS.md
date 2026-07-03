@@ -197,7 +197,8 @@ docs/**                            # 文档
 4. adapter 内部别 import Qt、别 os.getenv（配置从构造参数/注入拿）。
 5. turn 外文本型 LLM 消费者（summarizer/judge 一类）不直接依赖 LLMPort v1：走 spica/ports/model.py
    的 TextModel/BoundModel（OO 迁移 Phase 6a，host 侧手工组 BoundModel(adapter, model)）；v1 为冻结链
-   与 Phase 7 前生产链保留，spica/galgame+spica/host 禁新增 v1 消费者（test_no_new_v1_llm_consumers 钉）。
+   保留，spica/galgame+spica/host 禁新增 v1 消费者（test_no_new_v1_llm_consumers 钉），runtime 禁
+   v1/provider 家族十名（test_no_v1_llm_in_runtime 钉，OO 迁移 Phase 7）。
 必读：spica/ports/<kind>.py、spica/adapters/<kind>/、spica/host/builtins.py、spica/plugins/registry.py
 测试：对应 adapter 合同测试（仿 test_phase5_adapters / test_tts_adapters / test_stt_faster_whisper）
 ```

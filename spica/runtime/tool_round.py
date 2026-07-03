@@ -1,10 +1,14 @@
-"""Tool probe / followup for the streaming runtime (Phase 6C).
+"""Tool probe / followup for the streaming runtime (Phase 6C; model port v2
+since Phase 7-c2).
 
-Moved verbatim from agent/streaming_pipeline.py. Before streaming the final
-answer, optionally run one tool round (probe -> run local tools -> build a
-followup prompt). The probe goes through the Responses API or -- for clients
-that prefer Chat Completions (DeepSeek) -- through a chat tool probe; both feed
-the same local tool execution / followup chain. Qt-free.
+Before streaming the final answer, optionally run one tool round (probe -> run
+local tools -> build a followup prompt). The probes and followup streams run on
+``deps.model`` (BoundModel over the v2 ToolCallingModel/TextModel surface): the
+endpoint family choice is INTERNAL to the adapter -- ``probe_stream`` returning
+a handle means "this provider streams probes" (chat family), ``None`` means the
+non-streaming probe flow (Responses family). The runtime never reads provider
+traits or v1 methods (pinned by tests/test_no_v1_llm_in_runtime.py); observer
+timing/marks stay HERE -- the adapter only does I/O. Qt-free.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from typing import Any, Iterator
 from spica.runtime.stages import _compact_tool_history_for_prompt, record_screen_tool_result
 from common.timing import elapsed_ms, now_ms
 from spica.runtime.context import TurnContext, is_turn_cancelled
-from spica.runtime.llm_stream import get_attr, record_usage
+from spica.runtime.llm_stream import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,9 @@ def prepare_prompt_for_streaming(
     put_status: Any,
     deps: Any = None,
 ) -> tuple[str, str | None]:
-    if services.llm_client is None:
+    if not deps.llm_ready:
+        # Terminal semantics (7-c2): "no LLM capability at all" -- neither an
+        # adapter nor a raw client. Message byte-identical (5-c0 pins it).
         raise RuntimeError("LLM client 未配置。")
 
     # Tools (C3a) and config / LLM port (C3b) come from the injected deps; the
@@ -81,18 +87,19 @@ def prepare_prompt_for_streaming(
     # No status during the probe (either endpoint): "deciding whether to use a
     # tool" is not "processing tools" -- the UI keeps showing the plain pending
     # dots until a tool ACTUALLY executes (_run_tool_calls emits per-tool status).
-    if deps.llm.prefers_chat_completions():
+    # Phase 7-c2: the family signal is probe_stream's Optional return -- a
+    # handle means the chat-family streaming flow, None means the Responses
+    # non-streaming flow. Constructing the handle is ZERO client I/O (lazy
+    # contract), so the probe timing below still starts at first consumption.
+    probe_handle = deps.model.probe_stream(str(prompt_input or ""), active_tool_schemas, ctx)
+    if probe_handle is not None:
         # Chat Completions tool probe (DeepSeek etc.). Until this branch existed
         # the probe was skipped entirely and tools never reached the request --
         # the watch_game_screen zero-trigger root cause (FINDINGS #18).
         def _probe_chat(prompt_text: str, round_number: int) -> tuple[list[dict[str, str]], str]:
             probe_start_ms = now_ms()
-            calls, text = deps.llm.create_chat_with_tools(
-                model=model,
-                prompt=prompt_text,
-                tools=active_tool_schemas,
-                state=ctx,
-            )
+            result = deps.model.probe(prompt_text, active_tool_schemas, ctx)
+            calls, text = result.calls, result.text
             probe_ms = elapsed_ms(probe_start_ms)
             obs.mark("agent_rounds", round_number)
             if round_number == 1:
@@ -117,12 +124,8 @@ def prepare_prompt_for_streaming(
         # no "answer" field -> the orchestrator's JsonAnswerExtractor drops it (nothing
         # played); STREAM_RESET then clears it from raw before the followup answer.
         def _chat_tool_stream() -> Iterator[Any]:
-            calls_sink: list[dict[str, str]] = []
             probe_start_ms = now_ms()
-            for delta in deps.llm.iter_chat_with_tools(
-                model=model, prompt=str(prompt_input or ""),
-                tools=active_tool_schemas, state=ctx, tool_calls_sink=calls_sink,
-            ):
+            for delta in probe_handle.deltas:
                 yield delta
             probe_ms = elapsed_ms(probe_start_ms)
             obs.mark("agent_rounds", 1)
@@ -131,6 +134,11 @@ def prepare_prompt_for_streaming(
                 "agent_response", probe_ms, phase="tool_probe",
                 endpoint="chat_completions", model=model, use_tools=True, round=1,
             )
+            # Normal exhaustion reached (the lines above only run after the for
+            # loop completed) -> .calls is legally readable. A turn cancelled
+            # MID-probe never gets here: the orchestrator abandons this
+            # generator, so .calls is never read and no tool runs (contract).
+            calls_sink = probe_handle.calls
             if not calls_sink:
                 return  # no tool -> the JSON answer already streamed (the win)
             if is_turn_cancelled(ctx.request):
@@ -141,7 +149,7 @@ def prepare_prompt_for_streaming(
                 # Single-shot tools (watch/note/inspect): one followup, streamed.
                 put_status("thinking", "thinking")
                 followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup)
-                for delta in deps.llm.iter_response_text({"model": model, "input": followup}, ctx):
+                for delta in deps.model.stream(followup, ctx):
                     if is_turn_cancelled(ctx.request):
                         break
                     yield delta
@@ -154,7 +162,7 @@ def prepare_prompt_for_streaming(
             if chain_text is not None:
                 yield chain_text
                 return
-            for delta in deps.llm.iter_response_text({"model": model, "input": chain_prompt}, ctx):
+            for delta in deps.model.stream(chain_prompt, ctx):
                 if is_turn_cancelled(ctx.request):
                     break
                 yield delta
@@ -162,20 +170,19 @@ def prepare_prompt_for_streaming(
         return str(prompt_input or ""), _chat_tool_stream()
 
     def _probe_responses(prompt_text: str, round_number: int) -> tuple[list[dict[str, str]], str]:
-        request = {
-            "model": model,
-            "input": prompt_text,
-            "tools": active_tool_schemas,
-        }
         response_start_ms = now_ms()
-        response = deps.llm.create_responses(**request)
+        result = deps.model.probe(prompt_text, active_tool_schemas, ctx)
         response_ms = elapsed_ms(response_start_ms)
         obs.mark("agent_rounds", round_number)
         if round_number == 1:
             obs.mark("agent_response_initial_ms", response_ms)
         else:
             obs.bump("agent_followup_response_ms", response_ms)
-        record_usage(obs, response)
+        # Responses-family usage is recorded HERE via the observer (today's
+        # semantics); the chat family records inside the adapter and carries
+        # usage=None -- never both (no-double-accounting ruling).
+        if result.usage is not None:
+            record_usage(obs, result)
         obs.event(
             "agent_response",
             response_ms,
@@ -184,20 +191,9 @@ def prepare_prompt_for_streaming(
             use_tools=True,
             round=round_number,
         )
-        function_calls = [
-            item for item in list(get_attr(response, "output", []) or [])
-            if get_attr(item, "type") == "function_call"
-        ]
-        if not function_calls:
-            ctx.response_id = str(get_attr(response, "id", "") or "") or None
-        normalized = [
-            {
-                "name": str(get_attr(item, "name", "")),
-                "arguments": str(get_attr(item, "arguments", "") or "{}"),
-            }
-            for item in function_calls
-        ]
-        return normalized, str(get_attr(response, "output_text", "") or "")
+        if not result.calls:
+            ctx.response_id = result.response_id
+        return result.calls, result.text
 
     normalized_calls, probe_text = _probe_responses(str(prompt_input or ""), 1)
     if not normalized_calls:

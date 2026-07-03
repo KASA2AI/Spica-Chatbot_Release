@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any, Iterator
 
 from common.timing import elapsed_ms, log_timing, now_ms
+from spica.ports.model import ToolProbeResult, ToolProbeStream
 
 
 def to_chat_completions_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -233,6 +234,57 @@ class OpenAICompatibleAdapter:
 
     def stream(self, prompt: str, *, model: str, state: Any) -> Iterator[str]:
         return self.iter_response_text({"model": model, "input": prompt}, state)
+
+    # ------------------------------------------------------------------ #
+    # ToolCallingModel v2 (Phase 7-c2). Same single-home rule as complete/
+    # stream: the endpoint family branch and the provider response parsing
+    # live HERE; the runtime only sees ToolProbeResult / ToolProbeStream.
+    # Usage accounting (no-double ruling): the chat family records inside
+    # create_chat_with_tools via _record_usage(state, ...) -> usage=None on
+    # the result; the Responses family returns response.usage so the runtime
+    # observer records it (today's tool_round semantics, unchanged).
+    # ------------------------------------------------------------------ #
+
+    def probe(
+        self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any
+    ) -> ToolProbeResult:
+        if self.prefers_chat_completions():
+            calls, text = self.create_chat_with_tools(
+                model=model, prompt=prompt, tools=tools, state=state
+            )
+            return ToolProbeResult(calls=calls, text=text)
+        response = self.create_responses(model=model, input=prompt, tools=tools)
+        function_calls = [
+            item for item in list(_get_attr(response, "output", []) or [])
+            if _get_attr(item, "type") == "function_call"
+        ]
+        calls = [
+            {
+                "name": str(_get_attr(item, "name", "")),
+                "arguments": str(_get_attr(item, "arguments", "") or "{}"),
+            }
+            for item in function_calls
+        ]
+        return ToolProbeResult(
+            calls=calls,
+            text=str(_get_attr(response, "output_text", "") or ""),
+            response_id=str(_get_attr(response, "id", "") or "") or None,
+            usage=_get_attr(response, "usage"),
+        )
+
+    def probe_stream(
+        self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any
+    ) -> ToolProbeStream | None:
+        if not self.prefers_chat_completions():
+            return None  # Responses family: probes do not stream (family signal)
+        # LAZY by construction: iter_chat_with_tools is a generator function
+        # (calling it does no I/O) and ToolProbeStream only pulls it when
+        # .deltas is iterated -- the client stream opens at first consumption.
+        return ToolProbeStream(
+            lambda sink: self.iter_chat_with_tools(
+                model=model, prompt=prompt, tools=tools, state=state, tool_calls_sink=sink
+            )
+        )
 
 
 # --------------------------------------------------------------------------- #

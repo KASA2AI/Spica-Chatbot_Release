@@ -49,17 +49,13 @@ BANNED_ATTRS = {
     "tool_schemas",
 }
 # Precise TEMPORARY exemptions: (repo-relative file, LINE, banned attr) --
-# line-pinned on purpose: a SECOND ``services.llm_client`` read added anywhere
-# else in the same file must go red (D1 禁扩散), which a file+attr exemption
-# would silently license. Known trade-off: edits above the pinned line shift it
-# and break this guard LOUDLY (false positive -> consciously re-pin), never
-# silently. The single entry is the D1 leftover the migration plan explicitly
-# defers: the ``services.llm_client is None`` probe guard at tool_round.py:36
-# is settled by Phase 7-c2 (ToolCallingModel flip), which must DELETE this
-# entry in the same commit.
-TEMP_EXEMPT: set[tuple[str, int, str]] = {
-    ("spica/runtime/tool_round.py", 36, "llm_client"),
-}
+# line-pinned on purpose: a second read of an exempted attr anywhere else in
+# the same file must go red (D1 禁扩散), which a file+attr exemption would
+# silently license. EMPTY since Phase 7-c2 settled the last entry
+# (tool_round.py:36 ``services.llm_client`` -> ``deps.llm_ready``); any future
+# entry needs a written reason and a settling phase, and the liveness test
+# below keeps it pinned to the exact line while it lives.
+TEMP_EXEMPT: set[tuple[str, int, str]] = set()
 
 
 def _legacy_services_reads(path: Path, rel: str) -> list[str]:
@@ -103,10 +99,11 @@ class NoDictConfigGuardTest(unittest.TestCase):
             self.assertTrue((REPO_ROOT / rel).is_file(), f"Stale entry: {rel}")
 
     def test_exempted_read_still_exists_at_the_pinned_line(self):
-        # The temporary exemption must die WITH the exact code it excuses: once
-        # Phase 7-c2 removes tool_round's llm_client probe guard (or ANY edit
-        # shifts the pinned line), this goes red and forces a conscious re-pin
-        # or deletion -- an exemption can never rot as a silent loophole.
+        # An exemption must die WITH the exact code it excuses: any edit that
+        # shifts a pinned line goes red and forces a conscious re-pin or
+        # deletion -- an exemption can never rot as a silent loophole.
+        # Vacuous while TEMP_EXEMPT is empty (Phase 7-c2 settled the last
+        # entry); it re-arms automatically for any future entry.
         for rel, lineno, attr in TEMP_EXEMPT:
             path = REPO_ROOT / rel
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

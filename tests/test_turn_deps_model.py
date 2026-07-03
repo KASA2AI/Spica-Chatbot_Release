@@ -91,6 +91,29 @@ class AutoFillTest(unittest.TestCase):
         self.assertIs(replaced.model, deps.model)
 
 
+class LlmReadyTerminalSemanticsTest(unittest.TestCase):
+    """Phase 7-c2: readiness = ANY LLM capability (adapter OR raw client).
+
+    Adapter-only is the natural shape of a non-OpenAI provider -- it MUST be
+    ready, or "a second provider = just write an adapter" cannot hold. Only
+    adapter-less AND client-less is not ready (the 5-c0 error path,
+    reinterpreted as "no LLM capability at all"; its message is unchanged).
+    """
+
+    def test_adapter_only_services_are_ready(self):
+        services = _services(client=None)
+        services.llm_client = None
+        services.llm_adapter = object()  # a resolved v2-capable adapter, no raw client
+        deps = TurnDeps.from_services(services, AppConfig())
+        self.assertTrue(deps.llm_ready)
+
+    def test_no_adapter_and_no_client_is_not_ready(self):
+        services = _services(client=None)
+        services.llm_client = None  # llm_adapter already None in the helper
+        deps = TurnDeps.from_services(services, AppConfig())
+        self.assertFalse(deps.llm_ready)
+
+
 # ---- pin 4: the real orchestrator streams through deps.model ---------------- #
 
 class _FakeTTS:

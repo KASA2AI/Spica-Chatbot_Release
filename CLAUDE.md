@@ -93,7 +93,7 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 | 内置工具（registry 注册） | `inspect_screen`(read) / `watch_game_screen`(read) / `note_game_observation`(write) / `sing_song`(act)，全部「工具垫片 + host 闭包持权限」形制 |
 | song 事件 | `spica/core/song_events.py::SongRequestEvent`（host 闭包 emit → RuntimeEvent 桥 → UI 起 SongWorker） |
 | 兼容同步链（冻结） | `spica/runtime/sync_chain.py`：**纯 golden 锚，生产零调用方，不准长新能力**（生产同步入口是 `run_voice` = run_turn + fold） |
-| 模型 port v2（文本族） | `spica/ports/model.py`（`TextModel`/`BoundModel`；turn 外文本消费者 summarizer/judge 经 `BoundModel.complete`——OO 迁移 Phase 6a；生产链 flip 归 Phase 7，v1 `LLMPort` 为冻结链保留；galgame/host 禁新增 v1 消费者，`test_no_new_v1_llm_consumers` 钉） |
+| 模型 port v2 | `spica/ports/model.py`（`TextModel`/`ToolCallingModel`/`BoundModel`/`ToolProbeStream`；turn 外消费者 summarizer/judge 经 `BoundModel.complete`——OO 迁移 Phase 6a；**生产链已 v2**——orchestrator 终答流 + tool_round 探针族经 `deps.model.stream/probe/probe_stream`，OO 迁移 Phase 7；v1 `LLMPort` 仅冻结链保留；守卫：`test_no_new_v1_llm_consumers` + `test_no_v1_llm_in_runtime`） |
 | 屏幕识别工具链 | `agent_tools/function_tools/screen/`（`inspect_screen` ToolPort：本地截图 + RapidOCR + Moondream，**绝不上传**） |
 | 手动框选截图 UI | `ui/widgets/screenshot_selector.py::ScreenshotSelectionOverlay` + `ui/workers/screenshot_worker.py` |
 | 活体诊断器 | `scripts/verify_watch_chain.py`（工具不触发先跑它）、`scripts/diag_ocr_providers.py`（疑 OCR 回落 CPU 先跑它） |

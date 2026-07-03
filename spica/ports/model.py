@@ -23,7 +23,7 @@ Qt-free (铁律 #1); pure types, no I/O.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterator, Protocol
+from typing import Any, Callable, Iterator, Protocol
 
 
 class TextModel(Protocol):
@@ -40,11 +40,91 @@ class TextModel(Protocol):
 
 
 @dataclass(frozen=True)
+class ToolProbeResult:
+    """One non-streaming tool probe's outcome (ToolCallingModel v2, Phase 7-c2).
+
+    ``calls`` are normalized ``{"name", "arguments"}`` dicts (arguments = raw
+    JSON string). ``usage`` carries the provider usage object ONLY on the
+    Responses family (the runtime records it via its observer, today's
+    semantics); the chat family records usage inside the adapter (``state``)
+    and leaves ``usage=None`` -- never both (the no-double-accounting ruling).
+    """
+
+    calls: list[dict[str, str]]
+    text: str
+    response_id: str | None = None
+    usage: Any = None
+
+
+class ToolProbeStream:
+    """A LAZY streaming tool probe handle (chat family).
+
+    Contract (Phase 7 ruling, pinned by tests/test_tool_calling_model_contract):
+    - constructing this object performs NO client I/O; the underlying stream is
+      created only when ``deltas`` is first iterated;
+    - ``calls`` is readable ONLY after ``deltas`` was NORMALLY exhausted --
+      reading it early, after a cancel abandoned the iterator, or after a
+      mid-stream exception raises RuntimeError (loud, never undefined data);
+    - a probe cancelled mid-stream therefore never yields STREAM_RESET and
+      never executes tools (the caller structurally cannot reach ``calls``).
+
+    ``open_stream`` receives the calls sink and returns the delta iterator
+    (adapter side: a generator over ``chat.completions.create(stream=True)``,
+    itself lazy until first ``next()``).
+    """
+
+    def __init__(self, open_stream: Callable[[list[dict[str, str]]], Iterator[str]]) -> None:
+        self._sink: list[dict[str, str]] = []
+        self._exhausted = False
+        self._deltas = self._consume(open_stream)
+
+    def _consume(self, open_stream: Callable[[list[dict[str, str]]], Iterator[str]]) -> Iterator[str]:
+        for delta in open_stream(self._sink):
+            yield delta
+        # Reached ONLY on normal exhaustion -- an exception or an abandoned
+        # generator never sets it, so .calls stays locked.
+        self._exhausted = True
+
+    @property
+    def deltas(self) -> Iterator[str]:
+        return self._deltas
+
+    @property
+    def calls(self) -> list[dict[str, str]]:
+        if not self._exhausted:
+            raise RuntimeError(
+                "ToolProbeStream.calls read before deltas were normally exhausted "
+                "(early read / cancelled / errored stream) -- the contract forbids it."
+            )
+        return list(self._sink)
+
+
+class ToolCallingModel(Protocol):
+    """Adapter-side tool-probe capability (v2). The endpoint family choice
+    (Responses vs Chat Completions) is INTERNAL: ``probe_stream`` returning
+    ``None`` is the family signal (this provider does not stream probes) --
+    the runtime never reads traits."""
+
+    def probe(self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any) -> ToolProbeResult:
+        """One-shot tool probe; returns normalized calls + text."""
+        ...
+
+    def probe_stream(
+        self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any
+    ) -> ToolProbeStream | None:
+        """Streaming tool probe handle (LAZY, zero I/O at construction), or
+        ``None`` when this provider's probes do not stream."""
+        ...
+
+
+@dataclass(frozen=True)
 class BoundModel:
     """An adapter bound to a model name -- the one object text consumers hold.
 
-    Callers cannot re-pick the model per call (``complete``/``stream`` take no
-    ``model`` parameter): the bound value is injected on every request.
+    Callers cannot re-pick the model per call (no method takes a ``model``
+    parameter): the bound value is injected on every request. Phase 7-c2 adds
+    the tool-probe forwards; adapters that implement ToolCallingModel get them
+    for free through the same binding.
     """
 
     adapter: TextModel
@@ -55,3 +135,11 @@ class BoundModel:
 
     def stream(self, prompt: str, state: Any) -> Iterator[str]:
         return self.adapter.stream(prompt, model=self.model, state=state)
+
+    def probe(self, prompt: str, tools: list[dict[str, Any]], state: Any) -> ToolProbeResult:
+        return self.adapter.probe(prompt, tools, model=self.model, state=state)
+
+    def probe_stream(
+        self, prompt: str, tools: list[dict[str, Any]], state: Any
+    ) -> ToolProbeStream | None:
+        return self.adapter.probe_stream(prompt, tools, model=self.model, state=state)

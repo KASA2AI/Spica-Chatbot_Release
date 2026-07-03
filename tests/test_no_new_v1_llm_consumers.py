@@ -26,9 +26,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCAN_DIRS = ("spica/galgame", "spica/host")
 V1_METHODS = {
+    # Phase 7-c2 upgrade: the full eight-method v1 family (the traits pair is
+    # runtime-guard-specific, see tests/test_no_v1_llm_in_runtime.py).
     "complete_text",
     "prefers_chat_completions",
+    "has_chat_completions",
     "iter_response_text",
+    "create_responses",
+    "complete_chat",
     "create_chat_with_tools",
     "iter_chat_with_tools",
 }
@@ -87,7 +92,10 @@ class NoNewV1LLMConsumersTest(unittest.TestCase):
         for src in (
             "x.complete_text(p, model=m)",
             "y.prefers_chat_completions()",
+            "y.has_chat_completions()",
             "z.iter_response_text(req, ctx)",
+            "z.create_responses(model=m, input=p)",
+            "z.complete_chat(m, p, s)",
             "a.create_chat_with_tools(model=m, prompt=p, tools=t, state=s)",
             "b.iter_chat_with_tools(model=m)",
             "from spica.ports.llm import LLMPort",

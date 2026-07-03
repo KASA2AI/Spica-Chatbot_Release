@@ -13,7 +13,7 @@ config, paths) without the registry knowing the concrete types.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 Factory = Callable[..., Any]
 
@@ -36,33 +36,47 @@ def _tool_schema_name(schema: dict[str, Any]) -> str:
     return ""
 
 
+class ToolEntry(NamedTuple):
+    """One registered tool's stored record (OO migration Phase 4R).
+
+    Field ORDER matches the historical anonymous 7-tuple, so the NamedTuple is a
+    strict drop-in (it still IS a tuple). Field semantics:
+
+    - ``schema``: stored VERBATIM (flat or OpenAI-nested); ``tool_schemas()``
+      returns it unchanged.
+    - ``handler``: the callable ``tools.run`` dispatches to.
+    - ``available``: optional STATE predicate -- the tool is only offered while
+      it returns True (e.g. watch/note during companion play); None = always.
+    - ``intent_gated``: whether the router wordlist pre-filter applies (supply
+      gating only -- it never hijacks/swallows the message).
+    - ``chainable``: True lets the streaming tool round loop (P1); False (every
+      current tool) keeps the single-round path.
+    - ``compact_output``: optional followup-prompt compactor (P1).
+    - ``effect``: "read" | "write" | "act" footprint tier (P2) -- audit metadata;
+      the SAFETY boundary for "act" stays the host-closure port pattern.
+
+    New metadata (Phase 4/9 candidates) must be added HERE as a named field --
+    never by widening an anonymous tuple (test_registry pins ``_fields``).
+    """
+
+    schema: dict[str, Any]
+    handler: Callable[..., Any]
+    available: Callable[[], bool] | None
+    intent_gated: bool
+    chainable: bool
+    compact_output: Callable[[str], str] | None
+    effect: str
+
+
 class CapabilityRegistry:
     def __init__(self) -> None:
         self._llm: dict[str, Factory] = {}
         self._tts: dict[str, Factory] = {}
         self._visual: dict[str, Factory] = {}
         self._memory: dict[str, Factory] = {}
-        # name -> (schema, handler, available, intent_gated, chainable,
-        # compact_output, effect). available=None means always offered;
-        # intent_gated=True means the router wordlist pre-filter applies (the
-        # pre-refactor behaviour for every tool); chainable=False means a single
-        # execution ends the tool round (P1); compact_output optionally shrinks
-        # the tool's output before it enters a followup prompt (P1); effect (P2)
-        # classifies the tool's footprint: "read" = pure observation, "write" =
-        # mutates own-domain data, "act" = operates the user's environment /
-        # starts jobs / claims shared resources.
-        self._tools: dict[
-            str,
-            tuple[
-                dict[str, Any],
-                Callable[..., Any],
-                Callable[[], bool] | None,
-                bool,
-                bool,
-                Callable[[str], str] | None,
-                str,
-            ],
-        ] = {}
+        # Field semantics documented on ToolEntry (Phase 4R: the historical
+        # anonymous 7-tuple, now with named fields).
+        self._tools: dict[str, ToolEntry] = {}
 
     # -- registration ---------------------------------------------------------
     def register_llm(self, name: str, factory: Factory) -> None:
@@ -114,8 +128,14 @@ class CapabilityRegistry:
         name = _tool_schema_name(schema)
         if not name:
             raise ValueError("tool schema must include a 'name' (top-level or under 'function')")
-        self._tools[name] = (
-            schema, handler, available, intent_gated, chainable, compact_output, effect
+        self._tools[name] = ToolEntry(
+            schema=schema,
+            handler=handler,
+            available=available,
+            intent_gated=intent_gated,
+            chainable=chainable,
+            compact_output=compact_output,
+            effect=effect,
         )
 
     # -- resolution -----------------------------------------------------------
@@ -136,41 +156,41 @@ class CapabilityRegistry:
         # State-filtered: a tool with an ``available`` predicate is only offered
         # while it returns True (a failing predicate must never break the turn).
         offered: list[dict[str, Any]] = []
-        for schema, _handler, available, _gated, _chainable, _compact, _effect in self._tools.values():
-            if available is not None:
+        for entry in self._tools.values():
+            if entry.available is not None:
                 try:
-                    if not available():
+                    if not entry.available():
                         continue
                 except Exception:  # noqa: BLE001 -- a broken predicate hides the tool
                     continue
-            offered.append(schema)
+            offered.append(entry.schema)
         return offered
 
     def tool_handler(self, name: str) -> Callable[..., Any] | None:
         entry = self._tools.get(name)
-        return entry[1] if entry else None
+        return entry.handler if entry else None
 
     def tool_intent_gated(self, name: str) -> bool:
         """Whether the router wordlist pre-filter applies to this tool (True for
         every pre-refactor tool; False = offered whenever available)."""
         entry = self._tools.get(name)
-        return entry[3] if entry else True
+        return entry.intent_gated if entry else True
 
     def tool_chainable(self, name: str) -> bool:
         """Whether the streaming tool round may loop after this tool runs (P1).
         False for every tool that does not declare otherwise."""
         entry = self._tools.get(name)
-        return entry[4] if entry else False
+        return entry.chainable if entry else False
 
     def tool_compact_output(self, name: str) -> Callable[[str], str] | None:
         """The tool's declared followup-prompt compactor, or None."""
         entry = self._tools.get(name)
-        return entry[5] if entry else None
+        return entry.compact_output if entry else None
 
     def tool_effect(self, name: str) -> str:
         """The tool's declared footprint tier (P2): read | write | act."""
         entry = self._tools.get(name)
-        return entry[6] if entry else "read"
+        return entry.effect if entry else "read"
 
     # -- introspection (used by ManagementSurface in Phase 8) -----------------
     def list_adapters(self, kind: str) -> list[str]:

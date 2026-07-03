@@ -118,3 +118,54 @@
   1. `tests/test_memory_pipeline_e2e.py:14` 模块 docstring 尾句（"recent stays on the bare
      conversation_id"）在 Phase 2 后过时——该文件不在白名单且其测试全绿，留后续文档轮处理；
   2. Phase 3+ 未执行。
+
+## Phase 3 — PromptContextContributor seam（已收口）
+- 日期：2026-07-03
+- commit：`d7865612044ac79dc16a3c1a47adc8edd5203968`（前置 plan amendment：`57b7f3f`——
+  docs 白名单逐文件明确 CLAUDE.md + GUARDRAILS §5/§9-4）
+- 实际修改文件（与修订版白名单完全一致，10 件，零超出）：
+  - 新增 3 件：`spica/runtime/prompt_context.py`（Protocol：name/priority/mode(request)/
+    sections(ctx,deps,mode)，typing-only 零 spica 边）、`spica/galgame/context_contributor.py`
+    （gate/target 解析自 stages 逐字迁入 + `GalgameContextContributor` 单例）、
+    `tests/test_prompt_context_contributors.py`（13 用例守卫）；
+  - 修改 7 件：`spica/runtime/stages.py`（gate helpers 删除；通用 `contribute_context_node`
+    57 行 + 纯赋值别名）、`spica/runtime/deps.py`（`context_contributors` 字段 +
+    `__post_init__` galgame auto-fill，函数级懒 import）、`orchestrator.py` / `sync_chain.py`
+    （各 import+调用两行换名）、`tests/test_layering.py`（TRANSFORM_LAYER_FILES 增两新文件，
+    只扩域）、`docs/DEVELOPMENT_GUARDRAILS.md`（仅 §5 决策树 + §9 第 4 条改向）、
+    `CLAUDE.md`（仅 Phase 3 两个 hunk：§2 表 contributor 行 + §3 表述改向；文末 Agent skills
+    WIP hunk 经选择性 stage 排除在 commit 外）
+- 测试：
+  - `test_game_prompt_golden.py` → 4 passed（字节等价 + (d) span 语义基线）
+  - 三直调（retrieve/current_line/reaction_wiring）→ 31 passed, 3 subtests（**零改动**硬 gate）
+  - 新守卫 + layering → 17 passed, 15 subtests
+  - game_context_in_chain + turn_contract → 12 passed
+  - `python -m pytest tests -q` → 1140 passed, 1 warning, 108 subtests passed
+    （= 1127 基线 + 13 新守卫用例，零 fail/skip/xfail）
+- exit conditions 逐条：① orchestrator/sync_chain 调新名 ✓；② 三直调测试零改动全绿 ✓；
+  ③ N1 扫描含两个新文件 ✓；④ CLAUDE/GUARDRAILS 决策树同 commit 改向 ✓
+- 双轨表变化：D2 开钟即停——别名**永久保留**（成本≈0，Decision Log「保留为 facade」项），
+  防再生长守卫（纯赋值 AST + node 行数上限 65 + span 名钉死 + auto-fill 恰一项）常驻
+- 关键设计记录：
+  - `PromptContextContributor` Protocol：gate 签名只收 request（结构性防线）；实现方结构性
+    满足、不 import Protocol；
+  - 注册：`TurnDeps.context_contributors=None` → galgame 兼容 auto-fill（永不长第二项）、
+    显式 `()` 关闭（字节级 no-op）、显式 tuple 原样尊重——未来 domain 必须经 assembly 显式注册；
+  - node 保留旧 span/timing 名 `retrieve_game_context_node(_ms)`（三处 timing 断言不改自绿）；
+  - **prior-error no-op 修正**（重审 P1）：`ctx.error` 检查先于 deps 构造，`(ctx, None, None)`
+    直调形态保持旧语义并有 PriorErrorCompatTest 钉死；
+  - 异常隔离：`mode()` 抛异常按 none + WARNING（坏 gate 不炸普通聊天、不拖垮同伴 contributor）；
+    `sections()` 抛异常 span 保留、注入为空、不炸 turn；
+  - runtime→galgame 的模块级 import 边随 gate 迁出而消失（Phase 1 的 stages→prompt_sections
+    边移交给 contributor），deps 侧仅函数级懒 import——15 包 import 环检测常驻。
+- 遗留/偏差：
+  1. `docs/DEVELOPMENT_GUARDRAILS.md` §9 必读列表仍写 `spica/runtime/stages.py(gate)`——
+     gate 已迁 contributor，措辞过时（重审 P2；授权范围仅 §5 + §9 第 4 条），留后续文档轮；
+  2. `spica/galgame/prompt_sections.py:5-7` docstring「gate half stays in stages.py」过时
+     （forbidden 文件）；
+  3. `spica/runtime/context.py:56` 注释提及 `stages._GALGAME_CONVERSATION_PREFIX` 过时
+     （forbidden 文件）；
+  4. 已知契约收窄（如实记录）：`(services=None, deps=None)` 且**无**先行错误的 none-mode
+     直调形态，旧实现静默 no-op、新通用 node 需 deps 问 contributors——结构上不可保留
+     （零调用方、零测试依赖）；错误路径的对应容忍已保留并钉死；
+  5. Phase 4R / 4+ 未执行。

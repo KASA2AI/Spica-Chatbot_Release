@@ -26,7 +26,7 @@
 | 0D | Phase 0 文档收口（微 phase） | 0 收口 | Phase 0 收口后 | 已收口 | `2bc96c3d8d5fffb49153a6c4302d1ef66cf971e3` | 2026-07-03 已回写 Phase 0 状态板与 PROGRESS；见 Phase 0D 提交 |
 | 1 | galgame prompt_sections 出走 stages | 0 | 批准 | 已收口 | `da8f29b47384ddaaae132542fd63a65cbfb79733` | 2026-07-03 收口：`prompt_sections.py` 从 `stages.py` 出走（gate + node 留守）；Phase 0 golden 字节等价；全量 gate 通过（1117 passed, 1 xfailed）。详见 `PROGRESS.md` |
 | 2 | CharacterScope + scoped recent + MemoryScopeStrategy | 0（排在 1 后） | 批准 | 已收口 | `26314a2da7b0c88b4de622aa9d330d43d5cb7224` | 2026-07-03 收口：CharacterScope + MemoryScopeStrategy 落 `spica/runtime/scope.py`；recent 桶改 character scoped（读/写/清三点对称，全计划唯一主动行为变更）；全量 gate 1127 passed。详见 `PROGRESS.md` |
-| 3 | PromptContextContributor seam | 0,1 | 批准 | 未批准 | — | contributor 机制已裁决（方案 a·galgame 兼容限定版） |
+| 3 | PromptContextContributor seam | 0,1 | 批准 | 已收口 | `d7865612044ac79dc16a3c1a47adc8edd5203968` | 2026-07-03 收口：PromptContextContributor seam 落地（方案 a·galgame 兼容 auto-fill）；`retrieve_game_context_node` 永久纯赋值别名；orchestrator/sync_chain 已调新名 `contribute_context_node`；全量 gate 1140 passed。详见 `PROGRESS.md` |
 | 4R | registry ToolEntry NamedTuple（微 phase） | 0 | 批准 | 未批准 | — | 可穿插在 1/2/3 之间 |
 | 4 | ReactionScoringPolicy + reaction assembly | 0,2,4R | 批准 | 未批准 | — | 含 patch 有效性退出条件 |
 | 5 | deps 单轨化（stages/memory_commit 禁区） | 4 | 批准 | 未批准 | — | 三 commit：5-c0/c1/c2；删 Phase 4 薄委托 |

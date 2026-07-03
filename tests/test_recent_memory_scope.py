@@ -1,25 +1,22 @@
-"""Phase 0 characterization: recent-memory scoping baseline (OO migration).
+"""Phase 0 characterization: recent-memory scoping (OO migration).
 
-(a) pins TODAY's isolation guarantee: different conversation_ids never see each
+(a) pins the isolation guarantee: different conversation_ids never see each
 other's recent turns.
-(b) pins TODAY's known hole as a strict xfail: the recent bucket key is the BARE
-conversation_id (memory/recent.py keyed by whatever load/save pass through --
-stages.py load_recent_context_node / memory_commit.py save_stream_memory), so two
-different characters sharing a conversation_id silently share recent context.
-Phase 2's MemoryScopeStrategy ({character_id}::{conversation_id} key) turns (b)
-green, at which point the xfail marker is removed (by Phase 2, not here).
+(b) pins cross-CHARACTER isolation: written as a strict xfail in Phase 0 (the
+recent bucket key was the BARE conversation_id, so two characters sharing a
+conversation_id silently shared recent context); Phase 2's MemoryScopeStrategy
+({character_id}::{conversation_id} key) turned it green and the xfail marker
+was removed -- it now guards the fix.
 
 HARD RULES (migration plan Phase 0 #4): the write path goes through
 ``save_stream_memory`` (the production write point) and the read path through
 ``load_recent_context_node`` (the production read point); the recent deque is
 never written directly; each role gets a FRESHLY CONSTRUCTED TurnDeps from its
 own config (no in-place config mutation, no deps reuse) so the test holds for
-both frozen and live scope implementations Phase 2 might choose.
+both frozen and live scope implementations.
 """
 
 from types import SimpleNamespace
-
-import pytest
 
 from memory.recent import RecentMemory
 from spica.config.schema import AppConfig, CharacterConfig
@@ -82,15 +79,11 @@ def test_recent_isolated_across_conversation_ids():
     assert got[0]["user_text"] == "早上好"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="recent key 未按 character 命名空间隔离；由 Phase 2 的 MemoryScopeStrategy 转绿",
-)
 def test_recent_isolated_across_characters():
-    # (b) Cross-character pollution baseline: character A writes, character B
-    # reads the SAME conversation_id through freshly constructed deps. Isolation
-    # demands B sees nothing; today's bare-conversation_id key makes B see A's
-    # turn, so this fails (xfail) until Phase 2 scopes the key by character.
+    # (b) Cross-character isolation: character A writes, character B reads the
+    # SAME conversation_id through freshly constructed deps -- B must see
+    # nothing. Was a strict xfail against the bare-conversation_id key; green
+    # since Phase 2's MemoryScopeStrategy scoped the bucket by character.
     recent = RecentMemory()
     services = SimpleNamespace(recent_memory=recent)
 

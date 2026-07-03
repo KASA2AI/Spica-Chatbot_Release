@@ -22,6 +22,7 @@ from spica.conversation.character_loader import (
     build_character_profile,
     normalize_interlocutor_name,
 )
+from spica.runtime.scope import DEFAULT_CHARACTER_ID
 from spica.runtime.services import AgentServices
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from common.timing import log_timing
@@ -167,7 +168,7 @@ def build_agent_services(
         character_name = character_package.char_name
         skill_dir = character_package.skill_dir
     else:
-        character_id = "spica"
+        character_id = DEFAULT_CHARACTER_ID
         character_name = DEFAULT_CHARACTER_NAME
         skill_dir = config.character.skill_dir
     character_profile = build_character_profile(

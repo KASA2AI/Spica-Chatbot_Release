@@ -22,24 +22,27 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from spica.conversation.time_context import format_local_time_for_prompt
 from agent_tools.function_tools.screen.schema import screen_observation_context_for_next_turn
-from spica.ports.memory import MemoryScope
 from spica.runtime.context import TurnContext
 from spica.runtime.deps import TurnDeps
+from spica.runtime.scope import MemoryScopeStrategy
 
 logger = logging.getLogger(__name__)
 
 
 def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> None:
     deps = deps or TurnDeps.from_legacy_services(services)
+    strategy = MemoryScopeStrategy(deps.config)
     answer_text = (ctx.answer.answer if ctx.answer else None) or ""
 
     # recent_memory append is SYNCHRONOUS and must complete before `done` (N4-memory).
+    # Phase 2: the bucket key is character-scoped via the strategy -- the SAME
+    # derivation stages.load_recent_context_node reads with, so write/read symmetry
+    # is structural.
     try:
         services.recent_memory.append_turn(
-            ctx.request.conversation_id,
+            strategy.recent_key(ctx.request),
             ctx.user_input,
             answer_text,
             user_local_time=(
@@ -55,19 +58,16 @@ def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> Non
         ctx.metadata["memory_error"] = str(exc)
 
     # Long-term commit is fire-and-forget via the injected JobRunner (C6).
-    interlocutor = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
     # §27① write-side symmetry (stage 2): commit under the same effective id the
     # retrieve node reads (stages.retrieve_long_term_memory_node), so a galgame
     # turn's extracted memories land in the caller's ORIGINAL conversation scope,
     # not the galgame namespace. Plain chat turns leave memory_conversation_id
     # unset -> effective == the raw conversation_id -> byte-identical to before.
-    scope = MemoryScope(
-        character_id=str(deps.config.character.character_id or "spica"),
-        user_id=interlocutor,
-        conversation_id=ctx.request.effective_memory_conversation_id,
-    )
+    # Phase 2: the triple comes from strategy.ltm_scope -- same values as the old
+    # hand-built MemoryScope, now shared with the retrieve node by construction.
+    scope = strategy.ltm_scope(ctx.request)
     meta = {
-        "interlocutor_name": interlocutor,
+        "interlocutor_name": scope.user_id,
         "max_active_memories": deps.config.memory.max_long_term_memories,
     }
 

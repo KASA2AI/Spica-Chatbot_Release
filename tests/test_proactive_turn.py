@@ -24,6 +24,7 @@ from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
 from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
 from spica.core.chat_engine import ChatEngine
 from spica.core.proactive import (
@@ -137,7 +138,7 @@ class SystemTurnSinglePathTest(unittest.TestCase):
             events = list(engine.stream_system_turn(
                 "你刚唱完了《稻香》（周杰伦）。", source="song"))
             done = next(e for e in events if e.get("event") == "done")
-            recent = engine.services.recent_memory.get_recent("default")
+            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
 
         self.assertEqual(done["data"]["answer"], "唱完啦，怎么样？")
         # Exactly ONE streamed call -- NO probe, NO tools field, although the

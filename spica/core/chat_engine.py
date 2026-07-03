@@ -23,7 +23,6 @@ from spica.conversation.character_loader import (
 from spica.conversation.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
 from spica.core.proactive import compose_system_directive_message
 from spica.runtime.services import AgentServices
-from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
 from spica.runtime.context import (
     GALGAME_CONVERSATION_PREFIX,
@@ -34,6 +33,7 @@ from spica.runtime.context import (
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import Inline
 from spica.runtime.fold import fold_events
+from spica.runtime.scope import MemoryScopeStrategy
 from spica.runtime.turn import run_turn
 
 
@@ -44,6 +44,10 @@ class ChatEngine:
         # Typed deps (C3a): the runtime uses deps.tools; ports/config are wired in
         # by later stages. Built from the host-assembled (port-resolved) services.
         self.deps = TurnDeps.from_services(services, config)
+        # Phase 2: ONE strategy instance over this same AppConfig object -- its
+        # methods live-read config.character, so set_interlocutor_name's in-place
+        # rename is visible to every later scope resolution.
+        self._memory_scope = MemoryScopeStrategy(config)
         self.interlocutor_name = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
         self.model = services.config.get("model")
         # Path B stage 2: when companion play is active, the host-injected provider
@@ -229,25 +233,23 @@ class ChatEngine:
         self.services.visual_tool = visual_tool
 
     def _ltm_conversation_id(self, conversation_id: str) -> str:
-        # Long-term store is namespaced by character (Phase 7) so it matches
-        # commit_turn / retrieve. "::" is defined once, in scoped_conversation_id.
-        #
-        # TODO(Phase 7 多角色): short-term recent_memory still uses the BARE
-        # conversation_id -- it is NOT namespaced by character_id. Switching
-        # characters within one conversation would cross-contaminate the short-term
-        # context (recent turns of character A leaking into character B). When Phase 7
-        # wires runtime character switching, recent_memory must key on the same
-        # character namespace as the long-term store (scoped_conversation_id).
-        return scoped_conversation_id(
-            str(self.services.config.get("character_id") or "spica"),
-            conversation_id,
-        )
+        # Long-term store is namespaced by character so it matches commit_turn /
+        # retrieve. Phase 2: derivation lives in MemoryScopeStrategy (live-read of
+        # the typed config -- agent_assembly keeps it in sync with the legacy dict
+        # this used to read); "::" is still defined once, in scoped_conversation_id.
+        # The old TODO here is RESOLVED: recent memory now keys on the same
+        # character namespace (stages read / memory_commit write / clear below).
+        return self._memory_scope.clear_targets(conversation_id)[1]
 
     def clear_memory(self, conversation_id: str = "default", clear_long_term: bool = False) -> dict[str, Any]:
-        self.services.recent_memory.clear(conversation_id)
+        recent_key, ltm_conversation_id = self._memory_scope.clear_targets(conversation_id)
+        # Phase 2: recent clear targets the character-scoped bucket, symmetric with
+        # the scoped write key (previously it cleared the bare conversation_id
+        # while the long-term side below was already scoped -- the asymmetry).
+        self.services.recent_memory.clear(recent_key)
         cleared = {"recent_memory": True, "long_term_memory": False}
         if clear_long_term:
-            self.services.memory_store.clear_memories(self._ltm_conversation_id(conversation_id))
+            self.services.memory_store.clear_memories(ltm_conversation_id)
             cleared["long_term_memory"] = True
         return {"ok": True, "conversation_id": conversation_id, "cleared": cleared}
 

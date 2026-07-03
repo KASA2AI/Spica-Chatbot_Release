@@ -23,6 +23,7 @@ from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
 from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig, StreamConfig
 from spica.core.chat_engine import ChatEngine
 from spica.core.companion_events import (
@@ -152,7 +153,7 @@ class SwallowedSystemTurnTest(unittest.TestCase):
             _, done, units = _events_of(
                 engine, engine.stream_system_turn("陪玩剧情片段。", source="galgame")
             )
-            recent = engine.services.recent_memory.get_recent("default")
+            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
         self.assertEqual(units, [])                       # 不TTS的前提:零unit事件
         self.assertEqual(tts.calls, 0)                    # 不TTS(直接证据)
         self.assertEqual(done["data"]["answer"], NO_COMMENT_SENTINEL)  # done带canonical sentinel
@@ -177,7 +178,7 @@ class SwallowedSystemTurnTest(unittest.TestCase):
             _, done, _ = _events_of(
                 engine, engine.stream_system_turn("你刚唱完了歌。", source="song")
             )
-            recent = engine.services.recent_memory.get_recent("default")
+            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
         self.assertEqual(done["data"]["answer"], "唱完啦，怎么样？")
         self.assertGreater(done["data"]["units_count"], 0)
         self.assertGreater(tts.calls, 0)
@@ -189,7 +190,7 @@ class SwallowedSystemTurnTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             engine, _, tts = _build_engine(NO_COMMENT_SENTINEL, tmp)
             _, done, _ = _events_of(engine, engine.stream_voice("随便聊聊"))
-            recent = engine.services.recent_memory.get_recent("default")
+            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
         self.assertEqual(done["data"]["answer"], NO_COMMENT_SENTINEL)
         self.assertGreater(done["data"]["units_count"], 0)  # fallback unit spoken
         self.assertGreater(tts.calls, 0)

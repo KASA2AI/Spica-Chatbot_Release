@@ -11,6 +11,7 @@ is the design, not a bug.
 import unittest
 from types import SimpleNamespace
 
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig, CharacterConfig
 from spica.runtime.context import StreamedAnswer, TurnContext, TurnRequest
 from spica.runtime.deps import TurnDeps
@@ -75,13 +76,17 @@ class CommitScopeTest(unittest.TestCase):
             ("spica", "麦", "default"),
         )
 
-    def test_recent_append_still_uses_raw_conversation_id(self):
-        # Isolation preserved: companion Q&A recent context lives under the galgame
-        # conversation, never the origin one.
+    def test_recent_append_uses_character_scoped_galgame_conversation_id(self):
+        # Phase 2 behaviour change (PR-declared): the recent bucket key is now
+        # {character_id}::{conversation_id}. The galgame isolation this test always
+        # pinned is PRESERVED -- the scoped galgame key still carries the galgame
+        # namespace and still differs from the scoped origin bucket.
         _, recent = _run(
             TurnRequest(user_input="刚才剧情?", conversation_id=GALGAME_CID, memory_conversation_id="default")
         )
-        self.assertEqual(recent.appended, [GALGAME_CID])
+        scoped_galgame = scoped_conversation_id("spica", GALGAME_CID)
+        self.assertEqual(recent.appended, [scoped_galgame])
+        self.assertNotEqual(scoped_galgame, scoped_conversation_id("spica", "default"))
 
 
 if __name__ == "__main__":

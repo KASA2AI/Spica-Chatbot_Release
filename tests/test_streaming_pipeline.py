@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from memory.store import SQLiteMemoryStore
 from memory.recent import RecentMemory
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.runtime.services import AgentServices
 from spica.runtime.context import TurnContext, TurnRequest
 from spica.runtime.orchestrator import stream_voice_events
@@ -363,7 +364,7 @@ class StreamingMemoryJobTest(unittest.TestCase):
         # ... while the long-term commit is merely SUBMITTED, never run on the hot path
         self.assertEqual(len(jobs.submitted), 1)
         # recent append, by contrast, ran synchronously before `done`
-        self.assertTrue(services.recent_memory.get_recent("c1"))
+        self.assertTrue(services.recent_memory.get_recent(scoped_conversation_id("spica", "c1")))
 
 
 class StreamingSetupFailureTest(unittest.TestCase):

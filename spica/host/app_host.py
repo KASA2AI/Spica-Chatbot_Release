@@ -60,6 +60,7 @@ from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
 from spica.runtime.context import GameTurnBinding
 from spica.runtime.jobs import ThreadJobRunner
+from spica.runtime.scope import CharacterScope, character_scope_from_config
 from spica.host.agent_assembly import (
     build_agent_services,
     build_llm_client,
@@ -213,6 +214,16 @@ class AppHost:
             plugin_host=self.plugin_host,
             characters_root=DEFAULT_SPICA_SKILL_DIR.parent,
         )
+
+    @property
+    def character_scope(self) -> CharacterScope:
+        """The current character identity, resolved LIVE from config on every
+        access (Phase 2) -- the single replacement for the fourteen scattered
+        bare-literal identity fallbacks this class used to carry. A
+        property (not a cached value) so ``set_interlocutor_name``'s in-place
+        config rename is reflected immediately. Requires config (post-initialize
+        callers only, same as the sites it replaced)."""
+        return character_scope_from_config(self.config)
 
     def initialize(self) -> None:
         """Construct the backend services (moved verbatim from the UI).
@@ -429,8 +440,8 @@ class AppHost:
 
         game_id, playthrough_id, _ = scope
         gm = self.services.game_memory_adapter
-        character_id = str(self.config.character.character_id or "spica")
-        user_id = str(self.config.character.interlocutor_name or "麦")
+        character_id = self.character_scope.character_id
+        user_id = self.character_scope.user_id
         judge_model = self.config.galgame.reaction_judge_model or self.config.llm.model
         judge_started = time.monotonic()
         try:
@@ -486,8 +497,8 @@ class AppHost:
             logger.warning("reaction beat dropped: no live play scope to record under")
             return
         game_id, playthrough_id, _ = scope
-        character_id = str(self.config.character.character_id or "spica")
-        user_id = str(self.config.character.interlocutor_name or "麦")
+        character_id = self.character_scope.character_id
+        user_id = self.character_scope.user_id
         self.services.game_memory_adapter.add_companion_beat(
             CompanionBeat(
                 beat_id=uuid.uuid4().hex,
@@ -509,8 +520,8 @@ class AppHost:
         if scope is None or self.services is None:
             return []
         game_id = scope[0]
-        character_id = str(self.config.character.character_id or "spica")
-        user_id = str(self.config.character.interlocutor_name or "麦")
+        character_id = self.character_scope.character_id
+        user_id = self.character_scope.user_id
         return self.services.game_memory_adapter.recent_reaction_beats_for_dedupe(
             game_id, user_id, character_id, limit=limit
         )
@@ -622,8 +633,8 @@ class AppHost:
         return GalgameCompanionSession(
             self.services.game_memory_adapter,
             emit=self.companion_sink,
-            character_id=str(self.config.character.character_id or "spica"),
-            user_id=str(self.config.character.interlocutor_name or "麦"),
+            character_id=self.character_scope.character_id,
+            user_id=self.character_scope.user_id,
             jobs=ThreadJobRunner(),
             summarizer=self._new_summarizer(),
             summary_trigger_chars=self.config.galgame.summary_trigger_chars,
@@ -699,8 +710,8 @@ class AppHost:
             summarizer=self._new_summarizer(),
             emit=self.companion_sink,
             record_history=self._record_play_history,  # B 方案: host 持写权限
-            character_id=str(self.config.character.character_id or "spica"),
-            user_id=str(self.config.character.interlocutor_name or "麦"),
+            character_id=self.character_scope.character_id,
+            user_id=self.character_scope.user_id,
             summary_trigger_chars=self.config.galgame.summary_trigger_chars,
             interval_seconds=self.config.galgame.ocr_interval_seconds,
             play_history_card_max_chars=self.config.galgame.play_history_card_max_chars,
@@ -761,8 +772,8 @@ class AppHost:
             source="spica",
             created_at=utc_now_iso(),
             scope={
-                "character_id": str(self.config.character.character_id or "spica"),
-                "user_id": str(self.config.character.interlocutor_name or "麦"),
+                "character_id": self.character_scope.character_id,
+                "user_id": self.character_scope.user_id,
                 "game_id": request.game_id,
             },
         )
@@ -774,7 +785,7 @@ class AppHost:
         it. memory_key is the game -> one play of the same game OVERWRITES the
         previous card (store.upsert_memory's explicit-key UPDATE semantics);
         scope="relationship" renders as "スピカと麦" in the prompt."""
-        character_id = str(self.config.character.character_id or "spica")
+        character_id = self.character_scope.character_id
         self.services.memory_store.upsert_memory(
             conversation_id=scoped_conversation_id(character_id, "default"),
             scope="relationship",
@@ -797,7 +808,7 @@ class AppHost:
         game_memory = self.services.game_memory_adapter
         dangling = {ps.session_id: ps for ps in game_memory.dangling_play_sessions()}
         recovered = recover_dangling_sessions(game_memory, summarizer)
-        user_name = str(self.config.character.interlocutor_name or "麦")
+        user_name = self.character_scope.user_id
         seen_games: set[str] = set()
         for session_id in recovered:
             play_session = dangling.get(session_id)

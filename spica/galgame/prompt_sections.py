@@ -8,12 +8,15 @@ half (mode decision, target resolution) and the node itself
 decides WHETHER to inject, only WHAT the sections look like.
 
 Import boundary (guarded by tests/test_layering.py): exactly ``json`` /
-``typing.Any`` / ``DEFAULT_INTERLOCUTOR_NAME``. This module must not import
-``spica.runtime.*`` (stages imports us -- the reverse edge would be a cycle),
+``typing.Any`` (Phase 2 tightened it from three -- identity now arrives
+pre-resolved as the ``companion_scope`` parameter, so the
+``DEFAULT_INTERLOCUTOR_NAME`` import and the default fallbacks left this
+module). It must not import ``spica.runtime.*`` (stages imports us -- the
+reverse edge would be a cycle; that also rules out ``spica.runtime.scope``),
 ``spica.galgame.session`` (the state owner has no business in a pure formatter),
 ``spica.core.events`` (N1: transform layers never produce RuntimeEvent), or Qt
-(CLAUDE.md #1). ``game_memory`` / ``request`` / ``deps`` stay duck-typed ``Any``
-for exactly this reason.
+(CLAUDE.md #1). ``game_memory`` / ``request`` / ``deps`` / ``companion_scope``
+stay duck-typed ``Any`` for exactly this reason.
 
 Byte parity with the pre-move behaviour is pinned by
 tests/test_game_prompt_golden.py (Phase 0 golden #2).
@@ -21,8 +24,6 @@ tests/test_game_prompt_golden.py (Phase 0 golden #2).
 
 import json
 from typing import Any
-
-from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 
 _COMPANION_INTENT = "ask_companion_memory"
 # Stage 2 (Path B): active mode also injects the most recent summaries -- a smaller
@@ -128,7 +129,7 @@ def _format_beats(beats: list[Any]) -> str:
 
 def _build_game_context_sections(
     mode: str, game_memory: Any, request: Any, deps: Any, game_id: str, playthrough_id: str,
-    session_id: str | None,
+    session_id: str | None, companion_scope: Any,
 ) -> list[str]:
     sections: list[str] = []
 
@@ -180,12 +181,13 @@ def _build_game_context_sections(
         sections.append(_section("[GAME_CHOICES]", _format_choices(choices)))
 
     if _should_inject_companion(mode, request):
-        character_id = str(deps.config.character.character_id or "spica")
-        user_id = str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME)
+        # Phase 2: identity arrives pre-resolved from the caller (stages.py) --
+        # this module holds no default fallbacks and never resolves identity.
         # P5 D-P5-6: the prompt reader EXCLUDES silent reaction beats -- they
         # accrue faster than spoken ones and would crowd her real words out.
         beats = game_memory.recent_companion_beats_for_prompt(
-            game_id, user_id, character_id, limit=deps.config.galgame.prompt_context_recent_limit
+            game_id, companion_scope.user_id, companion_scope.character_id,
+            limit=deps.config.galgame.prompt_context_recent_limit
         )
         if beats:
             sections.append(_section("[COMPANION_CONTEXT]", _format_beats(beats)))

@@ -84,7 +84,8 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 | prompt 组装 | `spica/conversation/prompt_builder.py::build_spica_prompt`（`[LONG_TERM_MEMORY]` 段在此） |
 | 记忆端口 | `spica/ports/memory.py` → `MemoryScope(character_id, user_id, conversation_id)` + `MemoryPort` |
 | 记忆 adapter | `spica/adapters/memory/sqlite.py`（按 `character_id::conversation_id` 命名空间隔离） |
-| recent memory | `memory/recent.py`（内存 deque，按裸 conversation_id） |
+| recent memory | `memory/recent.py`（内存 deque 哑存储；key 由 scope 策略推导，按 `character_id::conversation_id`——OO 迁移 Phase 2） |
+| 记忆 scope 策略 | `spica/runtime/scope.py`（`CharacterScope` + `MemoryScopeStrategy`：身份默认值单一居所 + recent/LTM/clear 三点对称，live-read `config.character`） |
 | 能力注册表 | `spica/plugins/registry.py::CapabilityRegistry` |
 | 工具轮（流式生产链） | `spica/runtime/tool_round.py`（probe → 执行 → followup；`chainable` 工具进 round 2..max_tool_rounds 多轮循环，超限优雅强制收尾不报错） |
 | 主动开口（turn 发起器） | `spica/core/proactive.py`（`ProactiveTurnRequest` / `ProactiveTurnArbiter`，模式无关）+ `ChatEngine.stream_system_turn`；UI 消费 `StreamKind.SYSTEM` |

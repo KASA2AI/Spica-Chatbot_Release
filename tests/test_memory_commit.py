@@ -13,6 +13,7 @@ import unittest
 from dataclasses import replace
 from types import SimpleNamespace
 
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig, CharacterConfig, MemoryConfig
 from spica.runtime.context import StreamedAnswer, TurnContext, TurnRequest
 from spica.runtime.deps import TurnDeps
@@ -86,7 +87,11 @@ class SaveStreamMemoryTest(unittest.TestCase):
 
         # recent append already happened (synchronous, before `done`)
         self.assertEqual(len(recent.appends), 1)
-        self.assertEqual(recent.appends[0][:3], ("c1", "你好", "こんにちは。"))
+        # Phase 2: the recent bucket key is character-scoped ({character_id}::{cid}).
+        self.assertEqual(
+            recent.appends[0][:3],
+            (scoped_conversation_id("spica", "c1"), "你好", "こんにちは。"),
+        )
         # long-term commit was SUBMITTED, not run inline
         self.assertEqual(len(jobs.submitted), 1)
         self.assertEqual(memory.commits, [])

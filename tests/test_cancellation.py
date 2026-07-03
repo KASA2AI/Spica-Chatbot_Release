@@ -36,6 +36,7 @@ from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
 from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig
 from spica.core.chat_engine import ChatEngine
 from spica.plugins.registry import CapabilityRegistry
@@ -182,7 +183,7 @@ class CheckpointTwoMemoryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             engine = _build_engine(api, tmp)
             list(engine.stream_voice("你好", cancelled=event))
-            recent = engine.services.recent_memory.get_recent("default")
+            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
         self.assertEqual(recent, [])  # save_stream_memory skipped -> no ghost recent append
         # ② guards the WHOLE save_stream_memory call, so the backgrounded long-term
         # commit (jobs.submit inside it) is skipped by the same gate.
@@ -192,7 +193,7 @@ class CheckpointTwoMemoryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             engine = _build_engine(_OneChunkChatAPI(), tmp)
             list(engine.stream_voice("你好"))  # no cancel
-            recent = engine.services.recent_memory.get_recent("default")
+            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
         self.assertEqual(len(recent), 1)  # the harness really writes when not cancelled
         self.assertIn("你好", recent[0]["user_text"])
 

@@ -45,7 +45,6 @@ from agent_tools.function_tools.screen.schema import (
     compact_screen_observation_for_prompt,
 )
 from agent_tools.tts.schemas import TTSRequest, TTSResult
-from spica.ports.memory import MemoryScope
 from spica.runtime.context import (
     PromptBundle,
     RetrievedContext,
@@ -56,6 +55,7 @@ from spica.runtime.context import (
 )
 from spica.runtime.deps import TurnDeps
 from spica.runtime.observer import NoopTurnObserver
+from spica.runtime.scope import MemoryScopeStrategy, character_scope_from_config
 
 
 logger = logging.getLogger(__name__)
@@ -151,8 +151,14 @@ def load_recent_context_node(ctx: TurnContext, services: AgentServices, deps: An
     deps = deps or TurnDeps.from_legacy_services(services)
     # TODO(C6): the recent-turn buffer becomes a deps-resolved capability;
     # services.recent_memory is a transitional carrier (N3 allows it).
+    #
+    # Phase 2: the bucket key is character-scoped ({character_id}::{conversation_id})
+    # via MemoryScopeStrategy -- symmetric with memory_commit's append key, so two
+    # characters sharing a conversation_id can no longer read each other's recent
+    # context. memory/recent.py stays a dumb store; ALL key derivation lives in the
+    # strategy.
     recent = services.recent_memory.get_recent(
-        ctx.request.conversation_id,
+        MemoryScopeStrategy(deps.config).recent_key(ctx.request),
         limit=deps.config.memory.recent_context_limit,
     )
     if ctx.recent is None:
@@ -176,11 +182,10 @@ def retrieve_long_term_memory_node(ctx: TurnContext, services: AgentServices, de
     # memory_conversation_id = "default" and still read Spica's long-term character
     # memory. For a plain chat turn memory_conversation_id is unset -> this falls
     # back to conversation_id -> byte-identical behaviour (golden unchanged).
-    scope = MemoryScope(
-        character_id=str(deps.config.character.character_id or "spica"),
-        user_id=str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME),
-        conversation_id=ctx.request.effective_memory_conversation_id,
-    )
+    # Phase 2: the scope triple comes from MemoryScopeStrategy (same values as the
+    # old hand-built MemoryScope; write-side symmetry with memory_commit is now
+    # structural, not a comment).
+    scope = MemoryScopeStrategy(deps.config).ltm_scope(ctx.request)
     items = deps.memory.retrieve(
         scope,
         ctx.user_input,
@@ -386,8 +391,11 @@ def retrieve_game_context_node(ctx: TurnContext, services: AgentServices, deps: 
             game_id, playthrough_id, session_id = _resolve_game_target(ctx.request, game_memory, mode)
             if not game_id:
                 return ctx
+            # Phase 2: identity is resolved HERE (live, per turn) and passed down --
+            # prompt_sections must not know about defaults or import spica.runtime.
             sections = _build_game_context_sections(
-                mode, game_memory, ctx.request, deps, game_id, playthrough_id, session_id
+                mode, game_memory, ctx.request, deps, game_id, playthrough_id, session_id,
+                character_scope_from_config(deps.config),
             )
         except Exception as exc:  # noqa: BLE001 -- best-effort: never fail the turn
             # Hard rule (Phase 3): do NOT silently swallow. Surface the failure on

@@ -206,8 +206,10 @@ docs/**                            # 文档
 2. 新存储字段 → 改 memory/store.py 表结构 + spica/adapters/memory/sqlite.py + 抽取规则 memory/extractor.py。
    注意命名空间 {character_id}::{conversation_id}（adapters/memory/sqlite.py），别破坏角色隔离。
 3. galgame 侧记忆 → 用 game_memory 独立库，不混进角色 MemoryScope。
-4. 注意已知 P1：recent_memory 仍按裸 conversation_id（chat_engine.py:235-240 TODO），多角色前需命名空间化。
-必读：spica/ports/memory.py、spica/adapters/memory/sqlite.py、memory/、spica/runtime/memory_commit.py
+4. recent/LTM/clear 的 key 与 scope 一律经 spica/runtime/scope.py 的 MemoryScopeStrategy 推导
+   （OO 迁移 Phase 2：recent 桶已按 {character_id}::{conversation_id}，旧「裸 conversation_id」
+   P1 已修复），不要在调用点手拼 key 或身份默认值。
+必读：spica/runtime/scope.py、spica/ports/memory.py、spica/adapters/memory/sqlite.py、memory/、spica/runtime/memory_commit.py
 测试：test_memory_commit / test_memory_store / test_recent_memory / test_ltm_cross_restart / test_memory_commit_scope
 ```
 

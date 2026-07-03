@@ -70,3 +70,51 @@
   `test_layering::test_spica_packages_import_cleanly`（15 包 import）gate 常驻覆盖
 - 遗留/偏差：`CLAUDE.md` 文末 Agent skills hunk 是 unrelated WIP，未包含在 Phase 1 commit；
   Phase 2 未执行
+
+## Phase 2 — CharacterScope + scoped recent + MemoryScopeStrategy（已收口）
+- 日期：2026-07-03
+- commit：`26314a2da7b0c88b4de622aa9d330d43d5cb7224`（前置 plan amendment：`3128d8e`——
+  白名单补 `prompt_sections.py` / `test_memory_commit.py` 两缺口 + spy append 爆炸半径 rg）
+- 实际修改文件（与修订版白名单完全一致，零超出）：
+  - 生产 7 件：`spica/runtime/scope.py`（新增：DEFAULT_CHARACTER_ID + CharacterScope +
+    character_scope_from_config + MemoryScopeStrategy）、`spica/runtime/stages.py`、
+    `spica/runtime/memory_commit.py`、`spica/core/chat_engine.py`、`spica/host/app_host.py`
+    （14 处身份默认值 → `character_scope` property）、`spica/host/agent_assembly.py`（仅一行
+    改常量 import）、`spica/galgame/prompt_sections.py`（仅限定范围：身份参数化，未 import
+    `spica.runtime.*`）；
+  - 测试 8 件：`test_recent_memory_scope.py`（摘 strict xfail，红转绿）、
+    `test_memory_commit_scope.py`（recent append 断言改 scoped，隔离性断言保留）、
+    `test_cancellation.py` / `test_no_comment_gate.py` / `test_proactive_turn.py` /
+    `test_streaming_pipeline.py`（7 处裸 get_recent 改读 scoped 桶，含 2 处负向断言）、
+    `test_memory_commit.py`（仅 :89 spy 期望）、`test_memory_scope_strategy.py`（新增 9 用例：
+    语义 4 + retrieve/commit 对称 2 + clear 对称 1 + rename live-read 2）；
+  - 文档 2 件（与代码同 commit，迁移原则 3(d)）：`CLAUDE.md`（§2 表 recent/scope 两行，
+    Agent skills WIP hunk 经单 hunk 选择性 stage 排除）、`docs/DEVELOPMENT_GUARDRAILS.md`
+    （§11 旧 P1 裸 key 注记改已修复 + 必读加 scope.py）
+- 测试：
+  - memory 族 targeted（8 文件）→ 29 passed
+  - 白名单 4 测试 + turn_contract → 39 passed
+  - `test_game_prompt_golden.py` → 4 passed（身份参数化后字节等价保持）
+  - `python -m pytest tests -q` → 1127 passed, 1 warning, 108 subtests passed
+    （= 1117 基线 + 9 新增 + 1 xfail 转绿，0 xfailed）
+- 旧 seam 归零验证（退出 grep）：
+  - `rg -n 'or "spica"|or "麦"' spica` → **零命中**（比计划书「仅剩 scope.py 1 处」更严：
+    回退全部经常量，字面量模式在 spica/ 下绝迹）；
+  - `rg -n 'character_id[^=]*=\s*"spica"|user_id[^=]*=\s*"麦"' spica --type py` → 仅
+    `session.py:151-152` + `companion_controller.py:94-95`（计划书显式豁免），零计划外命中
+- 文档更新：见上「文档 2 件」；本条目与 README 状态板由收口文档回写补记
+- 双轨表变化：D5（裸 recent key vs strategy scoped key）零并存承诺兑现——三生产调用点
+  （stages 读 / memory_commit 写 / chat_engine 清）一次 flip，对称性测试常驻
+- 关键设计记录：
+  - MemoryScopeStrategy **live-read** `config.character`（调用时现算；`set_interlocutor_name`
+    的原地突变即时可见，rename 特征测试常驻）；不给 TurnDeps 挂 scope 字段（拍板保持）；
+  - recent read/write/clear **三点对称**（`clear_memory` 的 recent/LTM 不对称已修齐）；
+  - LTM `effective_memory_conversation_id`（§27①）语义不变，scope 三元组与旧手拼逐字节同值；
+  - `prompt_sections.py` import 白名单 **3→2 收紧**（`json`/`typing.Any`；身份由 stages 侧
+    resolve 后参数传入，Phase 1 import 边界原样保持）；
+  - `"::"` 单一居所仍是 `scoped_conversation_id`（scope.py 只 import 沿用，adapter 未改，
+    未向其他 runtime 模块扩散）
+- 遗留/偏差：
+  1. `tests/test_memory_pipeline_e2e.py:14` 模块 docstring 尾句（"recent stays on the bare
+     conversation_id"）在 Phase 2 后过时——该文件不在白名单且其测试全绿，留后续文档轮处理；
+  2. Phase 3+ 未执行。

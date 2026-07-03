@@ -38,8 +38,12 @@ from spica.galgame.reaction_judge import (
     _clamp_worth,
     _parse,
 )
-from spica.host import app_host as app_host_module
+from spica.galgame.reaction_scoring import (
+    _LEXICON_FALLBACK_PASS_SCORE,
+    ReactionScoringPolicy,
+)
 from spica.host.app_host import AppHost
+from spica.host.assemblies import reaction as reaction_assembly
 
 
 # -- helpers ------------------------------------------------------------------
@@ -167,7 +171,9 @@ class JudgeParseTest(unittest.TestCase):
 class DegradeFallbackTest(unittest.TestCase):
     def setUp(self):
         self.host = _judge_host(_RaisingJudge(), mode="high")
-        self.host._reaction_lexicon_for = lambda gid: _KNOWN_LEXICON  # deterministic
+        # Phase 4: the deterministic-lexicon seam lives on the policy (a host-
+        # level attribute override would be dead code behind the thin delegate).
+        self.host._reaction_scoring_policy.lexicon_for = lambda gid: _KNOWN_LEXICON
 
     def test_judge_failure_falls_back_to_lexicon_not_silence(self):
         # "真相" -> lexicon score 4 >= high min_score 3 -> fallback PASSES (不沉默)
@@ -186,7 +192,7 @@ class DegradeFallbackTest(unittest.TestCase):
         # NOT a worth-scale engine threshold. lex=4 passes; encoded as a big score
         # so the engine's worth threshold can never silence it.
         passed = self.host._reaction_scorer(_beat(("S", "真相大白")))
-        self.assertEqual(passed.score, app_host_module._LEXICON_FALLBACK_PASS_SCORE)
+        self.assertEqual(passed.score, _LEXICON_FALLBACK_PASS_SCORE)
 
 
 # -- ③ window read ------------------------------------------------------------
@@ -226,20 +232,64 @@ class JudgeCooldownTest(unittest.TestCase):
     def test_within_cooldown_returns_zero_without_calling_llm(self):
         judge = _CountingJudge(JudgeVerdict(worth=7, moment="m", angle="吐槽"))
         host = _judge_host(judge)
-        # settable fake clock: robust to however many monotonic reads a scorer call
-        # makes (cooldown check + judge-timing), unlike a fixed side_effect list.
+        # settable fake clock, INJECTED into the policy (Phase 4): robust to
+        # however many clock reads a scorer call makes (cooldown check +
+        # judge-timing), and impossible to fake-green -- without the injection
+        # the cooldown window would read the real clock and r2 would call the LLM.
         clock = {"t": 0.0}
-        with patch.object(app_host_module.time, "monotonic", lambda: clock["t"]):
-            clock["t"] = 0.0
-            r1 = host._reaction_scorer(_beat(("S", "a")))   # judge runs, last_at=0
-            clock["t"] = 5.0
-            r2 = host._reaction_scorer(_beat(("S", "b")))   # 5-0<15 -> cooldown, no LLM
-            clock["t"] = 20.0
-            r3 = host._reaction_scorer(_beat(("S", "c")))   # 20-0>=15 -> judge runs again
+        host._reaction_scoring_policy = ReactionScoringPolicy(
+            config_provider=lambda: host.config,
+            game_scope_provider=lambda: host._reaction_game_scope(),
+            game_memory_provider=lambda: host.services.game_memory_adapter,
+            character_scope_provider=lambda: host.character_scope,
+            judge_provider=lambda: host._reaction_judge,
+            clock=lambda: clock["t"],
+        )
+        clock["t"] = 0.0
+        r1 = host._reaction_scorer(_beat(("S", "a")))   # judge runs, last_at=0
+        clock["t"] = 5.0
+        r2 = host._reaction_scorer(_beat(("S", "b")))   # 5-0<15 -> cooldown, no LLM
+        clock["t"] = 20.0
+        r3 = host._reaction_scorer(_beat(("S", "c")))   # 20-0>=15 -> judge runs again
         self.assertEqual(r1.score, 7)
         self.assertEqual((r2.score, r2.reasons), (0, ("judge_cooldown",)))
         self.assertEqual(r3.score, 7)
         self.assertEqual(judge.calls, 2)  # the cooldown beat did NOT hit the LLM
+
+
+# -- ⑧ Phase 4 patch validity: the three facades are ON the real build path ----
+
+class PatchValidityTest(unittest.TestCase):
+    """Phase 4 exit ③ (anti-no-op-patch): assemblies.reaction builds THROUGH the
+    AppHost thin delegates, so patch.object(AppHost, ...) -- the shape the
+    moondream cutover 15-patch and future tests rely on -- always intercepts
+    real construction. A sentinel that fails to arrive means a facade exists
+    but is no longer on the build path."""
+
+    def test_install_builds_judge_through_the_host_delegate(self):
+        host = AppHost()
+        sentinel = object()
+        with patch.object(AppHost, "_new_reaction_judge", return_value=sentinel), \
+             patch.object(AppHost, "_build_reaction_engine", return_value=None):
+            reaction_assembly.install(host)
+        self.assertIs(host._reaction_judge, sentinel)
+
+    def test_install_builds_engine_through_the_host_delegate(self):
+        host = AppHost()
+        sentinel = object()
+        with patch.object(AppHost, "_new_reaction_judge", return_value=None), \
+             patch.object(AppHost, "_build_reaction_engine", return_value=sentinel):
+            reaction_assembly.install(host)
+        self.assertIs(host.reaction_engine, sentinel)
+
+    def test_new_reaction_judge_takes_adapter_through_the_host_delegate(self):
+        host = AppHost()
+        host.config = AppConfig(galgame=GalgameConfig(reaction_judge_enabled=True))
+        host.services = SimpleNamespace(llm_adapter=object())
+        sentinel_adapter = object()
+        with patch.object(AppHost, "_judge_llm_adapter", return_value=sentinel_adapter):
+            judge = host._new_reaction_judge()
+        self.assertIs(judge._llm, sentinel_adapter)
 
 
 # -- ⑥ zero-diff + config defaults --------------------------------------------

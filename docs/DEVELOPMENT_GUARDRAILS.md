@@ -41,7 +41,8 @@ spica/runtime/tool_round.py        # 工具轮 + 系统 turn 工具硬关断
 spica/runtime/stages.py            # 12 段纯 transform + galgame gate
 spica/runtime/context.py / deps.py # TurnRequest/Context/Deps 边界
 spica/core/chat_engine.py          # 三入口汇入 run_turn + galgame 绑定 + 记忆管理
-spica/host/app_host.py             # 组装根 + reaction/galgame host 闭包（持权限）
+spica/host/app_host.py             # 组装根 + galgame/写权限 host 闭包（持权限）；OO 迁移 Phase 4 后
+                                   # 禁新增 per-domain 方法——domain 装配走 assemblies（见 §12b）
 spica/conversation/prompt_builder.py  # 拼 prompt 的唯一地方
 spica/galgame/session.py           # galgame 唯一状态 owner（并发核心）
 spica/plugins/registry.py          # 工具/能力注册元数据
@@ -226,6 +227,22 @@ docs/**                            # 文档
    答案为 NO_COMMENT 哨兵时会被 system_silent 吞掉（不播不写），这是正常行为。
 必读：spica/core/proactive.py、spica/core/chat_engine.py(stream_system_turn)、spica/galgame/reaction.py(范例)
 测试：test_proactive_turn / test_reaction_wiring / test_no_comment_gate
+```
+
+---
+
+## 12b. 新 domain 装配模板（assemblies，OO 迁移 Phase 4 立范）
+
+```text
+1. 装配代码落 spica/host/assemblies/<domain>.py：install(host) + 各构建函数；不进 AppHost 方法体
+   （AppHost 每 domain 预算 ≤15 行 = 一次 install 调用 + 薄委托）。
+2. install() 与构建函数必须经 AppHost 薄委托构建（facade = 唯一构建路径）——patch 有效性测试常驻，
+   仿 test_reaction_judge.PatchValidityTest 的 sentinel 用例，防「facade 存在但不在路径上」的假绿。
+3. 评分/决策类逻辑下沉 domain 包（仿 spica/galgame/reaction_scoring.py 的 ReactionScoringPolicy）：
+   依赖一律 provider live-read（lambda 现读 host 属性，不捕获 bound method/值），时钟等可注入。
+4. 写权限闭包（beat writer / song request 等）留 host（铁律 #9），policy/assembly 只经它们转发。
+必读：spica/host/assemblies/reaction.py、spica/galgame/reaction_scoring.py
+测试：test_reaction_judge（patch 有效性族 + 冷却/降级）+ domain 专属测试
 ```
 
 ---

@@ -22,11 +22,9 @@ The host exposes two narrow surfaces rather than one fat object:
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from typing import Any, Callable
 
-from common.timing import log_timing
 
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
@@ -44,18 +42,13 @@ from spica.galgame.models import CompanionBeat, utc_now_iso
 from spica.galgame.ocr_calibration import GalgameOcrCalibrator
 from spica.galgame.ocr_loop import OcrStreamRunner
 from spica.galgame.reaction import (
-    REACTION_MODE_TABLE,
     ReactionEngine,
     ReactionLexicon,
-    ReactionModeParams,
     ScoreResult,
     compose_reaction_directive,
-    lexicon_source_mtime,
-    load_reaction_lexicon,
-    merge_mode_table,
-    score_beat,
 )
-from spica.galgame.reaction_judge import GalgameReactionJudge, ReactionJudgeError
+from spica.galgame.reaction_judge import GalgameReactionJudge
+from spica.galgame.reaction_scoring import ReactionScoringPolicy
 from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
 from spica.runtime.context import GameTurnBinding
@@ -63,9 +56,9 @@ from spica.runtime.jobs import ThreadJobRunner
 from spica.runtime.scope import CharacterScope, character_scope_from_config
 from spica.host.agent_assembly import (
     build_agent_services,
-    build_llm_client,
     build_moondream_provider,
 )
+from spica.host.assemblies import reaction as reaction_assembly
 from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
 from spica.host.warmup import run_warmup
@@ -86,21 +79,6 @@ from spica.adapters.visual import build_spica_visual
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS, GPTSoVITSTool, load_tts_config
 
 logger = logging.getLogger(__name__)
-
-# -- P5 v2 reaction-judge host-wiring tunables --------------------------------
-# judge-cooldown: minimum seconds between LLM judge calls on the engine worker
-# thread (single-consumer, no lock). Caps the judge call rate even when it keeps
-# declining (a decline stamps NO budget cooldown, so without this the closure
-# would re-judge every non-cooldown beat). budget/cooldown still gate BEFORE the
-# scorer (reaction.py L587), so this is an extra throttle, not the only one.
-REACTION_JUDGE_COOLDOWN_SECONDS = 15.0
-# scene window: tail N unsummarized committed lines the judge sees (the offline
-# report's default). The cross-beat run-up the lexicon gate is blind to.
-REACTION_JUDGE_WINDOW_LINES = 24
-# judge-down fallback (叉口②-b): a pass score above any worth threshold, so the
-# engine's worth-scale min_score can't silence a beat the LEXICON scale passed.
-_LEXICON_FALLBACK_PASS_SCORE = 1000
-
 
 def _install_ocr_runtime_provider(config: AppConfig, services: Any) -> None:
     from agent_tools.function_tools.screen.backends.ocr_runtime import (
@@ -139,13 +117,24 @@ class AppHost:
         # request_proactive_turn injection).
         self.reaction_engine: ReactionEngine | None = None
         self._reaction_try_speak: Any | None = None
-        self._reaction_lexicons: dict[str | None, ReactionLexicon] = {}
-        self._reaction_lexicon_mtimes: dict[str | None, float] = {}
-        # P5 v2 LLM judge: built in initialize() when reaction_judge_enabled (None
-        # -> the lexicon score_beat stays the scorer, zero diff). _last_at throttles
-        # re-judging (worker-thread only, single-consumer -> no lock).
+        # P5 v2 LLM judge: built by assemblies.reaction.install() when
+        # reaction_judge_enabled (None -> the lexicon score_beat stays the
+        # scorer, zero diff). The judge lives HERE (write-authority stays on the
+        # host); cooldown state + lexicon caches moved into the policy (Phase 4).
         self._reaction_judge: GalgameReactionJudge | None = None
-        self._reaction_judge_last_at: float | None = None
+        # Phase 4: the scoring DECISION half. Providers are live-read lambdas on
+        # purpose -- tests (and set_interlocutor_name-style runtime mutation)
+        # replace host attributes after construction and the policy must see it;
+        # capturing a bound method or value here would silently freeze them.
+        self._reaction_scoring_policy = ReactionScoringPolicy(
+            config_provider=lambda: self.config,
+            game_scope_provider=lambda: self._reaction_game_scope(),
+            game_memory_provider=lambda: (
+                self.services.game_memory_adapter if self.services is not None else None
+            ),
+            character_scope_provider=lambda: self.character_scope,
+            judge_provider=lambda: self._reaction_judge,
+        )
         # Path B stage 2: the process-wide companion controller singleton, built
         # lazily by companion_controller(); _companion_game_binding reads it.
         self._companion_controller: GalgameCompanionController | None = None
@@ -311,12 +300,10 @@ class AppHost:
             # the controller singleton at call time), so wiring order is free and a
             # plain chat turn stays byte-identical while no companion play is active.
             self.chat_engine.set_game_binding_provider(self._companion_game_binding)
-            # P5 v2: the reaction judge (None unless reaction_judge_enabled). Built
-            # BEFORE the engine so the scorer closure sees it on the first beat.
-            self._reaction_judge = self._new_reaction_judge()
-            # P5: the reaction engine (None while reaction_mode is off -- the
-            # tee then never enqueues, zero overhead on the OCR thread).
-            self.reaction_engine = self._build_reaction_engine()
+            # P5 / Phase 4: reaction domain wiring via the assembly (judge before
+            # engine; install() builds THROUGH the thin delegates below -- the
+            # facade is the only build path, pinned by patch-validity tests).
+            reaction_assembly.install(self)
             # Plan B: build the STT adapter ONCE (resident singleton). Construction
             # is cheap (the WhisperModel loads lazily at warmup/first transcribe);
             # injected by reference into each SpeechWorker so worker churn never
@@ -395,99 +382,16 @@ class AppHost:
         return bool(try_speak(request))
 
     def _reaction_lexicon_for(self, game_id: str | None) -> ReactionLexicon:
-        """mtime-cached per-game lexicon (step 4-B hot-reload, mirrors
-        VisualDiffService): a default.yaml / <game_id>.yaml edit is picked up on
-        the next beat without a restart. Shared by the lexicon scorer (judge off)
-        and the judge's failure fallback so both see the same hot-reloaded words."""
-        mtime = lexicon_source_mtime(game_id)
-        if (
-            game_id not in self._reaction_lexicons
-            or self._reaction_lexicon_mtimes.get(game_id) != mtime
-        ):
-            self._reaction_lexicons[game_id] = load_reaction_lexicon(game_id)
-            self._reaction_lexicon_mtimes[game_id] = mtime
-        return self._reaction_lexicons[game_id]
+        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2): the mtime cache
+        lives on the scoring policy now."""
+        return self._reaction_scoring_policy.lexicon_for(game_id)
 
     def _reaction_scorer(self, beat: Any) -> ScoreResult:
-        """The scorer behind the engine's ``self._scorer(beat)`` seam (reaction.py
-        L592). ENGINE UNTOUCHED: the signature is ``(beat) -> ScoreResult`` and the
-        L396 injection are both unchanged.
-
-        - Judge OFF (default) -> lexicon ``score_beat`` (byte-identical to pre-judge,
-          zero diff).
-        - Judge ON -> LLM worth via the judge, reading a scene WINDOW + arc from
-          game_memory (the same data ``_build_game_context_sections`` injects), so
-          it no longer misses wordless drama.
-        - judge-cooldown -> a worth-0 sentinel (drops below any worth threshold)
-          without an LLM call, throttling the rate.
-        - ANY judge failure DEGRADES HERE, not in the engine: the engine's worker
-          loop swallows scorer exceptions into a silent drop, so catching here is
-          the only place a failure becomes lexicon scoring rather than silence."""
-        scope = self._reaction_game_scope()
-        game_id = scope[0] if scope else None
-        lexicon = self._reaction_lexicon_for(game_id)
-        if self._reaction_judge is None:
-            return score_beat(beat, lexicon)  # judge off: zero-diff lexicon path
-
-        now = time.monotonic()
-        if (
-            self._reaction_judge_last_at is not None
-            and now - self._reaction_judge_last_at < REACTION_JUDGE_COOLDOWN_SECONDS
-        ):
-            return ScoreResult(0, ("judge_cooldown",))
-        if scope is None or self.services is None:
-            return self._lexicon_fallback(beat, lexicon)  # no live scope -> lexicon scale
-
-        game_id, playthrough_id, _ = scope
-        gm = self.services.game_memory_adapter
-        character_id = self.character_scope.character_id
-        user_id = self.character_scope.user_id
-        judge_model = self.config.galgame.reaction_judge_model or self.config.llm.model
-        judge_started = time.monotonic()
-        try:
-            window = gm.unsummarized_committed_story_lines(game_id, playthrough_id)
-            verdict = self._reaction_judge.judge(
-                beat_lines=list(beat.lines),
-                window_lines=window[-REACTION_JUDGE_WINDOW_LINES:],
-                recent_summaries=gm.recent_summaries(game_id, playthrough_id, limit=2),
-                progress=gm.get_progress_state(game_id, playthrough_id),
-                recent_beats=gm.recent_companion_beats_for_prompt(
-                    game_id, user_id, character_id,
-                    limit=self.config.galgame.prompt_context_recent_limit,
-                ),
-            )
-        except ReactionJudgeError:
-            # Telemetry: one line per ACTUAL judge call (degraded path). 不改行为.
-            log_timing("reaction_judge", (time.monotonic() - judge_started) * 1000.0,
-                       model=judge_model, degraded=True, lines=len(beat.lines))
-            logger.warning("reaction judge failed -> lexicon fallback", exc_info=True)
-            return self._lexicon_fallback(beat, lexicon)
-        # Telemetry: judge latency + worth (correlate with the engine's downstream
-        # "reaction decision: spoke|below_threshold" log to see if worth was selected).
-        log_timing("reaction_judge", (time.monotonic() - judge_started) * 1000.0,
-                   model=judge_model, worth=verdict.worth, angle=verdict.angle,
-                   degraded=False, lines=len(beat.lines))
-        # Only an ACTUAL judge call stamps the cooldown (cooldown returns / fallback
-        # do not), so the throttle measures spacing between real LLM calls.
-        self._reaction_judge_last_at = now
-        return ScoreResult(
-            score=verdict.worth,
-            reasons=(f"worth:{verdict.worth}", f"moment:{verdict.moment}", f"angle:{verdict.angle}"),
-        )
-
-    def _lexicon_fallback(self, beat: Any, lexicon: ReactionLexicon) -> ScoreResult:
-        """叉口②-b: judge unavailable -> lexicon scoring on the LEXICON scale.
-        Decide pass/fail against the CODE ``REACTION_MODE_TABLE`` (lexicon weight
-        scale) -- NOT the worth-scale ``reaction_table`` the engine gates the judge
-        with -- then return a pass/fail-encoded score so the engine's worth
-        threshold can never silence a lexicon-passing beat (两套阈, 不沉默不崩)."""
-        lex = score_beat(beat, lexicon)
-        tier = REACTION_MODE_TABLE.get(self.config.galgame.reaction_mode)
-        passed = tier is not None and lex.score >= tier.min_score
-        return ScoreResult(
-            score=(_LEXICON_FALLBACK_PASS_SCORE if passed else 0),
-            reasons=("lexicon_fallback",) + lex.reasons,
-        )
+        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2): the engine's
+        ``(beat) -> ScoreResult`` seam now lands on ReactionScoringPolicy.score
+        (judge call / cooldown / lexicon hot-reload / failure degradation all
+        live there; write closures stay below on the host)."""
+        return self._reaction_scoring_policy.score(beat)
 
     def _write_reaction_beat(self, content: str, meta: dict) -> None:
         """Engine beat_writer (worker thread): persist a reaction CompanionBeat
@@ -527,42 +431,9 @@ class AppHost:
         )
 
     def _build_reaction_engine(self) -> ReactionEngine | None:
-        """Assemble + start the reaction engine, or None when off. The mode is
-        the typed ``galgame.reaction_mode`` (step 4-A), resolve-once (D-P5-4:
-        restart-effective; the params lambda is the holder seam a future
-        settings panel swaps without touching this assembly)."""
-        mode = self.config.galgame.reaction_mode
-        override_raw = self.config.galgame.reaction_table
-        override = (
-            {
-                name: ReactionModeParams(
-                    min_score=tier.min_score,
-                    max_per_window=tier.max_per_window,
-                    cooldown_seconds=tier.cooldown_seconds,
-                )
-                for name, tier in override_raw.items()
-            }
-            if override_raw
-            else None
-        )
-        params = merge_mode_table(override).get(mode)
-        if params is None:
-            # "off" by contract; anything else is schema-impossible (Literal),
-            # kept as a defensive guard for hand-built configs in tests.
-            if mode != "off":
-                logger.warning("unknown galgame.reaction_mode %r -- reaction engine stays off", mode)
-            return None
-        engine = ReactionEngine(
-            speak=self._reaction_speak,
-            params_provider=lambda: params,
-            scorer=self._reaction_scorer,
-            beat_writer=self._write_reaction_beat,
-            recent_for_dedupe=self._recent_reaction_beats,
-            budget_window_seconds=self.config.galgame.reaction_budget_window_seconds,
-        )
-        engine.start()
-        logger.info("reaction engine on (mode=%s)", mode)
-        return engine
+        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2). Kept as the
+        patch target cutover tests intercept; the assembly builds THROUGH it."""
+        return reaction_assembly.build_reaction_engine(self)
 
     def _new_summarizer(self) -> GalgameSummarizer | None:
         # Summary LLM = config.galgame.summary_model, else the dialogue model (Phase 8),
@@ -573,40 +444,14 @@ class AppHost:
         return GalgameSummarizer(self.services.llm_adapter, summary_model)
 
     def _new_reaction_judge(self) -> GalgameReactionJudge | None:
-        """The P5 v2 reaction judge. None unless reaction_judge_enabled AND an LLM
-        is wired (so a half-config or a test never builds it). Model =
-        reaction_judge_model, else the dialogue model -- same resolved adapter as
-        the summarizer (mirrors _new_summarizer)."""
-        if not self.config.galgame.reaction_judge_enabled:
-            return None
-        if self.services is None or self.services.llm_adapter is None:
-            return None
-        model = self.config.galgame.reaction_judge_model or self.config.llm.model
-        return GalgameReactionJudge(self._judge_llm_adapter(), model)
+        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2)."""
+        return reaction_assembly.new_reaction_judge(self)
 
     def _judge_llm_adapter(self) -> Any:
-        """LLM adapter for the reaction judge -- its own endpoint (key + base_url),
-        so the judge's load never saturates the main chat/summary endpoint (the
-        deepseek-timeout-under-load root cause). Vendor-neutral: any OpenAI-compatible
-        provider (deepseek/OpenAI/...; NOT Claude/Anthropic, which needs a separate
-        messages-API adapter). Each knob falls back to the main LLM independently:
-          key      = secrets.judge_api_key  (unset -> share the main adapter, zero change)
-          base_url = galgame.reaction_judge_base_url or config.llm.base_url
-          (model is resolved by the caller: reaction_judge_model or config.llm.model)
-        Construction is network-free, so a bad key/url cannot break startup -- it
-        surfaces on the first judge call, which the host scorer catches and degrades
-        to the lexicon gate."""
-        judge_key = self.secrets.judge_api_key if self.secrets else None
-        if not judge_key:
-            logger.info("reaction judge: no JUDGE_API_KEY -> sharing the main LLM key/endpoint")
-            return self.services.llm_adapter
-        base_url = self.config.galgame.reaction_judge_base_url or self.config.llm.base_url
-        client = build_llm_client(judge_key, base_url)
-        logger.info("reaction judge: separate endpoint (JUDGE_API_KEY, base_url=%s)", base_url)
-        return self.registry.resolve_llm(
-            self.config.llm.provider, client=client,
-            reasoning_effort=self.config.galgame.reaction_judge_reasoning_effort,
-        )
+        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2). The assembly's
+        new_reaction_judge() takes the adapter THROUGH this method (patch-validity
+        pin), so tests patching it keep intercepting real construction."""
+        return reaction_assembly.judge_llm_adapter(self)
 
     def _new_stt_adapter(self) -> Any | None:
         """Plan B local STT. None unless backend == "faster_whisper" (the "google"

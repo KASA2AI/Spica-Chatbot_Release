@@ -11,7 +11,8 @@ that for the resolved config; here we pin the code seams):
   defaulting to the module constants, so a bare call is unchanged and the host's
   config values flow through.
 - lexicon hot-reload: editing default.yaml is picked up on the NEXT beat without
-  a restart, driven through the REAL AppHost._reaction_scorer mtime cache.
+  a restart, driven through the REAL ReactionScoringPolicy mtime cache (Phase 4:
+  the cache moved off the host into the policy; the host scorer is a delegate).
 """
 
 from __future__ import annotations
@@ -95,15 +96,29 @@ def test_lexicon_source_mtime_tracks_the_newest_source_file(tmp_path):
     assert lexicon_source_mtime("nope", base_dir=tmp_path / "absent") == 0.0
 
 
-# -- hot reload through the REAL AppHost._reaction_scorer ------------------------
+# -- hot reload through the REAL ReactionScoringPolicy --------------------------
+
+
+def _lexicon_policy():
+    """A ReactionScoringPolicy on the judge-off path (Phase 4): the production
+    mtime hot-reload cache under test lives on the policy; config/game_memory/
+    identity are never read on this path, so their providers return None."""
+    from spica.galgame.reaction_scoring import ReactionScoringPolicy
+
+    return ReactionScoringPolicy(
+        config_provider=lambda: None,
+        game_scope_provider=lambda: ("g1", "default", object()),
+        game_memory_provider=lambda: None,
+        character_scope_provider=lambda: None,
+        judge_provider=lambda: None,  # judge off -> the lexicon (hot-reload) path
+    )
 
 
 def test_reaction_scorer_hot_reloads_lexicon_on_mtime_change(tmp_path, monkeypatch):
     """Edit default.yaml -> the NEXT beat scores with the new weight, NO restart.
-    Drives the real AppHost._reaction_scorer (its mtime cache is the production
-    hot-reload), with the lexicon data dir pointed at a temp file."""
+    Drives the real ReactionScoringPolicy.score (its mtime cache is the
+    production hot-reload), with the lexicon data dir pointed at a temp file."""
     import spica.galgame.reaction as reaction
-    from spica.host.app_host import AppHost
 
     monkeypatch.setattr(reaction, "_REACTION_DATA_DIR", tmp_path)
     lexicon_path = tmp_path / "default.yaml"
@@ -111,14 +126,10 @@ def test_reaction_scorer_hot_reloads_lexicon_on_mtime_change(tmp_path, monkeypat
         "categories:\n  twist:\n    weight: 4\n    words: [真相]\n", encoding="utf-8"
     )
 
-    host = AppHost.__new__(AppHost)  # no full construction -- only the scorer's deps
-    host._reaction_lexicons = {}
-    host._reaction_lexicon_mtimes = {}
-    host._reaction_judge = None  # judge off -> the lexicon (hot-reload) scorer path
-    host._reaction_game_scope = lambda: ("g1", "default", object())
+    policy = _lexicon_policy()
 
     beat = _twist_beat()
-    assert host._reaction_scorer(beat).score == 4  # first read caches (lexicon + mtime)
+    assert policy.score(beat).score == 4  # first read caches (lexicon + mtime)
 
     base = lexicon_source_mtime("g1")  # reads the patched _REACTION_DATA_DIR
     lexicon_path.write_text(
@@ -126,13 +137,12 @@ def test_reaction_scorer_hot_reloads_lexicon_on_mtime_change(tmp_path, monkeypat
     )
     os.utime(lexicon_path, (base + 10, base + 10))  # force a distinct mtime
 
-    assert host._reaction_scorer(beat).score == 9  # hot-reloaded, same host instance
+    assert policy.score(beat).score == 9  # hot-reloaded, same policy instance
 
 
 def test_reaction_scorer_does_not_reload_when_file_unchanged(tmp_path, monkeypatch):
     """No mtime change -> the cached lexicon is reused (no per-beat re-read storm)."""
     import spica.galgame.reaction as reaction
-    from spica.host.app_host import AppHost
 
     monkeypatch.setattr(reaction, "_REACTION_DATA_DIR", tmp_path)
     (tmp_path / "default.yaml").write_text(
@@ -145,18 +155,15 @@ def test_reaction_scorer_does_not_reload_when_file_unchanged(tmp_path, monkeypat
         calls["n"] += 1
         return real_load(game_id, base_dir)
 
-    monkeypatch.setattr("spica.host.app_host.load_reaction_lexicon", _counting_load)
+    # Phase 4: the cache (and its load import) live on reaction_scoring now.
+    monkeypatch.setattr("spica.galgame.reaction_scoring.load_reaction_lexicon", _counting_load)
 
-    host = AppHost.__new__(AppHost)
-    host._reaction_lexicons = {}
-    host._reaction_lexicon_mtimes = {}
-    host._reaction_judge = None  # judge off -> the lexicon (hot-reload) scorer path
-    host._reaction_game_scope = lambda: ("g1", "default", object())
+    policy = _lexicon_policy()
 
     beat = _twist_beat()
-    host._reaction_scorer(beat)
-    host._reaction_scorer(beat)
-    host._reaction_scorer(beat)
+    policy.score(beat)
+    policy.score(beat)
+    policy.score(beat)
     assert calls["n"] == 1  # loaded once, then served from cache
 
 

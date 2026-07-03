@@ -48,6 +48,7 @@ def _run(request: TurnRequest):
         visual=None,
         memory=memory,
         tools=RegistryToolSet.from_function_table([], {}),
+        recent=recent,  # Phase 5: deps.recent
     )  # jobs defaults to InlineJobRunner -> the commit runs synchronously here
     save_stream_memory(ctx, SimpleNamespace(recent_memory=recent), deps)
     return memory, recent

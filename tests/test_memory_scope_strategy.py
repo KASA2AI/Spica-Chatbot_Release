@@ -97,7 +97,7 @@ class _RecordingMemoryPort:
         return {}
 
 
-def _deps(config: AppConfig, memory) -> TurnDeps:
+def _deps(config: AppConfig, memory, recent=None) -> TurnDeps:
     return TurnDeps(
         config=config,
         llm=None,
@@ -105,6 +105,7 @@ def _deps(config: AppConfig, memory) -> TurnDeps:
         visual=None,
         memory=memory,
         tools=RegistryToolSet.from_function_table([], {}),
+        recent=recent,  # Phase 5: deps.recent
     )  # jobs defaults to InlineJobRunner -> commit runs synchronously
 
 
@@ -112,7 +113,8 @@ class RetrieveCommitSymmetryTest(unittest.TestCase):
     def test_same_request_reads_and_writes_one_scope_pair(self):
         config = _config()
         memory = _RecordingMemoryPort()
-        services = SimpleNamespace(recent_memory=RecentMemory())
+        recent = RecentMemory()
+        services = SimpleNamespace(recent_memory=recent)
         req = TurnRequest(
             user_input="记住这个",
             conversation_id="galgame::ABC::playthrough::default",
@@ -122,11 +124,11 @@ class RetrieveCommitSymmetryTest(unittest.TestCase):
 
         write_ctx = TurnContext(req)
         write_ctx.answer = StreamedAnswer(answer="好。")
-        save_stream_memory(write_ctx, services, _deps(config, memory))
+        save_stream_memory(write_ctx, services, _deps(config, memory, recent))
 
         read_ctx = TurnContext(req)
-        load_recent_context_node(read_ctx, services, _deps(config, memory))
-        retrieve_long_term_memory_node(read_ctx, services, _deps(config, memory))
+        load_recent_context_node(read_ctx, services, _deps(config, memory, recent))
+        retrieve_long_term_memory_node(read_ctx, services, _deps(config, memory, recent))
 
         # LTM symmetry: the committed triple IS the retrieved triple.
         [committed] = memory.commit_scopes
@@ -141,16 +143,17 @@ class RetrieveCommitSymmetryTest(unittest.TestCase):
         self.assertEqual(read_ctx.recent.recent_context[0]["user_text"], "记住这个")
 
     def test_two_characters_never_share_a_recent_bucket(self):
-        services = SimpleNamespace(recent_memory=RecentMemory())
+        recent = RecentMemory()
+        services = SimpleNamespace(recent_memory=recent)
         req = TurnRequest(
             user_input="悄悄话", conversation_id="shared", include_user_time_context=False
         )
         ctx = TurnContext(req)
         ctx.answer = StreamedAnswer(answer="嗯。")
-        save_stream_memory(ctx, services, _deps(_config("spica"), _RecordingMemoryPort()))
+        save_stream_memory(ctx, services, _deps(_config("spica"), _RecordingMemoryPort(), recent))
 
         other = TurnContext(req)
-        load_recent_context_node(other, services, _deps(_config("second-chara"), _RecordingMemoryPort()))
+        load_recent_context_node(other, services, _deps(_config("second-chara"), _RecordingMemoryPort(), recent))
         self.assertEqual(other.recent.recent_context, [])
 
 

@@ -41,7 +41,7 @@ def save_stream_memory(ctx: TurnContext, services: Any, deps: Any = None) -> Non
     # derivation stages.load_recent_context_node reads with, so write/read symmetry
     # is structural.
     try:
-        services.recent_memory.append_turn(
+        deps.recent.append_turn(
             strategy.recent_key(ctx.request),
             ctx.user_input,
             answer_text,

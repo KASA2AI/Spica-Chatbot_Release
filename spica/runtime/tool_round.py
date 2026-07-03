@@ -58,7 +58,7 @@ def prepare_prompt_for_streaming(
     use_tools = bool(active_tool_schemas)
     obs = deps.observer
     ctx.metadata["use_tools"] = use_tools
-    ctx.metadata["available_tool_schema_count"] = len(services.tool_schemas)
+    ctx.metadata["available_tool_schema_count"] = deps.available_tool_schema_count
     ctx.metadata["selected_tool_schema_count"] = len(active_tool_schemas)
     obs.mark("agent_tool_local_ms", 0.0)
     obs.mark("agent_function_calls", 0)

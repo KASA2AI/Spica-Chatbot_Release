@@ -56,7 +56,7 @@ class _DeferredJobs:
         return None
 
 
-def _deps(memory, jobs):
+def _deps(memory, jobs, recent=None):
     return TurnDeps(
         config=AppConfig(
             character=CharacterConfig(interlocutor_name="麦", character_id="spica"),
@@ -68,6 +68,7 @@ def _deps(memory, jobs):
         memory=memory,
         tools=None,
         jobs=jobs,
+        recent=recent if recent is not None else _SpyRecent(),  # Phase 5: deps.recent
     )
 
 
@@ -83,7 +84,7 @@ class SaveStreamMemoryTest(unittest.TestCase):
         services = SimpleNamespace(recent_memory=recent)
         ctx = _ctx("你好", "こんにちは。")
 
-        save_stream_memory(ctx, services, _deps(memory, jobs))
+        save_stream_memory(ctx, services, _deps(memory, jobs, recent))
 
         # recent append already happened (synchronous, before `done`)
         self.assertEqual(len(recent.appends), 1)
@@ -141,7 +142,10 @@ class SaveStreamMemoryTest(unittest.TestCase):
         jobs = _DeferredJobs()
         ctx = _ctx("你好", "hi")
         with self.assertLogs("spica.runtime.memory_commit", level="WARNING") as logs:
-            save_stream_memory(ctx, SimpleNamespace(recent_memory=_BoomRecent()), _deps(_SpyMemory(), jobs))
+            save_stream_memory(
+                ctx, SimpleNamespace(recent_memory=_BoomRecent()),
+                _deps(_SpyMemory(), jobs, _BoomRecent()),  # Phase 5: the boom store rides deps.recent
+            )
         self.assertTrue(any("recent boom" in line for line in logs.output))
         self.assertEqual(ctx.metadata.get("memory_error"), "recent boom")
         self.assertEqual(len(jobs.submitted), 1)  # long-term path still proceeds

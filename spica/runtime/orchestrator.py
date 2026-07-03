@@ -261,8 +261,8 @@ def _produce_stream_events(
         ctx = contribute_context_node(ctx, services, deps)
 
         visual_context = None
-        if services.visual_tool is not None and hasattr(services.visual_tool, "prepare_stream_context"):
-            visual_context = services.visual_tool.prepare_stream_context(
+        if deps.visual is not None and hasattr(deps.visual, "prepare_stream_context"):
+            visual_context = deps.visual.prepare_stream_context(
                 requested_costume=ctx.request.visual_overrides.get("costume_set"),
                 requested_mode=ctx.request.visual_overrides.get("costume_mode"),
             )

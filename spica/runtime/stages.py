@@ -1,10 +1,11 @@
 """Turn stages (C4: moved from agent/nodes.py; C5: timing via TurnObserver).
 
 Each stage is ``(ctx, services, deps) -> ctx``: it reads/writes its own TurnContext
-sub-object (C3c) and never emits events. Tunables + the LLM/memory ports come from
-the typed ``deps`` (config/llm/memory); ``services`` is a *transitional* dependency
-carrier for the bits not yet on deps -- recent_memory and the tool schema/function
-registry (TODO C6/C7).
+sub-object (C3c) and never emits events. Tunables, ports and per-turn state all
+come from the typed ``deps`` (Phase 5 single-track: config / llm / memory /
+recent / llm_ready / available_tool_schema_count / visual / tts); ``services``
+stays only as the positional signature slot (guard-banned for attribute reads
+here -- test_no_dict_config).
 
 Timing + structured logging go through ``deps.observer`` (C5): ``span`` for a timed
 node, ``mark`` / ``mark_once`` / ``bump`` for stored values, ``event`` for a
@@ -86,8 +87,8 @@ def _get_attr(value: Any, key: str, default: Any = None) -> Any:
     return getattr(value, key, default)
 
 
-def _tts_adapter_name(services: AgentServices) -> str:
-    return str(getattr(services.tts_adapter, "name", None) or "tts")
+def _tts_adapter_name(deps: Any) -> str:
+    return str(getattr(deps.tts, "name", None) or "tts")
 
 
 def _build_tts_request(ctx: TurnContext, text: str, emotion: str) -> TTSRequest:
@@ -137,15 +138,15 @@ def load_recent_context_node(ctx: TurnContext, services: AgentServices, deps: An
     if _skip_if_error(ctx):
         return ctx
     deps = deps or TurnDeps.from_legacy_services(services)
-    # TODO(C6): the recent-turn buffer becomes a deps-resolved capability;
-    # services.recent_memory is a transitional carrier (N3 allows it).
+    # Phase 5: the recent-turn buffer is a deps-resolved capability (deps.recent,
+    # bridge-filled from the host bundle) -- the old C6 TODO is settled.
     #
     # Phase 2: the bucket key is character-scoped ({character_id}::{conversation_id})
     # via MemoryScopeStrategy -- symmetric with memory_commit's append key, so two
     # characters sharing a conversation_id can no longer read each other's recent
     # context. memory/recent.py stays a dumb store; ALL key derivation lives in the
     # strategy.
-    recent = services.recent_memory.get_recent(
+    recent = deps.recent.get_recent(
         MemoryScopeStrategy(deps.config).recent_key(ctx.request),
         limit=deps.config.memory.recent_context_limit,
     )
@@ -376,10 +377,13 @@ retrieve_game_context_node = contribute_context_node
 def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
     if _skip_if_error(ctx):
         return ctx
-    if services.llm_client is None:
+    deps = deps or TurnDeps.from_legacy_services(services)
+    # Phase 5: readiness is the bridge-computed flag, NOT ``deps.llm is None``
+    # (from_services wraps even a None client in an adapter, so deps.llm is
+    # never None -- test_llm_client_not_configured pins this branch).
+    if not deps.llm_ready:
         ctx.error = TurnError("LLM_CLIENT_NOT_CONFIGURED", "LLM client 未配置。")
         return ctx
-    deps = deps or TurnDeps.from_legacy_services(services)
     obs = deps.observer
 
     model = deps.config.llm.model
@@ -402,7 +406,7 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
     )
     use_tools = bool(active_tool_schemas)
     ctx.metadata["use_tools"] = use_tools
-    ctx.metadata["available_tool_schema_count"] = len(services.tool_schemas)
+    ctx.metadata["available_tool_schema_count"] = deps.available_tool_schema_count
     ctx.metadata["selected_tool_schema_count"] = len(active_tool_schemas)
     obs.mark("agent_tool_local_ms", 0.0)
     obs.mark("agent_followup_response_ms", 0.0)
@@ -600,15 +604,14 @@ def parse_reply_node(ctx: TurnContext, services: AgentServices, deps: Any = None
 def build_visual_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
     if _skip_if_error(ctx):
         return ctx
-    # TODO(C7): visual is a resolved port (deps.visual); services.visual_tool transitional.
-    if services.visual_tool is None:
-        return ctx
     deps = deps or TurnDeps.from_legacy_services(services)
+    if deps.visual is None:
+        return ctx
     obs = deps.observer
     answer = ctx.answer if ctx.answer is not None else StreamedAnswer()
     ctx.answer = answer
     try:
-        visual = services.visual_tool.build_visual_payload(
+        visual = deps.visual.build_visual_payload(
             answer=answer.answer or "",
             emotion=answer.emotion or "happy",
             requested_costume=ctx.request.visual_overrides.get("costume_set"),
@@ -647,13 +650,12 @@ def build_visual_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
 def synthesize_tts_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
     if _skip_if_error(ctx):
         return ctx
-    # TODO(C7): TTS is a resolved port (deps.tts); services.tts_adapter transitional.
-    provider = _tts_adapter_name(services)
     deps = deps or TurnDeps.from_legacy_services(services)
+    provider = _tts_adapter_name(deps)
     obs = deps.observer
     answer = ctx.answer if ctx.answer is not None else StreamedAnswer()
     ctx.answer = answer
-    if services.tts_adapter is None:
+    if deps.tts is None:
         ctx.tools.append(
             {
                 "name": provider,
@@ -665,7 +667,7 @@ def synthesize_tts_node(ctx: TurnContext, services: AgentServices, deps: Any = N
         ctx.error = TurnError("TTS_TOOL_NOT_CONFIGURED", "TTS adapter 未初始化。")
         return ctx
     try:
-        result = services.tts_adapter.synthesize(
+        result = deps.tts.synthesize(
             _build_tts_request(
                 ctx,
                 text=answer.answer or "",

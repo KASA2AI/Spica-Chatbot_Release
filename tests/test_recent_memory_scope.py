@@ -35,7 +35,7 @@ class _NoopLongTermMemory:
         return {}
 
 
-def _deps(character_id: str) -> TurnDeps:
+def _deps(character_id: str, recent) -> TurnDeps:
     # A fresh TurnDeps per role, built from that role's OWN config object.
     return TurnDeps(
         config=AppConfig(
@@ -46,6 +46,7 @@ def _deps(character_id: str) -> TurnDeps:
         visual=None,
         memory=_NoopLongTermMemory(),
         tools=RegistryToolSet.from_function_table([], {}),
+        recent=recent,  # Phase 5: deps.recent (the SHARED store, per-role deps)
     )  # jobs defaults to InlineJobRunner -> the long-term no-op runs inline
 
 
@@ -71,10 +72,10 @@ def test_recent_isolated_across_conversation_ids():
     # (a) Today's guarantee: conversation_ids partition recent memory.
     recent = RecentMemory()
     services = SimpleNamespace(recent_memory=recent)
-    _write_turn(services, _deps("spica"), "c1")
+    _write_turn(services, _deps("spica", recent), "c1")
 
-    assert _read_recent(services, _deps("spica"), "c2") == []
-    got = _read_recent(services, _deps("spica"), "c1")
+    assert _read_recent(services, _deps("spica", recent), "c2") == []
+    got = _read_recent(services, _deps("spica", recent), "c1")
     assert len(got) == 1
     assert got[0]["user_text"] == "早上好"
 
@@ -87,8 +88,8 @@ def test_recent_isolated_across_characters():
     recent = RecentMemory()
     services = SimpleNamespace(recent_memory=recent)
 
-    deps_a = _deps("spica")  # role A: its own config, its own deps
+    deps_a = _deps("spica", recent)  # role A: its own config, its own deps
     _write_turn(services, deps_a, "shared-conversation")
 
-    deps_b = _deps("second-chara")  # role B: RE-constructed deps, different config
+    deps_b = _deps("second-chara", recent)  # role B: RE-constructed deps, different config
     assert _read_recent(services, deps_b, "shared-conversation") == []

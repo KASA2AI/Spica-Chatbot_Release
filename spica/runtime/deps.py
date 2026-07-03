@@ -64,6 +64,17 @@ class TurnDeps:
     # off; future domains must register their FULL tuple explicitly via assembly
     # (including the galgame contributor), never rely on the auto-fill.
     context_contributors: tuple[Any, ...] | None = None
+    # Phase 5 (deps single-track): the last three services reads the stage/commit
+    # layer needed. ``recent`` is the recent-context store (filled by the bridge;
+    # direct test constructions inject their own). ``llm_ready`` is computed by
+    # the bridge from ``services.llm_client is not None`` -- deliberately NOT
+    # derivable from ``deps.llm`` (from_services wraps a None client in an
+    # adapter, so deps.llm is never None; the 5-c0 characterization pins the
+    # error path this protects). ``available_tool_schema_count`` carries the
+    # legacy telemetry count byte-for-byte (decided: value-preserving).
+    recent: Any = None
+    llm_ready: bool = True
+    available_tool_schema_count: int = 0
 
     def __post_init__(self) -> None:
         if self.context_contributors is None:
@@ -104,6 +115,13 @@ class TurnDeps:
             # Host sets services.game_memory_adapter (Phase 3); legacy/test services
             # without it map to None (the gated stage then injects nothing).
             game_memory=getattr(services, "game_memory_adapter", None),
+            # Phase 5 fills. getattr like game_memory above: the OLD code only
+            # touched these services attrs lazily (behind ``or`` short-circuits /
+            # inside the un-taken branch), so minimal test fakes may omit them.
+            # Production AgentServices always carries all three -> identical values.
+            recent=getattr(services, "recent_memory", None),
+            llm_ready=getattr(services, "llm_client", None) is not None,
+            available_tool_schema_count=len(getattr(services, "tool_schemas", None) or []),
         )
 
     @classmethod

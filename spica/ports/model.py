@@ -7,10 +7,15 @@ build the request themselves). ``BoundModel`` pairs an adapter with a model
 name so turn-external text consumers (summarizer / reaction judge) hold ONE
 object and never resolve endpoints or model names per call.
 
-v1 ``LLMPort`` (``spica/ports/llm.py``) stays frozen: the sync museum chain
-(``sync_chain.py`` / ``call_llm_node``) and the pre-Phase-7 production chain
-are its permanent users. ``spica/galgame`` + ``spica/host`` must not grow new
-v1 consumers -- pinned by ``tests/test_no_new_v1_llm_consumers.py``.
+Since Phase 7 the PRODUCTION chain runs entirely on this v2 surface: the
+orchestrator's final stream and tool_round's probe family go through
+``deps.model.stream/probe/probe_stream``. v1 ``LLMPort``
+(``spica/ports/llm.py``) stays frozen for the sync museum chain ONLY
+(``sync_chain.py`` / ``call_llm_node``) plus the adapter's own v1 method
+tests. ``spica/galgame`` + ``spica/host`` must not grow new v1 consumers
+(``tests/test_no_new_v1_llm_consumers.py``); the flipped runtime files must
+not touch the v1 surface or its carriers at all
+(``tests/test_no_v1_llm_in_runtime.py``).
 
 BoundModel deliberately has NO ``complete_text`` compatibility shim: the v2
 path calls ``adapter.complete`` / ``adapter.stream`` only (structurally pinned

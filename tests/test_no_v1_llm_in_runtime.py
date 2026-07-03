@@ -12,6 +12,13 @@ details", not "the current call sites are gone":
     create_responses / complete_chat / create_chat_with_tools /
     iter_chat_with_tools / complete_text / traits / provider_traits
 
+...AND the v1 CARRIERS themselves (review hardening): ``deps.llm`` attribute
+reads (precise: only when the receiver is the bare name ``deps`` --
+``deps.config.llm.model`` is a legal typed-config read and must never trip),
+``LLMPort`` name references, and any ``spica.ports.llm`` import. Banning only
+method names would let a future edit smuggle ``deps.llm`` back in and call it
+through an alias.
+
 Scope is EXACTLY the two flipped files. ``spica/runtime/stages.py``
 (``call_llm_node`` and the sync-only stages) is the FROZEN MUSEUM -- permanent
 v1, never scanned, never migrated (Phase 7 forbidden file; see the migration
@@ -50,10 +57,42 @@ def _v1_hits(tree: ast.AST) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in BANNED:
             hits.append(f"line {node.lineno}: .{node.attr}")
+        elif (
+            # v1 carrier: a ``deps.llm`` read -- PRECISE (receiver must be the
+            # bare name ``deps``), so ``deps.config.llm.model`` never trips.
+            isinstance(node, ast.Attribute)
+            and node.attr == "llm"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "deps"
+        ):
+            hits.append(f"line {node.lineno}: deps.llm")
+        elif isinstance(node, ast.Name) and node.id == "LLMPort":
+            hits.append(f"line {node.lineno}: LLMPort")
+        elif isinstance(node, ast.Attribute) and node.attr == "LLMPort":
+            # Package-alias escape hatch (review hardening #3): ``ports.LLMPort``
+            # after ``import spica.ports as ports`` / ``from spica import ports``.
+            # Importing the package itself stays legal; only touching .LLMPort
+            # trips (any receiver -- the name is unique to the v1 Protocol).
+            hits.append(f"line {node.lineno}: .LLMPort")
         elif isinstance(node, ast.ImportFrom):
+            if node.module == "spica.ports.llm":
+                hits.append(f"line {node.lineno}: from spica.ports.llm import ...")
+            elif node.module == "spica.ports":
+                # Package-level escape hatches (review hardening #2): the v1
+                # module or the Protocol pulled in through the parent package.
+                # PRECISE names only -- ``from spica.ports import model`` (v2)
+                # and future legal ports must never trip.
+                for alias in node.names:
+                    if alias.name in {"LLMPort", "llm"}:
+                        hits.append(f"line {node.lineno}: from spica.ports import {alias.name}")
+            else:
+                for alias in node.names:
+                    if alias.name in BANNED:
+                        hits.append(f"line {node.lineno}: from {node.module} import {alias.name}")
+        elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name in BANNED:
-                    hits.append(f"line {node.lineno}: from {node.module} import {alias.name}")
+                if alias.name == "spica.ports.llm":
+                    hits.append(f"line {node.lineno}: import spica.ports.llm")
     return hits
 
 
@@ -91,11 +130,37 @@ class NoV1LLMInRuntimeTest(unittest.TestCase):
             _v1_hits(ast.parse("from spica.adapters.llm.openai_compatible import complete_text"))
         )
 
+    def test_guard_catches_each_v1_carrier_form(self):
+        # Review hardening: the four carrier forms must trip the detector.
+        for src in (
+            "deps.llm",                                  # bare read
+            "deps.llm.anything(r, c)",                   # aliased call through the carrier
+            "def f(x: LLMPort): pass",                   # name reference (annotation)
+            "port = LLMPort",                            # name reference (value)
+            "import spica.ports.llm",                    # module import
+            "from spica.ports.llm import LLMPort",       # from-import
+            "from spica.ports.llm import anything_else", # from-import, any name
+            "from spica.ports import LLMPort",           # package-level Protocol pull
+            "from spica.ports import llm",               # package-level module pull
+            "from spica.ports import llm\nx = llm.LLMPort",  # chained: the import itself trips
+            "import spica.ports as ports\nx = ports.LLMPort",  # package-alias attribute pull
+            "from spica import ports\nx = ports.LLMPort",      # parent-package alias pull
+        ):
+            with self.subTest(src=src):
+                self.assertTrue(_v1_hits(ast.parse(src)), f"guard missed: {src}")
+
     def test_guard_ignores_the_v2_surface(self):
         for src in (
             "deps.model.stream(p, ctx)",
             "deps.model.probe(p, tools, ctx)",
             "deps.model.probe_stream(p, tools, ctx)",
+            "deps.config.llm.model",   # legal typed-config read -- must NOT trip
+            "model = deps.config.llm.model",
+            "other.llm",               # only the ``deps`` carrier is banned
+            "from spica.ports import model",       # legal v2 port import
+            "from spica.ports import game_memory", # any other legal port
+            "ports.model",                          # package-alias access to v2 stays legal
+            "ports.game_memory",                    # ...and to any other port
             "handle.deltas",
             "handle.calls",
             "result.usage",

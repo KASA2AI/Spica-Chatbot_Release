@@ -1,11 +1,19 @@
-"""OpenAI-compatible LLM adapter (Phase 5).
+"""OpenAI-compatible LLM adapter (Phase 5; model port v2 since OO migration
+Phase 6a/7).
 
 Encapsulates the chat-model client I/O and the OpenAI-Responses vs
 Chat-Completions (e.g. DeepSeek) branch + streaming fallbacks that previously
 lived inline in ``agent/streaming_pipeline.py`` and ``agent/nodes.py``. The
-module-level functions below are moved verbatim from the streaming pipeline
-(zero behaviour change); the thin ``OpenAICompatibleAdapter`` binds them to a
-client so the pipeline can depend on ``LLMPort`` instead of a raw client.
+adapter carries TWO surfaces over the same internals:
+
+- the frozen v1 ``LLMPort`` method family -- kept verbatim for the sync museum
+  chain (``stages.call_llm_node`` / ``sync_chain``) and the adapter-level
+  tests; and
+- the v2 ``TextModel`` / ``ToolCallingModel`` face (``complete`` / ``stream``
+  / ``probe`` / ``probe_stream``), thin over the v1 paths so the endpoint and
+  fallback logic keeps a single home. The production runtime enters ONLY here,
+  through a ``BoundModel`` (``deps.model``) -- never through v1 methods
+  (guarded by ``tests/test_no_v1_llm_in_runtime.py``).
 
 ``state`` is typed ``Any`` to avoid a spica -> agent import; only its ``timing``
 dict / ``response_id`` attributes are touched.

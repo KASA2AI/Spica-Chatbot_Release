@@ -89,6 +89,10 @@ def _agent_imports_in(path: Path) -> list[str]:
 # Pure transform layers: they return ``ctx`` and must never produce RuntimeEvent.
 TRANSFORM_LAYER_FILES = [
     SPICA_ROOT / "runtime" / "stages.py",
+    # OO migration Phase 1: the galgame prompt-section builders moved out of
+    # stages.py; they stay a pure transform layer (scan domain EXTENDED, never
+    # narrowed).
+    SPICA_ROOT / "galgame" / "prompt_sections.py",
     *sorted((SPICA_ROOT / "conversation").rglob("*.py")),
 ]
 

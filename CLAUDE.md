@@ -112,6 +112,8 @@ spica/galgame/                   # domain / session 层（Qt-free）
   models.py session.py text_stream.py summarizer.py ocr_loop.py
   companion_controller.py binding.py history.py ocr_calibration.py
   ocr_region.py window_match.py manual.py
+  prompt_sections.py             # galgame prompt 段落构建（OO 迁移 Phase 1 自
+                                 # stages.py 迁入；gate + node 仍在 stages.py）
   # 注：早期规划的 choices.py / commands.py 从未单独落地——choice 逻辑长在
   # session.py 内，command intent 已随 B2（song 工具化）一并消亡。
 

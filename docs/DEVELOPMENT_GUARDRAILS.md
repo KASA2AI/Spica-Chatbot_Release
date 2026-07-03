@@ -174,10 +174,12 @@ docs/**                            # 文档
    on_window_lost/on_choice_detected/on_user_reported_choice/on_summary_finished）。不碰它私有字段。
 2. OCR 相关：串行「完成后等待」，复用 RapidOCR 单例 + _INFER_LOCK，不双加载模型。
 3. 总结/问答读不可变 snapshot（锁内切 list），不持有可变 buffer 引用。
-4. 要把游戏上下文进 prompt：扩 retrieve_game_context_node 的注入，gate 用请求字段，不跑第二次 LLM。
+4. 要把游戏上下文进 prompt：扩 retrieve_game_context_node 的注入（prompt 段落构建自 OO 迁移
+   Phase 1 起在 spica/galgame/prompt_sections.py；gate + node 仍在 stages.py），gate 用请求字段，
+   不跑第二次 LLM。
 5. OCR 文本绝不进 recent memory / 绝不直接成用户消息。游戏数据写 game_memory 独立库。
-必读：spica/galgame/{session,ocr_loop,summarizer,companion_controller}.py、spica/runtime/stages.py(gate)
-      spica/ports/game_memory.py、spica/adapters/game_memory/sqlite.py
+必读：spica/galgame/{session,ocr_loop,summarizer,companion_controller,prompt_sections}.py、
+      spica/runtime/stages.py(gate)、spica/ports/game_memory.py、spica/adapters/game_memory/sqlite.py
 测试：test_galgame_session / test_galgame_summarizer / test_retrieve_game_context_node / test_companion_*
 ```
 

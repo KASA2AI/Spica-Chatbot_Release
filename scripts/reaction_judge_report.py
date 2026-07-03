@@ -88,14 +88,15 @@ class _Rec:
 
 
 class _MeasuringLLM:
-    """Wraps an LLMPort to capture prompt/output sizes for the cost estimate. The
-    judge only ever calls ``complete_text``, so that is all this needs to forward."""
+    """Wraps a TextModel v2 adapter to capture prompt/output sizes for the cost
+    estimate (OO migration Phase 6a: the judge holds a ``BoundModel`` and only
+    ever calls the adapter-side ``complete``, so that is all this forwards)."""
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
-    def complete_text(self, prompt: str, *, model: str) -> str:
-        out = self._inner.complete_text(prompt, model=model)
+    def complete(self, prompt: str, *, model: str) -> str:
+        out = self._inner.complete(prompt, model=model)
         _MeasuringLLM.last_prompt_chars = len(prompt or "")
         _MeasuringLLM.last_out_chars = len(out or "")
         return out
@@ -120,7 +121,8 @@ def _load_lines(db: Path, game_id: str) -> list[tuple[float, str | None, str]]:
 
 
 def _build_judge(model_override: str | None) -> tuple[GalgameReactionJudge, str]:
-    """Standalone LLMPort, built the same way build_agent_services does. 铁律 #10:
+    """Standalone adapter, built the same way build_agent_services does, then
+    hand-assembled into a ``BoundModel`` (Phase 6a judge shape). 铁律 #10:
     load_secrets() first so the client gets the key/base_url, not empty values."""
     import httpx
     from openai import OpenAI
@@ -128,6 +130,7 @@ def _build_judge(model_override: str | None) -> tuple[GalgameReactionJudge, str]
     from spica.adapters.llm.openai_compatible import OpenAICompatibleAdapter
     from spica.config.manager import ConfigManager
     from spica.config.secrets import load_secrets
+    from spica.ports.model import BoundModel
 
     secrets = load_secrets()
     if not secrets.openai_api_key:
@@ -140,7 +143,7 @@ def _build_judge(model_override: str | None) -> tuple[GalgameReactionJudge, str]
         http_client=httpx.Client(trust_env=False, timeout=60),
     )
     adapter = OpenAICompatibleAdapter(client)
-    return GalgameReactionJudge(_MeasuringLLM(adapter), model), model
+    return GalgameReactionJudge(BoundModel(_MeasuringLLM(adapter), model)), model
 
 
 def _print_beat(beat: ReactionBeat, indent: str = "      ") -> None:

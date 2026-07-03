@@ -197,3 +197,43 @@
   - 七处读取访问点全部改命名字段；新元数据必须走命名字段（`_fields` pin 防匿名加宽回潮）；
   - 预扫验证：`_tools` 在 registry.py 之外零引用，内部表示自由更换无隐蔽依赖。
 - 遗留/偏差：无；Phase 4 / 5+ 未执行。
+
+## Phase 4 — ReactionScoringPolicy + reaction assembly（已收口）
+- 日期：2026-07-03
+- commit：`d5dde5770792b4f900a5a54014ea90cc0894e8b3`（前置 plan amendment：`3240fc8`——
+  白名单补 `test_reaction_config.py` 缺口 + `test_reaction_judge.py` lexicon seam 迁移范围 +
+  三条 facade patch 有效性退出条件 + docs 逐处点名）
+- 实际修改文件（与修订版白名单完全一致，7 件，零超出）：
+  - 新增 3 件：`spica/galgame/reaction_scoring.py`（ReactionScoringPolicy：judge 调用 / 冷却
+    状态 / lexicon mtime 热重载缓存 / 失败降级逐字下沉；依赖全 provider live-read + clock 注入）、
+    `spica/host/assemblies/__init__.py`（装配约定 docstring）、`spica/host/assemblies/reaction.py`
+    （install + new_reaction_judge / judge_llm_adapter / build_reaction_engine 三本体逐字迁入）；
+  - 修改 4 件：`spica/host/app_host.py`（净 -190 行：initialize 两行 → `reaction_assembly.
+    install(self)` 一行；五方法改薄委托；三常量与三状态属性迁出；`_lexicon_fallback` 经 rg 证
+    零外部引用后随逻辑整体迁入 policy 不留委托）、`tests/test_reaction_judge.py`（clock 注入
+    改造 + 常量 import 随迁 + DegradeFallbackTest lexicon patch 迁 policy seam + 新增
+    PatchValidityTest 三用例）、`tests/test_reaction_config.py`（热重载/缓存两用例迁直驱
+    policy，monkeypatch 点改 `spica.galgame.reaction_scoring.load_reaction_lexicon`，断言值
+    逐条保持）、`docs/DEVELOPMENT_GUARDRAILS.md`（§12b 装配模板 + §3.1 禁新增 per-domain
+    方法注记）
+- 测试：
+  - `tests/test_reaction_judge.py` → 31 passed（28 既有 + 3 新 patch 有效性）
+  - reaction 全族 + cutover + Phase 0 #1（9 文件）→ 85 passed
+  - Phase 3 / golden / turn_contract / layering smoke → 29 passed, 15 subtests
+  - `python -m pytest tests -q` → 1150 passed, 1 warning, 108 subtests passed
+    （= 1147 基线 + 3 新用例，零 fail/skip/xfail）
+- exit conditions 逐条：① reaction 接线全部出 app_host（initialize 仅剩 install 一行；残留 =
+  五薄委托 + 计划书明确留 host 的写权限闭包；`_reaction_lexicons`/`_mtimes`/`_judge_last_at`/
+  `def _lexicon_fallback` 在 app_host 零命中）✓；② judge 冷却/降级语义逐断言保持（冷却三段 +
+  judge.calls==2、fallback lexicon 阈值表、热重载 4→9、reload 计数、窗口读、key/base_url/
+  effort 回退树——断言值全部未动全绿）✓；③ **三条 facade patch 有效性常驻**（install 经
+  `host._new_reaction_judge()` / `host._build_reaction_engine()`；new_reaction_judge 经
+  `host._judge_llm_adapter()`——sentinel 用例 PatchValidityTest 常驻，clock 注入用例不可假绿）✓
+- 双轨表变化：**D4 开钟**——AppHost 薄委托（`_reaction_scorer` / `_reaction_lexicon_for` /
+  `_new_reaction_judge` / `_build_reaction_engine` / `_judge_llm_adapter`）最长并存 1 个 phase，
+  Phase 5-c2 删除并同 commit 迁移 cutover patch 目标
+- 审查发现与修复记录：实现首版把 GUARDRAILS §12b 插进了 §12 的 ```text 代码块内部（CommonMark
+  中带 info string 的 fence 不能作闭合），致 §12b 被吞成字面文本、悬空 fence 吞掉 §13——重审
+  P1 拦下后已修（§12 补闭合 fence、删悬空 fence），全文件 24 fence 成对、`git diff --check` 干净
+- 遗留/偏差：无新增；Phase 5+ 未执行（薄委托未删、cutover patch 目标未迁、`test_no_dict_config`
+  未扩）。

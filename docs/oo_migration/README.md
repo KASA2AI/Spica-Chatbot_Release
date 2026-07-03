@@ -28,7 +28,7 @@
 | 2 | CharacterScope + scoped recent + MemoryScopeStrategy | 0（排在 1 后） | 批准 | 已收口 | `26314a2da7b0c88b4de622aa9d330d43d5cb7224` | 2026-07-03 收口：CharacterScope + MemoryScopeStrategy 落 `spica/runtime/scope.py`；recent 桶改 character scoped（读/写/清三点对称，全计划唯一主动行为变更）；全量 gate 1127 passed。详见 `PROGRESS.md` |
 | 3 | PromptContextContributor seam | 0,1 | 批准 | 已收口 | `d7865612044ac79dc16a3c1a47adc8edd5203968` | 2026-07-03 收口：PromptContextContributor seam 落地（方案 a·galgame 兼容 auto-fill）；`retrieve_game_context_node` 永久纯赋值别名；orchestrator/sync_chain 已调新名 `contribute_context_node`；全量 gate 1140 passed。详见 `PROGRESS.md` |
 | 4R | registry ToolEntry NamedTuple（微 phase） | 0 | 批准 | 已收口 | `983c8747bfec8325bc39147728d045c8cb4fb37b` | 2026-07-03 收口：registry 内部 7 元组改 `ToolEntry` NamedTuple；对外 API 零变化（Phase 0 #1 零改动自绿）；全量 gate 1147 passed。详见 `PROGRESS.md` |
-| 4 | ReactionScoringPolicy + reaction assembly | 0,2,4R | 批准 | 未批准 | — | 含 patch 有效性退出条件 |
+| 4 | ReactionScoringPolicy + reaction assembly | 0,2,4R | 批准 | 已收口 | `d5dde5770792b4f900a5a54014ea90cc0894e8b3` | 2026-07-03 收口：评分决策下沉 `reaction_scoring.py`、装配出走 `assemblies/reaction.py`（AppHost 仅剩 install 一行 + 薄委托）；冷却/降级语义逐断言保持；三条 facade patch 有效性常驻；全量 gate 1150 passed。**D4 双轨开钟**（薄委托 ≤1 phase，Phase 5-c2 删）。详见 `PROGRESS.md` |
 | 5 | deps 单轨化（stages/memory_commit 禁区） | 4 | 批准 | 未批准 | — | 三 commit：5-c0/c1/c2；删 Phase 4 薄委托 |
 | 6a | TextModel + BoundModel + summarizer/judge 收编 | 5 | 批准 | 未批准 | — | 同 commit 落 D3 弱守卫 |
 | 6b | ModelRouter 收编 host endpoint 决策 | 6a | 批准 | 未批准 | — | 可与 Phase 7 对调，不占 D3 时钟 |

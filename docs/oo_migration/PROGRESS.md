@@ -390,3 +390,34 @@
      `summary_model or llm.model` vs 生产 `reaction_judge_model or llm.model`）——非 Phase 7
      范畴，另立项裁决；
   4. Phase 6b 仍未批准/可选（D3 已停钟，不受时钟约束；批准前须先裁决「施工前必须裁决」小节）。
+
+## 审查后小修 — Phase 7 收口后三方深度对抗审查（小刀 A/B/C）
+- 日期：2026-07-04
+- 背景：Phase 7 收口后由三个独立窗口对抗审查，合并定谳 6 项缺陷（BUG-1..6，全部经独立实测
+  复核；无 P0/P1，今日生产零触发路径——host 恒配 client、博物馆零生产调用方）。
+- **小刀 A（代码修复）**：BUG-2 `ToolProbeStream` 自引用环——consume 泵改模块级
+  `_consume_probe_stream`（零 self 闭包 + exhausted flag 容器），取消弃流恢复 v1 的
+  refcount 即时释放语义；回归测试 `test_abandoned_stream_closes_on_refcount_without_gc`
+  （gc.disable 隔离 + 结构证：生成器帧不再引用 handle）。BUG-3 `from_services` 判空错位——
+  llm 选择改显式 `is not None` 与 `llm_ready` 同源（falsy adapter-only 不再错绑
+  `OpenAICompatibleAdapter(None)`）；回归测试 `test_falsey_adapter_only_bundle_binds_the_adapter`。
+- **小刀 B（守卫加固，test-only）**：BUG-5 弱守卫镜像 runtime 守卫的包级载体禁面
+  （`from spica.ports import LLMPort|llm`、`.LLMPort` 任意 receiver——`ports/__init__`
+  re-export 为真实暴露面；liveness 正向 +5 / 反向 +4）。BUG-6 弱守卫与
+  `test_no_dict_config` 补扫描根存在性 + 非空断言（防目录迁移后 rglob 空集 vacuous 绿，
+  三守卫 liveness 自此对称）。
+- **小刀 C（契约显名 + 记账 + 注释清理）**：BUG-1 博物馆契约特征测试
+  `tests/test_sync_museum_contract.py` 两态钉死——adapter-only + v1 面通行（7-c2 终局语义
+  抵达博物馆 gate 的显名承认）、纯 v2 adapter → `NODE_FAILED`（**契约记录非功能诉求**，
+  博物馆只承诺 v1 面 adapter；冻结文件零改动）。BUG-4 `replace(deps, llm/config=…)` 陈旧
+  绑定显名——`deps.py` 契约注释 + 特征测试 `test_replace_with_new_llm_keeps_old_binding_by_design`
+  + MIGRATION_PLAN 6b「施工前必须裁决」追加。注释清理（纯文字零逻辑）：orchestrator 模块
+  docstring 与 `:109` 注释 deps.llm→deps.model 改向、`context.py` 前缀注释
+  stages→context_contributor 指向修正。
+- 测试：全量 `python -m pytest tests -q` → **1198 passed, 1 warning, 169 subtests passed**
+  （链路：收口基线 1191 → A +2 → B +2/subtests+9 → C +3，加法闭合）。
+- 未修显名：BUG-7 AST 守卫动态形态逃逸（getattr/importlib/裸载体别名）= 全仓守卫固有边界，
+  裁决不修（复合覆盖成立：别名载体调任何 v1 方法仍被方法名禁面抓回）；`from_services` 的
+  `memory=… or …` 同族 truthiness 模式（无 ready 错位驱动，记录备裁）；GUARDRAILS §9:184
+  `stages.py(gate)` 旧句（不在本轮允许文件，归下次 GUARDRAILS 触碰顺带）；
+  `reaction_judge_report` 默认模型分歧（另立项）。

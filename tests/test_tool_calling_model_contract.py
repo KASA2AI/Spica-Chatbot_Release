@@ -14,6 +14,7 @@ Same two-group discipline as tests/test_text_model_contract.py:
   bound-model injection into probe/probe_stream.
 """
 
+import gc
 import unittest
 from types import SimpleNamespace
 
@@ -200,6 +201,34 @@ class ToolProbeStreamContractTest(unittest.TestCase):
         self.assertEqual(opened, [])  # construction ran NO opener code
         next(stream.deltas)
         self.assertEqual(opened, [True])
+
+    def test_abandoned_stream_closes_on_refcount_without_gc(self):
+        # BUG-2 regression (self-cycle): an abandoned (cancelled) probe stream
+        # must release its underlying generator via REFCOUNT the moment the
+        # handle drops -- never wait for cyclic GC. This is the v1 bare-nested-
+        # generator cancel semantics the Phase 7 lazy contract promised to
+        # preserve; a bound-method pump would re-create the handle<->generator
+        # cycle and this test would go red (finally deferred to gc.collect).
+        closed = []
+
+        def opener(sink):
+            try:
+                yield "a"
+                yield "b"
+            finally:
+                closed.append(True)
+
+        gc_was_enabled = gc.isenabled()
+        gc.disable()  # isolate refcount behaviour from the cyclic collector
+        try:
+            stream = ToolProbeStream(opener)
+            next(stream.deltas)  # consume ONE delta, then abandon (cancel shape)
+            del stream
+            # finally ran BEFORE any gc.collect -> released by refcount alone.
+            self.assertEqual(closed, [True])
+        finally:
+            if gc_was_enabled:
+                gc.enable()
 
 
 class _RecordingToolAdapter:

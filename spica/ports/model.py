@@ -61,17 +61,40 @@ class ToolProbeResult:
     usage: Any = None
 
 
+def _consume_probe_stream(
+    open_stream: Callable[[list[dict[str, str]]], Iterator[str]],
+    sink: list[dict[str, str]],
+    exhausted_flag: list[bool],
+) -> Iterator[str]:
+    """ToolProbeStream's delta pump. MODULE-LEVEL on purpose: the generator
+    frame must close over only ``open_stream``/``sink``/``exhausted_flag`` --
+    never the handle -- so an abandoned (cancelled) stream is torn down by
+    REFCOUNT the moment the handle drops, exactly like the v1 bare nested
+    generator. A bound-method generator would put ``self`` in the frame and
+    create a handle<->generator reference CYCLE, deferring the underlying
+    HTTP/SSE close to cyclic GC (the BUG-2 review finding)."""
+    for delta in open_stream(sink):
+        yield delta
+    # Reached ONLY on normal exhaustion -- an exception or an abandoned
+    # generator never sets it, so .calls stays locked.
+    exhausted_flag[0] = True
+
+
 class ToolProbeStream:
     """A LAZY streaming tool probe handle (chat family).
 
     Contract (Phase 7 ruling, pinned by tests/test_tool_calling_model_contract):
     - constructing this object performs NO client I/O; the underlying stream is
       created only when ``deltas`` is first iterated;
+    - ``deltas`` is SINGLE-SHOT (one consumer, one pass; re-iteration yields
+      nothing and never re-opens the client stream);
     - ``calls`` is readable ONLY after ``deltas`` was NORMALLY exhausted --
       reading it early, after a cancel abandoned the iterator, or after a
       mid-stream exception raises RuntimeError (loud, never undefined data);
     - a probe cancelled mid-stream therefore never yields STREAM_RESET and
-      never executes tools (the caller structurally cannot reach ``calls``).
+      never executes tools (the caller structurally cannot reach ``calls``);
+    - an ABANDONED stream is released by refcount, not cyclic GC: the pump
+      generator deliberately holds no reference back to this handle.
 
     ``open_stream`` receives the calls sink and returns the delta iterator
     (adapter side: a generator over ``chat.completions.create(stream=True)``,
@@ -80,15 +103,8 @@ class ToolProbeStream:
 
     def __init__(self, open_stream: Callable[[list[dict[str, str]]], Iterator[str]]) -> None:
         self._sink: list[dict[str, str]] = []
-        self._exhausted = False
-        self._deltas = self._consume(open_stream)
-
-    def _consume(self, open_stream: Callable[[list[dict[str, str]]], Iterator[str]]) -> Iterator[str]:
-        for delta in open_stream(self._sink):
-            yield delta
-        # Reached ONLY on normal exhaustion -- an exception or an abandoned
-        # generator never sets it, so .calls stays locked.
-        self._exhausted = True
+        self._exhausted_flag: list[bool] = [False]
+        self._deltas = _consume_probe_stream(open_stream, self._sink, self._exhausted_flag)
 
     @property
     def deltas(self) -> Iterator[str]:
@@ -96,7 +112,7 @@ class ToolProbeStream:
 
     @property
     def calls(self) -> list[dict[str, str]]:
-        if not self._exhausted:
+        if not self._exhausted_flag[0]:
             raise RuntimeError(
                 "ToolProbeStream.calls read before deltas were normally exhausted "
                 "(early read / cancelled / errored stream) -- the contract forbids it."

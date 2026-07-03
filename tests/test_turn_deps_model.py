@@ -90,6 +90,20 @@ class AutoFillTest(unittest.TestCase):
         # the copied model must be the SAME binding, not a re-minted one.
         self.assertIs(replaced.model, deps.model)
 
+    def test_replace_with_new_llm_keeps_old_binding_by_design(self):
+        # BUG-4 ledger (characterization, NOT an endorsement): replace() copies
+        # a filled model verbatim. Correct for the observer/jobs path above,
+        # but it means ``replace(deps, llm=...)`` / ``replace(deps, config=...)``
+        # silently keeps the OLD binding. Today nothing does that; any future
+        # model-switching (6b router / settings) must pass a new BoundModel
+        # explicitly or rebuild deps -- adjudicated before 6b construction.
+        deps = TurnDeps.from_services(_services(), AppConfig())
+        new_llm = SimpleNamespace()
+        swapped = replace(deps, llm=new_llm)
+        self.assertIs(swapped.llm, new_llm)
+        self.assertIs(swapped.model, deps.model)          # stale binding kept
+        self.assertIsNot(swapped.model.adapter, new_llm)  # the ledgered trap
+
 
 class LlmReadyTerminalSemanticsTest(unittest.TestCase):
     """Phase 7-c2: readiness = ANY LLM capability (adapter OR raw client).
@@ -112,6 +126,33 @@ class LlmReadyTerminalSemanticsTest(unittest.TestCase):
         services.llm_client = None  # llm_adapter already None in the helper
         deps = TurnDeps.from_services(services, AppConfig())
         self.assertFalse(deps.llm_ready)
+
+    def test_falsey_adapter_only_bundle_binds_the_adapter(self):
+        # BUG-3 regression: llm selection must use the SAME ``is not None`` test
+        # as llm_ready. A falsy-but-present adapter (e.g. a mock whose __bool__
+        # is False) must be BOUND -- under the old ``or`` it was silently
+        # swapped for OpenAICompatibleAdapter(None) while llm_ready said True,
+        # and the first stream() call crashed on the None client.
+        class _FalseyV2Adapter:
+            def __bool__(self):
+                return False
+
+            def complete(self, prompt, *, model):
+                return "ok"
+
+            def stream(self, prompt, *, model, state):
+                yield "答"
+
+        adapter = _FalseyV2Adapter()
+        services = _services(client=None)
+        services.llm_client = None
+        services.llm_adapter = adapter
+        deps = TurnDeps.from_services(services, AppConfig())
+        self.assertTrue(deps.llm_ready)
+        self.assertIs(deps.llm, adapter)            # bound, not swapped
+        self.assertIs(deps.model.adapter, adapter)  # BoundModel over the SAME adapter
+        # The stream really runs on the fake -- never OpenAICompatibleAdapter(None).
+        self.assertEqual(list(deps.model.stream("p", SimpleNamespace(timing={}))), ["答"])
 
 
 # ---- pin 4: the real orchestrator streams through deps.model ---------------- #

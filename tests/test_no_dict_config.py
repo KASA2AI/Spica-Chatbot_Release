@@ -98,6 +98,16 @@ class NoDictConfigGuardTest(unittest.TestCase):
         for rel in ALLOWLIST | {rel for rel, _, _ in TEMP_EXEMPT}:
             self.assertTrue((REPO_ROOT / rel).is_file(), f"Stale entry: {rel}")
 
+    def test_scan_root_exists_and_is_nonempty(self):
+        # BUG-6 liveness: if spica/runtime ever moved, rglob("*.py") would be
+        # an empty iterator and the main scan vacuously green. The root must
+        # exist and actually contain scannable files.
+        self.assertTrue(RUNTIME_DIR.is_dir(), f"scan root missing: {RUNTIME_DIR}")
+        self.assertTrue(
+            any(RUNTIME_DIR.rglob("*.py")),
+            f"scan root has no .py files (vacuous scan): {RUNTIME_DIR}",
+        )
+
     def test_exempted_read_still_exists_at_the_pinned_line(self):
         # An exemption must die WITH the exact code it excuses: any edit that
         # shifts a pinned line goes red and forces a conscious re-pin or

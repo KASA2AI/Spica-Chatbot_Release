@@ -53,7 +53,8 @@ class GameContextRequest:
 
 # The galgame conversation-id namespace prefix. Defined HERE (typed-request layer)
 # so ChatEngine's double-wrap guard can read it without importing spica.galgame.
-# stages._GALGAME_CONVERSATION_PREFIX and models.game_conversation_id carry the
+# context_contributor._GALGAME_CONVERSATION_PREFIX (the gate's copy -- moved out
+# of stages in OO migration Phase 3) and models.game_conversation_id carry the
 # same literal -- deliberately NOT deduped: the gate code is untouchable (stage-2
 # guardrail), see GALGAME_FINDINGS.md #9.
 GALGAME_CONVERSATION_PREFIX = "galgame::"

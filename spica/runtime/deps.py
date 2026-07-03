@@ -87,6 +87,12 @@ class TurnDeps:
     # family are its users. NOT a readiness signal -- deps.model can exist
     # while ``llm_ready`` is False (from_services wraps a None client in an
     # adapter); no-LLM error paths gate on ``llm_ready`` alone.
+    # BUG-4 ledger (post-Phase-7 review): ``dataclasses.replace()`` copies a
+    # FILLED model verbatim -- correct for the orchestrator's per-turn
+    # replace(observer=..., jobs=...), but ``replace(deps, llm=...)`` /
+    # ``replace(deps, config=...)`` does NOT re-bind. Model switching (6b
+    # router / a future settings panel) must pass a new BoundModel explicitly
+    # or rebuild deps -- adjudicate before 6b construction.
     model: BoundModel | None = None
 
     def __post_init__(self) -> None:
@@ -112,14 +118,20 @@ class TurnDeps:
     def from_services(cls, services: Any, app_config: AppConfig) -> "TurnDeps":
         """Map host-assembled AgentServices (resolved ports) into typed deps.
 
-        The ``or Adapter(...)`` is the ONE place that resolves a raw client/store
-        into a port -- in production the host already resolved them (the ``or``
-        takes the first branch); for legacy callers passing only a raw client it
-        wraps. This keeps the dual-field fallback out of the runtime hot path.
+        The adapter-else-wrap conditional is the ONE place that resolves a raw
+        client/store into a port -- in production the host already resolved them
+        (the adapter branch wins); for legacy callers passing only a raw client
+        it wraps. The llm test is an explicit ``is not None`` so it stays
+        SAME-SOURCE with ``llm_ready`` below (BUG-3: a falsy-but-present adapter
+        must be bound, never silently swapped for a wrapper over a None client).
         """
         return cls(
             config=app_config,
-            llm=services.llm_adapter or OpenAICompatibleAdapter(services.llm_client),
+            llm=(
+                services.llm_adapter
+                if services.llm_adapter is not None
+                else OpenAICompatibleAdapter(services.llm_client)
+            ),
             tts=services.tts_adapter,
             visual=services.visual_tool,
             memory=services.memory_adapter

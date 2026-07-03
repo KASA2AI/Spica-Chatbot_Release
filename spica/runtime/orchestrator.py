@@ -6,8 +6,9 @@ fan each unit out to the visual + TTS jobs, emit ordered events, and commit
 memory. It only *coordinates* the runtime components / ports -- no business
 logic (text cleanup, LLM branch, visual/TTS, extraction) lives here.
 
-Tunables (model, play-unit sizes, visual workers) and the LLM port come from the
-typed ``deps`` (C3b: ``deps.config`` / ``deps.llm``, never ``services.config``);
+Tunables (model, play-unit sizes, visual workers) and the model handle come from
+the typed ``deps`` (C3b/Phase 7: ``deps.config`` / ``deps.model``, never
+``services.config``);
 direct dict-config callers are bridged via ``TurnDeps.from_legacy_services``. The
 turn runs on a typed ``TurnContext`` (C3c) rather than the ``AgentState``
 blackboard. Qt-free (CLAUDE.md #1).
@@ -106,7 +107,8 @@ def _produce_stream_events(
         first_unit_event = threading.Event()
 
         # C3b: run on typed deps. Direct (dict-config) callers bridge here; the
-        # hot path below reads only deps.config / deps.llm, never services.config.
+        # hot path below reads only deps.config / deps.model (Phase 7), never
+        # services.config.
         deps = deps or TurnDeps.from_legacy_services(services)
 
         # Concurrency + background jobs are injected per-turn (C2/C5/C6). Streaming

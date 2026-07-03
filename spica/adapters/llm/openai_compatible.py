@@ -220,6 +220,20 @@ class OpenAICompatibleAdapter:
         _record_usage(state, response)
         return str(_get_attr(response, "output_text", "") or "")
 
+    # ------------------------------------------------------------------ #
+    # TextModel v2 (OO migration Phase 6a, spica/ports/model.py). Thin over
+    # the v1 methods so the endpoint/fallback logic keeps a single home (fix
+    # a bug once): complete() reuses complete_text()'s Responses/Chat branch;
+    # stream() assembles the request dict HERE (the depth v1 lacks) and
+    # reuses iter_response_text's fallback tree. No new I/O branches.
+    # ------------------------------------------------------------------ #
+
+    def complete(self, prompt: str, *, model: str) -> str:
+        return self.complete_text(prompt, model=model)
+
+    def stream(self, prompt: str, *, model: str, state: Any) -> Iterator[str]:
+        return self.iter_response_text({"model": model, "input": prompt}, state)
+
 
 # --------------------------------------------------------------------------- #
 # Moved verbatim from agent/streaming_pipeline.py (Phase 5). Behaviour-identical.

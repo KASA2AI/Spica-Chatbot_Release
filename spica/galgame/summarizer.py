@@ -1,8 +1,9 @@
 """Galgame story summarization via LLM (Phase 8). Qt-free, turn-INDEPENDENT.
 
 A background TOOL call -- NOT run_turn: it builds one summarization prompt, calls
-the LLM endpoint once through ``LLMPort.complete_text``, and parses a structured
-result. It never builds a TurnContext / touches prompt_builder / run_turn (§1.3).
+the LLM endpoint once through ``BoundModel.complete`` (model port v2, OO migration
+Phase 6a), and parses a structured result. It never builds a TurnContext / touches
+prompt_builder / run_turn (§1.3).
 
 §13.5 load-bearing wall: the route it returns is ALWAYS a *guess* (no ``confirmed``
 key here; the session stamps ``confirmed=False`` when applying). Only the player can
@@ -22,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spica.galgame.models import StorySummary, utc_now_iso
-from spica.ports.llm import LLMPort
+from spica.ports.model import BoundModel
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,8 @@ _PROMPT = """你在帮玩家整理一段 galgame 剧情。下面是按时间顺�
 
 
 class GalgameSummarizer:
-    def __init__(self, llm: LLMPort, model: str) -> None:
-        self._llm = llm
-        self._model = model
+    def __init__(self, bound: BoundModel) -> None:
+        self._bound = bound
 
     def summarize(self, lines: list[Any], *, recent_summaries: list[Any] | None = None, progress: Any | None = None) -> SummaryResult:
         if not lines:
@@ -79,7 +79,7 @@ class GalgameSummarizer:
             transcript="\n".join(f"{l.speaker or '—'}: {l.text}" for l in lines),
         )
         try:
-            raw = self._llm.complete_text(prompt, model=self._model)
+            raw = self._bound.complete(prompt)
         except Exception as exc:  # noqa: BLE001 -- any LLM error -> fold + retry
             raise SummaryError(f"LLM call failed: {exc}") from exc
         return _parse(raw)

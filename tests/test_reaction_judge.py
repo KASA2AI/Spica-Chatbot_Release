@@ -44,6 +44,7 @@ from spica.galgame.reaction_scoring import (
 )
 from spica.host.app_host import AppHost
 from spica.host.assemblies import reaction as reaction_assembly
+from spica.ports.model import BoundModel
 
 
 # -- helpers ------------------------------------------------------------------
@@ -90,9 +91,15 @@ class _RecordingLLM:
     def __init__(self, response='{"worth": 7, "moment": "m", "angle": "吐槽"}'):
         self.response, self.prompt, self.model = response, None, None
 
-    def complete_text(self, prompt, *, model):
+    # Adapter-side TextModel v2 shape (Phase 6a): the judge holds a BoundModel,
+    # whose adapter half this fake plays.
+    def complete(self, prompt, *, model):
         self.prompt, self.model = prompt, model
         return self.response
+
+
+def _judge_over(fake):
+    return GalgameReactionJudge(BoundModel(fake, "m"))
 
 
 class _RaisingJudge:
@@ -151,18 +158,18 @@ class JudgeParseTest(unittest.TestCase):
 
     def test_judge_wraps_llm_error(self):
         class _Boom:
-            def complete_text(self, prompt, *, model):
+            def complete(self, prompt, *, model):
                 raise RuntimeError("net down")
 
         with self.assertRaises(ReactionJudgeError):
-            GalgameReactionJudge(_Boom(), "m").judge(beat_lines=[_line("hi")])
+            _judge_over(_Boom()).judge(beat_lines=[_line("hi")])
 
     def test_judge_empty_beat_raises(self):
         with self.assertRaises(ReactionJudgeError):
-            GalgameReactionJudge(_RecordingLLM(), "m").judge(beat_lines=[])
+            _judge_over(_RecordingLLM()).judge(beat_lines=[])
 
     def test_judge_returns_verdict_from_llm(self):
-        v = GalgameReactionJudge(_RecordingLLM(), "m").judge(beat_lines=[_line("hi")])
+        v = _judge_over(_RecordingLLM()).judge(beat_lines=[_line("hi")])
         self.assertEqual(v, JudgeVerdict(worth=7, moment="m", angle="吐槽"))
 
 
@@ -200,7 +207,7 @@ class DegradeFallbackTest(unittest.TestCase):
 class WindowReadTest(unittest.TestCase):
     def test_closure_feeds_window_tail_summaries_progress_recent(self):
         rec = _RecordingLLM()
-        host = _judge_host(GalgameReactionJudge(rec, "m"))
+        host = _judge_host(_judge_over(rec))
         host._reaction_game_scope = lambda: ("limelight", "default", object())
         host.services = SimpleNamespace(
             game_memory_adapter=_FakeGM(
@@ -289,7 +296,9 @@ class PatchValidityTest(unittest.TestCase):
         sentinel_adapter = object()
         with patch.object(AppHost, "_judge_llm_adapter", return_value=sentinel_adapter):
             judge = host._new_reaction_judge()
-        self.assertIs(judge._llm, sentinel_adapter)
+        # Phase 6a: the judge holds a BoundModel; the sentinel must arrive as
+        # its adapter half (same interception semantics, new field path).
+        self.assertIs(judge._bound.adapter, sentinel_adapter)
 
 
 # -- ⑥ zero-diff + config defaults --------------------------------------------
@@ -323,13 +332,13 @@ class ZeroDiffTest(unittest.TestCase):
             llm=LLMConfig(model="dialogue-m"),
             galgame=GalgameConfig(reaction_judge_enabled=True),
         )
-        self.assertEqual(host._new_reaction_judge()._model, "dialogue-m")
+        self.assertEqual(host._new_reaction_judge()._bound.model, "dialogue-m")
         # explicit override
         host.config = AppConfig(
             llm=LLMConfig(model="dialogue-m"),
             galgame=GalgameConfig(reaction_judge_enabled=True, reaction_judge_model="small-m"),
         )
-        self.assertEqual(host._new_reaction_judge()._model, "small-m")
+        self.assertEqual(host._new_reaction_judge()._bound.model, "small-m")
 
 
 # -- judge LLM-key split (relieve the deepseek endpoint saturation) -----------
@@ -393,13 +402,14 @@ class JudgeKeySplitTest(unittest.TestCase):
             llm=LLMConfig(model="main-m"),
             galgame=GalgameConfig(reaction_judge_enabled=True, reaction_judge_model="judge-m"),
         )
-        self.assertEqual(host._new_reaction_judge()._model, "judge-m")
+        self.assertEqual(host._new_reaction_judge()._bound.model, "judge-m")
 
     def test_summary_stays_on_main_key(self):
         host, _main = self._host(judge_key="K2")
         host.config = AppConfig(llm=LLMConfig(model="m"), galgame=GalgameConfig())
-        # summary must NOT move to the judge endpoint -- it reads services.llm_adapter.
-        self.assertIs(host._new_summarizer()._llm, host.services.llm_adapter)
+        # summary must NOT move to the judge endpoint -- it reads services.llm_adapter
+        # (Phase 6a: as the adapter half of its BoundModel).
+        self.assertIs(host._new_summarizer()._bound.adapter, host.services.llm_adapter)
 
     def test_load_secrets_reads_both_keys(self):
         import spica.config.secrets as secmod

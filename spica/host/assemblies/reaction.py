@@ -12,8 +12,8 @@ FACADE CONTRACT (patch-validity, pinned by tests/test_reaction_judge.py):
 adapter through ``host._judge_llm_adapter()``. The AppHost thin delegates are
 the ONLY build path -- ``patch.object(AppHost, ...)`` must always intercept
 (the ``test_moondream_default_cutover`` 15-patch depends on it). The delegates
-are scheduled for deletion in Phase 5-c2, which migrates those patch targets
-here in the same commit.
+are LONG-LIVED facades (D4 stop-clock, amendment 521f882) -- deletion is not
+scheduled.
 
 ``host`` stays duck-typed ``Any``: this module must not import ``AppHost``
 (app_host imports us -- the reverse edge would be a cycle).
@@ -27,6 +27,7 @@ from typing import Any
 from spica.galgame.reaction import ReactionEngine, ReactionModeParams, merge_mode_table
 from spica.galgame.reaction_judge import GalgameReactionJudge
 from spica.host.agent_assembly import build_llm_client
+from spica.ports.model import BoundModel
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,9 @@ def new_reaction_judge(host: Any) -> GalgameReactionJudge | None:
         return None
     model = host.config.galgame.reaction_judge_model or host.config.llm.model
     # Facade contract: the adapter comes through the host delegate, never a
-    # direct judge_llm_adapter(host) call (patch-validity pin).
-    return GalgameReactionJudge(host._judge_llm_adapter(), model)
+    # direct judge_llm_adapter(host) call (patch-validity pin). Phase 6a:
+    # hand-assemble the BoundModel here (the router半 is Phase 6b).
+    return GalgameReactionJudge(BoundModel(host._judge_llm_adapter(), model))
 
 
 def judge_llm_adapter(host: Any) -> Any:

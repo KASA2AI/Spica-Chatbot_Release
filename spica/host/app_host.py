@@ -51,6 +51,7 @@ from spica.galgame.reaction_judge import GalgameReactionJudge
 from spica.galgame.reaction_scoring import ReactionScoringPolicy
 from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
+from spica.ports.model import BoundModel
 from spica.runtime.context import GameTurnBinding
 from spica.runtime.jobs import ThreadJobRunner
 from spica.runtime.scope import CharacterScope, character_scope_from_config
@@ -382,12 +383,14 @@ class AppHost:
         return bool(try_speak(request))
 
     def _reaction_lexicon_for(self, game_id: str | None) -> ReactionLexicon:
-        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2): the mtime cache
-        lives on the scoring policy now."""
+        """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
+        521f882 -- deletion is not scheduled): the mtime cache lives on the
+        scoring policy now."""
         return self._reaction_scoring_policy.lexicon_for(game_id)
 
     def _reaction_scorer(self, beat: Any) -> ScoreResult:
-        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2): the engine's
+        """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
+        521f882): the engine's
         ``(beat) -> ScoreResult`` seam now lands on ReactionScoringPolicy.score
         (judge call / cooldown / lexicon hot-reload / failure degradation all
         live there; write closures stay below on the host)."""
@@ -431,24 +434,28 @@ class AppHost:
         )
 
     def _build_reaction_engine(self) -> ReactionEngine | None:
-        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2). Kept as the
-        patch target cutover tests intercept; the assembly builds THROUGH it."""
+        """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
+        521f882). The patch target cutover tests intercept; the assembly builds
+        THROUGH it."""
         return reaction_assembly.build_reaction_engine(self)
 
     def _new_summarizer(self) -> GalgameSummarizer | None:
         # Summary LLM = config.galgame.summary_model, else the dialogue model (Phase 8),
-        # over the same resolved LLM adapter. None when no LLM is wired (tests).
+        # over the same resolved LLM adapter, hand-assembled into a BoundModel
+        # (Phase 6a; the router半 is Phase 6b). None when no LLM is wired (tests).
         if self.services is None or self.services.llm_adapter is None:
             return None
         summary_model = self.config.galgame.summary_model or self.config.llm.model
-        return GalgameSummarizer(self.services.llm_adapter, summary_model)
+        return GalgameSummarizer(BoundModel(self.services.llm_adapter, summary_model))
 
     def _new_reaction_judge(self) -> GalgameReactionJudge | None:
-        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2)."""
+        """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
+        521f882)."""
         return reaction_assembly.new_reaction_judge(self)
 
     def _judge_llm_adapter(self) -> Any:
-        """Thin delegate (Phase 4 facade, deleted in Phase 5-c2). The assembly's
+        """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
+        521f882). The assembly's
         new_reaction_judge() takes the adapter THROUGH this method (patch-validity
         pin), so tests patching it keep intercepting real construction."""
         return reaction_assembly.judge_llm_adapter(self)

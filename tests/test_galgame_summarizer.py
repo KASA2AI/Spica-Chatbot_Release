@@ -11,6 +11,7 @@ from spica.galgame.summarizer import (
     SummaryError,
     recover_dangling_sessions,
 )
+from spica.ports.model import BoundModel
 
 GOOD = (
     '{"summary_zh":"麦和六花一起去真澄镇","characters":["麦","六花"],'
@@ -28,11 +29,17 @@ class _FakeLLM:
         self.raise_ = raise_
         self.calls = []
 
-    def complete_text(self, prompt, *, model):
+    # Adapter-side TextModel v2 shape (Phase 6a): the summarizer holds a
+    # BoundModel, whose adapter half this fake plays.
+    def complete(self, prompt, *, model):
         self.calls.append((prompt, model))
         if self.raise_:
             raise RuntimeError("llm down")
         return self.text
+
+
+def _summarizer(fake):
+    return GalgameSummarizer(BoundModel(fake, "m"))
 
 
 def _line(line_id, text, session_id="S1"):
@@ -44,7 +51,7 @@ def _line(line_id, text, session_id="S1"):
 
 class SummarizerParseTest(unittest.TestCase):
     def test_parses_structured_result(self):
-        result = GalgameSummarizer(_FakeLLM(GOOD), "m").summarize([_line("L1", "おはよう")])
+        result = _summarizer(_FakeLLM(GOOD)).summarize([_line("L1", "おはよう")])
         self.assertEqual(result.summary_zh, "麦和六花一起去真澄镇")
         self.assertEqual(result.characters, ["麦", "六花"])
         self.assertEqual(result.route_guess["name"], "六花线")
@@ -52,24 +59,24 @@ class SummarizerParseTest(unittest.TestCase):
 
     def test_route_guess_has_no_confirmed_key(self):
         # §13.5: the LLM result is a GUESS -- it must not assert "confirmed".
-        result = GalgameSummarizer(_FakeLLM(GOOD), "m").summarize([_line("L1", "x")])
+        result = _summarizer(_FakeLLM(GOOD)).summarize([_line("L1", "x")])
         self.assertNotIn("confirmed", result.route_guess)
 
     def test_json_in_code_fence_is_extracted(self):
-        result = GalgameSummarizer(_FakeLLM("```json\n" + GOOD + "\n```"), "m").summarize([_line("L1", "x")])
+        result = _summarizer(_FakeLLM("```json\n" + GOOD + "\n```")).summarize([_line("L1", "x")])
         self.assertEqual(result.summary_zh, "麦和六花一起去真澄镇")
 
     def test_garbage_output_raises_summary_error(self):
         with self.assertRaises(SummaryError):
-            GalgameSummarizer(_FakeLLM("not json at all"), "m").summarize([_line("L1", "x")])
+            _summarizer(_FakeLLM("not json at all")).summarize([_line("L1", "x")])
 
     def test_llm_failure_raises_summary_error(self):
         with self.assertRaises(SummaryError):
-            GalgameSummarizer(_FakeLLM(raise_=True), "m").summarize([_line("L1", "x")])
+            _summarizer(_FakeLLM(raise_=True)).summarize([_line("L1", "x")])
 
     def test_empty_lines_raises(self):
         with self.assertRaises(SummaryError):
-            GalgameSummarizer(_FakeLLM(GOOD), "m").summarize([])
+            _summarizer(_FakeLLM(GOOD)).summarize([])
 
 
 class RecoverDanglingTest(unittest.TestCase):
@@ -83,7 +90,7 @@ class RecoverDanglingTest(unittest.TestCase):
             self.mem.add_story_line(_line(lid, text))
 
     def test_recovers_with_summary_and_marks_ended(self):
-        recovered = recover_dangling_sessions(self.mem, GalgameSummarizer(_FakeLLM(GOOD), "m"))
+        recovered = recover_dangling_sessions(self.mem, _summarizer(_FakeLLM(GOOD)))
         self.assertEqual(recovered, ["S1"])
         summaries = self.mem.recent_summaries("ABC")
         self.assertEqual(len(summaries), 1)
@@ -91,7 +98,7 @@ class RecoverDanglingTest(unittest.TestCase):
         self.assertEqual(self.mem.get_play_session("S1").state, "ended")
 
     def test_failed_recovery_marks_interrupted_and_keeps_lines(self):
-        recover_dangling_sessions(self.mem, GalgameSummarizer(_FakeLLM(raise_=True), "m"))
+        recover_dangling_sessions(self.mem, _summarizer(_FakeLLM(raise_=True)))
         self.assertEqual(self.mem.recent_summaries("ABC"), [])  # nothing persisted
         self.assertEqual(self.mem.get_play_session("S1").state, "interrupted")
         # lines remain unsummarized -> still recoverable later

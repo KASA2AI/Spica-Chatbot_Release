@@ -205,7 +205,9 @@ class RecoverHistoryTest(unittest.TestCase):
         }, ensure_ascii=False)
 
         class _FakeLLM:
-            def complete_text(self, prompt, *, model):
+            # Adapter-side TextModel v2 shape (Phase 6a): this fake sits at
+            # services.llm_adapter -- the adapter half BoundModel calls into.
+            def complete(self, prompt, *, model):
                 return fake_summary
 
         with TemporaryDirectory() as tmp:

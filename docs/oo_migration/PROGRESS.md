@@ -169,3 +169,31 @@
      直调形态，旧实现静默 no-op、新通用 node 需 deps 问 contributors——结构上不可保留
      （零调用方、零测试依赖）；错误路径的对应容忍已保留并钉死；
   5. Phase 4R / 4+ 未执行。
+
+## Phase 4R — registry ToolEntry NamedTuple（微 phase）（已收口）
+- 日期：2026-07-03
+- commit：`983c8747bfec8325bc39147728d045c8cb4fb37b`
+- 实际修改文件（与计划白名单完全一致，零超出）：`spica/plugins/registry.py`（+52/-34）、
+  `tests/test_registry.py`（+87，只加断言，既有 3 用例零改动）
+- 测试：
+  - `tests/test_registry.py` → 10 passed（3 既有 + 7 新增：`ToolEntry._fields` 形状 pin /
+    显式元数据读取器 / 未注册名默认值 / 非法 effect ValueError / available False→True 供给
+    翻转 + 谓词抛异常隐藏不炸（该分支首次有覆盖）/ 同名重复注册覆盖）
+  - `tests/test_app_host_tool_registration.py` → 5 passed（Phase 0 #1 **零改动自绿**——
+    该文件当初即为本 phase 设计的公共接口回归判据）
+  - 工具族（chat_tool_round / tool_chain_rounds / no_static_tool_schemas / sing_song /
+    watch / note）→ 60 passed, 6 subtests（消费方零改动）
+  - `rg -n 'entry\[[0-9]\]' spica/plugins/registry.py` → 零命中（7 元解包循环同步归零）
+  - `python -m pytest tests -q` → 1147 passed, 1 warning, 108 subtests passed
+    （= 1140 基线 + 7 新用例，零 fail/skip/xfail）
+- exit conditions 逐条：① registry.py 内元组索引访问消失 ✓（`entry[n]` 与解包循环双 grep
+  归零）；② 对外 API 零变化 ✓（八个公共入口签名未动；Phase 0 #1 + 工具族零改动全绿）
+- 双轨表变化：无（内部表示重构，无 seam 切换；解锁 Phase 4——消除元组/NamedTuple 双索引窗口）
+- 关键设计记录：
+  - `ToolEntry` 字段顺序与历史 7 元组一致（`schema, handler, available, intent_gated,
+    chainable, compact_output, effect`）——NamedTuple ⊃ tuple，下标语义纵深兼容；
+  - `_tools` 类型注解 12 行嵌套 tuple → `dict[str, ToolEntry]`；
+  - `register_tool` 关键字构造，schema verbatim / effect 三值校验 / name 解析行为不变；
+  - 七处读取访问点全部改命名字段；新元数据必须走命名字段（`_fields` pin 防匿名加宽回潮）；
+  - 预扫验证：`_tools` 在 registry.py 之外零引用，内部表示自由更换无隐蔽依赖。
+- 遗留/偏差：无；Phase 4 / 5+ 未执行。

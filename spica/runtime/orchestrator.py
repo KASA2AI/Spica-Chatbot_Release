@@ -351,8 +351,10 @@ def _produce_stream_events(
             # #1 checkpoint ③a: a turn cancelled during the tool round skips the LLM
             # stream entirely -- don't even open it. Deadline: cancelled None ->
             # `not False` -> identical to the original unconditional `else`.
-            request = {"model": model, "input": prompt_for_stream}
-            for delta in deps.llm.iter_response_text(request, ctx):
+            # Phase 7-c1 (model port v2): the request dict is assembled INSIDE
+            # the adapter now -- byte-identical {"model", "input"} shape, pinned
+            # client-level by test_chat_tool_round + test_text_model_contract.
+            for delta in deps.model.stream(prompt_for_stream, ctx):
                 # #1 checkpoint ③b: stop consuming deltas the moment cancel lands
                 # mid-stream (saves tokens + halts further submit_unit -> TTS).
                 # Breaking the for-loop suspends the generator; its connection is

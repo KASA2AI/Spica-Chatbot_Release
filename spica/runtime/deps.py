@@ -32,6 +32,7 @@ from spica.config.schema import (
 from spica.ports.game_memory import GameMemoryPort
 from spica.ports.llm import LLMPort
 from spica.ports.memory import MemoryPort
+from spica.ports.model import BoundModel
 from spica.ports.tts import TTSPort
 from spica.ports.visual import VisualPort
 from spica.runtime.exec_strategy import ExecStrategy, Inline
@@ -75,6 +76,15 @@ class TurnDeps:
     recent: Any = None
     llm_ready: bool = True
     available_tool_schema_count: int = 0
+    # Phase 7-c1 (model port v2): the BoundModel the orchestrator's final
+    # no-tool stream runs on. None -> auto-filled from ``llm`` + the config
+    # model in ``__post_init__`` (every bridge and direct test construction
+    # gets it for free); an explicitly passed model is always respected.
+    # ``llm`` stays: the frozen sync chain and (until 7-c2) tool_round's probe
+    # family are its users. NOT a readiness signal -- deps.model can exist
+    # while ``llm_ready`` is False (from_services wraps a None client in an
+    # adapter); no-LLM error paths gate on ``llm_ready`` alone.
+    model: BoundModel | None = None
 
     def __post_init__(self) -> None:
         if self.context_contributors is None:
@@ -87,6 +97,13 @@ class TurnDeps:
             from spica.galgame.context_contributor import galgame_contributor
 
             object.__setattr__(self, "context_contributors", (galgame_contributor,))
+        if self.model is None and self.llm is not None:
+            # Phase 7-c1 auto-fill: bind the resolved adapter to the config
+            # model once per construction. Value-preserving: llm.model is never
+            # mutated post-assembly (single write: config/manager env override),
+            # and dataclasses.replace() copies a filled model verbatim (this
+            # branch only fires on None).
+            object.__setattr__(self, "model", BoundModel(self.llm, self.config.llm.model))
 
     @classmethod
     def from_services(cls, services: Any, app_config: AppConfig) -> "TurnDeps":

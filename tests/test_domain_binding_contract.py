@@ -264,5 +264,154 @@ class SystemTurnDomainIdTest(unittest.TestCase):
         self.assertEqual(galgame_contributor.mode(plain), "none")
 
 
+# --------------------------------------------------------------------------- #
+# Phase 8-c1 contracts (appended after the c0 baselines above): the generic
+# DomainTurnBinding lane, the registry-based double-wrap guard, the router's
+# galgame-only isolation, and the exploding-sink safety (设计裁决 1/2/6).
+# --------------------------------------------------------------------------- #
+
+import dataclasses
+
+from spica.host.domain_router import ActiveDomainRouter
+from spica.runtime.context import DomainContextRequest, DomainTurnBinding
+
+
+class _CowatchRequest(DomainContextRequest):
+    """A minimal second-domain request shape (kw_only subclassing works)."""
+
+
+_GENERIC_BINDING = DomainTurnBinding(
+    conversation_id="cowatch::movie-night",
+    context_request=_CowatchRequest(domain="cowatch", mode="active"),
+)
+
+
+class GenericTypesShapeTest(unittest.TestCase):
+    """裁决 2: the generic types are frozen; the base is kw_only."""
+
+    def test_domain_context_request_is_frozen_and_kw_only(self):
+        with self.assertRaises(TypeError):
+            DomainContextRequest("cowatch")  # positional forbidden (kw_only)
+        req = DomainContextRequest(domain="cowatch")
+        self.assertEqual(req.mode, "none")
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            req.mode = "active"
+
+    def test_domain_turn_binding_is_frozen(self):
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            _GENERIC_BINDING.conversation_id = "x"
+
+
+class GenericLaneTest(unittest.TestCase):
+    """裁决 2: the DomainTurnBinding lane fills the generic tuple, never the
+    galgame slot, and preserves §27① exactly like the legacy lane."""
+
+    def _engine_with_generic(self):
+        engine = _engine()
+        engine.set_game_binding_provider(lambda: _GENERIC_BINDING)
+        return engine
+
+    def test_generic_lane_fills_tuple_not_game_slot(self):
+        req = self._engine_with_generic()._request(
+            "你好", "default", None, None, None, True, "chat", None
+        )
+        self.assertEqual(req.conversation_id, "cowatch::movie-night")
+        self.assertEqual(req.domain_context_requests, (_GENERIC_BINDING.context_request,))
+        self.assertIsNone(req.game_context_request)  # galgame-only slot untouched
+
+    def test_generic_lane_preserves_caller_conversation(self):
+        req = self._engine_with_generic()._request(
+            "你好", "side_chat", None, None, None, True, "chat", None
+        )
+        self.assertEqual(req.memory_conversation_id, "side_chat")  # §27①
+
+    def test_generic_lane_empty_caller_falls_back_to_default(self):
+        req = self._engine_with_generic()._request(
+            "你好", "", None, None, None, True, "chat", None
+        )
+        self.assertEqual(req.memory_conversation_id, "default")
+
+    def test_registered_prefix_double_wrap_guard(self):
+        # A caller already inside ANY registered domain namespace is taken
+        # as-is even while a binding is active (galgame:: is the only
+        # registered prefix today -> byte-identical to the old guard).
+        engine = self._engine_with_generic()
+        manual_cid = "galgame::other::playthrough::ng+"
+        req = engine._request("你好", manual_cid, None, None, None, True, "chat", None)
+        self.assertEqual(req.conversation_id, manual_cid)
+        self.assertEqual(req.domain_context_requests, ())
+        self.assertIsNone(req.game_context_request)
+
+    def test_unknown_binding_shape_fails_open_to_plain(self):
+        engine = _engine()
+        engine.set_game_binding_provider(lambda: object())  # wiring bug shape
+        req = engine._request("你好", "default", None, None, None, True, "chat", None)
+        self.assertEqual(req.conversation_id, "default")
+        self.assertEqual(req.domain_context_requests, ())
+        self.assertIsNone(req.game_context_request)
+
+
+class RouterGalgameIsolationTest(unittest.TestCase):
+    """裁决 修正 1: a non-galgame high-priority router binding must NOT leak
+    into the galgame-only closure -- it keeps reading the controller snapshot."""
+
+    def test_high_priority_generic_binding_does_not_reach_galgame_closure(self):
+        host = AppHost()
+        host._companion_controller = SimpleNamespace(current_game_context=lambda: _BINDING)
+        host.domain_router.publish("cowatch", _GENERIC_BINDING, priority=100)
+        # The engine's slot (router.current) sees the generic binding...
+        self.assertIs(host.domain_router.current(), _GENERIC_BINDING)
+        # ...but the galgame-only closure still sees ONLY the controller snapshot.
+        self.assertIs(host._companion_game_binding(), _BINDING)
+
+
+class _ExplodingSink:
+    def publish(self, domain, binding, priority=0):
+        raise RuntimeError("sink down")
+
+    def retract(self, domain):
+        raise RuntimeError("sink down")
+
+
+class BindingSinkSafetyTest(ControllerHarness):
+    """裁决 6: sink failures are best-effort -- never half-start, never break
+    stop, never resurrect a binding."""
+
+    def _controller_with_sink(self, sink):
+        return GalgameCompanionController(
+            self.mem, _Capture(), _Locator(), _InertOcr(),
+            summarizer=None, emit=lambda event: None,
+            summary_trigger_chars=100000, interval_seconds=60.0,
+            binding_sink=sink,
+        )
+
+    def test_exploding_sink_does_not_block_start_or_stop(self):
+        c = self._controller_with_sink(_ExplodingSink())
+        c.start("0x1", game_id="g1", dialog_ratios=(0.0, 0.0, 1.0, 1.0))  # no raise
+        self.assertIsNotNone(c.current_game_context())  # local publish intact
+        c.stop()  # no raise
+        self.assertIsNone(c.current_game_context())     # clear-FIRST intact
+        self.assertIsNone(c.current_watch_target())
+
+    def test_real_router_sink_mirrors_publish_and_retract(self):
+        router = ActiveDomainRouter()
+        c = self._controller_with_sink(router)
+        c.start("0x1", game_id="g1", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
+        published = router.current_for("galgame")
+        self.assertIsInstance(published, GameTurnBinding)
+        self.assertIs(published, c.current_game_context())  # the SAME snapshot object
+        c.stop()
+        self.assertIsNone(router.current_for("galgame"))    # retracted at clear-FIRST
+        self.assertIsNone(router.current())
+
+    def test_failed_start_leaves_router_empty(self):
+        router = ActiveDomainRouter()
+        c = self._controller_with_sink(router)
+        with self.assertRaises(GalgameCompanionError):
+            c.start("0x1", game_id="g1")  # no ratios -> fails before publish
+        self.assertIsNone(router.current())
+        self.assertIsNone(router.current_for("galgame"))
+
+
 if __name__ == "__main__":
     unittest.main()

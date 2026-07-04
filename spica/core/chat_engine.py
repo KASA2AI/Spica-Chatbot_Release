@@ -25,10 +25,11 @@ from spica.core.proactive import compose_system_directive_message
 from spica.runtime.services import AgentServices
 from spica.config.schema import AppConfig
 from spica.runtime.context import (
-    GALGAME_CONVERSATION_PREFIX,
+    DomainTurnBinding,
     GameTurnBinding,
     TurnContext,
     TurnRequest,
+    is_domain_conversation,
 )
 from spica.runtime.deps import TurnDeps
 from spica.runtime.exec_strategy import Inline
@@ -50,21 +51,27 @@ class ChatEngine:
         self._memory_scope = MemoryScopeStrategy(config)
         self.interlocutor_name = str(services.config.get("interlocutor_name") or DEFAULT_INTERLOCUTOR_NAME)
         self.model = services.config.get("model")
-        # Path B stage 2: when companion play is active, the host-injected provider
-        # returns a GameTurnBinding and _request auto-fills the galgame turn fields.
-        # None (never set / not playing) -> _request builds the exact same
-        # TurnRequest as before, byte for byte.
-        self._game_binding_provider: Callable[[], GameTurnBinding | None] | None = None
+        # Path B stage 2 / Phase 8-c1: when a domain is live, the host-injected
+        # provider (the ActiveDomainRouter's ``current`` -- the ONE injector, D6)
+        # returns its binding: GameTurnBinding (galgame legacy lane) or
+        # DomainTurnBinding (generic lane). None (never set / nothing live) ->
+        # _request builds the exact same TurnRequest as before, byte for byte.
+        self._game_binding_provider: Callable[
+            [], GameTurnBinding | DomainTurnBinding | None
+        ] | None = None
 
     # -- driving --------------------------------------------------------------
     def set_game_binding_provider(
-        self, provider: Callable[[], GameTurnBinding | None] | None
+        self, provider: Callable[[], GameTurnBinding | DomainTurnBinding | None] | None
     ) -> None:
-        """Inject the companion-play binding provider (Path B stage 2).
+        """Inject the domain turn-binding provider (Phase 8-c1).
 
-        The host wires this to its companion controller's published snapshot.
-        ``None`` (or a provider returning ``None``) keeps every turn a plain chat
-        turn -- the construction path is then identical to before.
+        The host wires this to ``ActiveDomainRouter.current`` -- the ONE
+        injector (D6). ``None`` (or a provider returning ``None``) keeps every
+        turn a plain chat turn, byte-identical to before. A ``GameTurnBinding``
+        rides the galgame legacy lane (``game_context_request``); a
+        ``DomainTurnBinding`` rides the generic lane
+        (``domain_context_requests``).
         """
         self._game_binding_provider = provider
 
@@ -81,26 +88,48 @@ class ChatEngine:
         cancelled: threading.Event | None = None,
     ) -> TurnRequest:
         binding = self._game_binding_provider() if self._game_binding_provider else None
-        # Double-wrap guard: a caller already addressing a galgame conversation
-        # (manual/debug path) is taken as-is, never rewritten.
-        if binding is not None and not (conversation_id or "").startswith(GALGAME_CONVERSATION_PREFIX):
-            # Companion play is active: the turn moves into the galgame conversation
-            # (recent-memory isolation + the active gate) while memory_conversation_id
-            # keeps the caller's ORIGINAL conversation, so long-term character memory
-            # stays continuous (§27①).
-            return TurnRequest(
-                user_input=user_input or "",
-                conversation_id=binding.conversation_id,
-                emotion_override=emotion_override,
-                interaction_mode=interaction_mode,
-                include_user_time_context=include_user_time_context,
-                screen_attachment=screen_attachment,
-                tts_param_overrides=tts_param_overrides,
-                visual_overrides=visual_overrides or {},
-                memory_conversation_id=conversation_id or "default",
-                game_context_request=binding.game_context_request,
-                cancelled=cancelled,
-            )
+        # Double-wrap guard (Phase 8-c1: registry-based): a caller already
+        # addressing ANY registered domain conversation (manual/debug path) is
+        # taken as-is, never rewritten. The registry holds exactly galgame
+        # today, so this is byte-identical to the old single-prefix test.
+        if binding is not None and not is_domain_conversation(conversation_id or ""):
+            if isinstance(binding, GameTurnBinding):
+                # galgame legacy lane (permanent facade): the turn moves into the
+                # galgame conversation (recent-memory isolation + the active gate)
+                # while memory_conversation_id keeps the caller's ORIGINAL
+                # conversation, so long-term character memory stays continuous (§27①).
+                return TurnRequest(
+                    user_input=user_input or "",
+                    conversation_id=binding.conversation_id,
+                    emotion_override=emotion_override,
+                    interaction_mode=interaction_mode,
+                    include_user_time_context=include_user_time_context,
+                    screen_attachment=screen_attachment,
+                    tts_param_overrides=tts_param_overrides,
+                    visual_overrides=visual_overrides or {},
+                    memory_conversation_id=conversation_id or "default",
+                    game_context_request=binding.game_context_request,
+                    cancelled=cancelled,
+                )
+            if isinstance(binding, DomainTurnBinding):
+                # Generic lane (Phase 8, 设计裁决 2): same conversation move +
+                # §27① memory continuity, but the gate input rides the generic
+                # tuple -- game_context_request stays None (galgame-only slot).
+                return TurnRequest(
+                    user_input=user_input or "",
+                    conversation_id=binding.conversation_id,
+                    emotion_override=emotion_override,
+                    interaction_mode=interaction_mode,
+                    include_user_time_context=include_user_time_context,
+                    screen_attachment=screen_attachment,
+                    tts_param_overrides=tts_param_overrides,
+                    visual_overrides=visual_overrides or {},
+                    memory_conversation_id=conversation_id or "default",
+                    domain_context_requests=(binding.context_request,),
+                    cancelled=cancelled,
+                )
+            # Unknown binding shape: fail-open to plain chat (a wiring bug must
+            # not crash or misroute a user's turn into a domain namespace).
         return TurnRequest(
             user_input=user_input or "",
             conversation_id=conversation_id or "default",

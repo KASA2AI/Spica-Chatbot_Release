@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,54 @@ class GameContextRequest:
 # same literal -- deliberately NOT deduped: the gate code is untouchable (stage-2
 # guardrail), see GALGAME_FINDINGS.md #9.
 GALGAME_CONVERSATION_PREFIX = "galgame::"
+
+
+@dataclass(frozen=True, kw_only=True)
+class DomainContextRequest:
+    """Generic per-domain gate input (OO migration Phase 8, 设计裁决 2).
+
+    The typed half of the request landing point for domain #2+: a contributor's
+    ``mode(request)`` gate finds its own domain's entry in
+    ``TurnRequest.domain_context_requests``. Domains SUBCLASS this with their
+    own typed fields (``kw_only=True`` so subclass non-default fields never hit
+    the dataclass field-order trap). ``GameContextRequest`` stays galgame's
+    PERMANENT dedicated slot (never migrated into this type -- pinned by the
+    Phase 8 amendment; do not put non-galgame context into GameContextRequest,
+    and do not put galgame context here).
+    """
+
+    domain: str
+    mode: str = "none"  # active | offline | none -- same vocabulary as galgame
+
+
+# Immutable domain conversation-prefix registry (Phase 8, 设计裁决 2 前缀半):
+# every domain claims ONE conversation-id prefix; a system turn carries its
+# domain identity AS its conversation_id (``source`` stays telemetry-only).
+# MappingProxyType so no caller can mutate the registry at runtime; galgame is
+# the only entry today -- co-watch etc. register here (one line) when they land.
+DOMAIN_CONVERSATION_PREFIXES: Mapping[str, str] = MappingProxyType(
+    {"galgame": GALGAME_CONVERSATION_PREFIX}
+)
+
+
+def is_domain_conversation(conversation_id: str) -> bool:
+    """True iff the conversation id already lives in ANY registered domain
+    namespace -- the double-wrap guard's test (a caller already addressing a
+    domain conversation is taken as-is, never rewritten)."""
+    cid = conversation_id or ""
+    return any(cid.startswith(prefix) for prefix in DOMAIN_CONVERSATION_PREFIXES.values())
+
+
+@dataclass(frozen=True)
+class DomainTurnBinding:
+    """Generic domain turn binding (Phase 8, 设计裁决 2) -- what a NON-galgame
+    domain publishes to the ActiveDomainRouter. ``ChatEngine._request`` routes
+    it down the generic lane (``domain_context_requests`` tuple); galgame keeps
+    publishing ``GameTurnBinding`` (the legacy lane, permanent facade -- never
+    force-fitted into this type)."""
+
+    conversation_id: str
+    context_request: DomainContextRequest
 
 
 @dataclass(frozen=True)
@@ -104,6 +153,11 @@ class TurnRequest:
     memory_conversation_id: str | None = None
     command_intent: str | None = None  # canonical CommandIntent enum lands with Phase 4 commands.py
     game_context_request: GameContextRequest | None = None
+    # Phase 8 (设计裁决 2): the GENERIC domain gate inputs -- filled by the
+    # DomainTurnBinding lane in ChatEngine._request; () (the default) keeps
+    # every existing turn byte-identical. galgame stays on game_context_request
+    # above (permanent facade), never in this tuple.
+    domain_context_requests: tuple[DomainContextRequest, ...] = ()
     # #1 ghost-producer cancellation: a turn-level cancel flag the UI (ChatWorker)
     # sets when its stream is retired -- user cancel OR proactive/P5 preemption, both
     # via stop_current. The producer thread checks it at its three side-effect points

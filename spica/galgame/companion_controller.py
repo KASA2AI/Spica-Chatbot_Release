@@ -96,6 +96,7 @@ class GalgameCompanionController:
         summary_trigger_chars: int = 2000,
         interval_seconds: float = 0.3,
         play_history_card_max_chars: int = 220,
+        binding_sink: Any | None = None,
     ) -> None:
         self._game_memory = game_memory
         self._capture = capture
@@ -108,6 +109,12 @@ class GalgameCompanionController:
         # text (game_id, card); write authority stays with the host's closure
         # (铁律 #8: galgame 对角色记忆只读).
         self._record_history = record_history
+        # Phase 8-c1 (设计裁决 1/6): optional ActiveDomainRouter-shaped sink
+        # (duck-typed: publish/retract). BEST-EFFORT by contract -- a sink
+        # failure is logged and swallowed so it can never half-start a play or
+        # break stop(); the local published snapshots below stay the galgame
+        # domain's own truth (galgame-only closures keep reading THEM).
+        self._binding_sink = binding_sink
         self._character_id = character_id
         self._user_id = user_id
         self._summary_trigger_chars = summary_trigger_chars
@@ -250,6 +257,14 @@ class GalgameCompanionController:
                 ),
             )
             self._published_watch_target = (resolved, window_id)  # Phase 9: watch tool target
+            # Phase 8-c1: mirror the publish-LAST point into the domain router
+            # (best-effort AFTER the local snapshots -- an exploding sink leaves
+            # the play fully started and the local publish discipline intact).
+            if self._binding_sink is not None:
+                try:
+                    self._binding_sink.publish("galgame", self._published_binding, priority=0)
+                except Exception as exc:  # noqa: BLE001 -- sink must never break start
+                    logger.warning("binding sink publish failed (ignored): %s", exc, exc_info=True)
             return resolved
 
     def stop(self) -> None:
@@ -261,6 +276,14 @@ class GalgameCompanionController:
             # immediately and never observe the session being finalized below.
             self._published_binding = None
             self._published_watch_target = None  # watch tool reverts to NO_ACTIVE_COMPANION
+            # Phase 8-c1: mirror the clear-FIRST point into the domain router
+            # (best-effort AFTER the local clears -- an exploding sink cannot
+            # resurrect the binding or block the stop below).
+            if self._binding_sink is not None:
+                try:
+                    self._binding_sink.retract("galgame")
+                except Exception as exc:  # noqa: BLE001 -- sink must never break stop
+                    logger.warning("binding sink retract failed (ignored): %s", exc, exc_info=True)
             runner, session = self._runner, self._session
             self._runner = None
             self._session = None

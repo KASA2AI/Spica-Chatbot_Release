@@ -51,6 +51,7 @@ from spica.galgame.reaction_judge import GalgameReactionJudge
 from spica.galgame.reaction_scoring import ReactionScoringPolicy
 from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
+from spica.host.domain_router import ActiveDomainRouter
 from spica.host.model_router import ModelRouter
 from spica.runtime.context import GameTurnBinding
 from spica.runtime.jobs import ThreadJobRunner
@@ -140,6 +141,13 @@ class AppHost:
         # model fallbacks + the judge endpoint tree). Constructor is inert
         # (stores the host ref only); every decision resolves per call.
         self.model_router = ModelRouter(self)
+        # Phase 8-c1: the ONE home for "which domain owns the current turn
+        # binding". ChatEngine's single provider slot points at its current();
+        # galgame publishes/retracts through the controller's binding sink.
+        # galgame-only closures (_companion_game_binding / reaction scope /
+        # note write-back) keep reading the CONTROLLER snapshot, never
+        # router.current() (设计裁决 修正 1).
+        self.domain_router = ActiveDomainRouter()
         # Path B stage 2: the process-wide companion controller singleton, built
         # lazily by companion_controller(); _companion_game_binding reads it.
         self._companion_controller: GalgameCompanionController | None = None
@@ -304,7 +312,10 @@ class AppHost:
             # Stage 2: companion-play auto-injection. The provider is LAZY (reads
             # the controller singleton at call time), so wiring order is free and a
             # plain chat turn stays byte-identical while no companion play is active.
-            self.chat_engine.set_game_binding_provider(self._companion_game_binding)
+            # Phase 8-c1: the engine's single binding slot reads the domain
+            # router (D6: the router is the ONE injector); galgame's binding
+            # reaches it through the controller's sink at publish-LAST time.
+            self.chat_engine.set_game_binding_provider(self.domain_router.current)
             # P5 / Phase 4: reaction domain wiring via the assembly (judge before
             # engine; install() builds THROUGH the thin delegates below -- the
             # facade is the only build path, pinned by patch-validity tests).
@@ -571,6 +582,7 @@ class AppHost:
             summary_trigger_chars=self.config.galgame.summary_trigger_chars,
             interval_seconds=self.config.galgame.ocr_interval_seconds,
             play_history_card_max_chars=self.config.galgame.play_history_card_max_chars,
+            binding_sink=self.domain_router,  # Phase 8-c1: publish-LAST/clear-FIRST 镜像
         )
 
     def _request_song(self, query: str) -> dict[str, Any]:

@@ -12,7 +12,8 @@ Contract (pinned by tests/test_domain_router.py):
   controller's binding sink must never be able to break start/stop);
 - ``current()`` returns the highest-priority live binding; a priority TIE is a
   configuration error -- the latest publish wins deterministically and a
-  WARNING is logged once at publish time (never raises);
+  WARNING is logged at EACH tied publish (no dedup; review NEW-6 pinned this
+  as the contract -- fix the tie, don't silence it); never raises;
 - ``current_for(domain)`` is the domain-filtered read galgame-only closures
   may use (设计裁决 修正 1: galgame-only closures such as
   ``_companion_game_binding`` / the note write-back / the reaction scope never

@@ -19,11 +19,17 @@ reads (precise: only when the receiver is the bare name ``deps`` --
 method names would let a future edit smuggle ``deps.llm`` back in and call it
 through an alias.
 
-Scope is EXACTLY the two flipped files. ``spica/runtime/stages.py``
-(``call_llm_node`` and the sync-only stages) is the FROZEN MUSEUM -- permanent
-v1, never scanned, never migrated (Phase 7 forbidden file; see the migration
-plan's Museum entry). ``deps.py`` is the bridge and owns the ``llm`` field for
-the museum's sake -- also out of scope by design.
+Scope (review NEW-2 widening): EVERY ``spica/runtime/**/*.py`` file, minus the
+two files that legitimately carry v1 today -- ``stages.py`` (the FROZEN MUSEUM:
+``call_llm_node`` and the sync-only stages, permanent v1, never migrated) and
+``deps.py`` (the bridge; owns the ``llm`` field for the museum's sake). The
+original two-file scope let a NEW runtime module carry v1 calls consumed
+indirectly by orchestrator/tool_round without any guard firing -- narrower
+than the invariant this docstring states. Exemptions are LIVE-CHECKED: each
+exempt file must currently contain v1 hits, so an exemption cannot outlive its
+reason. ``sync_chain.py`` is frozen-museum adjacent but has ZERO v1 hits today,
+so it needs no exemption and stays scanned -- if it ever starts hitting, that
+is a stop-and-adjudicate signal, not a whitelist edit.
 
 AST-based (docstrings/comments never trip it); liveness tests prove the
 detector catches every banned form so the guard cannot rot into a no-op.
@@ -34,9 +40,14 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCAN_FILES = (
-    "spica/runtime/orchestrator.py",
-    "spica/runtime/tool_round.py",
+# Exempt = legitimately v1-carrying today (museum + bridge); liveness-checked.
+EXEMPT_FILES = frozenset({"stages.py", "deps.py"})
+SCAN_FILES = tuple(
+    sorted(
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in (REPO_ROOT / "spica" / "runtime").rglob("*.py")
+        if p.name not in EXEMPT_FILES
+    )
 )
 BANNED = {
     "prefers_chat_completions",
@@ -97,7 +108,7 @@ def _v1_hits(tree: ast.AST) -> list[str]:
 
 
 class NoV1LLMInRuntimeTest(unittest.TestCase):
-    def test_flipped_runtime_files_have_no_v1_surface(self):
+    def test_runtime_files_have_no_v1_surface(self):
         offenders: dict[str, list[str]] = {}
         for rel in SCAN_FILES:
             path = REPO_ROOT / rel
@@ -110,8 +121,9 @@ class NoV1LLMInRuntimeTest(unittest.TestCase):
             offenders,
             {},
             msg=(
-                "orchestrator/tool_round must not touch the v1 LLM surface or "
-                "provider-family details (Phase 7-c2): run on deps.model "
+                "spica/runtime (minus the live-checked museum/bridge exemptions) "
+                "must not touch the v1 LLM surface or provider-family details "
+                "(Phase 7-c2 + review NEW-2): run on deps.model "
                 f"(BoundModel probe/probe_stream/stream). {offenders}"
             ),
         )
@@ -119,6 +131,27 @@ class NoV1LLMInRuntimeTest(unittest.TestCase):
     def test_scan_files_exist(self):
         for rel in SCAN_FILES:
             self.assertTrue((REPO_ROOT / rel).is_file(), f"Stale scan entry: {rel}")
+
+    def test_scan_set_covers_the_flipped_files(self):
+        # BUG-6 discipline: a dynamic scan set must be proven non-degenerate --
+        # the two historically flipped files must be inside it.
+        self.assertIn("spica/runtime/orchestrator.py", SCAN_FILES)
+        self.assertIn("spica/runtime/tool_round.py", SCAN_FILES)
+        self.assertGreater(len(SCAN_FILES), 2)  # ...and it widened past them
+
+    def test_exemptions_are_alive(self):
+        # An exemption may only exist while its file REALLY carries v1 -- the
+        # day deps.py/stages.py go v1-free, this fails and the exemption must
+        # be removed (guard grows, never rots).
+        for name in sorted(EXEMPT_FILES):
+            with self.subTest(file=name):
+                path = REPO_ROOT / "spica" / "runtime" / name
+                self.assertTrue(path.is_file(), f"Stale exemption: {name}")
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+                self.assertTrue(
+                    _v1_hits(tree),
+                    f"{name} no longer carries v1 -- remove it from EXEMPT_FILES",
+                )
 
     def test_guard_catches_each_banned_form(self):
         # Liveness (the 6a/Phase-5 precedent): every banned name must trip the

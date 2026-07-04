@@ -12,6 +12,7 @@ INVARIANT (CLAUDE.md #1): Qt-free.
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any, Callable
 
@@ -36,6 +37,8 @@ from spica.runtime.exec_strategy import Inline
 from spica.runtime.fold import fold_events
 from spica.runtime.scope import MemoryScopeStrategy
 from spica.runtime.turn import run_turn
+
+logger = logging.getLogger(__name__)
 
 
 class ChatEngine:
@@ -129,7 +132,12 @@ class ChatEngine:
                     cancelled=cancelled,
                 )
             # Unknown binding shape: fail-open to plain chat (a wiring bug must
-            # not crash or misroute a user's turn into a domain namespace).
+            # not crash or misroute a user's turn into a domain namespace) --
+            # but LOUDLY (review NEW-4): silence would hide the wiring bug.
+            logger.warning(
+                "unknown domain binding shape %s -- falling open to plain chat",
+                type(binding).__name__,
+            )
         return TurnRequest(
             user_input=user_input or "",
             conversation_id=conversation_id or "default",

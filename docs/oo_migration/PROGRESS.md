@@ -467,7 +467,7 @@
   - **8-c0** `8b83657`（test-only）：`tests/test_domain_binding_contract.py` 五组保护基线
     （request lane 缺口、publish-LAST/clear-FIRST、galgame-only 闭包、watch 5 元组三 None 路、
     system turn 域识别 = conversation_id 且 `source` 结构性不可达 gate）；
-  - **8-c1** `cf6c415`：`ActiveDomainRouter`（inert/加锁/priority/平手取最近 + WARNING once/
+  - **8-c1** `cf6c415`：`ActiveDomainRouter`（inert/加锁/priority/平手取最近 + 每次 tied publish WARNING（不去重）/
     no-throw 契约/`current_for` 过滤读）+ `context.py` 泛化（`DomainContextRequest`
     frozen+kw_only、`DomainTurnBinding`、`domain_context_requests` tuple、`MappingProxyType`
     不可变前缀注册表）+ `chat_engine._request` isinstance 三路分派（galgame legacy lane
@@ -494,3 +494,35 @@
   推迟到 domain #2 contributor 真落地时。
 - 文档更新（8-c3 同批）：README 状态板 / MIGRATION_PLAN 状态区 / GUARDRAILS 决策树新正路 /
   CLAUDE.md §2 架构地图两行（Agent skills WIP hunk 照例排除）。
+
+## Phase 6b/8 二轮对抗审查后小修（已收口，本条目与修复同 commit）
+- 日期：2026-07-04；审查形式：两个独立窗口（fable-max / gpt）对 6b49185 之后 9 个 commit
+  的对抗审查，双方 P0/P1 均零发现、主链判可信；合并账本 NEW-1..NEW-6 一刀修复。
+- **NEW-1（P2·计划承诺补交付）**：Phase 8 承诺的「非 galgame contributor 禁读
+  `game_context_request` 守卫」当时未交付且未挂账（收口自检按「做了什么」而非「承诺了什么」
+  对账——流程教训显名）。本刀交付 `tests/test_game_context_slot_guard.py`：AST 三形态
+  （attr / getattr / kwarg——审查修正：galgame contributor 本身就是 getattr 读，纯 attr 扫
+  连正向 liveness 都建不起来）+ 形态级白名单（chat_engine=attr+kwarg、companion_controller=
+  仅 kwarg 构造、context_contributor=仅 getattr、app_host=仅 attr）**双向精确相等**（新触碰
+  者红、白名单腐坏也红）+ 正/负 liveness（合成源三形态必抓、docstring/注释/AnnAssign 定义
+  不误报，context.py/prompt_context.py 实文件零命中钉真）。
+- **NEW-2（守卫扫描域）**：`test_no_v1_llm_in_runtime` 从固定两文件扩为
+  `spica/runtime/**/*.py` 动态全扫，显名豁免恰 {stages.py（冻结博物馆）, deps.py（v1 桥）}
+  且**豁免活性检查**（豁免文件必须当前真有 v1 命中，否则测试红逼删豁免）；`sync_chain.py`
+  当前零命中故不豁免、保持在扫描域内——未来若命中即停工裁决信号。
+- **NEW-3（BUG-3 同族）**：`deps.from_services` memory 半边 `or` → `is not None` +
+  falsy-memory 契约测试（两审查窗口独立命中同一行）。
+- **NEW-4（fail-open loud 化）**：`chat_engine._request` 未知 binding 形状分支加
+  WARNING（fail-open 行为不变）；assertLogs 钉一条告警 + assertNoLogs 钉五条正常 lane
+  （None/None-provider/双 lane/double-wrap）零告警。
+- **NEW-5（封闭 role 集）**：`ModelRouter.role_model` 只接受 summary/judge/dialogue
+  （dialogue 为既有契约 `test_model_router.py` 钉住），集外抛 ValueError；typo 测试。
+- **NEW-6（tie 契约口径）**：逻辑零改动；docstring/PLAN/测试三处对齐为「每次 tied publish
+  告警，不去重」，测试追加第二次 tied publish 再出一条 WARNING 的显式钉。
+- **共识挂账**：co-watch 立项前置「前缀注册与首个 caller 同 commit + double-wrap 回归」
+  已写入 MIGRATION_PLAN Phase 8 小节。
+- 测试：全量 `python -m pytest tests -q` → **1256 passed, 1 warning, 177 subtests passed**
+  （1245 + 11【守卫 6 + NEW-2 两测 + NEW-3/4/5 各一】；subtests 170 + 7【豁免活性 2 +
+  五 lane 静默 5】，加法闭合）；四组 targeted gate 全绿（13+37sub / 35+5sub / 16 / 24+33sub）。
+- 生产改动面（全部微创）：`deps.py`（一处三元）、`chat_engine.py`（logger + 一条 WARNING）、
+  `model_router.py`（else-raise）、`domain_router.py`（仅 docstring）；runtime 主链行为零变。

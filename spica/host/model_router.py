@@ -39,13 +39,18 @@ class ModelRouter:
     def role_model(self, role: str) -> str:
         """The model name for a role. summary/judge fall back to the dialogue
         model INDEPENDENTLY -- byte-for-byte the historical per-site
-        expressions (_new_summarizer / assemblies.new_reaction_judge)."""
+        expressions (_new_summarizer / assemblies.new_reaction_judge). The role
+        set is CLOSED (summary/judge/dialogue); an unknown role is a wiring bug
+        and raises loudly (review NEW-5) instead of silently answering with
+        the dialogue model."""
         config = self._host.config
         if role == "summary":
             return config.galgame.summary_model or config.llm.model
         if role == "judge":
             return config.galgame.reaction_judge_model or config.llm.model
-        return config.llm.model
+        if role == "dialogue":
+            return config.llm.model
+        raise ValueError(f"unknown model role {role!r} (expected summary/judge/dialogue)")
 
     def for_role(self, role: str) -> BoundModel:
         """The role's BoundModel, resolved per call.

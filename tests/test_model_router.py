@@ -67,6 +67,12 @@ class RoleModelFallbackTest(unittest.TestCase):
     def test_dialogue_is_the_config_model(self):
         self.assertEqual(ModelRouter(_stub_host()).role_model("dialogue"), "dlg-m")
 
+    def test_unknown_role_raises_loud(self):
+        # Review NEW-5: the role set is CLOSED -- a typo ("sumary") must raise,
+        # never silently answer with the dialogue model.
+        with self.assertRaises(ValueError):
+            ModelRouter(_stub_host()).role_model("sumary")
+
 
 class ForRoleTest(unittest.TestCase):
     def test_summary_binds_the_main_adapter(self):

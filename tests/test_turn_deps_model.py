@@ -154,6 +154,22 @@ class LlmReadyTerminalSemanticsTest(unittest.TestCase):
         # The stream really runs on the fake -- never OpenAICompatibleAdapter(None).
         self.assertEqual(list(deps.model.stream("p", SimpleNamespace(timing={}))), ["答"])
 
+    def test_falsey_memory_adapter_is_bound_not_swapped(self):
+        # Review NEW-3 (BUG-3 sibling): the memory half of from_services must
+        # use the same ``is not None`` selection -- a falsy-but-present
+        # MemoryPort adapter is BOUND, never silently swapped for the Sqlite
+        # wrapper over memory_store/recent_memory.
+        class _FalseyMemory:
+            def __bool__(self):
+                return False
+
+        memory = _FalseyMemory()
+        services = _services(client=None)
+        services.llm_adapter = object()  # keep llm resolution out of the way
+        services.memory_adapter = memory
+        deps = TurnDeps.from_services(services, AppConfig())
+        self.assertIs(deps.memory, memory)
+
 
 # ---- pin 4: the real orchestrator streams through deps.model ---------------- #
 

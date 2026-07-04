@@ -1,7 +1,7 @@
 """ActiveDomainRouter unit contract (OO migration Phase 8-c1, 设计裁决 1).
 
 Pins: publish/current/retract lifecycle, priority selection, the tie rule
-(latest publish wins + WARNING once at publish time -- ties are a config
+(latest publish wins + WARNING on each tied publish, no dedup -- ties are a config
 error but never raise), the in-memory NO-THROW contract (the controller's
 binding sink must never be able to break start/stop), and the domain-filtered
 ``current_for`` read (the only router read galgame-only closures may use).
@@ -52,15 +52,21 @@ class PriorityTest(unittest.TestCase):
         router.retract("cowatch")
         self.assertIs(router.current(), low)  # falls back to the survivor
 
-    def test_tie_latest_publish_wins_and_warns_once(self):
+    def test_tie_latest_publish_wins_and_warns_per_tied_publish(self):
+        # Review NEW-6 pinned the contract: EACH tied publish warns (no dedup)
+        # -- a tie is a configuration error to fix, not to silence.
         router = ActiveDomainRouter()
-        first, second = object(), object()
+        first, second, third = object(), object(), object()
         router.publish("galgame", first, priority=0)
         with self.assertLogs("spica.host.domain_router", level="WARNING") as logs:
             router.publish("cowatch", second, priority=0)  # tie -> config error
-        self.assertEqual(len(logs.output), 1)  # WARNING exactly once, at publish time
+        self.assertEqual(len(logs.output), 1)  # one warning per tied publish...
         self.assertIn("priority tie", logs.output[0])
         self.assertIs(router.current(), second)  # latest publish wins the tie
+        with self.assertLogs("spica.host.domain_router", level="WARNING") as logs:
+            router.publish("cowatch", third, priority=0)  # STILL tied -> warns again
+        self.assertEqual(len(logs.output), 1)  # ...including republishes while tied
+        self.assertIs(router.current(), third)
 
 
 class NoThrowContractTest(unittest.TestCase):

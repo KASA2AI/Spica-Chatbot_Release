@@ -134,8 +134,13 @@ class TurnDeps:
             ),
             tts=services.tts_adapter,
             visual=services.visual_tool,
-            memory=services.memory_adapter
-            or SqliteMemoryAdapter(services.memory_store, services.recent_memory),
+            # Review NEW-3 (BUG-3 sibling): ``is not None``, not truthiness -- a
+            # falsy-but-present adapter must be bound, never silently swapped.
+            memory=(
+                services.memory_adapter
+                if services.memory_adapter is not None
+                else SqliteMemoryAdapter(services.memory_store, services.recent_memory)
+            ),
             # C7: registry-backed ToolSet. Host sets services.tool_registry (ToolPort
             # tools incl. inspect_screen); tests leave it None -> adapt the legacy
             # services tool table so injected fakes still work, golden unchanged.

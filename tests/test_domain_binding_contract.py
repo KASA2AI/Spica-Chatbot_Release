@@ -347,10 +347,30 @@ class GenericLaneTest(unittest.TestCase):
     def test_unknown_binding_shape_fails_open_to_plain(self):
         engine = _engine()
         engine.set_game_binding_provider(lambda: object())  # wiring bug shape
-        req = engine._request("你好", "default", None, None, None, True, "chat", None)
+        # Review NEW-4: fail-open must be LOUD -- one WARNING naming the shape.
+        with self.assertLogs("spica.core.chat_engine", level="WARNING") as logs:
+            req = engine._request("你好", "default", None, None, None, True, "chat", None)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("unknown domain binding shape", logs.output[0])
         self.assertEqual(req.conversation_id, "default")
         self.assertEqual(req.domain_context_requests, ())
         self.assertIsNone(req.game_context_request)
+
+    def test_normal_lanes_never_warn(self):
+        # The NEW-4 warning is for wiring bugs ONLY -- None provider, both
+        # binding lanes and the double-wrap guard stay silent.
+        for provider, cid in (
+            (None, "default"),
+            ((lambda: None), "default"),
+            ((lambda: _BINDING), "default"),          # galgame legacy lane
+            ((lambda: _GENERIC_BINDING), "default"),  # generic lane
+            ((lambda: _BINDING), "galgame::x::y::z"), # double-wrap guard lane
+        ):
+            with self.subTest(cid=cid, provider=bool(provider)):
+                engine = _engine()
+                engine.set_game_binding_provider(provider)
+                with self.assertNoLogs("spica.core.chat_engine", level="WARNING"):
+                    engine._request("你好", cid, None, None, None, True, "chat", None)
 
 
 class RouterGalgameIsolationTest(unittest.TestCase):

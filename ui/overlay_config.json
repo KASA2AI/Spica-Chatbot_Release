@@ -4,5 +4,6 @@
   "default_typewriter_speed": 1.0,
   "character_label_height_scale": 1.0,
   "overlay_initial_height_scale": 1.0,
-  "character_max_height_ratio": 1.0
+  "character_max_height_ratio": 1.0,
+  "spica_voice_volume": 1.0
 }

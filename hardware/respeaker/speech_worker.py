@@ -52,7 +52,7 @@ class SpeechWorker(QThread):
     def run(self) -> None:
         self._capturing = False
         try:
-            self.status_changed.emit("正在等待 ReSpeaker 硬件 VAD...")
+            self.status_changed.emit("等待说话中....")
             pcm = record_respeaker_channel0_hardware_vad(
                 should_stop=self.isInterruptionRequested,
                 on_speech_start=self._mark_capturing,
@@ -63,7 +63,7 @@ class SpeechWorker(QThread):
             if not pcm:
                 self.failed.emit("没有检测到语音输入。")
                 return
-            self.status_changed.emit("识别中...")
+            self.status_changed.emit("...")
             if self.isInterruptionRequested():
                 return
             text = self._transcribe(pcm)  # local whisper by default; google only if unwired

@@ -421,3 +421,40 @@
   `memory=… or …` 同族 truthiness 模式（无 ready 错位驱动，记录备裁）；GUARDRAILS §9:184
   `stages.py(gate)` 旧句（不在本轮允许文件，归下次 GUARDRAILS 触碰顺带）；
   `reaction_judge_report` 默认模型分歧（另立项）。
+
+## Phase 6b — ModelRouter 收编 host endpoint 决策（已收口）
+- 日期：2026-07-04
+- commit：`633c0d2926f89082d68b479d05d74ddf66ed6e9b`（前置裁决 amendment：`118de31`——
+  方案 A-ii + BUG-4「重建 deps」规则 + 施工硬约束四条 + 五组测试 gate，施工前落盘）
+- 实际修改文件（与白名单完全一致，6 件，零超出）：
+  - 新增 2 件：`spica/host/model_router.py`（`ModelRouter(host)`：构造 inert 零读零 I/O、
+    duck-typed `Any` 不 import AppHost；`role_model` 三角色回退决策逐字保持历史表达式；
+    `for_role` 组 BoundModel——judge 半恒经 `host._judge_llm_adapter()`；`judge_adapter()`
+    = key/base_url/reasoning 回退树自 assemblies **逐字迁入**）、`tests/test_model_router.py`
+    （7 单测：构造 inert（ExplodingHost）、三回退、summary 绑主 adapter、no-key 共享、
+    **router 级 patch-validity**——sentinel 经 `for_role("judge").adapter` 必达）；
+  - 修改 4 件：`spica/host/app_host.py`（`__init__` 挂 `self.model_router`；`_new_summarizer`
+    改 `for_role("summary")`（None 守卫原样）；`_judge_llm_adapter` 委托体改指
+    `router.judge_adapter()`，方法名/patch 语义不变；BoundModel import 随迁移除）、
+    `spica/host/assemblies/reaction.py`（`new_reaction_judge` 仅替换组装行为
+    `GalgameReactionJudge(host.model_router.for_role("judge"))`，双 guard 原样；
+    `judge_llm_adapter` 函数体迁出删除（唯一调用方即 host 委托，已核验）；docstring 改向）、
+    `CLAUDE.md`（§2 模型 port 行加 router 唯一居所一句；Agent skills WIP hunk 经单 hunk
+    选择性 stage 排除）、`docs/DEVELOPMENT_GUARDRAILS.md`（§10 第 5 条加 router 注记）
+- 测试：
+  - `tests/test_model_router.py` → 7 passed；零改动硬 gate（reaction_judge + cutover +
+    summarizer + app_host）→ 54 passed；守卫组（no_new_v1 + no_getenv + layering）→
+    11 passed, 38 subtests；博物馆/deps 契约 → 11 passed
+  - 全量 `python -m pytest tests -q` → **1205 passed, 1 warning, 169 subtests passed**
+    （= 审查后小修基线 1198 + 7 router 单测，加法闭合）
+- 旧 seam 归零验证：`rg -n 'reaction_judge_base_url|judge_api_key|summary_model' spica/host/app_host.py
+  spica/host/assemblies/reaction.py` 决策逻辑命中归零（app_host 仅剩委托转发注释；assemblies
+  零命中）——三处 endpoint/model 决策唯一居所达成
+- facade / patch 有效性：`install` 仍经 `host._new_reaction_judge()`/`_build_reaction_engine()`；
+  judge adapter 仍经 `host._judge_llm_adapter()`（`for_role("judge")` 回经委托，调用链单向
+  无环）；PatchValidityTest 三 sentinel + JudgeKeySplitTest 六用例 + cutover 15-patch
+  **全部零改动全绿**
+- 双轨表变化：无新开钟；Open Questions #1（`_new_*` facade 删除时机）维持默认永久保留
+- 遗留/偏差：无新增；BUG-4 按裁决未触发（构造期解析，无运行时切换）；遥测对齐仍挂
+  真正换模型功能立项时；`reaction_scoring.py:130` log-only model 拷贝维持已挂账。
+  **至此计划内全部 Y1 phase（0–7 含 6b）收口**；Phase 8/9 feature-triggered 待立项。

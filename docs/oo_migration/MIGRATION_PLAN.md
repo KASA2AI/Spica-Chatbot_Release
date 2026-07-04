@@ -4,7 +4,7 @@
 
 - **Version**: v2
 - **Date**: 2026-07-03
-- **Status**: Phase 0 / 0D / 1 / 2 / 3 / 4R / 4 / 5 / 6a / 7 complete，**D3 已停钟**（Phase 7 于时钟内完成）；Phase 6b not approved / 可选（批准前须先裁决其「施工前必须裁决」小节）；Phase 8 / 9 feature-triggered
+- **Status**: Phase 0 / 0D / 1 / 2 / 3 / 4R / 4 / 5 / 6a / 6b / 7 complete——**计划内全部 Y1 phase 收口**，D3 已停钟；Phase 8 / 9 feature-triggered（等 co-watch / browser-media 立项）
 - **Supersedes**: v1（v1 全部有效内容已整合进本文；本文为唯一执行版本，执行任何 phase 不需要回读 v1。v1 原文存档于 `MIGRATION_PLAN_v1.md`，仅供追溯，不作执行依据）
 - **Scope**: 把五个 seam 再契约（LLM provider / host domain assembly / prompt context contributor / character-memory scope / tool authority）变成一串可单独批准、单独收口、单独回滚的 phase。终点五个硬能力：① 非 OpenAI provider 只需写一个 adapter；② 新 domain 上下文注入不碰 runtime 高危文件；③ 第二角色接入不产生静默记忆污染；④ 新 domain 装配不使 AppHost 增长（≤15 行/domain）；⑤ act 工具规模化时权限面恒定收敛在 host。
 - **Non-goals**: co-watch / browser / 视频陪看等 feature 本身（另行立项，本计划只保证 seam 先于 feature 就位）；Windows / installer / local_runtime / packaging；对当前架构的重新评审。
@@ -30,7 +30,7 @@
 | 4 | ReactionScoringPolicy + reaction assembly | 0, 2, 4R | **complete** | 已收口 `d5dde57`（amendment `3240fc8`） |
 | 5 | deps 单轨化（stages/memory_commit 禁区版） | 4 | **complete** | 已收口 `7a352d1`（amendment `521f882`：D4 停钟改记长寿 facade、D1 收窄） |
 | 6a | TextModel + BoundModel + summarizer/judge 收编 | 5 | **complete** | 已收口 `2250542`（amendment `00d4852`）；弱守卫已同 commit 落地；**D3 开钟**：自 6a 收口起 ≤2 个已批生产 phase 内必须完成 Phase 7（6b 可对调不占钟） |
-| 6b | ModelRouter 收编 host endpoint 决策 | 6a | not approved | Phase 7 已完成，6b 仍未批准/可选（D3 已停钟）；批准前须先裁决「施工前必须裁决」小节 |
+| 6b | ModelRouter 收编 host endpoint 决策 | 6a | **complete** | 已收口 `633c0d2`（裁决 amendment `118de31`：方案 A-ii + BUG-4 重建规则）；三处 endpoint/model 决策唯一居所 + patch seam 零改动；全量 1205 passed |
 | 7 | ToolCallingModel 生产链 flip | 5, 6a | **complete** | 已收口 `57b900a`（链：c0 `d791550` → c1 `fbc6084` → c2 `c7a9e2b` → 加固 `57b900a`；amendments `03d3961` + `c9bae59`）；runtime v1 十名 + 载体禁面零命中、TEMP_EXEMPT 清空、llm_ready 终局语义在位；全量 1191 passed；**D3 停钟**（时钟内完成） |
 | 8 | ActiveDomainRouter + WindowTarget/PrivacyGate + request 落点泛化 | 3, 4 | **feature-triggered**（co-watch 批准） | 含 context.py / chat_engine.py 受控改动预留 |
 | 9 | ToolAuthority + ToolExecutionPolicy | 4, 8 | **feature-triggered**（browser/media 批准） | — |

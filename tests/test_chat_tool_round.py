@@ -48,6 +48,7 @@ from spica.ports.screen_capture import CaptureImage
 from spica.ports.window_locator import WindowGeometry
 from spica.runtime.context import GameContextRequest, GameTurnBinding, TurnContext, TurnRequest
 from spica.runtime.services import AgentServices
+from spica.runtime.window import WatchContext, WindowTarget
 from spica.runtime.sync_chain import run_voice_pipeline
 
 RAW_ANSWER = json.dumps(
@@ -202,9 +203,13 @@ def _build_engine(client, tmp, *, with_watch):
     if with_watch:
         watch = WatchGameScreenTool(
             analysis,
-            # privacy gate (review #1): the provider now carries the session state
-            lambda: ("limelight", "0x07e00005", _WatchLocator(), _WatchCapture(),
-                     GalgameState.PLAYING),
+            # privacy gate (review #1); Phase 8-c2: named WatchContext carrier
+            lambda: WatchContext(
+                target=WindowTarget(window_id="0x07e00005", owner_domain="galgame",
+                                    game_id="limelight"),
+                locator=_WatchLocator(), capture=_WatchCapture(),
+                state=GalgameState.PLAYING,
+            ),
         )
         registry.register_tool(watch.schema(), watch.run, available=lambda: True, intent_gated=False)
     services = AgentServices(

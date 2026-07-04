@@ -55,6 +55,7 @@ from spica.host.domain_router import ActiveDomainRouter
 from spica.host.model_router import ModelRouter
 from spica.runtime.context import GameTurnBinding
 from spica.runtime.jobs import ThreadJobRunner
+from spica.runtime.window import WatchContext, WindowTarget
 from spica.runtime.scope import CharacterScope, character_scope_from_config
 from spica.host.agent_assembly import (
     build_agent_services,
@@ -522,9 +523,10 @@ class AppHost:
         controller = self._companion_controller
         return controller.current_game_context() if controller is not None else None
 
-    def _companion_watch_context(self) -> tuple[str, str, Any, Any, Any] | None:
-        """Lazy provider for the watch_game_screen tool (Phase 9): the live play's
-        (game_id, window_id, locator, capture, session_state), or ``None`` when not
+    def _companion_watch_context(self) -> WatchContext | None:
+        """Lazy provider for the watch_game_screen tool (Phase 9; Phase 8-c2:
+        named ``WatchContext`` replaces the bare 5-tuple): the live play's
+        target + locator/capture handles + session_state, or ``None`` when not
         playing / before initialize(). Reads the singleton WITHOUT building it.
         session_state is read lock-free at call time (staleness <= one OCR cycle);
         the tool's privacy gate (CLAUDE.md §4) refuses capture on unsafe states."""
@@ -555,12 +557,11 @@ class AppHost:
             "watch context: game_id=%s window_id=%s state=%s",
             game_id, window_id, getattr(state, "value", state),
         )
-        return (
-            game_id,
-            window_id,
-            self.services.window_locator_adapter,
-            self.services.screen_capture_adapter,
-            state,
+        return WatchContext(
+            target=WindowTarget(window_id=window_id, owner_domain="galgame", game_id=game_id),
+            locator=self.services.window_locator_adapter,
+            capture=self.services.screen_capture_adapter,
+            state=state,
         )
 
     def new_companion_controller(self) -> GalgameCompanionController:

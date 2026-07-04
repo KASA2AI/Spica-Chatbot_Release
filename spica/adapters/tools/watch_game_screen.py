@@ -37,16 +37,18 @@ from agent_tools.function_tools.screen.tool import (
     _capture_metadata_for_observation,
     classify_screen_question,
 )
+from spica.galgame.privacy_gate import PrivacyGate
 from spica.galgame.session import WATCH_SAFE_STATES, GalgameState
 from spica.ports.screen import ScreenAnalysisPort
+from spica.runtime.window import WatchContext
 
 logger = logging.getLogger(__name__)
 
-# (game_id, window_id, locator, capture, session_state) of the CURRENT companion
-# play, or None. session_state is the GalgameState enum read lock-free at call
-# time (staleness <= one OCR cycle -- the same granularity the loop's own safety
-# check detects occlusion with); the privacy gate below judges it.
-WatchContextProvider = Callable[[], "tuple[str, str, Any, Any, Any] | None"]
+# The CURRENT companion play's WatchContext (target + locator/capture handles +
+# lock-free session-state snapshot), or None. Phase 8-c2: named carrier replaces
+# the historical bare 5-tuple; state staleness stays <= one OCR cycle -- the
+# same granularity the loop's own safety check detects occlusion with.
+WatchContextProvider = Callable[[], "WatchContext | None"]
 
 # The only states where the OCR loop is alive, runs _evaluate_safety every cycle
 # and the window is monitored-visible. CHOICE_CHECKING is the tool's PRIMARY
@@ -154,15 +156,21 @@ class WatchGameScreenTool:
                 "NO_ACTIVE_COMPANION",
                 "当前没有正在陪玩的游戏，无法查看游戏画面。要先开始陪玩并绑定游戏窗口。",
             )
-        game_id, window_id, locator, capture, state = context
-        if state not in _WATCH_SAFE_STATES:
-            # Privacy gate (CLAUDE.md §4): refuse BEFORE any capture -- the rect
-            # under a lost/paused window may show another application.
+        target, locator, capture, state = (
+            context.target, context.locator, context.capture, context.state
+        )
+        game_id, window_id = target.game_id, target.window_id
+        # Privacy gate (CLAUDE.md §4, Phase 8-c2: the PrivacyGate is the ONE
+        # evaluator): watch purpose = state gate only (the historical asymmetry
+        # -- no check_safety here), refusing BEFORE any capture.
+        gate = PrivacyGate(locator, safe_states=_WATCH_SAFE_STATES)
+        result = gate.evaluate(target, state, "watch")
+        if not result.ok:
             logger.info(
                 "watch_game_screen: refused, window not safe to capture (state=%s)",
                 getattr(state, "value", state),
             )
-            raise ScreenToolError("GAME_WINDOW_NOT_SAFE", _window_not_safe_message(state))
+            raise ScreenToolError(result.reason_code, _window_not_safe_message(state))
         # Diagnostic (stale-frame triage): the DECISIVE marker that the tool really
         # ran this turn -- absent => the LLM reused a previous observation instead.
         logger.info("watch_game_screen: capturing window_id=%s game_id=%s", window_id, game_id)

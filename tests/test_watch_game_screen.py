@@ -29,6 +29,16 @@ from spica.runtime.deps import TurnDeps
 from spica.runtime.observer import NoopTurnObserver
 from spica.runtime.stages import call_llm_node, record_screen_tool_result
 from spica.runtime.tools import RegistryToolSet
+from spica.runtime.window import WatchContext, WindowTarget
+
+
+def _ctx(game_id, window_id, locator, capture, state):
+    """Phase 8-c2: the named WatchContext the provider now returns (was a bare
+    5-tuple); semantics unchanged, unpacked by name in the tool."""
+    return WatchContext(
+        target=WindowTarget(window_id=window_id, owner_domain="galgame", game_id=game_id),
+        locator=locator, capture=capture, state=state,
+    )
 
 
 class _Locator:
@@ -67,7 +77,7 @@ class ThinShellTest(unittest.TestCase):
     def test_captures_the_bound_window_and_analyzes(self):
         locator, capture, analysis = _Locator(), _Capture(), _Analysis()
         tool = WatchGameScreenTool(
-            analysis, lambda: ("limelight", "0x42", locator, capture, GalgameState.PLAYING)
+            analysis, lambda: _ctx("limelight", "0x42", locator, capture, GalgameState.PLAYING)
         )
         result = tool.run(question="这个角色是谁")
         self.assertEqual(result["schema_version"], "screen_observation.v1")
@@ -99,7 +109,7 @@ class ThinShellTest(unittest.TestCase):
     def test_window_gone_raises_unavailable(self):
         locator = _Locator(geometry=None)
         tool = WatchGameScreenTool(
-            _Analysis(), lambda: ("g", "0x1", locator, _Capture(), GalgameState.PLAYING)
+            _Analysis(), lambda: _ctx("g", "0x1", locator, _Capture(), GalgameState.PLAYING)
         )
         with self.assertRaises(ScreenToolError) as caught:
             tool.run(question="看看")
@@ -116,7 +126,7 @@ class PrivacyGateTest(unittest.TestCase):
     def _tool(state):
         locator, capture, analysis = _Locator(), _Capture(), _Analysis()
         tool = WatchGameScreenTool(
-            analysis, lambda: ("g", "0x1", locator, capture, state)
+            analysis, lambda: _ctx("g", "0x1", locator, capture, state)
         )
         return tool, capture
 
@@ -371,11 +381,14 @@ class HostWiringTest(unittest.TestCase):
         host.services = SimpleNamespace(window_locator_adapter="LOC", screen_capture_adapter="CAP")
         self.assertEqual(
             host._companion_watch_context(),
-            ("g1", "0x9", "LOC", "CAP", GalgameState.PLAYING),
+            WatchContext(
+                target=WindowTarget(window_id="0x9", owner_domain="galgame", game_id="g1"),
+                locator="LOC", capture="CAP", state=GalgameState.PLAYING,
+            ),
         )
-        # the state element is LIVE: a lost window shows up in the same tuple
+        # the state field is LIVE: a lost window shows up in the same context
         host._companion_controller.session = SimpleNamespace(state=GalgameState.WINDOW_LOST)
-        self.assertEqual(host._companion_watch_context()[4], GalgameState.WINDOW_LOST)
+        self.assertEqual(host._companion_watch_context().state, GalgameState.WINDOW_LOST)
         # target published but session gone (stop race) -> treated as not playing
         host._companion_controller.session = None
         self.assertIsNone(host._companion_watch_context())

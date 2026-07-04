@@ -48,6 +48,7 @@ from spica.ports.screen_capture import CaptureImage
 from spica.ports.window_locator import WindowGeometry
 from spica.runtime.context import GameContextRequest, GameTurnBinding
 from spica.runtime.services import AgentServices
+from spica.runtime.window import WatchContext, WindowTarget
 
 RAW_ANSWER = json.dumps({"answer": "画面上是个女孩。", "emotion": "happy", "emotion_reason": "x"}, ensure_ascii=False)
 QUESTION = "现在画面有什么"
@@ -195,9 +196,13 @@ def build_engine(client, tmp):
     registry.register_tool(InspectScreenTool(LocalMoondreamScreenAnalysis()).schema(), lambda **kw: "x")
     watch = WatchGameScreenTool(
         _WatchAnalysis(),
-        # privacy gate (review #1): the provider now carries the session state
-        lambda: ("limelight", "0x07e00005", _WatchLocator(), _WatchCapture(),
-                 GalgameState.PLAYING),
+        # privacy gate (review #1); Phase 8-c2: named WatchContext carrier
+        lambda: WatchContext(
+            target=WindowTarget(window_id="0x07e00005", owner_domain="galgame",
+                                game_id="limelight"),
+            locator=_WatchLocator(), capture=_WatchCapture(),
+            state=GalgameState.PLAYING,
+        ),
     )
     registry.register_tool(watch.schema(), watch.run, available=lambda: True, intent_gated=False)
     services = AgentServices(

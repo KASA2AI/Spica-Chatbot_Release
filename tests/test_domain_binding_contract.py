@@ -174,8 +174,9 @@ class GalgameOnlyClosureTest(unittest.TestCase):
 
 
 class WatchContextTest(unittest.TestCase):
-    """裁决 4 baseline: today's bare 5-tuple + its None paths. The 8-c2
-    WatchContext NamedTuple flip must preserve every branch's semantics."""
+    """裁决 4: the watch provider contract. Originally pinned as the bare
+    5-tuple baseline (8-c0); updated at 8-c2 to the named WatchContext shape --
+    the three None paths and the live-target semantics carried over verbatim."""
 
     def _host(self):
         host = AppHost()
@@ -204,7 +205,9 @@ class WatchContextTest(unittest.TestCase):
         )
         self.assertIsNone(host._companion_watch_context())
 
-    def test_live_target_returns_bare_five_tuple(self):
+    def test_live_target_returns_named_watch_context(self):
+        from spica.runtime.window import WatchContext, WindowTarget
+
         host = self._host()
         host._companion_controller = SimpleNamespace(
             current_watch_target=lambda: ("g1", "0x1"),
@@ -213,12 +216,11 @@ class WatchContextTest(unittest.TestCase):
         context = host._companion_watch_context()
         self.assertEqual(
             context,
-            (
-                "g1",
-                "0x1",
-                host.services.window_locator_adapter,
-                host.services.screen_capture_adapter,
-                GalgameState.PLAYING,
+            WatchContext(
+                target=WindowTarget(window_id="0x1", owner_domain="galgame", game_id="g1"),
+                locator=host.services.window_locator_adapter,
+                capture=host.services.screen_capture_adapter,
+                state=GalgameState.PLAYING,
             ),
         )
 

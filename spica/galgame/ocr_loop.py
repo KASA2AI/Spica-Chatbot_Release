@@ -25,11 +25,18 @@ import time
 from typing import Any, Callable
 
 from spica.galgame.models import WindowMatchRule
-from spica.galgame.ocr_region import crop_by_ratios, overlay_covers_region
-from spica.galgame.session import GalgameCompanionSession, GalgameState, GalgameStateError
+from spica.galgame.ocr_region import crop_by_ratios
+from spica.galgame.privacy_gate import PrivacyGate
+from spica.galgame.session import (
+    WATCH_SAFE_STATES,
+    GalgameCompanionSession,
+    GalgameState,
+    GalgameStateError,
+)
 from spica.ports.ocr import OCRPort
 from spica.ports.screen_capture import ScreenCapturePort
 from spica.ports.window_locator import WindowLocatorPort, WindowSafetyResult
+from spica.runtime.window import WindowTarget
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,10 @@ class OcrStreamRunner:
         self._capture = capture
         self._locator = locator
         self._ocr = ocr
+        # Phase 8-c2 (设计裁决 5): the safety evaluator. The gate holds only the
+        # locator + the named state set; every dynamic input (overlay rect /
+        # dialog ratios / overlay window id) is passed per evaluate() call.
+        self._gate = PrivacyGate(locator, safe_states=WATCH_SAFE_STATES)
         self._interval = max(0.0, float(interval_seconds))
         self._clock = clock or time.monotonic
         self._stop = threading.Event()
@@ -163,22 +174,20 @@ class OcrStreamRunner:
             self._submit(self._session.on_window_recovered)
 
     def _evaluate_safety(self) -> WindowSafetyResult:
-        result = self._locator.check_safety(self._window_id, self._match_rule, self._overlay_window_id)
-        if not result.ok:
-            return result
-        if self._overlay_rect is not None and self._dialog_ratios is not None:
-            geom = self._locator.get_window_geometry(self._window_id)
-            if geom is not None and overlay_covers_region(self._overlay_rect, self._dialog_region_rect(geom)):
-                return WindowSafetyResult(ok=False, reason_code="OVERLAY_COVERS", reason="Spica overlay 覆盖了 OCR 对白区域。")
-        return result
-
-    def _dialog_region_rect(self, geom: Any) -> tuple[int, int, int, int]:
-        rx, ry, rw, rh = self._dialog_ratios  # type: ignore[misc]
-        return (
-            geom.x + round(rx * geom.width),
-            geom.y + round(ry * geom.height),
-            round(rw * geom.width),
-            round(rh * geom.height),
+        # Phase 8-c2: verbatim semantics via the PrivacyGate (ocr purpose =
+        # check_safety + overlay-covers-dialog-region, OVERLAY_COVERS kept);
+        # dynamic inputs are passed per call, never frozen at construction.
+        return self._gate.evaluate(
+            WindowTarget(
+                window_id=self._window_id,  # type: ignore[arg-type]
+                owner_domain="galgame",
+                match_rule=self._match_rule,
+            ),
+            None,  # session state is irrelevant to the ocr purpose
+            "ocr",
+            overlay_window_id=self._overlay_window_id,
+            overlay_rect=self._overlay_rect,
+            dialog_ratios=self._dialog_ratios,
         )
 
     def _capture_and_ocr(self) -> tuple[str | None, str | None]:

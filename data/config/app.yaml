@@ -104,6 +104,9 @@
 
 # max_tool_rounds: 3             # env MAX_TOOL_ROUNDS
 
+# platform:                      # W1 平台开关 (yaml-only,无 env -- 铁律 #4)
+#   os: auto                     # auto | linux | windows (auto = 装配期按 sys.platform 折算)
+
 # --- migrated by migrate_config_p0b ---
 screen:
   enabled: true

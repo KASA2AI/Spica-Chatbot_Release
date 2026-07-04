@@ -95,3 +95,12 @@ class WindowLocatorPort(Protocol):
         pauses rather than risk capturing another app. Overlay-covers-region is checked
         separately by the loop (it has the overlay rect)."""
         ...
+
+    def format_native_window_id(self, native: int) -> str:
+        """Format a NATIVE window handle (Qt ``winId()`` int) into this backend's
+        ``window_id`` string form (W1 / A3): X11 -> hex ("0x5000003"), Win32 ->
+        decimal HWND. The UI feeds its own overlay handle through this so the
+        ``check_safety`` focus exemption compares like-with-like -- the native int
+        exists ONLY as this method's argument and never crosses controller /
+        ocr_loop / privacy_gate (F2); providers stay ``Callable[[], str | None]``."""
+        ...

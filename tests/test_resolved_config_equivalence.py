@@ -280,3 +280,50 @@ def test_roster_covers_every_env_name_in_the_config_layer():
         if hits:
             unknown[rel] = sorted(set(hits))
     assert unknown == {}, f"env names missing from spica/config/env_roster.py: {unknown}"
+
+
+# -- platform domain (W1, WINDOWS_COMPAT_PLAN §3.4): fold pins -- ADDITIONS ONLY --
+# Machine-independent by construction: fold_platform is pure and every pin below
+# INJECTS the host platform value; the real sys.platform is never read here.
+
+
+def test_fold_platform_auto_on_linux_host_folds_linux():
+    from spica.host.agent_assembly import fold_platform
+
+    assert fold_platform("auto", "linux") == "linux"
+
+
+def test_fold_platform_auto_on_win32_host_folds_windows():
+    from spica.host.agent_assembly import fold_platform
+
+    assert fold_platform("auto", "win32") == "windows"
+
+
+def test_fold_platform_explicit_value_ignores_host():
+    from spica.host.agent_assembly import fold_platform
+
+    assert fold_platform("windows", "linux") == "windows"
+    assert fold_platform("linux", "win32") == "linux"
+
+
+def test_fold_platform_auto_on_unknown_host_raises():
+    # P2-2: auto + darwin/cygwin/... must FAIL LOUD, never silently fold onto
+    # the wmctrl lane of a non-Linux host.
+    from spica.host.agent_assembly import fold_platform
+
+    with pytest.raises(ValueError):
+        fold_platform("auto", "darwin")
+
+
+def test_platform_config_default_auto_and_literal_fails_loud(clean_env, tmp_path):
+    # Schema layer: default stays "auto" (load() == AppConfig() equivalence keeps
+    # holding with the new section); an illegal value dies at the Literal, so
+    # fold_platform never sees it.
+    from pydantic import ValidationError
+
+    from spica.config.schema import PlatformConfig
+
+    assert AppConfig().platform.os == "auto"
+    assert ConfigManager(tmp_path / "absent.yaml").load().platform.os == "auto"
+    with pytest.raises(ValidationError):
+        PlatformConfig(os="macos")

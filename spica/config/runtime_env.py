@@ -16,9 +16,16 @@ inline code used to live -- do not defer or hoist these calls.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
-DEFAULT_RUNTIME_CACHE_ROOT = Path("/tmp/spica_chatbot_cache")
+# W1/L5: the default cache root is anchored on tempfile.gettempdir() instead of a
+# hardcoded POSIX /tmp, so Windows resolves to its native temp dir. On Linux with
+# the TMPDIR/TEMP/TMP family unset this is /tmp -- the resolved value is unchanged
+# (Layer A pins it). NOTE: gettempdir() reads that env family INSIDE the stdlib --
+# an implicit read the roster meta-pin cannot see; recorded as a comment in
+# env_roster.py (P2-5). SPICA_RUNTIME_CACHE_DIR remains the explicit override.
+DEFAULT_RUNTIME_CACHE_ROOT = Path(tempfile.gettempdir()) / "spica_chatbot_cache"
 _PROXY_ENV_KEYS = ("all_proxy", "ALL_PROXY", "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
 
 

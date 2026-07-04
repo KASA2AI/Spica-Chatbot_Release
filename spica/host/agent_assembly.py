@@ -11,6 +11,7 @@ INVARIANT (CLAUDE.md #1 + #4): Qt-free; secrets come from the secrets loader.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 import httpx
@@ -134,6 +135,69 @@ def build_moondream_provider(
     return None
 
 
+def fold_platform(os_cfg: str, host_platform: str) -> str:
+    """Fold the typed ``platform.os`` value into the effective platform (W1,
+    WINDOWS_COMPAT_PLAN §3.2). Pure function -- no ``sys`` read here, so Layer B
+    pins it with injected values; the ONE production ``sys.platform`` read is in
+    ``build_agent_services``.
+
+    - explicit "linux"/"windows" -> returned verbatim (never looks at the host;
+      also the only escape hatch on unknown hosts);
+    - "auto": host "linux" -> "linux", host "win32" -> "windows", anything else
+      (darwin/cygwin/msys/...) RAISES -- fail loud, never a silent fold onto the
+      wmctrl lane on a non-Linux host (P2-2);
+    - an illegal os_cfg already fails loud at the schema Literal layer; the raise
+      here only backstops non-config callers."""
+    if os_cfg in ("linux", "windows"):
+        return os_cfg
+    if os_cfg == "auto":
+        if host_platform == "linux":
+            return "linux"
+        if host_platform == "win32":
+            return "windows"
+        raise ValueError(
+            f"platform.os=auto has no fold for host platform {host_platform!r}; "
+            "set platform.os explicitly (linux|windows) in data/config/app.yaml"
+        )
+    raise ValueError(f"unknown platform.os value {os_cfg!r}")
+
+
+def build_window_locator(effective_os: str):
+    """Platform-lane factory for the ``WindowLocatorPort`` adapter (W1 §3.3,
+    ``build_ocr_adapter`` precedent). UNLIKE build_ocr_adapter this FAILS LOUD on
+    an unknown lane: a mis-selected platform must never silently fall back to the
+    other platform's window probes. The windows class is imported lazily inside
+    its branch so the module import stays platform-clean (§3.5)."""
+    if effective_os == "linux":
+        return LinuxX11WindowLocator()
+    if effective_os == "windows":
+        from spica.adapters.window_locator.windows_win32 import WindowsWin32WindowLocator
+
+        return WindowsWin32WindowLocator()
+    raise ValueError(f"no window_locator lane for effective platform {effective_os!r}")
+
+
+def build_screen_capture(effective_os: str):
+    """Platform-lane factory for the ``ScreenCapturePort`` adapter (W1 §3.3).
+    mss is cross-platform (X11 on Linux, GDI on Windows), so BOTH lanes return
+    ``MssScreenCapture`` -- the factory still validates the lane (fail loud)."""
+    if effective_os in ("linux", "windows"):
+        return MssScreenCapture()
+    raise ValueError(f"no screen_capture lane for effective platform {effective_os!r}")
+
+
+def build_game_launcher(effective_os: str):
+    """Platform-lane factory for the ``GameLauncherPort`` adapter (W1 §3.3).
+    Fail-loud on unknown lanes; windows class lazily imported (§3.5)."""
+    if effective_os == "linux":
+        return LinuxDesktopGameLauncher()
+    if effective_os == "windows":
+        from spica.adapters.game_launcher.windows_native import WindowsNativeGameLauncher
+
+        return WindowsNativeGameLauncher()
+    raise ValueError(f"no game_launcher lane for effective platform {effective_os!r}")
+
+
 def build_llm_client(api_key: str, base_url: str | None, timeout: float = 15) -> OpenAI:
     """One OpenAI-compatible client. Shared by the main chat/summary client and the
     reaction judge's separate-key client (so the construction stays single-sourced).
@@ -186,6 +250,24 @@ def build_agent_services(
     # this root with the character memory store -- a separate file, never the same
     # DB (CLAUDE.md #1.8). No config knob this phase; mirrors the memory.sqlite3 path.
     data_dir = _REPO_ROOT / "spica_data"
+    # W1: fold the platform ONCE (resolve-once + inject, the screen/song precedent)
+    # and select the three platform-adapter lanes via the factories. This is the
+    # single production sys.platform read; every later consumer reads
+    # services.effective_platform (§3.6), never sys.platform again.
+    effective_platform = fold_platform(config.platform.os, sys.platform)
+    window_locator = build_window_locator(effective_platform)
+    screen_capture = build_screen_capture(effective_platform)
+    game_launcher = build_game_launcher(effective_platform)
+    _LOGGER.info(
+        "platform resolved: os_cfg=%s host=%s effective=%s "
+        "lanes=window_locator/%s screen_capture/%s game_launcher/%s",
+        config.platform.os,
+        sys.platform,
+        effective_platform,
+        getattr(window_locator, "name", type(window_locator).__name__),
+        getattr(screen_capture, "name", type(screen_capture).__name__),
+        getattr(game_launcher, "name", type(game_launcher).__name__),
+    )
     return AgentServices(
         llm_client=client,
         tts_adapter=tts_adapter,
@@ -193,15 +275,17 @@ def build_agent_services(
         memory_store=SQLiteMemoryStore(data_dir / "memory.sqlite3"),
         recent_memory=RecentMemory(max_turns=config.memory.recent_memory_turns),
         game_memory_adapter=GameMemorySqliteAdapter(data_dir / "galgame.sqlite3"),
-        # Phase 5: galgame launch + window-binding adapters (linux/Bottles path).
-        game_launcher_adapter=LinuxDesktopGameLauncher(),
-        window_locator_adapter=LinuxX11WindowLocator(),
+        # Phase 5 / W1: galgame launch + window-binding adapters, now selected by
+        # the platform-lane factories above (linux lane == the former hardcoded
+        # constructions, byte-equivalent).
+        game_launcher_adapter=game_launcher,
+        window_locator_adapter=window_locator,
         # Phase 6: galgame screen capture (mss) + OCR. The OCR provider is selected
         # by resolved config via the factory: repo default rapidocr_ort, schema /
         # fallback default rapidocr. The SAME adapter is installed into the path-B
         # hook in app_host so galgame OCR and inspect_screen never fork
         # (LOCAL_RUNTIME_PLAN §2.2).
-        screen_capture_adapter=MssScreenCapture(),
+        screen_capture_adapter=screen_capture,
         ocr_adapter=build_ocr_adapter(
             config.ocr.provider, config.ocr.fallback_provider, trt_config=config.ocr.trt
         ),
@@ -224,4 +308,7 @@ def build_agent_services(
         logger=log_timing,
         tool_functions=default_tool_functions(),
         tool_schemas=TOOL_SCHEMAS,
+        # W1 (§3.6/A8): the folded value's persistent home -- production always
+        # writes the real fold result, never relying on the dataclass default.
+        effective_platform=effective_platform,
     )

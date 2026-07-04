@@ -137,6 +137,12 @@ class LinuxX11WindowLocator:
             reason="焦点不在游戏窗口（活动窗口标题未命中 keyword），暂停 OCR。",
         )
 
+    def format_native_window_id(self, native: int) -> str:
+        # W1 / A3: X11 window ids are compared as hex strings (see _same_window);
+        # hex(native) is byte-identical to the `hex(int(winId()))` string the UI
+        # used to build inline, so the focus-exemption comparison is unchanged.
+        return hex(int(native))
+
     def _default_active_window(self) -> str | None:
         try:
             output = self._run(["xprop", "-root", "_NET_ACTIVE_WINDOW"])

@@ -80,6 +80,14 @@ SCREEN_ENV_MAP: dict[str, str] = {
 RUNTIME_CACHE_ENV_MAP: dict[str, str] = {
     "cache_root": "SPICA_RUNTIME_CACHE_DIR",
 }
+# W1/L5 (P2-5, comment-only record -- the roster itself is UNCHANGED):
+# runtime_env.DEFAULT_RUNTIME_CACHE_ROOT is now based on tempfile.gettempdir(),
+# which reads the TMPDIR / TEMP / TMP env family INSIDE the stdlib. That implicit
+# read cannot be rostered or masked like the names above (the meta-pin only scans
+# quoted uppercase names in the config layer's own source, and stdlib internals
+# are out of its reach). On Linux with that family unset the value stays /tmp
+# (Layer A zero-diff precondition, checked before the W1 baseline was dumped).
+# SPICA_RUNTIME_CACHE_DIR above remains the explicit, rostered override.
 
 RESPEAKER_ENV_MAP: dict[str, str] = {
     "tuning_path": "RESPEAKER_TUNING_PATH",

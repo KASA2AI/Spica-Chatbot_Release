@@ -351,6 +351,19 @@ class OcrConfig(BaseModel):
     trt: TrtOcrConfig = Field(default_factory=TrtOcrConfig)
 
 
+class PlatformConfig(BaseModel):
+    """Platform lane selection (Windows compat W1, WINDOWS_COMPAT_PLAN §3.1).
+
+    yaml-only (铁律 #4): no env name -- nothing added to env_roster, so the
+    roster meta-pin stays untouched. Literal makes a typo fail loud at startup
+    (mirrors GalgameConfig.reaction_mode). ``auto`` is NEVER folded here or in
+    ConfigManager.load() -- folding to the effective platform happens exactly
+    once at assembly time (agent_assembly.fold_platform), keeping the
+    resolved-config equivalence pins (load() == AppConfig()) green."""
+
+    os: Literal["auto", "linux", "windows"] = "auto"
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
@@ -360,6 +373,7 @@ class AppConfig(BaseModel):
     stt: SttConfig = Field(default_factory=SttConfig)
     screen: ScreenConfig = Field(default_factory=ScreenConfig)
     ocr: OcrConfig = Field(default_factory=OcrConfig)
+    platform: PlatformConfig = Field(default_factory=PlatformConfig)
     # P0b step 3 (D-3a): the song section is intentionally UNTYPED -- it is the
     # override dict layered over song/config.py's DEFAULT_CONFIG by the same
     # deep-merge engine the legacy json used (voices are an open name->config

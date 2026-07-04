@@ -23,6 +23,7 @@ actions -- every failure path (bind_failed / picker cancel / calibration cancel
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, QObject
@@ -44,13 +45,87 @@ AskActiveAction = Callable[[], str | None]  # "stop" | "recalibrate" | None
 def selection_to_physical_rect(
     logical_rect: tuple[int, int, int, int], device_pixel_ratio: float
 ) -> tuple[int, int, int, int]:
-    """Global logical Qt coords -> physical screen coords for the calibrator
+    """DEPRECATED (W1, WINDOWS_COMPAT_PLAN §5-W1 内容 6): superseded by
+    ``selection_to_physical_screen_rect`` (per-screen dpr + multi-monitor origin
+    folding); kept with its ORIGINAL name/signature/semantics because
+    tests/test_companion_bridge.py pins this exact behaviour (P1-1). Removal is a
+    separate future step (W5 裁决), NOT part of the W series.
+
+    Global logical Qt coords -> physical screen coords for the calibrator
     (same coordinate system as wmctrl/xprop geometry). v1: uniform dpr scaling;
     dpr=1 (the X11 norm here) is the identity. dpr!=1 / mixed-dpr multi-monitor
     is a KNOWN LIMITATION (GALGAME_FINDINGS.md)."""
     x, y, w, h = logical_rect
     dpr = float(device_pixel_ratio or 1.0)
     return (round(x * dpr), round(y * dpr), round(w * dpr), round(h * dpr))
+
+
+# -- W1 multi-screen geometry (L3/L4). Pure functions: screen layout comes in as
+# plain data (the qt_overlay call sites collect it from QGuiApplication.screens()),
+# so every branch is testable with synthetic dpr/origin -- no display needed.
+
+
+@dataclass(frozen=True)
+class ScreenGeometry:
+    """One screen's layout as pure data: its global-LOGICAL rect (Qt coordinate
+    space), the same rect in global-PHYSICAL pixels (wmctrl/xprop / Win32 space),
+    and its device pixel ratio. On X11 (dpr=1 everywhere) logical == physical."""
+
+    logical: tuple[int, int, int, int]
+    physical: tuple[int, int, int, int]
+    device_pixel_ratio: float = 1.0
+
+
+def _rect_contains(rect: tuple[int, int, int, int], x: int, y: int) -> bool:
+    # Integer-rect containment, same semantics as QRect.contains: the right/bottom
+    # edges (x + w, y + h) are OUTSIDE.
+    rx, ry, rw, rh = rect
+    return rx <= x < rx + rw and ry <= y < ry + rh
+
+
+def selection_to_physical_screen_rect(
+    logical_rect: tuple[int, int, int, int],
+    screens: list[ScreenGeometry],
+) -> tuple[int, int, int, int]:
+    """Global logical Qt coords -> global physical coords, folding the containing
+    screen's dpr AND origin (the L3 fix: ``selection_to_physical_rect`` scaled
+    uniformly and never subtracted a screen origin, wrong on per-monitor-DPI
+    multi-screen). The selection's screen is matched by its top-left, falling back
+    to its centre. With every screen at dpr=1 (the X11 norm) this is the identity,
+    byte-equal to the old function -- pinned by the W1 goldens. No/unmatched
+    screens -> the old uniform-dpr=1 behaviour (identity), never a crash."""
+    x, y, w, h = logical_rect
+    screen = next((s for s in screens if _rect_contains(s.logical, x, y)), None)
+    if screen is None:
+        screen = next(
+            (s for s in screens if _rect_contains(s.logical, x + w // 2, y + h // 2)), None
+        )
+    if screen is None:
+        return (x, y, w, h)
+    dpr = float(screen.device_pixel_ratio or 1.0)
+    lx, ly = screen.logical[0], screen.logical[1]
+    px, py = screen.physical[0], screen.physical[1]
+    return (
+        px + round((x - lx) * dpr),
+        py + round((y - ly) * dpr),
+        round(w * dpr),
+        round(h * dpr),
+    )
+
+
+def physical_point_to_screen_index(
+    point: tuple[int, int], screens: list[ScreenGeometry]
+) -> int | None:
+    """Global PHYSICAL point (wmctrl/Win32 window centre) -> index of the screen
+    whose PHYSICAL rect contains it, or None (the L4 fix: the old call fed
+    physical coords to ``QGuiApplication.screenAt``, which expects LOGICAL
+    coords). At dpr=1 physical == logical, so the match is unchanged -- pinned by
+    the W1 goldens; W2 validates real per-monitor-DPI behaviour."""
+    x, y = point
+    for index, screen in enumerate(screens):
+        if _rect_contains(screen.physical, x, y):
+            return index
+    return None
 
 
 def _noop_text(_text: str) -> None:

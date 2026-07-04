@@ -42,3 +42,9 @@ class AgentServices:
     # present the turn resolves tools from it (registry-backed ToolSet); tests leave
     # it None and the ToolSet adapts tool_schemas / tool_functions instead.
     tool_registry: Any = None
+    # W1 (WINDOWS_COMPAT_PLAN §3.6 / A8): the folded effective platform, the ONE
+    # persistent home platform consumers read (host.services.effective_platform) --
+    # never a second sys.platform read. The default is the tests/legacy-construction
+    # value (same tail-field convention as above); the production path
+    # (build_agent_services) always writes the fold_platform() result.
+    effective_platform: str = "linux"

@@ -17,7 +17,12 @@ from spica.host.app_host import AppHost
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.chat_stream_controller import ChatStreamController
 from ui.controllers.companion_event_bridge import CompanionEventBridge
-from ui.controllers.galgame_controller import GalgameController, selection_to_physical_rect
+from ui.controllers.galgame_controller import (
+    GalgameController,
+    ScreenGeometry,
+    physical_point_to_screen_index,
+    selection_to_physical_screen_rect,
+)
 from ui.controllers.interaction_controller import InteractionController
 from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
@@ -331,9 +336,13 @@ class OverlayWindow(QWidget):
             pick_window=lambda candidates: WindowPickerDialog.pick(candidates, self),
             select_region=self._select_companion_region,
             ask_active_action=self._ask_companion_active_action,
-            # window_lost fix: hand GalgameController this overlay's X11 id (read at
-            # start time) so check_safety's focus exemption fires while typing to her.
-            overlay_window_id_provider=lambda: hex(int(self.winId())),
+            # window_lost fix: hand GalgameController this overlay's own window id
+            # (read at start time) so check_safety's focus exemption fires while
+            # typing to her. W1/A3: the id FORMAT is the locator adapter's business
+            # (X11 hex / Win32 decimal) -- the native int never leaves this lambda.
+            overlay_window_id_provider=lambda: self.host.services.window_locator_adapter.format_native_window_id(
+                int(self.winId())
+            ),
         )
 
     def _on_companion_requested(self) -> None:
@@ -397,8 +406,14 @@ class OverlayWindow(QWidget):
         def _finished(payload: dict) -> None:
             self.companion_region_selector = None
             rect = payload.get("logical_rect")
-            dpr = float(payload.get("device_pixel_ratio") or 1.0)
-            on_done(selection_to_physical_rect((rect.x(), rect.y(), rect.width(), rect.height()), dpr))
+            # W1/L3: per-screen dpr + origin folding (dpr=1 == the old uniform
+            # scaling byte-for-byte; goldens pin the equivalence).
+            on_done(
+                selection_to_physical_screen_rect(
+                    (rect.x(), rect.y(), rect.width(), rect.height()),
+                    self._screen_geometries(QGuiApplication.screens()),
+                )
+            )
 
         def _cancelled(_reason: str) -> None:
             self.companion_region_selector = None
@@ -408,13 +423,43 @@ class OverlayWindow(QWidget):
         selector.selection_cancelled.connect(_cancelled)
         selector.begin()
 
+    @staticmethod
+    def _screen_geometries(screens) -> list[ScreenGeometry]:
+        """Collect the screen layout as pure data for the W1 geometry functions
+        (L3/L4 seams). The physical rect is derived as logical*dpr per screen --
+        exact on X11 (dpr=1); real per-monitor-DPI values are validated in W2."""
+        geometries: list[ScreenGeometry] = []
+        for screen in screens:
+            geometry = screen.geometry()
+            dpr = float(screen.devicePixelRatio() or 1.0)
+            geometries.append(
+                ScreenGeometry(
+                    logical=(geometry.x(), geometry.y(), geometry.width(), geometry.height()),
+                    physical=(
+                        round(geometry.x() * dpr),
+                        round(geometry.y() * dpr),
+                        round(geometry.width() * dpr),
+                        round(geometry.height() * dpr),
+                    ),
+                    device_pixel_ratio=dpr,
+                )
+            )
+        return geometries
+
     def _screen_for_window(self, window_id: str):
         try:
             geom = self.host.services.window_locator_adapter.get_window_geometry(window_id)
             if geom is not None:
-                screen = QGuiApplication.screenAt(QPoint(geom.x + geom.width // 2, geom.y + geom.height // 2))
-                if screen is not None:
-                    return screen
+                # W1/L4: wmctrl geometry is PHYSICAL; QGuiApplication.screenAt
+                # expects LOGICAL coords -- match against per-screen PHYSICAL
+                # rects instead (identical at dpr=1; goldens pin it).
+                screens = QGuiApplication.screens()
+                index = physical_point_to_screen_index(
+                    (geom.x + geom.width // 2, geom.y + geom.height // 2),
+                    self._screen_geometries(screens),
+                )
+                if index is not None:
+                    return screens[index]
         except Exception:  # noqa: BLE001 -- fall back to the primary screen
             pass
         return QGuiApplication.primaryScreen()

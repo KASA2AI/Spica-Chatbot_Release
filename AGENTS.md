@@ -1,13 +1,13 @@
-# CLAUDE.md
+# AGENTS.md
 
-> 这是 Spica 仓库的常驻操作手册。Claude / Claude Code 每次进入本仓库都先读它。
+> 这是 Spica 仓库的常驻操作手册。Codex 每次进入本仓库都先读它。
 > 详细的 galgame 陪玩系统规格在 `GALGAME_COMPANION_PLAN.md`，本文件只放**每次都要遵守的铁律、架构地图和工作方式**，不重复完整规格。
 
 ---
 
 ## 📌 新会话必读：护栏闭环 + 文档地图
 
-> 这一节给「新开的 Claude Code 会话加需求」用。先走这条，再按需读下面 §1–§7 和外部 docs。
+> 这一节给「新开的 Codex 会话加需求」用。先走这条，再按需读下面 §1–§7 和外部 docs。
 
 **文档地图（按需读，别一次全读）：**
 - `docs/DEVELOPMENT_GUARDRAILS.md` —— 高危文件清单、落点决策树、各类改动模板、每类改动跑哪些测试、工作流程。
@@ -17,7 +17,7 @@
 - `docs/REAL_ARCHITECTURE_MAP.md` —— 真实路径 + 各链路 ASCII 图。
 
 **收到新需求后的固定流程（先计划后改码）：**
-1. 先读本 `CLAUDE.md`（§1 铁律 + 下面 10 条硬规则）。
+1. 先读本 `AGENTS.md`（§1 铁律 + 下面 10 条硬规则）。
 2. 再读 `docs/DEVELOPMENT_GUARDRAILS.md`。
 3. 按需求类型读 `docs/FUTURE_FEATURE_PLAYBOOK.md` 对应章节。
 4. 需要全局背景再读 `docs/ARCHITECTURE_FOR_ALGORITHM_ENGINEERS.md`。
@@ -81,21 +81,16 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 | 类型化上下文 | `spica/runtime/context.py::TurnContext` |
 | 注入依赖 | `spica/runtime/deps.py::TurnDeps` |
 | turn stages | `spica/runtime/stages.py` |
-| prompt 上下文 contributor | `spica/runtime/prompt_context.py`（Protocol）+ `spica/galgame/context_contributor.py`（galgame gate；经 `deps.context_contributors` 注册：None → galgame auto-fill、`()` 关闭；通用 node `contribute_context_node` 别名 `retrieve_game_context_node` 永久保留——OO 迁移 Phase 3） |
 | prompt 组装 | `spica/conversation/prompt_builder.py::build_spica_prompt`（`[LONG_TERM_MEMORY]` 段在此） |
 | 记忆端口 | `spica/ports/memory.py` → `MemoryScope(character_id, user_id, conversation_id)` + `MemoryPort` |
 | 记忆 adapter | `spica/adapters/memory/sqlite.py`（按 `character_id::conversation_id` 命名空间隔离） |
-| recent memory | `memory/recent.py`（内存 deque 哑存储；key 由 scope 策略推导，按 `character_id::conversation_id`——OO 迁移 Phase 2） |
-| 记忆 scope 策略 | `spica/runtime/scope.py`（`CharacterScope` + `MemoryScopeStrategy`：身份默认值单一居所 + recent/LTM/clear 三点对称，live-read `config.character`） |
+| recent memory | `memory/recent.py`（内存 deque，按裸 conversation_id） |
 | 能力注册表 | `spica/plugins/registry.py::CapabilityRegistry` |
 | 工具轮（流式生产链） | `spica/runtime/tool_round.py`（probe → 执行 → followup；`chainable` 工具进 round 2..max_tool_rounds 多轮循环，超限优雅强制收尾不报错） |
 | 主动开口（turn 发起器） | `spica/core/proactive.py`（`ProactiveTurnRequest` / `ProactiveTurnArbiter`，模式无关）+ `ChatEngine.stream_system_turn`；UI 消费 `StreamKind.SYSTEM` |
 | 内置工具（registry 注册） | `inspect_screen`(read) / `watch_game_screen`(read) / `note_game_observation`(write) / `sing_song`(act)，全部「工具垫片 + host 闭包持权限」形制 |
 | song 事件 | `spica/core/song_events.py::SongRequestEvent`（host 闭包 emit → RuntimeEvent 桥 → UI 起 SongWorker） |
 | 兼容同步链（冻结） | `spica/runtime/sync_chain.py`：**纯 golden 锚，生产零调用方，不准长新能力**（生产同步入口是 `run_voice` = run_turn + fold） |
-| domain turn 绑定路由 | `spica/host/domain_router.py::ActiveDomainRouter`（publish/retract/current；ChatEngine 单槽 provider 唯一注入者——OO 迁移 Phase 8；galgame 走 `GameTurnBinding` legacy lane，新域走 `DomainTurnBinding`/`domain_context_requests` 泛化槽 + 认领 conversation 前缀，**禁复用 GameContextRequest**） |
-| 窗口身份/隐私门 | `spica/runtime/window.py`（`WindowTarget`/`WatchContext`）+ `spica/galgame/privacy_gate.py`（ocr/watch 双 purpose 唯一评估器，动态输入逐调用；状态集单一居所仍在 `session.py`——OO 迁移 Phase 8） |
-| 模型 port v2 | `spica/ports/model.py`（`TextModel`/`ToolCallingModel`/`BoundModel`/`ToolProbeStream`；turn 外消费者 summarizer/judge 经 `BoundModel.complete`——OO 迁移 Phase 6a；**生产链已 v2**——orchestrator 终答流 + tool_round 探针族经 `deps.model.stream/probe/probe_stream`，OO 迁移 Phase 7；v1 `LLMPort` 仅冻结链保留；守卫：`test_no_new_v1_llm_consumers` + `test_no_v1_llm_in_runtime`；host 侧 role/endpoint 决策唯一居所 `spica/host/model_router.py::for_role`——OO 迁移 Phase 6b，judge adapter 仍经 `AppHost._judge_llm_adapter` patch seam） |
 | 屏幕识别工具链 | `agent_tools/function_tools/screen/`（`inspect_screen` ToolPort：本地截图 + RapidOCR + Moondream，**绝不上传**） |
 | 手动框选截图 UI | `ui/widgets/screenshot_selector.py::ScreenshotSelectionOverlay` + `ui/workers/screenshot_worker.py` |
 | 活体诊断器 | `scripts/verify_watch_chain.py`（工具不触发先跑它）、`scripts/diag_ocr_providers.py`（疑 OCR 回落 CPU 先跑它） |
@@ -117,8 +112,6 @@ spica/galgame/                   # domain / session 层（Qt-free）
   models.py session.py text_stream.py summarizer.py ocr_loop.py
   companion_controller.py binding.py history.py ocr_calibration.py
   ocr_region.py window_match.py manual.py
-  prompt_sections.py             # galgame prompt 段落构建（OO 迁移 Phase 1 自
-                                 # stages.py 迁入；gate + node 仍在 stages.py）
   # 注：早期规划的 choices.py / commands.py 从未单独落地——choice 逻辑长在
   # session.py 内，command intent 已随 B2（song 工具化）一并消亡。
 
@@ -158,7 +151,7 @@ song（B2 后）的正确形态：点歌经主 LLM 的 `sing_song` function call
 galgame 的正确做法：
 
 - `GalgameCompanionSession` 负责 session 状态、OCR loop、stable line、buffer、进度状态、游戏记忆读写、选项事件。
-- 需要回复时，**仍然调用 `ChatEngine`、仍然走 `run_turn`**，经 PromptContextContributor 把游戏上下文注入 prompt（OO 迁移 Phase 3：galgame gate 在 `spica/galgame/context_contributor.py`，通用 node `contribute_context_node` 的别名 `retrieve_game_context_node` 永久保留）。
+- 需要回复时，**仍然调用 `ChatEngine`、仍然走 `run_turn`**，通过新增的 gated stage `retrieve_game_context_node` 把游戏上下文注入 prompt。
 - **禁止**：galgame 自己拼 prompt、自己调 LLM、为判断「是否注入游戏上下文」单独跑一次 LLM 分类（那等于第二条 LLM 路径）。gate 只能用显式 `interaction_mode` / `conversation_id` 命名空间 / active session / command intent / 关键词启发式。
 
 ---
@@ -204,11 +197,76 @@ galgame 的正确做法：
 
 ## Agent skills
 
-当前仓库同步提供 `.agents/skills/` repo-level Codex skills。这些 skills 只补充工作流程，不覆盖本文件已有 Claude Code 护栏。
+当前仓库使用 `.agents/skills/` 里的 repo-level Codex skills。新会话优先读取 repo 内 skill；全局 `~/.codex/skills` 只作为安装来源，不作为本仓库规则来源。issue tracker、triage label 和 domain docs 配置见 `docs/agents/`。
 
-- `$diagnosing-bugs`：bug 复现、定位、日志和最小修复。
-- `$tdd`：可测试的行为修改。
-- `$code-review`：非小改动完成前的 diff 检查。
-- `$grill-with-docs`：新功能设计或 agent/tool 行为变更前的需求澄清。
-- `$handoff`：长任务结束前整理交接文档。
-- `$improve-codebase-architecture`：只用于架构审查；没有明确批准不得大规模重构。
+### Skill routing policy
+
+每个非平凡任务开始前，先判断任务类型并选择最合适的 repo/user skill。不要默认启用所有 skill；只选一个 primary skill，必要时声明一个后续 skill（通常是 `$code-review` 或 `$handoff`）。
+
+#### General rules
+
+- Follow this repo's project guidance first, including `CLAUDE.md` if present and relevant files under `docs/agents/`.
+- Simple file lookup, code explanation, grep/search, or one-line edits with no behavior risk do not need a skill unless the user explicitly asks.
+- Complex or risky tasks need skill routing before implementation, especially when they affect production behavior, multiple files, runtime paths, config defaults, tests, or smoke validation.
+- If the user explicitly names a skill, use it unless it conflicts with safety or repo constraints.
+- If a skill is selected, state the primary skill and task mode in one short line, then proceed.
+- Skills never override user constraints or repo guardrails.
+- Do not broaden scope. If the task says "only Moondream", do not touch OCR/TTS/RVC/song/Windows. If the task says "only preflight", do not modify production code.
+
+#### Primary skill selection
+
+- `$diagnosing-bugs`: use for bug reproduction, root-cause analysis, runtime failures, flaky tests, dependency/environment checks, GPU/CUDA/TensorRT/ONNXRuntime checks, and read-only preflight/smoke gates. Inspect and narrow the cause before changing anything; if the user says not to modify code or install dependencies, stop at reporting gaps.
+- `$tdd`: use for intended behavior changes that should be proven by tests, including config default cutovers, provider selection, factory/install-hook behavior, algorithm/calibration changes, and legacy fallback behavior. Read existing tests first, add or update the smallest meaningful failing test, then make the smallest implementation change. Do not use it for read-only preflight or exploratory diagnosis.
+- `$grill-with-docs`: use for new feature design, ambiguous architecture/product decisions, agent/tool behavior design, or large changes that need a plan before code. Produce a design plan and risk/test/rollout strategy before implementation.
+- `$code-review`: use after non-trivial changes, especially before commit. Review current and staged diffs for scope violations, unrelated WIP, missing tests, hardcoded paths, env leaks, layering issues, broad refactors, and temporary debug code. Do not keep modifying code during review unless explicitly asked.
+- `$handoff`: use when ending a long task, leaving partial work, or preserving findings for a later session. Summarize objective, changed files, commands, test results, decisions, risks, exact next steps, and a next-session prompt.
+- `$setup-matt-pocock-skills`: use only for initializing or repairing repo-level skill configuration, `docs/agents/*`, or concise `Agent skills` sections. Do not use it for normal coding, bug fixing, or runtime cutover work.
+- `$improve-codebase-architecture`: use cautiously for architecture review, module-boundary analysis, layering problems, and staged refactor plans. Do not perform large refactors without explicit approval, and do not mix cleanup into urgent runtime/cutover/bugfix tasks.
+
+#### Skill priority rules
+
+- If the user says "do not modify code", "preflight only", "smoke only", or "report gaps only", prefer `$diagnosing-bugs`.
+- If the task requires a planned behavior change and tests, prefer `$tdd`.
+- If the task is design-heavy or ambiguous, prefer `$grill-with-docs`.
+- If code has already changed and the user asks whether it is safe, prefer `$code-review`.
+- If the session is ending or work needs to be resumed later, prefer `$handoff`.
+- If the task is about installing/configuring skills or `docs/agents`, prefer `$setup-matt-pocock-skills`.
+- If the task is broad architectural analysis, prefer `$improve-codebase-architecture`.
+
+#### Common Spica mappings
+
+- Moondream default cutover with tests and config change: `$tdd`.
+- Moondream runtime failure or provider not routing correctly: `$diagnosing-bugs`.
+- OCR TRT dependency/preflight/smoke gate: `$diagnosing-bugs`.
+- OCR provider default cutover with tests: `$tdd`.
+- STT engine selection or wake-word design: `$grill-with-docs`.
+- Exposure/calibration behavior change: `$tdd`.
+- Exposure/calibration abnormal runtime result: `$diagnosing-bugs`.
+- Tool-trigger routing design for screen vision: `$grill-with-docs`.
+- Reviewing Codex changes before commit: `$code-review`.
+- Preparing next-session continuation: `$handoff`.
+- Creating project-level agent docs: `$setup-matt-pocock-skills`.
+- Reviewing messy runtime architecture: `$improve-codebase-architecture`.
+
+#### Before implementation checklist
+
+- Identify selected primary skill.
+- State whether the task is read-only, test-only, implementation, smoke, or commit-capable.
+- Run `git status --short`.
+- Protect existing WIP unless the user explicitly authorizes touching it.
+- Read relevant docs and code before changing files.
+- For risky tasks, summarize intended files to modify before editing.
+- Do not stage or commit unless the user explicitly requested it.
+
+#### After implementation checklist
+
+- Run targeted tests first.
+- Run broader tests only when appropriate.
+- Show `git diff --stat`.
+- If staging or committing, show staged diff and confirm no unrelated WIP is staged.
+- Use `$code-review` before committing non-trivial changes.
+- Use `$handoff` if the task is incomplete or context-heavy.
+
+#### Task prompt convention
+
+When a user says “按 Skill routing policy 判断”, Codex should apply this section automatically: choose one primary skill, optionally name a follow-up skill, state the task mode, then begin the task without requiring the user to paste the full routing instructions again.

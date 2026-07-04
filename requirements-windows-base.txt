@@ -1,0 +1,34 @@
+# Windows base environment for Spica (W2-a bootstrap).
+# Target: conda env `spica-win` (python=3.11) on the Windows acceptance machine.
+# Verify with: python scripts/windows/check_imports.py
+#
+# Deliberately NOT in this file (out of W2-a scope):
+#   - torch / CUDA stacks / onnxruntime-gpu / TensorRT  -> W4 (heavy runtimes)
+#   - pywin32 / any Win32 API packages                  -> W2 (real WindowLocator/launcher; ctypes-based, likely no package needed)
+#   - webrtcvad (software VAD)                          -> W3-a (selection pending)
+#
+# Sections: REQUIRED must all import green (check_imports gate);
+# PREFLIGHT failures only WARN and do not block W2-a closeout.
+
+# --- REQUIRED ---
+PySide6>=6.6,<7
+openai>=2,<3
+httpx>=0.27,<1
+pydantic>=2.7,<3
+PyYAML>=6,<7
+python-dotenv>=1,<2
+# numpy<2: forward constraint from vendored GPT-SoVITS (W4 heavy runtime shares this env family).
+numpy>=1.24,<2
+Pillow>=10,<12
+mss>=9,<11
+rapidocr-onnxruntime>=1.4,<2
+# Explicit CPU onnxruntime (W2-a ruling: do not rely on rapidocr-onnxruntime's
+# transitive pull; check_imports prints get_available_providers() from it).
+# GPU execution providers are W4 scope.
+onnxruntime>=1.17,<2
+faster-whisper>=1.1,<2
+
+# --- PREFLIGHT ---
+# Microphone capture. On Windows, pip wheels exist for cp311; if install or
+# import fails it is a WARN, not a W2-a blocker (real capture seam is W3).
+PyAudio>=0.2.11,<0.3

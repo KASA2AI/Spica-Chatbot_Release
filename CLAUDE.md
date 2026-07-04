@@ -93,6 +93,8 @@ Spica 是一个**本地运行的桌面语音角色扮演陪伴应用**（PySide6
 | 内置工具（registry 注册） | `inspect_screen`(read) / `watch_game_screen`(read) / `note_game_observation`(write) / `sing_song`(act)，全部「工具垫片 + host 闭包持权限」形制 |
 | song 事件 | `spica/core/song_events.py::SongRequestEvent`（host 闭包 emit → RuntimeEvent 桥 → UI 起 SongWorker） |
 | 兼容同步链（冻结） | `spica/runtime/sync_chain.py`：**纯 golden 锚，生产零调用方，不准长新能力**（生产同步入口是 `run_voice` = run_turn + fold） |
+| domain turn 绑定路由 | `spica/host/domain_router.py::ActiveDomainRouter`（publish/retract/current；ChatEngine 单槽 provider 唯一注入者——OO 迁移 Phase 8；galgame 走 `GameTurnBinding` legacy lane，新域走 `DomainTurnBinding`/`domain_context_requests` 泛化槽 + 认领 conversation 前缀，**禁复用 GameContextRequest**） |
+| 窗口身份/隐私门 | `spica/runtime/window.py`（`WindowTarget`/`WatchContext`）+ `spica/galgame/privacy_gate.py`（ocr/watch 双 purpose 唯一评估器，动态输入逐调用；状态集单一居所仍在 `session.py`——OO 迁移 Phase 8） |
 | 模型 port v2 | `spica/ports/model.py`（`TextModel`/`ToolCallingModel`/`BoundModel`/`ToolProbeStream`；turn 外消费者 summarizer/judge 经 `BoundModel.complete`——OO 迁移 Phase 6a；**生产链已 v2**——orchestrator 终答流 + tool_round 探针族经 `deps.model.stream/probe/probe_stream`，OO 迁移 Phase 7；v1 `LLMPort` 仅冻结链保留；守卫：`test_no_new_v1_llm_consumers` + `test_no_v1_llm_in_runtime`；host 侧 role/endpoint 决策唯一居所 `spica/host/model_router.py::for_role`——OO 迁移 Phase 6b，judge adapter 仍经 `AppHost._judge_llm_adapter` patch seam） |
 | 屏幕识别工具链 | `agent_tools/function_tools/screen/`（`inspect_screen` ToolPort：本地截图 + RapidOCR + Moondream，**绝不上传**） |
 | 手动框选截图 UI | `ui/widgets/screenshot_selector.py::ScreenshotSelectionOverlay` + `ui/workers/screenshot_worker.py` |

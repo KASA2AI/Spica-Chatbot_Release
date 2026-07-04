@@ -458,3 +458,39 @@
 - 遗留/偏差：无新增；BUG-4 按裁决未触发（构造期解析，无运行时切换）；遥测对齐仍挂
   真正换模型功能立项时；`reaction_scoring.py:130` log-only model 拷贝维持已挂账。
   **至此计划内全部 Y1 phase（0–7 含 6b）收口**；Phase 8/9 feature-triggered 待立项。
+
+## Phase 8 — ActiveDomainRouter + WindowTarget/PrivacyGate + request 落点泛化（已收口）
+- 日期：2026-07-04
+- commit（seam 基建获提前批准，按 c0 → review → c1 → review → c2 → review → c3 分段）：
+  - **设计裁决 amendment** `b2b9c32`（六项裁决 + 审查五修正：router push 模型/方案 C 组合/
+    多 contributor 注册期排序/WindowTarget 纯身份/PrivacyGate 动态入参/sink 异常安全）；
+  - **8-c0** `8b83657`（test-only）：`tests/test_domain_binding_contract.py` 五组保护基线
+    （request lane 缺口、publish-LAST/clear-FIRST、galgame-only 闭包、watch 5 元组三 None 路、
+    system turn 域识别 = conversation_id 且 `source` 结构性不可达 gate）；
+  - **8-c1** `cf6c415`：`ActiveDomainRouter`（inert/加锁/priority/平手取最近 + WARNING once/
+    no-throw 契约/`current_for` 过滤读）+ `context.py` 泛化（`DomainContextRequest`
+    frozen+kw_only、`DomainTurnBinding`、`domain_context_requests` tuple、`MappingProxyType`
+    不可变前缀注册表）+ `chat_engine._request` isinstance 三路分派（galgame legacy lane
+    字节等价、generic lane、未知形状 fail-open）+ controller sink 两点 best-effort +
+    app_host 接线（engine provider 改指 `router.current`，`_companion_game_binding`
+    保持 galgame-only 零改动）；
+  - **8-c2 白名单 amendment** `c5647d1`（爆炸半径 rg 抓到两个裸 5 元组 provider 必改点，
+    实施窗口停工上报后扩权——`test_chat_tool_round.py` / `verify_watch_chain.py` 限定入单）；
+  - **8-c2 实现** `e7bbb7f`：`spica/runtime/window.py`（WindowTarget 纯身份值对象 +
+    WatchContext NamedTuple）+ `spica/galgame/privacy_gate.py`（唯一评估器：ocr purpose =
+    check_safety + OVERLAY_COVERS 逐字迁入、watch purpose = 仅状态门、动态输入逐调用、
+    owner_domain/未知 purpose loud ValueError）+ ocr_loop/watch 工具/app_host 等价迁移 +
+    `test_privacy_gate.py` 8 用例；`test_ocr_loop.py` 行为等价强至**零改动自绿**。
+- 测试：全量 `python -m pytest tests -q` → **1245 passed, 1 warning, 170 subtests passed**
+  （链路：8 前基线 1218 → c0 +13 → c1 +19/subtests+1 → c2 +8，逐段对账）；
+  `python scripts/verify_watch_chain.py` 离线活体全链通过（WatchContext 形 provider）。
+- exit conditions 逐条：galgame 经 router 发布且全族绿 ✓（controller sink 镜像
+  publish-LAST/clear-FIRST，exploding sink 无残留）；两处隐私评估逻辑收编进 gate、
+  `session.py` 状态集单一居所保留不删 ✓；域 conversation 前缀纪律入 GUARDRAILS（8-c3）✓；
+  check→capture race 未收窄挂账声明在档 ✓。
+- 行为边界（显名）：**co-watch feature 未实现、未立项**（Phase 8 只交付 seam）；watch
+  purpose 不做 check_safety 的**不对称保留**；check→capture race **未收窄，继续挂账**
+  （随 co-watch feature 或另立项）；多 contributor telemetry（单 span + metadata）实施
+  推迟到 domain #2 contributor 真落地时。
+- 文档更新（8-c3 同批）：README 状态板 / MIGRATION_PLAN 状态区 / GUARDRAILS 决策树新正路 /
+  CLAUDE.md §2 架构地图两行（Agent skills WIP hunk 照例排除）。

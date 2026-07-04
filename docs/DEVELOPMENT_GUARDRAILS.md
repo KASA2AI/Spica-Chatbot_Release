@@ -105,6 +105,18 @@ docs/**                            # 文档
 ├─ 要把某些上下文喂进 prompt？
 │    → 写 contributor（domain 内新文件 + deps/assembly 注册，仿 spica/galgame/context_contributor.py），
 │      gate 用请求字段判断，不跑第二次 LLM。绝不自己拼 prompt。（playbook §6/§19）
+├─ 新 domain 要接管 turn（会话绑定 + 上下文落点）？（OO 迁移 Phase 8 正路）
+│    → turn binding 经 spica/host/domain_router.py::ActiveDomainRouter publish/retract
+│      （ChatEngine 单槽 provider 只指 router.current，禁二次注入）；request 落点用
+│      DomainTurnBinding / domain_context_requests（context.py 泛化槽）+ 认领一个
+│      conversation 前缀（DOMAIN_CONVERSATION_PREFIXES）。**绝不复用 GameContextRequest /
+│      game_context_request**（galgame 永久专属槽）；galgame-only 闭包只读 controller
+│      快照或 router.current_for("galgame")，永不读 router.current()。
+├─ 要看/截某个窗口（OCR、看屏工具、未来 co-watch）？
+│    → 窗口身份用 spica/runtime/window.py::WindowTarget（纯身份值对象），截屏工具 provider
+│      返回 WatchContext（按名解包）；galgame 窗口安全评估统一经
+│      spica/galgame/privacy_gate.py::PrivacyGate（ocr/watch 双 purpose，动态输入逐调用；
+│      状态集单一居所仍在 session.py）。新 domain 建自己的 gate 实例，不塞 galgame gate。
 ├─ 让她主动说话（事件触发）？
 │    → 发 ProactiveTurnRequest → ProactiveTurnArbiter → stream_system_turn → run_turn。（playbook §7/§9）
 ├─ galgame 相关（OCR/选项/总结/反应/履历）？

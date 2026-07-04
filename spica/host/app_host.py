@@ -51,7 +51,7 @@ from spica.galgame.reaction_judge import GalgameReactionJudge
 from spica.galgame.reaction_scoring import ReactionScoringPolicy
 from spica.galgame.session import GalgameCompanionSession
 from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_sessions
-from spica.ports.model import BoundModel
+from spica.host.model_router import ModelRouter
 from spica.runtime.context import GameTurnBinding
 from spica.runtime.jobs import ThreadJobRunner
 from spica.runtime.scope import CharacterScope, character_scope_from_config
@@ -136,6 +136,10 @@ class AppHost:
             character_scope_provider=lambda: self.character_scope,
             judge_provider=lambda: self._reaction_judge,
         )
+        # Phase 6b: the ONE home for role/endpoint decisions (summary/judge
+        # model fallbacks + the judge endpoint tree). Constructor is inert
+        # (stores the host ref only); every decision resolves per call.
+        self.model_router = ModelRouter(self)
         # Path B stage 2: the process-wide companion controller singleton, built
         # lazily by companion_controller(); _companion_game_binding reads it.
         self._companion_controller: GalgameCompanionController | None = None
@@ -440,13 +444,12 @@ class AppHost:
         return reaction_assembly.build_reaction_engine(self)
 
     def _new_summarizer(self) -> GalgameSummarizer | None:
-        # Summary LLM = config.galgame.summary_model, else the dialogue model (Phase 8),
-        # over the same resolved LLM adapter, hand-assembled into a BoundModel
-        # (Phase 6a; the router半 is Phase 6b). None when no LLM is wired (tests).
+        # Summary LLM = the router's "summary" role (Phase 6b: summary_model or
+        # the dialogue model, over the main resolved adapter -- decision now
+        # lives in model_router). None when no LLM is wired (tests).
         if self.services is None or self.services.llm_adapter is None:
             return None
-        summary_model = self.config.galgame.summary_model or self.config.llm.model
-        return GalgameSummarizer(BoundModel(self.services.llm_adapter, summary_model))
+        return GalgameSummarizer(self.model_router.for_role("summary"))
 
     def _new_reaction_judge(self) -> GalgameReactionJudge | None:
         """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
@@ -455,10 +458,11 @@ class AppHost:
 
     def _judge_llm_adapter(self) -> Any:
         """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
-        521f882). The assembly's
-        new_reaction_judge() takes the adapter THROUGH this method (patch-validity
-        pin), so tests patching it keep intercepting real construction."""
-        return reaction_assembly.judge_llm_adapter(self)
+        521f882). The judge's BoundModel assembly takes the adapter THROUGH this
+        method (patch-validity pin -- router.for_role("judge") calls back here),
+        so tests patching it keep intercepting real construction; the endpoint
+        fallback tree itself lives in model_router.judge_adapter (Phase 6b)."""
+        return self.model_router.judge_adapter()
 
     def _new_stt_adapter(self) -> Any | None:
         """Plan B local STT. None unless backend == "faster_whisper" (the "google"

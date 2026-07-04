@@ -1,15 +1,17 @@
 """Reaction domain assembly (OO migration Phase 4).
 
 The WIRING half of the P5 reaction system, moved verbatim out of
-``AppHost``: judge construction (incl. the independent judge endpoint fallback
-tree) and engine assembly. The DECISION half lives in
-``spica/galgame/reaction_scoring.py``; the write-authority closures (speak /
-beat writer / dedupe reader) stay on the host.
+``AppHost``: judge construction and engine assembly. The DECISION half lives
+in ``spica/galgame/reaction_scoring.py``; the judge's endpoint/model decisions
+(incl. the independent endpoint fallback tree) live in
+``spica/host/model_router.py`` (Phase 6b); the write-authority closures
+(speak / beat writer / dedupe reader) stay on the host.
 
 FACADE CONTRACT (patch-validity, pinned by tests/test_reaction_judge.py):
 ``install(host)`` builds through ``host._new_reaction_judge()`` and
 ``host._build_reaction_engine()``; ``new_reaction_judge(host)`` takes its
-adapter through ``host._judge_llm_adapter()``. The AppHost thin delegates are
+adapter through ``host._judge_llm_adapter()`` (via
+``host.model_router.for_role("judge")``, Phase 6b). The AppHost thin delegates are
 the ONLY build path -- ``patch.object(AppHost, ...)`` must always intercept
 (the ``test_moondream_default_cutover`` 15-patch depends on it). The delegates
 are LONG-LIVED facades (D4 stop-clock, amendment 521f882) -- deletion is not
@@ -26,8 +28,6 @@ from typing import Any
 
 from spica.galgame.reaction import ReactionEngine, ReactionModeParams, merge_mode_table
 from spica.galgame.reaction_judge import GalgameReactionJudge
-from spica.host.agent_assembly import build_llm_client
-from spica.ports.model import BoundModel
 
 logger = logging.getLogger(__name__)
 
@@ -44,43 +44,17 @@ def install(host: Any) -> None:
 
 def new_reaction_judge(host: Any) -> GalgameReactionJudge | None:
     """The P5 v2 reaction judge. None unless reaction_judge_enabled AND an LLM
-    is wired (so a half-config or a test never builds it). Model =
-    reaction_judge_model, else the dialogue model -- same resolved adapter as
-    the summarizer (mirrors _new_summarizer)."""
+    is wired (so a half-config or a test never builds it)."""
     if not host.config.galgame.reaction_judge_enabled:
         return None
     if host.services is None or host.services.llm_adapter is None:
         return None
-    model = host.config.galgame.reaction_judge_model or host.config.llm.model
-    # Facade contract: the adapter comes through the host delegate, never a
-    # direct judge_llm_adapter(host) call (patch-validity pin). Phase 6a:
-    # hand-assemble the BoundModel here (the router半 is Phase 6b).
-    return GalgameReactionJudge(BoundModel(host._judge_llm_adapter(), model))
-
-
-def judge_llm_adapter(host: Any) -> Any:
-    """LLM adapter for the reaction judge -- its own endpoint (key + base_url),
-    so the judge's load never saturates the main chat/summary endpoint (the
-    deepseek-timeout-under-load root cause). Vendor-neutral: any OpenAI-compatible
-    provider (deepseek/OpenAI/...; NOT Claude/Anthropic, which needs a separate
-    messages-API adapter). Each knob falls back to the main LLM independently:
-      key      = secrets.judge_api_key  (unset -> share the main adapter, zero change)
-      base_url = galgame.reaction_judge_base_url or config.llm.base_url
-      (model is resolved by the caller: reaction_judge_model or config.llm.model)
-    Construction is network-free, so a bad key/url cannot break startup -- it
-    surfaces on the first judge call, which the scoring policy catches and
-    degrades to the lexicon gate."""
-    judge_key = host.secrets.judge_api_key if host.secrets else None
-    if not judge_key:
-        logger.info("reaction judge: no JUDGE_API_KEY -> sharing the main LLM key/endpoint")
-        return host.services.llm_adapter
-    base_url = host.config.galgame.reaction_judge_base_url or host.config.llm.base_url
-    client = build_llm_client(judge_key, base_url)
-    logger.info("reaction judge: separate endpoint (JUDGE_API_KEY, base_url=%s)", base_url)
-    return host.registry.resolve_llm(
-        host.config.llm.provider, client=client,
-        reasoning_effort=host.config.galgame.reaction_judge_reasoning_effort,
-    )
+    # Facade contract (Phase 6b, 方案 A-ii): for_role("judge") takes the adapter
+    # THROUGH host._judge_llm_adapter() -- never a direct router.judge_adapter()
+    # call -- so patch.object(AppHost, "_judge_llm_adapter", ...) keeps
+    # intercepting real construction (patch-validity pin). Model resolution
+    # (reaction_judge_model or the dialogue model) lives in the router too.
+    return GalgameReactionJudge(host.model_router.for_role("judge"))
 
 
 def build_reaction_engine(host: Any) -> ReactionEngine | None:

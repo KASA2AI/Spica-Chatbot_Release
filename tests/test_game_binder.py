@@ -197,6 +197,16 @@ class BindFailureTest(BinderTestBase):
         self.assertEqual(ev.code, "WAYLAND_UNSUPPORTED")
         self.assertEqual(ev.options, ["cancel"])
 
+    def test_win32_unavailable_readable(self):
+        # W2: the windows lane without user32 (e.g. mis-selected on a non-Windows
+        # host) -- no enumeration means no manual-bind either, so cancel-only.
+        loc = _FakeLocator(WindowEnumeration(windows=[], available=False, reason_code="WIN32_UNAVAILABLE", reason="Win32 窗口 API 不可用"))
+        binder = self._binder(locator=loc)
+        binder.begin_bind("ABC", LaunchProfile(launch_type="command", command="run"))
+        ev = self.sink.last("galgame_bind_failed")
+        self.assertEqual(ev.code, "WIN32_UNAVAILABLE")
+        self.assertEqual(ev.options, ["cancel"])
+
     def test_bind_game_rejection_surfaces_not_crashes(self):
         # G3: session already past idle -> bind_game raises GalgameStateError -> caught.
         self.session.bind_game("XYZ")  # session now game_launched

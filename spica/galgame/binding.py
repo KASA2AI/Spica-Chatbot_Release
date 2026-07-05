@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 _UNAVAILABLE_OPTIONS = {
     "WMCTRL_MISSING": ["install_wmctrl", "cancel"],
     "WAYLAND_UNSUPPORTED": ["cancel"],  # v1 needs X11; no manual-bind path either (can't enumerate)
+    "WIN32_UNAVAILABLE": ["cancel"],  # W2: win32 lane without user32 (non-Windows host / load failure); can't enumerate -> no manual-bind either
 }
 
 

@@ -23,8 +23,8 @@ def _check_linux_qt_xcb_dependency() -> bool:
         "Ubuntu 22.04 修复命令：\n"
         "  sudo apt update\n"
         "  sudo apt install -y libxcb-cursor0\n\n"
-        "安装后重新运行：\n"
-        "  /home/san/anaconda3/envs/gptsovits/bin/python webui_qt.py\n",
+        "安装后用你的 conda 环境 python 重新运行：\n"
+        "  python webui_qt.py\n",
         file=sys.stderr,
     )
     return False

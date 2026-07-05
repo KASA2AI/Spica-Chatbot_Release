@@ -8,3 +8,8 @@
 #     --local-dir spica_data/models/faster-whisper-large-v3-turbo
 # then point stt.model at that dir (see data/config/app.yaml).
 faster-whisper>=1.1,<2
+# Software VAD for the generic-mic recorder (W3): the maintained fork of
+# py-webrtcvad -- upstream "webrtcvad" ships NO cp311 wheels (W3-a probe).
+# Import name stays `webrtcvad`. Windows-primary at runtime; installed on Linux
+# too so the synthetic-frame segmentation tests run in the full suite.
+webrtcvad-wheels>=2.0.14,<3

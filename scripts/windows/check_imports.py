@@ -40,11 +40,12 @@ REQUIRED = [
     # the Windows base env installs the CPU "onnxruntime" distribution.
     ("onnxruntime", "onnxruntime", ("onnxruntime-gpu", "onnxruntime-directml")),
     ("faster-whisper", "faster_whisper", ()),
+    # W3: both promoted/added as hard deps of the Windows voice loop.
+    ("PyAudio", "pyaudio", ()),
+    ("webrtcvad-wheels", "webrtcvad", ()),
 ]
 
-PREFLIGHT = [
-    ("PyAudio", "pyaudio", ()),
-]
+PREFLIGHT: list[tuple[str, str, tuple[str, ...]]] = []
 
 
 def _version(dist_name: str, module: object, alternates: tuple[str, ...]) -> str:

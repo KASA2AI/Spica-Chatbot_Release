@@ -282,6 +282,12 @@ class SttConfig(BaseModel):
     # "google" -> legacy recognize_google fallback (STILL timeout-less / can hang;
     # kept only as an explicit opt-out, never auto-selected).
     backend: str = "faster_whisper"
+    # W3 (A5): which microphone RECORDER feeds the voice loop. "auto" folds by
+    # effective platform (linux -> respeaker hardware-VAD path, windows -> generic
+    # PyAudio + webrtcvad software VAD); explicit values override (W3b: ReSpeaker
+    # on Windows / debugging: force generic on Linux). Resolution is the pure
+    # ``resolve_mic_backend`` in spica/host/app_host.py; illegal values die here.
+    mic_backend: Literal["auto", "respeaker", "generic"] = "auto"
     model: str = "large-v3-turbo"  # repo id OR a local dir path (pre-downloaded)
     device: str = "cuda"  # cuda | cpu
     compute_type: str = "float16"  # float16 (gpu) | int8 | int8_float16 ...

@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QThread, Signal
 
 from .audio import (
+    ReSpeakerAudioError,
     ReSpeakerNoSpeechError,
     ReSpeakerRecordingCancelled,
     record_respeaker_channel0_hardware_vad,
@@ -18,6 +19,11 @@ FATAL_SPEECH_ERROR_MARKERS = (
     "Invalid input device",
     "无法打开 ReSpeaker",
     "ReSpeaker 硬件 VAD 不可用",
+    # W3 (P2-3): the generic-mic backend wraps EVERY open failure -- no device,
+    # privacy/permission denial, unsupported params, unknown mic_backend -- in
+    # this envelope, so a mic-less machine stops the loop instead of retrying
+    # forever. Mid-take read failures deliberately do NOT carry it (transient).
+    "无法打开麦克风",
 )
 
 
@@ -30,7 +36,7 @@ class SpeechWorker(QThread):
     recognized = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, parent=None, *, stt_port=None) -> None:
+    def __init__(self, parent=None, *, stt_port=None, mic_backend: str = "respeaker") -> None:
         super().__init__(parent)
         # Flipped True on THIS thread once the hardware VAD detects the user has
         # actually started speaking; stays True through recognition (so a barging
@@ -42,6 +48,10 @@ class SpeechWorker(QThread):
         # resident singleton, NOT owned/loaded here (worker churn != model churn).
         # None -> the legacy in-worker recognize_google fallback (backend=google).
         self._stt = stt_port
+        # W3: which mic RECORDER records the utterance -- a resolved STRING from
+        # AppHost (resolve_mic_backend), dispatched in _record(). Default
+        # "respeaker" == the pre-W3 hardware path (byte-equivalent when unwired).
+        self._mic_backend = mic_backend
 
     def is_capturing_user_speech(self) -> bool:
         return self._capturing
@@ -53,7 +63,7 @@ class SpeechWorker(QThread):
         self._capturing = False
         try:
             self.status_changed.emit("等待说话中....")
-            pcm = record_respeaker_channel0_hardware_vad(
+            pcm = self._record(
                 should_stop=self.isInterruptionRequested,
                 on_speech_start=self._mark_capturing,
                 end_silence_seconds=resolve_end_silence_seconds(),
@@ -83,6 +93,22 @@ class SpeechWorker(QThread):
             self.recognized.emit(text)
         else:
             self.failed.emit("没有识别到有效中文。")
+
+    def _record(self, **kwargs) -> bytes:
+        """Dispatch to the resolved mic backend (W3). Both lanes share one call
+        face (the W3-a recorder contract). The respeaker lane resolves through
+        the MODULE namespace (tests monkeypatch it there); the generic lane is
+        imported lazily so a respeaker-only environment never needs webrtcvad's
+        import chain at worker-construction time."""
+        if self._mic_backend == "respeaker":
+            return record_respeaker_channel0_hardware_vad(**kwargs)
+        if self._mic_backend == "generic":
+            from hardware.audio_input.generic_mic import record_generic_mic_software_vad
+
+            return record_generic_mic_software_vad(**kwargs)
+        # A mis-wired backend cannot open any mic: use the FATAL envelope so the
+        # voice loop stops instead of retrying forever (P2-3).
+        raise ReSpeakerAudioError(f"无法打开麦克风：未知 mic_backend {self._mic_backend!r}。")
 
     def _transcribe(self, pcm: bytes) -> str:
         """PCM (16-bit mono 16 kHz) -> text.

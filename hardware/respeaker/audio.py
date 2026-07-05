@@ -242,7 +242,7 @@ def _load_pyaudio():
         import pyaudio
     except Exception as exc:
         raise ReSpeakerAudioError(
-            "缺少 PyAudio，无法从 ReSpeaker 录音。请在 gptsovits 环境安装 PyAudio。"
+            "缺少 PyAudio，无法从 ReSpeaker 录音。请在当前 Python 环境安装 PyAudio。"
         ) from exc
     return pyaudio
 

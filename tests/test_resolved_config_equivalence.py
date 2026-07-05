@@ -315,6 +315,44 @@ def test_fold_platform_auto_on_unknown_host_raises():
         fold_platform("auto", "darwin")
 
 
+def test_stt_mic_backend_default_auto_and_literal_fails_loud(clean_env, tmp_path):
+    # A5 (W3): typed yaml-only key, no env name (roster untouched). Default "auto"
+    # keeps load() == AppConfig() equivalence; illegal values die at the Literal.
+    from pydantic import ValidationError
+
+    from spica.config.schema import SttConfig
+
+    assert AppConfig().stt.mic_backend == "auto"
+    assert ConfigManager(tmp_path / "absent.yaml").load().stt.mic_backend == "auto"
+    with pytest.raises(ValidationError):
+        SttConfig(mic_backend="usb")
+
+
+def test_resolve_mic_backend_auto_folds_by_platform():
+    from spica.host.app_host import resolve_mic_backend
+
+    assert resolve_mic_backend("auto", "linux") == "respeaker"
+    assert resolve_mic_backend("auto", "windows") == "generic"
+
+
+def test_resolve_mic_backend_explicit_value_ignores_platform():
+    from spica.host.app_host import resolve_mic_backend
+
+    assert resolve_mic_backend("respeaker", "windows") == "respeaker"
+    assert resolve_mic_backend("generic", "linux") == "generic"
+
+
+def test_resolve_mic_backend_unknown_values_raise():
+    # Same fail-loud discipline as fold_platform: a mis-set backend must never
+    # silently fold onto some mic path.
+    from spica.host.app_host import resolve_mic_backend
+
+    with pytest.raises(ValueError):
+        resolve_mic_backend("usb", "linux")
+    with pytest.raises(ValueError):
+        resolve_mic_backend("auto", "darwin")
+
+
 def test_platform_config_default_auto_and_literal_fails_loud(clean_env, tmp_path):
     # Schema layer: default stays "auto" (load() == AppConfig() equivalence keeps
     # holding with the new section); an illegal value dies at the Literal, so

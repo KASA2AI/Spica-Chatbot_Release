@@ -88,6 +88,7 @@ def _fake_services():
         game_memory_adapter=object(),
         screen_capture_adapter=object(),
         window_locator_adapter=object(),
+        effective_platform="linux",  # W3: initialize() feeds this to resolve_mic_backend
     )
 
 

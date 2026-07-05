@@ -1,14 +1,17 @@
-# Windows base environment for Spica (W2-a bootstrap).
+# Windows base environment for Spica (W2-a bootstrap, extended by W3 voice deps).
 # Target: conda env `spica-win` (python=3.11) on the Windows acceptance machine.
 # Verify with: python scripts/windows/check_imports.py
 #
-# Deliberately NOT in this file (out of W2-a scope):
+# Deliberately NOT in this file:
 #   - torch / CUDA stacks / onnxruntime-gpu / TensorRT  -> W4 (heavy runtimes)
-#   - pywin32 / any Win32 API packages                  -> W2 (real WindowLocator/launcher; ctypes-based, likely no package needed)
-#   - webrtcvad (software VAD)                          -> W3-a (selection pending)
+#   - pywin32 / any Win32 API packages                  -> not needed (W2 locator/launcher is ctypes-only)
+#   - upstream "webrtcvad"                              -> never: it ships no cp311 win_amd64 wheel
+#     (W3-a probe); use the webrtcvad-wheels fork listed below -- the import
+#     module is still `webrtcvad`.
 #
-# Sections: REQUIRED must all import green (check_imports gate);
-# PREFLIGHT failures only WARN and do not block W2-a closeout.
+# Sections: REQUIRED must all import green (check_imports gate). Since W3,
+# PyAudio and webrtcvad-wheels are REQUIRED (hard deps of the Windows voice
+# loop); the PREFLIGHT section is currently empty.
 
 # --- REQUIRED ---
 PySide6>=6.6,<7
@@ -27,8 +30,12 @@ rapidocr-onnxruntime>=1.4,<2
 # GPU execution providers are W4 scope.
 onnxruntime>=1.17,<2
 faster-whisper>=1.1,<2
+# W3: microphone capture is now a hard dependency of the Windows voice loop
+# (promoted from PREFLIGHT; validated on the real machine in W2-a as 0.2.14).
+PyAudio>=0.2.11,<0.3
+# W3: software VAD for the generic-mic recorder. MUST be the -wheels fork:
+# upstream "webrtcvad" has no cp311 win_amd64 wheel (W3-a probe evidence).
+webrtcvad-wheels>=2.0.14,<3
 
 # --- PREFLIGHT ---
-# Microphone capture. On Windows, pip wheels exist for cp311; if install or
-# import fails it is a WARN, not a W2-a blocker (real capture seam is W3).
-PyAudio>=0.2.11,<0.3
+# (empty since W3 promoted PyAudio to REQUIRED)

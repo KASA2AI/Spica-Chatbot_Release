@@ -278,6 +278,9 @@ class OverlayWindow(QWidget):
             # backend=google -> SpeechWorker uses the legacy fallback.
             if self.voice_input_controller is not None:
                 self.voice_input_controller.set_stt_port(self.host.stt_adapter)
+                # W3: same delayed-wiring shape -- the resolved mic backend
+                # string reaches each SpeechWorker via the controller.
+                self.voice_input_controller.set_mic_backend(self.host.effective_mic_backend)
             self._init_chat_stream_controller()
             self._init_companion_ui()
             self.interlocutor_name = self.agent.interlocutor_name

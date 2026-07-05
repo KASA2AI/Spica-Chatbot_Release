@@ -33,6 +33,10 @@ class VoiceInputController(QObject):
         # host.initialize() via set_stt_port (this controller is built before the
         # host). Passed by reference into each SpeechWorker; None -> google fallback.
         self._stt_port = None
+        # W3: resolved mic recorder backend STRING (host.effective_mic_backend),
+        # injected after host.initialize() like the STT port. Default keeps the
+        # pre-W3 hardware path when unwired.
+        self._mic_backend = "respeaker"
 
     def set_on_recognized_text(self, on_recognized_text: Callable[[str], None]) -> None:
         self.on_recognized_text = on_recognized_text
@@ -42,6 +46,11 @@ class VoiceInputController(QObject):
         initialize(), after this controller is constructed). Each subsequent
         SpeechWorker gets this same instance by reference -- no per-worker reload."""
         self._stt_port = stt_port
+
+    def set_mic_backend(self, mic_backend: str) -> None:
+        """Inject the resolved mic recorder backend (W3; same delayed-wiring shape
+        as set_stt_port). Each subsequent SpeechWorker dispatches on this string."""
+        self._mic_backend = mic_backend
 
     def start(self) -> None:
         if not self.backend_ready():
@@ -160,7 +169,7 @@ class VoiceInputController(QObject):
     def _start_speech_worker(self) -> None:
         self.set_busy(True)
         session_id = self.voice_session_id
-        self.speech_worker = SpeechWorker(self, stt_port=self._stt_port)
+        self.speech_worker = SpeechWorker(self, stt_port=self._stt_port, mic_backend=self._mic_backend)
         self.speech_worker.status_changed.connect(
             lambda message, sid=session_id: self.handle_speech_status(message, sid)
         )

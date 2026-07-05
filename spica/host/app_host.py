@@ -95,6 +95,31 @@ def _install_ocr_runtime_provider(config: AppConfig, services: Any) -> None:
         reset_active_ocr_provider()
 
 
+def resolve_mic_backend(mic_backend_cfg: str, effective_platform: str) -> str:
+    """Fold the typed ``stt.mic_backend`` value into the effective mic recorder
+    backend (W3 / A5). Pure function -- Layer B pins it with injected values,
+    same discipline as ``fold_platform``.
+
+    - explicit "respeaker"/"generic" -> returned verbatim (W3b: ReSpeaker on
+      Windows; debugging: force generic on Linux);
+    - "auto": platform "linux" -> "respeaker" (hardware-VAD path, unchanged),
+      "windows" -> "generic" (PyAudio + webrtcvad software VAD), anything else
+      RAISES -- fail loud, never a silent fold onto some mic path;
+    - an illegal cfg value already dies at the schema Literal; the raise here
+      only backstops non-config callers."""
+    if mic_backend_cfg in ("respeaker", "generic"):
+        return mic_backend_cfg
+    if mic_backend_cfg == "auto":
+        if effective_platform == "linux":
+            return "respeaker"
+        if effective_platform == "windows":
+            return "generic"
+        raise ValueError(
+            f"stt.mic_backend=auto has no fold for effective platform {effective_platform!r}"
+        )
+    raise ValueError(f"unknown stt.mic_backend value {mic_backend_cfg!r}")
+
+
 class AppHost:
     """Owns the backend services and wires them together at startup."""
 
@@ -105,6 +130,10 @@ class AppHost:
         self.tts_tool: Any | None = None
         self.tts_adapter: Any | None = None
         self.stt_adapter: Any | None = None  # Plan B: local faster-whisper STT (resident singleton)
+        # W3: resolved mic recorder backend STRING (resolve_mic_backend, set in
+        # initialize()); the UI wires it into the voice loop like stt_adapter.
+        # Default matches the pre-W3 Linux path for anything reading it early.
+        self.effective_mic_backend: str = "respeaker"
         self.services: Any | None = None
         self.character_package: Any | None = None
         self.chat_engine: Any | None = None
@@ -326,6 +355,17 @@ class AppHost:
             # injected by reference into each SpeechWorker so worker churn never
             # reloads the model.
             self.stt_adapter = self._new_stt_adapter()
+            # W3: resolve the mic recorder backend once (pure fold; selection
+            # logged like the platform lanes so smoke logs show the choice).
+            self.effective_mic_backend = resolve_mic_backend(
+                self.config.stt.mic_backend, self.services.effective_platform
+            )
+            logger.info(
+                "mic backend resolved: cfg=%s platform=%s effective=%s",
+                self.config.stt.mic_backend,
+                self.services.effective_platform,
+                self.effective_mic_backend,
+            )
         except Exception:
             if self.visual_tool is None:
                 try:

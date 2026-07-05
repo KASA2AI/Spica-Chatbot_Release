@@ -55,6 +55,52 @@ def test_run_passes_resolved_end_silence_to_recorder(qapp, monkeypatch):
     assert captured["end_silence_seconds"] == 1.3
 
 
+def test_run_dispatches_to_generic_backend(qapp, monkeypatch):
+    # W3: mic_backend is a STRING; SpeechWorker dispatches internally (the host
+    # never holds a recorder callable). The generic lane must receive the same
+    # call face the respeaker lane gets (should_stop/on_speech_start/end_silence).
+    import hardware.audio_input.generic_mic as gm
+
+    captured = {}
+    monkeypatch.setattr(
+        gm, "record_generic_mic_software_vad",
+        lambda **kw: (captured.update(kw), b"")[1],
+    )
+    monkeypatch.setenv("RESPEAKER_END_SILENCE_SECONDS", "1.1")
+
+    SpeechWorker(stt_port=None, mic_backend="generic").run()
+
+    assert captured["end_silence_seconds"] == 1.1
+    assert callable(captured["should_stop"]) and callable(captured["on_speech_start"])
+
+
+def test_run_default_backend_stays_respeaker(qapp, monkeypatch):
+    # Byte-equivalence guard: no mic_backend argument -> the existing hardware
+    # path, resolved through the MODULE namespace (so existing monkeypatch-based
+    # tests and the production import both keep working).
+    import hardware.respeaker.speech_worker as sw
+
+    called = []
+    monkeypatch.setattr(
+        sw, "record_respeaker_channel0_hardware_vad", lambda **kw: (called.append(1), b"")[1]
+    )
+    SpeechWorker(stt_port=None).run()
+    assert called == [1]
+
+
+def test_run_unknown_backend_fails_fatally_not_forever(qapp):
+    # P2-3: a mis-wired backend string must stop the voice loop (fatal marker),
+    # never spin the retry loop.
+    from hardware.respeaker.speech_worker import is_fatal_speech_error
+
+    failures = []
+    worker = SpeechWorker(stt_port=None, mic_backend="usb")
+    worker.failed.connect(failures.append)
+    worker.run()
+    assert len(failures) == 1
+    assert is_fatal_speech_error(failures[0])
+
+
 def test_apphost_builds_stt_adapter_only_for_faster_whisper():
     from spica.config.schema import AppConfig, SttConfig
     from spica.host.app_host import AppHost

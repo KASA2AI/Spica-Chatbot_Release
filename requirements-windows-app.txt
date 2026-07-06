@@ -1,0 +1,50 @@
+# Windows SINGLE app env -- TTS (GPT-SoVITS) + RVC/song layer (W4-b follow-on).
+# The top layer on top of requirements-windows-base.txt + requirements-windows-heavy.txt,
+# reproducing the production Linux `gptsovits` env in ONE Windows env (numpy<2).
+#
+# INSTALL with the constraints lock so numpy stays 1.26.4 and transitives match
+# gptsovits (order matters -- torch trio + base + heavy FIRST; see
+# docs/windows_heavy_install.md §3):
+#
+#   python -m pip install -c constraints-windows-app.txt -r requirements-windows-app.txt
+#   python -m pip install -c constraints-windows-app.txt --no-deps audio-separator==0.44.2
+#
+# Two Windows-specific substitutions vs the Linux env (both drop-in, same import name):
+#   - pyopenjtalk  -> pyopenjtalk-plus (Linux 0.4.1 has NO Windows wheel; the -plus
+#                     fork ships a cp311 win_amd64 wheel and imports as `pyopenjtalk`).
+#   - audio-separator: installed SEPARATELY --no-deps (it declares numpy>=2, metadata
+#                     only -- runtime is green at 1.26.4, as the gptsovits env proves).
+#
+# Versions are the gptsovits set; the constraints lock re-pins them + every transitive.
+# DRAFT until the Windows single-env install validates C/G (docs/windows_w4b_smoke.md).
+
+# --- GPT-SoVITS text frontend + audio core ---
+soundfile==0.13.1
+librosa==0.10.2
+numba==0.65.1
+scipy==1.17.1
+av==17.0.1
+ffmpeg-python==0.2.0
+noisereduce==3.0.3
+pytorch-lightning==2.6.4
+# text frontend: Chinese g2p + segmentation + language split
+jieba==0.42.1
+pypinyin==0.55.0
+cn2an==0.5.24
+g2p-en==2.1.0
+wordsegment==1.3.1
+split-lang==2.1.1
+fast-langdetect==1.0.1
+OpenCC==1.3.1
+# Japanese g2p -- Windows fork of pyopenjtalk (imports as `pyopenjtalk`)
+pyopenjtalk-plus==0.4.1.post8
+# vendored inference_webui.py top-level-imports gradio even headless (known smell)
+gradio==4.44.1
+
+# --- RVC / song (same env; worker_python stays None) ---
+faiss-cpu==1.14.2
+torchcrepe==0.0.24
+torchfcpe==0.0.4
+pedalboard==0.9.23
+soxr==1.1.0
+# audio-separator==0.44.2  -> installed SEPARATELY --no-deps (see header)

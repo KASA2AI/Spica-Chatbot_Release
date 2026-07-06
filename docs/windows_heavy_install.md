@@ -36,15 +36,32 @@ conda run -n spica-win-heavy python -m pip install torch==2.5.1 torchaudio==2.5.
 - `pip check` 的 `onnxruntime` dist-name 红 = 已知不洽(runtime 绿),**不修**;
 - 进程内 DLL 定序由 preload 代码承担(**整套 cuDNN-9 家族**先、`nvinfer_10.dll` 后——见 §6.3 根因,W4-b 已实装两个 preload 函数)。
 
-## 3. TTS + RVC 完整依赖 —— 单 env pin 清单(follow-on,从 Linux gptsovits 导出)
+## 3. TTS + RVC 单 env 清单（已产出 draft,待 Windows 验证）
 
-**做法(避免逐包裸装的 numpy 陷阱):** 从生产 `gptsovits` env 的 `pip freeze` 裁出实际 import 闭包,pin 死成一份 Windows 单 env 清单,**numpy==1.26.4 守卫**,对 `audio-separator`/`g2p_en` 等声明 `numpy>=2` 的包用 `--no-deps`/constraints 装(元数据红、runtime 绿)。
+从生产 `gptsovits` env 的 `pip freeze`(259 包,numpy 1.26.4)导出,产出两文件:
+- **`requirements-windows-app.txt`** —— TTS + RVC 顶层包(可读、pin 到 gptsovits 版本);
+- **`constraints-windows-app.txt`** —— 全量锁(240 行,剔除 torch trio/nvidia-cu12/triton/pyopenjtalk/@直引),pin 每个传递依赖 + `numpy==1.26.4`,防任何 transitive 顶 numpy(§6.3 smoke 那个 `g2p_en` 坑)。
 
-> **为什么必须 pin**:§6.3 smoke 实测——无 pin 装文本前端时 `g2p_en`(`numpy>=1.13.1` 无上界)把 numpy 顶到 2.4.6,违反 GPT-SoVITS 的 numpy<2,当场破坏 TTS。所以不能在验收机逐包猜装。
+**两处 Windows 替换(均 drop-in,import 名不变):**
+- `pyopenjtalk` → **`pyopenjtalk-plus==0.4.1.post8`**:Linux 的 pyopenjtalk 0.4.1 **无 win_amd64 wheel**(探针实测),-plus fork 有 cp311 wheel 且 top_level=`pyopenjtalk`;
+- `audio-separator==0.44.2`:**单独 `--no-deps` 装**(声明 numpy≥2 是元数据、runtime 绿——gptsovits 单 env 实证)。
 
-- 覆盖面:GPT-SoVITS 音频核(soundfile/librosa/numba/scipy/pyworld)+ 文本前端(jieba/pypinyin/cn2an/g2p_en/split_lang…)+ vendored `inference_webui.py` 顶层 import 的 web-UI 闭包(gradio 等)+ 日文 g2p `pyopenjtalk`(Windows 编译易碎,单独留意);+ RVC 层(`requirements-rvc.txt` 的包,同 env);
+**安装顺序(基于 clone 的单 heavy env):**
+
+```powershell
+# 前置:§2 已把 base + heavy(GPU-EP + screen 层)+ torch/torchaudio cu124 装好
+# 1) TTS+RVC 顶层,带 constraints 锁(numpy 守在 1.26.4、transitive 全钉 gptsovits 版)
+conda run -n spica-win-heavy python -m pip install -c constraints-windows-app.txt -r requirements-windows-app.txt
+# 2) audio-separator 单独 --no-deps（绕过其 numpy>=2 元数据声明）
+conda run -n spica-win-heavy python -m pip install -c constraints-windows-app.txt --no-deps audio-separator==0.44.2
+# 3) 守卫复查
+conda run -n spica-win-heavy python -c "import numpy; assert numpy.__version__=='1.26.4', numpy.__version__; print('numpy held', numpy.__version__)"
+```
+
+> **wheel 面已探明(Windows py3.11)**:soundfile/numba/scipy/gradio/pytorch-lightning/faiss-cpu/torchcrepe/torchfcpe/pedalboard/soxr/audio-separator 全有 wheel;唯 pyopenjtalk 无 → -plus fork 顶。**只有 audio-separator 需 --no-deps**(`ml_dtypes` 的 numpy≥2 是 py3.13 条件依赖、py3.11 不触发;`g2p_en` 无上界,constraints 钉住即可)。
+
 - vendored GPT-SoVITS 的 `os.name=="nt"` 分支转正、pushd/cwd、cache 落点 = §6.3 真嗓验收项,**vendored 零 patch**(R5);
-- 产出后并入本文件 §2 或另立 `requirements-windows-app.txt`(施工时定)。
+- **draft 状态**:两文件与本 recipe 待 Windows 装机 + `service.py` import 闭包 + 真嗓合成验证后定稿(C/G 项)。
 
 ## 4. §6.3 已验 / 待验矩阵(细节见 `docs/windows_w4b_smoke.md`)
 

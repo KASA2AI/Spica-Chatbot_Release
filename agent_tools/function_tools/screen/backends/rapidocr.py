@@ -22,6 +22,19 @@ _CUDA_PRELOADED = False
 # the directory; a dropped DLL object may unmap the library.
 _WIN_DLL_DIR_HANDLES: list[Any] = []
 _WIN_LOADED_DLLS: list[Any] = []
+# cuDNN 9 dispatcher + the backend DLLs it dlopens on demand (all shipped in
+# torch\lib / the nvidia-cudnn wheel). Dispatcher first; force-loading the WHOLE
+# family is mandatory -- see _preload_cuda_libraries_windows (W4-b §6.3 smoke).
+_WIN_CUDNN_DLLS = (
+    "cudnn64_9.dll",
+    "cudnn_graph64_9.dll",
+    "cudnn_ops64_9.dll",
+    "cudnn_engines_precompiled64_9.dll",
+    "cudnn_engines_runtime_compiled64_9.dll",
+    "cudnn_heuristic64_9.dll",
+    "cudnn_adv64_9.dll",
+    "cudnn_cnn64_9.dll",
+)
 
 
 def ocr_image(image: Any) -> dict[str, Any]:
@@ -170,14 +183,17 @@ def _win_candidate_cuda_dirs() -> list:
 
 
 def _preload_cuda_libraries_windows() -> None:
-    """Windows variant (W4-b, gate-1 validated): ORT's CUDA EP resolves
-    ``cudnn64_9.dll`` via the standard LoadLibrary search, which does NOT include
-    wheel dirs -- without help the EP is listed but fails init and silently falls
-    back to CPU (W4-a §4.E). So: register every candidate dir
-    (``os.add_dll_directory``) AND force-load the core cuDNN DLL
-    (``ctypes.WinDLL``) so it is already mapped when the EP asks. Handles and DLL
-    objects are kept alive at module level. Env-free, best-effort, no torch
-    import (``find_spec`` locates the dirs)."""
+    """Windows variant (W4-b; fixed after the §6.3 real-machine smoke). ORT's
+    CUDA/TRT EPs resolve ``cudnn64_9.dll`` via the standard LoadLibrary search,
+    which does NOT include wheel dirs. cuDNN 9 is ALSO split into a dispatcher
+    (``cudnn64_9.dll``) plus backend DLLs it dlopens at ``cudnnCreate`` time, and
+    that internal load ignores ``os.add_dll_directory`` dirs -- so force-loading
+    the dispatcher ALONE let the EP abort the process with "Could not locate
+    cudnn_graph64_9.dll" (0xC0000409, a fail-fast that bypasses Python except).
+    Fix: register every candidate dir AND force-load the WHOLE cuDNN-9 family
+    (``ctypes.WinDLL``) so every member is already mapped when the EP asks.
+    Handles and DLL objects are kept alive at module level. Env-free,
+    best-effort, no torch import (``find_spec`` locates the dirs)."""
     import ctypes
     import os
 
@@ -187,20 +203,24 @@ def _preload_cuda_libraries_windows() -> None:
             _WIN_DLL_DIR_HANDLES.append(os.add_dll_directory(str(directory)))
         except OSError:
             continue
-    loaded = False
+    loaded = 0
     for directory in candidates:
-        dll = directory / "cudnn64_9.dll"
-        if not dll.is_file():
-            continue
-        try:
-            _WIN_LOADED_DLLS.append(ctypes.WinDLL(str(dll)))
-            loaded = True
-            break  # one resident copy is enough
-        except OSError:
-            continue  # a copy that won't load is skipped; try the next candidate
+        if not (directory / "cudnn64_9.dll").is_file():
+            continue  # not a cuDNN dir -> don't load orphan siblings from elsewhere
+        for name in _WIN_CUDNN_DLLS:
+            dll = directory / name
+            if not dll.is_file():
+                continue
+            try:
+                _WIN_LOADED_DLLS.append(ctypes.WinDLL(str(dll)))
+                loaded += 1
+            except OSError:
+                continue  # a member that won't load is skipped; the rest still help
+        if loaded:
+            break  # the first dir carrying the dispatcher wins
     if _WIN_DLL_DIR_HANDLES or loaded:
         _LOGGER.info(
-            "windows CUDA preload: %d dirs registered, cudnn64_9 resident=%s",
+            "windows CUDA preload: %d dirs registered, %d cuDNN-9 DLLs resident",
             len(_WIN_DLL_DIR_HANDLES),
             loaded,
         )

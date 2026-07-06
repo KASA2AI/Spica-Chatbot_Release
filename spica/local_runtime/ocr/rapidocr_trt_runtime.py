@@ -50,6 +50,19 @@ _WIN_LOADED_DLLS: list[Any] = []
 # The Windows names of the TRT libs the Linux route loads as libnvinfer*.so.10
 # (nvinfer_10.dll confirmed on the real machine -- docs/windows_w4_probe.md §4.D).
 _WIN_TRT_DLLS = ("nvinfer_10.dll", "nvinfer_plugin_10.dll", "nvonnxparser_10.dll")
+# cuDNN 9 dispatcher + the backend DLLs it dlopens on demand. Force-loading the
+# dispatcher alone is NOT enough: cuDNN's internal load ignores add_dll_directory
+# dirs, so the CUDA/TRT EP aborted on cudnn_graph64_9 (0xC0000409, W4-b §6.3 smoke).
+_WIN_CUDNN_DLLS = (
+    "cudnn64_9.dll",
+    "cudnn_graph64_9.dll",
+    "cudnn_ops64_9.dll",
+    "cudnn_engines_precompiled64_9.dll",
+    "cudnn_engines_runtime_compiled64_9.dll",
+    "cudnn_heuristic64_9.dll",
+    "cudnn_adv64_9.dll",
+    "cudnn_cnn64_9.dll",
+)
 
 
 def _ctypes_load_all(so_paths) -> int:
@@ -176,7 +189,7 @@ def _preload_inference_libs_windows() -> None:
     init and silently fall back (W4-a §4.D/§4.E). ORDER MATTERS: cuDNN first so
     nvinfer's own dependency chain resolves. Env-free, best-effort, no torch
     import; mirrors the backend's Windows CUDA preload, extended with TRT."""
-    total = _win_register_and_load(_win_candidate_cuda_dirs(), ("cudnn64_9.dll",))
+    total = _win_register_and_load(_win_candidate_cuda_dirs(), _WIN_CUDNN_DLLS)
     trt_dirs = [d for d in _win_spec_dirs("tensorrt_libs") if d.is_dir()]
     total += _win_register_and_load(trt_dirs, _WIN_TRT_DLLS)
     if _WIN_DLL_DIR_HANDLES or total:

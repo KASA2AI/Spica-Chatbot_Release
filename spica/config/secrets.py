@@ -34,6 +34,12 @@ class Secrets:
     # JUDGE_MODEL). None -> the judge shares ``openai_api_key`` (zero behaviour
     # change). Roster: JUDGE_API_KEY.
     judge_api_key: str | None = None
+    # Anime-watch (Phase 3): the bilibili login cookie (stabilises risk control +
+    # unlocks 1080p) and the qBittorrent Web API password. Both are secrets ->
+    # env / xiaosan.env only, never app.yaml. Roster: BILIBILI_COOKIE /
+    # QBITTORRENT_PASSWORD. None -> anonymous bilibili / no-auth qbt.
+    bilibili_cookie: str | None = None
+    qbittorrent_password: str | None = None
 
 
 def load_secrets() -> Secrets:
@@ -53,4 +59,6 @@ def load_secrets() -> Secrets:
     return Secrets(
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         judge_api_key=os.getenv("JUDGE_API_KEY"),
+        bilibili_cookie=os.getenv("BILIBILI_COOKIE"),
+        qbittorrent_password=os.getenv("QBITTORRENT_PASSWORD"),
     )

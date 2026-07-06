@@ -107,6 +107,23 @@
 # platform:                      # W1 平台开关 (yaml-only,无 env -- 铁律 #4)
 #   os: auto                     # auto | linux | windows (auto = 装配期按 sys.platform 折算)
 
+# anime:                         # spica 看番装配 (Phase 3, yaml-only 无 env)。secrets 走 xiaosan.env:
+#                                #   BILIBILI_COOKIE / QBITTORRENT_PASSWORD
+#   enabled: false               # 默认关;Phase 4 端到端过后才翻 true
+#   download_dir: ~/Videos/SpicaAnime
+#   player_command: ""           # 空 = xdg-open / os.startfile;可填 vlc
+#   bilibili_spaces: ["3493112693394137"]
+#   mikan_base_urls: ["https://mikanani.me"]
+#   quality: 1080p
+#   subtitle_preference: ["简繁", "简体"]
+#   source_timeout_seconds: 15
+#   resolve_budget_seconds: 45
+#   qbittorrent_url: http://127.0.0.1:8080
+#   qbittorrent_username: admin  # password 是 secret (QBITTORRENT_PASSWORD)
+#   # Phase 4 worker knob (disk_limit_gb / auto_play_threshold_seconds /
+#   # stall_timeout_minutes / qbittorrent_poll_seconds / ytdlp_format / ...)
+#   # 接 UI worker 时再加,本轮不固化。
+
 # --- migrated by migrate_config_p0b ---
 screen:
   enabled: true
@@ -211,3 +228,5 @@ stt:                                     # 本地语音转文字(Plan B):faster-
   vad_filter: false
   warmup_on_startup: true                # 随 TTS 一起启动预热(模型只加载一次,绝不每次调用重载);false=首次说话懒加载
   download_root: null                    # null=HF 默认缓存;model 填本地目录时此项不用
+anime:                                   # spica 看番 (Phase 3):装配已就绪,默认关。完整键见上方注释模板
+  enabled: false

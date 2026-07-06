@@ -61,6 +61,7 @@ from spica.host.agent_assembly import (
     build_agent_services,
     build_moondream_provider,
 )
+from spica.host.assemblies import anime as anime_assembly
 from spica.host.assemblies import reaction as reaction_assembly
 from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
@@ -144,6 +145,11 @@ class AppHost:
         # bridge via attach_companion_sink.
         self._ui_companion_sink: CompanionEventSink = noop_companion_sink
         self.companion_sink: CompanionEventSink = self._dispatch_companion_event
+        # Anime-watch (Phase 3): dedicated Host->UI sink, attached in Phase 4 by
+        # the UI. None = not wired -> watch_anime is not supplied (and its closure
+        # returns ANIME_NOT_READY). Kept OFF the companion tee so anime events
+        # never reach the reaction engine.
+        self._anime_sink: Any = None
         # P5 reaction engine (built in initialize() when reaction_mode != off;
         # the arbiter handoff is UI-attached -- same shape as song's
         # request_proactive_turn injection).
@@ -334,6 +340,10 @@ class AppHost:
                 store=self.services.memory_store,
                 recent=self.services.recent_memory,
             )
+            # Anime-watch (Phase 3): domain assembly. MUST be here -- config /
+            # secrets / services already exist (adapters read config.anime +
+            # secrets at build time), unlike the __init__-registered tools.
+            anime_assembly.install(self)
             # C7: the turn resolves tools from the registry (inspect_screen ToolPort).
             self.services.tool_registry = self.registry
             # ChatEngine is the conversation core (Phase 6D: SimpleAgent dissolved
@@ -378,6 +388,12 @@ class AppHost:
     def conversation_surface(self) -> Any:
         """Entry point for the chat window: the ChatEngine (None before initialize)."""
         return self.chat_engine
+
+    def attach_anime_sink(self, sink: Any) -> None:
+        """Inject the anime-watch Host->UI event sink (Phase 4 seam). Until this
+        is called, watch_anime is not supplied and its closure returns
+        ANIME_NOT_READY -- Phase 3 never downloads."""
+        self._anime_sink = sink
 
     def attach_companion_sink(self, sink: CompanionEventSink) -> None:
         """Inject the galgame Host->UI event sink (Phase 4 seam).

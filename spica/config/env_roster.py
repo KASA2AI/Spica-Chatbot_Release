@@ -56,6 +56,9 @@ SECRETS_ENV_MAP: dict[str, str] = {
     # (deepseek/OpenAI/...; the base_url + model are JUDGE_BASE_URL / JUDGE_MODEL
     # below). Unset -> judge falls back to OPENAI_API_KEY (zero behaviour change).
     "judge_api_key": "JUDGE_API_KEY",
+    # Anime-watch (Phase 3): bilibili login cookie + qBittorrent Web API password.
+    "bilibili_cookie": "BILIBILI_COOKIE",
+    "qbittorrent_password": "QBITTORRENT_PASSWORD",
 }
 
 SCREEN_ENV_MAP: dict[str, str] = {

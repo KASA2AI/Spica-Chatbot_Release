@@ -370,6 +370,30 @@ class PlatformConfig(BaseModel):
     os: Literal["auto", "linux", "windows"] = "auto"
 
 
+class AnimeConfig(BaseModel):
+    """spica 看番装配配置 (Phase 3, yaml-only 无 env -- 铁律 #4; secrets 走 xiaosan.env)。
+
+    只放 Phase 3 装配层实际消费的键 (review #5)。Phase 4 worker knob
+    (disk_limit_gb / auto_play_threshold_seconds / stall_timeout_minutes /
+    qbittorrent_poll_seconds / ytdlp_format / bilibili_fallback_search /
+    preferred_subgroups) 等接 UI worker 时再加, 不提前固化进 resolved snapshot。
+    """
+
+    enabled: bool = False                 # Phase 4 端到端过后才翻 true
+    download_dir: str = "~/Videos/SpicaAnime"
+    player_command: str = ""              # 空 = xdg-open / os.startfile
+    bilibili_spaces: list[str] = Field(default_factory=lambda: ["3493112693394137"])
+    mikan_base_urls: list[str] = Field(
+        default_factory=lambda: ["https://mikanani.me"])
+    quality: str = "1080p"
+    subtitle_preference: list[str] = Field(
+        default_factory=lambda: ["简繁", "简体"])
+    source_timeout_seconds: float = 15.0
+    resolve_budget_seconds: float = 45.0
+    qbittorrent_url: str = "http://127.0.0.1:8080"
+    qbittorrent_username: str = "admin"   # password 是 secret (QBITTORRENT_PASSWORD)
+
+
 class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
@@ -380,6 +404,7 @@ class AppConfig(BaseModel):
     screen: ScreenConfig = Field(default_factory=ScreenConfig)
     ocr: OcrConfig = Field(default_factory=OcrConfig)
     platform: PlatformConfig = Field(default_factory=PlatformConfig)
+    anime: AnimeConfig = Field(default_factory=AnimeConfig)
     # P0b step 3 (D-3a): the song section is intentionally UNTYPED -- it is the
     # override dict layered over song/config.py's DEFAULT_CONFIG by the same
     # deep-merge engine the legacy json used (voices are an open name->config

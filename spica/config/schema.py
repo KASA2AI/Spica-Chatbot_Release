@@ -371,15 +371,15 @@ class PlatformConfig(BaseModel):
 
 
 class AnimeConfig(BaseModel):
-    """spica 看番装配配置 (Phase 3, yaml-only 无 env -- 铁律 #4; secrets 走 xiaosan.env)。
+    """spica 看番装配配置 (Phase 3/4, yaml-only 无 env -- 铁律 #4; secrets 走 xiaosan.env)。
 
-    只放 Phase 3 装配层实际消费的键 (review #5)。Phase 4 worker knob
-    (disk_limit_gb / auto_play_threshold_seconds / stall_timeout_minutes /
-    qbittorrent_poll_seconds / ytdlp_format / bilibili_fallback_search /
-    preferred_subgroups) 等接 UI worker 时再加, 不提前固化进 resolved snapshot。
+    Phase 4 补齐 UI worker / 完成行为 / 持久化的键 (auto_play_threshold_seconds /
+    qbittorrent_poll_seconds / stall_timeout_minutes / ytdlp_format / cookies_file /
+    library_file); disk_limit_gb 归 Phase 5 磁盘提醒。cookies_file / library_file
+    的相对路径按仓库根解析 (装配层 anime.py 统一处理, 同 manager._REPO_ROOT 惯例)。
     """
 
-    enabled: bool = False                 # Phase 4 端到端过后才翻 true
+    enabled: bool = False                 # Phase 4 真机端到端过后才翻 true
     download_dir: str = "~/Videos/SpicaAnime"
     player_command: str = ""              # 空 = xdg-open / os.startfile
     bilibili_spaces: list[str] = Field(default_factory=lambda: ["3493112693394137"])
@@ -392,6 +392,13 @@ class AnimeConfig(BaseModel):
     resolve_budget_seconds: float = 45.0
     qbittorrent_url: str = "http://127.0.0.1:8080"
     qbittorrent_username: str = "admin"   # password 是 secret (QBITTORRENT_PASSWORD)
+    # -- Phase 4 (UI worker + 完成行为 + 持久化) --
+    auto_play_threshold_seconds: float = 300.0   # D5 智能阈值: 快下自动播
+    qbittorrent_poll_seconds: float = 5.0        # worker 轮询间隔
+    stall_timeout_minutes: float = 30.0          # 无进度判卡 (本轮只播报询问)
+    ytdlp_format: str = "bv*[height<=1080]+ba/b[height<=1080]"
+    cookies_file: str = "data/cookies.txt"       # yt-dlp --cookies; 文件可缺省(匿名降清晰度)
+    library_file: str = "data/anime/library.json"  # host 唯一写点 (P1-6); pending.json 同目录
 
 
 class AppConfig(BaseModel):

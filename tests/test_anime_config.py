@@ -1,4 +1,4 @@
-"""Phase 3: AnimeConfig typed defaults + app.yaml + secrets/env roster."""
+"""Phase 3/4: AnimeConfig typed defaults + app.yaml + secrets/env roster."""
 
 from __future__ import annotations
 
@@ -31,13 +31,25 @@ def test_resolved_config_anime_enabled_false():
     assert ConfigManager().load().anime.enabled is False
 
 
-def test_phase4_knobs_not_yet_added():
-    # review #5: don't pre-freeze Phase-4 worker knobs into the config surface
+def test_phase4_worker_knobs_defaults():
+    # Phase 4 landed the worker/completion/persistence knobs (yaml-only typed,
+    # defaults == the hardcoded values of this round -> zero resolved diff
+    # beyond the new anime.* keys).
     a = AnimeConfig()
-    for absent in ("disk_limit_gb", "auto_play_threshold_seconds",
-                   "stall_timeout_minutes", "qbittorrent_poll_seconds",
-                   "ytdlp_format", "bilibili_fallback_search", "preferred_subgroups"):
-        assert not hasattr(a, absent), f"{absent} should be deferred to Phase 4"
+    assert a.auto_play_threshold_seconds == 300.0
+    assert a.qbittorrent_poll_seconds == 5.0
+    assert a.stall_timeout_minutes == 30.0
+    assert a.ytdlp_format == "bv*[height<=1080]+ba/b[height<=1080]"
+    assert a.cookies_file == "data/cookies.txt"
+    assert a.library_file == "data/anime/library.json"
+
+
+def test_phase5_knobs_still_deferred():
+    # disk reminder & source preferences stay deferred (Phase 5 打磨)
+    a = AnimeConfig()
+    for absent in ("disk_limit_gb", "bilibili_fallback_search",
+                   "preferred_subgroups"):
+        assert not hasattr(a, absent), f"{absent} should be deferred to Phase 5"
 
 
 def test_secrets_have_anime_fields_default_none():

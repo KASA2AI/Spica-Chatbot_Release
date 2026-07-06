@@ -26,9 +26,14 @@ from spica.anime.coordinator import (
     SOURCE_ERROR,
     resolve_episode,
 )
-from spica.anime.library import AnimeLibrary
+from spica.anime.library import AnimeLibrary, LibraryEntry
 from spica.anime.models import LATEST, EpisodeRef
-from spica.anime.resolver import canonical_episode_key, parse_query
+from spica.anime.resolver import (
+    canonical_episode_key,
+    name_matches,
+    parse_query,
+    parse_source_title,
+)
 from spica.core.anime_events import AnimeRequestEvent
 from spica.ports.anime_source import AnimeSourcePort
 from spica.ports.media_player import MediaPlayerError
@@ -93,15 +98,32 @@ def run_watch_request(
     new_id: Callable[[], str],
     now: Callable[[], str],
     in_flight: Callable[[], dict | None] | None = None,
+    mark_played: Callable[[str], None] | None = None,
+    use_recent_unplayed: bool = False,
 ) -> dict[str, Any]:
     """Return a small fire-and-ack dict on success; raise WatchAnimeError on any
     failure. ``config`` is the live ``AppConfig.anime`` section. ``in_flight``
     reports the current download as ``{"progress": 0..1, "title": str}`` or None
-    (F8); v1 downloads are single-flight, so a non-None answer means BUSY."""
+    (F8); v1 downloads are single-flight, so a non-None answer means BUSY.
+
+    Phase 4: every successful play also calls ``mark_played(episode_key)`` (the
+    host persistence closure) so the 「最近完成未播」pointer is consumed.
+    ``use_recent_unplayed=True`` is the 「放吧」escape hatch (P1-11②): play the
+    most-recent completed-but-unplayed episode, ignoring ``query``."""
     if not getattr(config, "enabled", False):
         raise WatchAnimeError("ANIME_DISABLED", "看番功能还没开启哦")
     if not is_ready():
         raise WatchAnimeError("ANIME_NOT_READY", "看番功能还没准备好（界面还没接上）")
+
+    # 「放吧」explicit escape (P1-11②): the LLM could not reconstruct the title
+    # (e.g. after a restart) -- play the freshest unplayed download outright.
+    if use_recent_unplayed:
+        mru = library.most_recent_unplayed()
+        if mru is None:
+            raise WatchAnimeError(
+                "ANIME_NOTHING_PENDING", "没有刚下好还没看的番哦")
+        return _play(play_file, mru.file_path, mru.episode_key, mru.title,
+                     mark_played=mark_played)
 
     ref = merge_episode_ref(query, episode)
 
@@ -111,7 +133,19 @@ def run_watch_request(
         hit = library.find(
             canonical_episode_key(ref.title_query, ref.season, ref.episode))
         if hit is not None:
-            return _play(play_file, hit.file_path, hit.episode_key, hit.title)
+            return _play(play_file, hit.file_path, hit.episode_key, hit.title,
+                         mark_played=mark_played)
+
+    # 「放吧」fuzzy pointer (P1-11②): a title-only rephrase (「把无职转生放了吧」)
+    # that names the most-recent unplayed download plays it directly instead of
+    # bouncing through resolve -> NEED_EPISODE. A DIFFERENT title (or an episode/
+    # season that contradicts the pointer) falls through unchanged, so the plain
+    # ask-which-episode contract is untouched. LATEST never matches the pointer
+    # (「最新一集」may be newer than what we downloaded -> must re-resolve).
+    mru = library.most_recent_unplayed()
+    if mru is not None and _pointer_matches(ref, mru):
+        return _play(play_file, mru.file_path, mru.episode_key, mru.title,
+                     mark_played=mark_played)
 
     # busy gate (F8): AFTER the library fast path (a hit plays, that's never
     # "busy") and BEFORE any network resolve. Phase 3 wires lambda: None; the
@@ -137,7 +171,8 @@ def run_watch_request(
     # a LATEST request resolves to a concrete episode -> dedup again by its key
     hit = library.find(res.episode_key)
     if hit is not None:
-        return _play(play_file, hit.file_path, hit.episode_key, hit.title)
+        return _play(play_file, hit.file_path, hit.episode_key, hit.title,
+                     mark_played=mark_played)
 
     event = AnimeRequestEvent(
         request_id=new_id(), query=query, title=res.display_title,
@@ -151,10 +186,28 @@ def run_watch_request(
     }
 
 
+def _pointer_matches(ref: EpisodeRef, mru: LibraryEntry) -> bool:
+    """Does the user's (possibly episode-less) request name the most-recent
+    unplayed entry? Episode/season must not contradict; the title folds through
+    the SAME canonical map the coordinator uses (aliases/romaji), with the
+    display-title matcher as fallback for spellings the alias map misses."""
+    if ref.episode is not None and ref.episode != mru.episode:
+        return False                    # a concrete mismatch or LATEST -> resolve
+    if ref.season is not None and ref.season != mru.season:
+        return False
+    if canonical_episode_key(ref.title_query, mru.season,
+                             mru.episode) == mru.episode_key:
+        return True
+    return name_matches(ref.title_query, parse_source_title(mru.title))
+
+
 def _play(play_file: Callable[[str], None], path: str, key: str,
-          title: str) -> dict[str, Any]:
+          title: str, *,
+          mark_played: Callable[[str], None] | None = None) -> dict[str, Any]:
     try:
         play_file(path)                            # port is the single check point
     except MediaPlayerError as e:
         raise WatchAnimeError("ANIME_PLAYBACK_ERROR", str(e))
+    if mark_played is not None:
+        mark_played(key)               # consume the 「最近未播」pointer + persist
     return {"status": "playing", "episode_key": key, "title": title}

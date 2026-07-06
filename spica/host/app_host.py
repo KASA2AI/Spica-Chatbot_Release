@@ -150,6 +150,9 @@ class AppHost:
         # returns ANIME_NOT_READY). Kept OFF the companion tee so anime events
         # never reach the reaction engine.
         self._anime_sink: Any = None
+        # F8 busy seam: live in-flight download state ({"progress","title"} or
+        # None), supplied by the UI controller via attach_anime_sink (Phase 4).
+        self._anime_in_flight: Any = lambda: None
         # P5 reaction engine (built in initialize() when reaction_mode != off;
         # the arbiter handoff is UI-attached -- same shape as song's
         # request_proactive_turn injection).
@@ -389,11 +392,13 @@ class AppHost:
         """Entry point for the chat window: the ChatEngine (None before initialize)."""
         return self.chat_engine
 
-    def attach_anime_sink(self, sink: Any) -> None:
+    def attach_anime_sink(self, sink: Any, *, in_flight: Any = None) -> None:
         """Inject the anime-watch Host->UI event sink (Phase 4 seam). Until this
         is called, watch_anime is not supplied and its closure returns
-        ANIME_NOT_READY -- Phase 3 never downloads."""
+        ANIME_NOT_READY. ``in_flight`` is the UI controller's live download-state
+        provider for the F8 busy gate (None -> stays "no download")."""
         self._anime_sink = sink
+        self._anime_in_flight = in_flight if in_flight is not None else (lambda: None)
 
     def attach_companion_sink(self, sink: CompanionEventSink) -> None:
         """Inject the galgame Host->UI event sink (Phase 4 seam).

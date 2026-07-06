@@ -14,6 +14,7 @@ from spica.config.secrets import load_secrets
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from spica.core.proactive import NO_COMMENT_SENTINEL, ProactiveTurnArbiter
 from spica.host.app_host import AppHost
+from ui.controllers.anime_controller import AnimeController
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.chat_stream_controller import ChatStreamController
 from ui.controllers.companion_event_bridge import CompanionEventBridge
@@ -130,6 +131,10 @@ class OverlayWindow(QWidget):
         self.companion_region_selector: ScreenshotSelectionOverlay | None = None
         self.dangling_recovery_worker: CompanionActionWorker | None = None
         self._dangling_recovery_started = False
+        # anime-watch (Phase 4): its own bridge instance (the host keeps the
+        # anime sink OFF the companion tee) + download controller + status chip.
+        self.anime_bridge: CompanionEventBridge | None = None
+        self.anime_controller: AnimeController | None = None
 
         self.character_label = QLabel(self)
         self.character_label.setObjectName("character")
@@ -251,6 +256,17 @@ class OverlayWindow(QWidget):
         )
         self.song_status_label.hide()
 
+        # Phase 4: anime download status chip -- same control-feedback family as
+        # the song chip (download progress / done / error; never fake speech).
+        self.anime_status_label = QLabel(self)
+        self.anime_status_label.setObjectName("animeStatus")
+        self.anime_status_label.setStyleSheet(
+            "QLabel#animeStatus { background-color: rgba(38, 52, 45, 138);"
+            " border: 1px solid rgba(255, 255, 255, 34); border-radius: 12px;"
+            " color: #EAFFF3; font-size: 13px; padding: 4px 10px; }"
+        )
+        self.anime_status_label.hide()
+
         self.resize_handle = CornerResizeHandle(self)
 
         self._apply_ui_scale()
@@ -283,6 +299,7 @@ class OverlayWindow(QWidget):
                 self.voice_input_controller.set_mic_backend(self.host.effective_mic_backend)
             self._init_chat_stream_controller()
             self._init_companion_ui()
+            self._init_anime_ui()
             self.interlocutor_name = self.agent.interlocutor_name
             provider_name = str(getattr(self.tts_adapter, "name", None) or self.host.tts_provider)
             self.dialogue.set_dialogue_text(f"LLM API 初始化完成，准备预热 {provider_name}...")
@@ -347,6 +364,63 @@ class OverlayWindow(QWidget):
                 int(self.winId())
             ),
         )
+
+    def _init_anime_ui(self) -> None:
+        """Wire the anime-watch download UI (Phase 4). Own bridge instance (the
+        host keeps ``_anime_sink`` off the companion tee); the controller gets
+        ONLY host-injected closures -- write authority (library/pending files,
+        playback validation) stays on the host (P1-6 / P0-4c). Tolerant of a
+        host built before the anime assembly (attrs missing -> skip wiring)."""
+        host = self.host
+        if not hasattr(host, "anime_register_download"):
+            logger.warning("anime assembly not installed; anime UI not wired")
+            return
+        self.anime_bridge = CompanionEventBridge()
+        self.anime_controller = AnimeController(
+            self,
+            set_anime_status=self._set_anime_status,
+            request_proactive_turn=self.proactive_arbiter.try_speak,
+            play_file=host.anime_play_file,
+            register_download=host.anime_register_download,
+            mark_played=host.anime_mark_played,
+            note_task_id=host.anime_note_task_id,
+            list_pending=host.anime_list_pending,
+            drop_pending=host.anime_drop_pending,
+            is_played=host.anime_is_played,
+            is_busy=self._is_proactive_busy,
+            galgame_active=self._anime_galgame_active,
+            anime_config=lambda: self.host.config.anime,
+            torrent_provider=lambda: self.host.anime_torrent,
+            download_dir=host.anime_download_dir,
+            cookies_file=host.anime_cookies_file,
+        )
+        self.anime_bridge.companion_event.connect(self._on_anime_runtime_event)
+        # sink + F8 in-flight seam attach together: from this point watch_anime
+        # is supplied (when enabled) and the busy gate reads real worker state.
+        host.attach_anime_sink(self.anime_bridge.sink,
+                               in_flight=self.anime_controller.in_flight_state)
+        # startup reconcile (P1-9): deferred -- talks to qbt, never in initialize
+        self.anime_controller.start_reconcile()
+
+    def _anime_galgame_active(self) -> bool:
+        """Read-only companion-active peek for the auto-play gate (P1-7); same
+        no-side-effect read as GalgameController._companion_is_active."""
+        controller = getattr(self.host, "_companion_controller", None)
+        return bool(controller is not None and controller.is_active)
+
+    def _set_anime_status(self, text: str) -> None:
+        self.anime_status_label.setText(text)
+        self.anime_status_label.setVisible(bool(text))
+        self._layout_overlay()
+
+    def _on_anime_runtime_event(self, event: Any) -> None:
+        """Bridge dispatch (Phase 4): the host watch_anime closure emitted an
+        AnimeRequestEvent; start the download worker on the UI thread. The
+        worker's completion payload (AnimeReadyEvent) stays INSIDE the UI --
+        worker Qt signal -> controller -- and never rides this bridge (P2-19)."""
+        if getattr(event, "kind", "") != "anime_request" or self.anime_controller is None:
+            return
+        self.anime_controller.handle_anime_request_event(event)
 
     def _on_companion_requested(self) -> None:
         if self.galgame_controller is None:
@@ -579,6 +653,13 @@ class OverlayWindow(QWidget):
             song_x = max(0, chip_right_edge - song_width)
             self.song_status_label.setGeometry(song_x, top_margin, song_width, controls_height)
             self.song_status_label.raise_()
+            chip_right_edge = song_x - scaled_px(8, scale)
+        if self.anime_status_label.isVisible():
+            anime_hint = self.anime_status_label.sizeHint()
+            anime_width = min(anime_hint.width(), max(120, int(width * 0.4)))
+            anime_x = max(0, chip_right_edge - anime_width)
+            self.anime_status_label.setGeometry(anime_x, top_margin, anime_width, controls_height)
+            self.anime_status_label.raise_()
 
         horizontal_margin = max(scaled_px(18, scale), int(width * 0.055))
         input_height = scaled_px(58, scale)
@@ -847,6 +928,10 @@ class OverlayWindow(QWidget):
             return
 
         self.input_panel.input.clear()
+        # P1-5 stop condition: the user spoke first (typed entry) -> pending
+        # anime completion-announce retries are dropped.
+        if self.anime_controller is not None:
+            self.anime_controller.notify_user_activity()
         if self.interaction_controller is not None:
             self.interaction_controller.handle_user_text(message)
 
@@ -868,6 +953,10 @@ class OverlayWindow(QWidget):
                 self.input_panel.set_voice_transcript(text)
                 self._voice_transcript_shown = text
                 QTimer.singleShot(_VOICE_TRANSCRIPT_LINGER_MS, self._clear_voice_transcript)
+        # P1-5 stop condition: the user spoke first (voice entry) -- same drop
+        # as the typed path in send_message.
+        if self.anime_controller is not None:
+            self.anime_controller.notify_user_activity()
         if self.interaction_controller is not None:
             self.interaction_controller.handle_user_text(text)
 
@@ -1276,6 +1365,7 @@ class OverlayWindow(QWidget):
             (self.input_panel, 1),
             (self.window_controls, 2),
             (self.companion_status_label, 1),  # setMask clips RENDERING too -- must be in
+            (self.anime_status_label, 1),
             (self.settings_panel, 1),
             (self.resize_handle, 2),
         ):
@@ -1439,6 +1529,10 @@ class OverlayWindow(QWidget):
             self.dangling_recovery_worker.wait(1500)
         if self.song_controller is not None:
             self.song_controller.shutdown(1500)
+        if self.anime_controller is not None:
+            # P1-9: terminate yt-dlp keeping .part; qbt polling stops, the
+            # external service keeps the task (reconciled on next startup).
+            self.anime_controller.shutdown(1500)
         if self.chat_stream_controller is not None:
             self.chat_stream_controller.shutdown(1500)
         if self.voice_input_controller is not None:

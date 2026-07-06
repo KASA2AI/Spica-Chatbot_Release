@@ -36,7 +36,11 @@ def test_schema_is_strict_with_nullable_episode():
     assert "null" in props["episode"]["type"]          # optional -> nullable
     assert "integer" in props["episode"]["type"]
     assert "string" in props["episode"]["type"]         # "latest"
-    assert set(WATCH_ANIME_SCHEMA["parameters"]["required"]) == {"query", "episode"}
+    # P1-11②: the 「放吧」flag is optional -> nullable boolean, still required
+    assert "null" in props["use_recent_unplayed"]["type"]
+    assert "boolean" in props["use_recent_unplayed"]["type"]
+    assert set(WATCH_ANIME_SCHEMA["parameters"]["required"]) == {
+        "query", "episode", "use_recent_unplayed"}
     assert WATCH_ANIME_SCHEMA["parameters"]["additionalProperties"] is False
 
 
@@ -53,22 +57,34 @@ def test_schema_converts_to_chat_completions_nested():
 
 def test_shim_forwards_to_closure():
     seen = {}
-    tool = WatchAnimeTool(lambda q, e: seen.update(query=q, episode=e) or {"ok": 1})
+    tool = WatchAnimeTool(
+        lambda q, e, r: seen.update(query=q, episode=e, recent=r) or {"ok": 1})
     out = tool.run(query="  无职转生  ", episode=1)
-    assert seen == {"query": "无职转生", "episode": 1}
+    assert seen == {"query": "无职转生", "episode": 1, "recent": False}
     assert out == {"ok": 1}
 
 
 def test_shim_empty_query_raises_query_empty():
-    tool = WatchAnimeTool(lambda q, e: {"never": True})
+    # the plain-path contract is UNCHANGED by P1-11②: no flag -> empty query errors
+    tool = WatchAnimeTool(lambda q, e, r: {"never": True})
     with pytest.raises(ScreenToolError) as ei:
         tool.run(query="   ", episode=None)
     assert ei.value.code == "ANIME_QUERY_EMPTY"
+    with pytest.raises(ScreenToolError):
+        tool.run(query="", episode=None, use_recent_unplayed=False)
+
+
+def test_shim_recent_unplayed_exempts_empty_query():
+    seen = {}
+    tool = WatchAnimeTool(
+        lambda q, e, r: seen.update(query=q, episode=e, recent=r) or {})
+    tool.run(query="", episode=None, use_recent_unplayed=True)
+    assert seen == {"query": "", "episode": None, "recent": True}
 
 
 def test_shim_blank_episode_string_becomes_none():
     seen = {}
-    tool = WatchAnimeTool(lambda q, e: seen.update(episode=e) or {})
+    tool = WatchAnimeTool(lambda q, e, r: seen.update(episode=e) or {})
     tool.run(query="x", episode="")
     assert seen["episode"] is None
 
@@ -221,3 +237,109 @@ def test_flow_playback_error_maps_code():
     with pytest.raises(WatchAnimeError) as ei:
         run_watch_request(**_kw(library=_lib_with_ep1(), play_file=boom))
     assert ei.value.code == "ANIME_PLAYBACK_ERROR"
+
+
+# -- Phase 4: every play marks played (pointer consumption) --------------------
+
+def test_flow_library_hit_marks_played():
+    marked = []
+    out = run_watch_request(**_kw(library=_lib_with_ep1(),
+                                  mark_played=marked.append))
+    assert out["status"] == "playing"
+    assert marked == [episode_key("无职转生", 3, 1)]
+
+
+def test_flow_playback_error_does_not_mark_played():
+    def boom(_p):
+        raise MediaPlayerError("UNSAFE_PATH", "bad")
+    marked = []
+    with pytest.raises(WatchAnimeError):
+        run_watch_request(**_kw(library=_lib_with_ep1(), play_file=boom,
+                                mark_played=marked.append))
+    assert marked == []
+
+
+# -- Phase 4: 「放吧」explicit escape (P1-11②) ---------------------------------
+
+def test_flow_recent_unplayed_plays_and_marks():
+    played, marked = [], []
+    out = run_watch_request(**_kw(query="", library=_lib_with_ep1(),
+                                  play_file=played.append,
+                                  mark_played=marked.append,
+                                  use_recent_unplayed=True))
+    assert played == ["/dl/ep1.mkv"]
+    assert marked == [episode_key("无职转生", 3, 1)]
+    assert out["status"] == "playing"
+
+
+def test_flow_recent_unplayed_nothing_pending():
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="", use_recent_unplayed=True))
+    assert ei.value.code == "ANIME_NOTHING_PENDING"
+
+
+def test_flow_recent_unplayed_ignores_played_entries():
+    lib = _lib_with_ep1()
+    lib.mark_played(episode_key("无职转生", 3, 1))
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="", library=lib, use_recent_unplayed=True))
+    assert ei.value.code == "ANIME_NOTHING_PENDING"
+
+
+# -- Phase 4: 「放吧」fuzzy pointer (P1-11②) -----------------------------------
+
+def test_flow_pointer_title_only_rephrase_plays(monkeypatch):
+    # 「把无职转生放了吧」: title-only query naming the fresh download plays it
+    # WITHOUT resolving (and without NEED_EPISODE bouncing).
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: pytest.fail("pointer hit must not resolve"))
+    played, marked = [], []
+    out = run_watch_request(**_kw(query="无职转生", episode=None,
+                                  library=_lib_with_ep1(),
+                                  play_file=played.append,
+                                  mark_played=marked.append))
+    assert played == ["/dl/ep1.mkv"]
+    assert marked == [episode_key("无职转生", 3, 1)]
+    assert out["status"] == "playing"
+
+
+def test_flow_pointer_different_title_falls_through(monkeypatch):
+    # a DIFFERENT anime, episode-less: the plain ask-which-episode contract is
+    # untouched by the pointer.
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: CoordinatorResult(NEED_EPISODE))
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="莉可丽丝", episode=None,
+                                library=_lib_with_ep1()))
+    assert ei.value.code == "ANIME_NEED_EPISODE"
+
+
+def test_flow_pointer_episode_mismatch_falls_through(monkeypatch):
+    # a concrete DIFFERENT episode must resolve, never replay the pointer
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: CoordinatorResult(NOT_FOUND))
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="无职转生第三季第二集",
+                                library=_lib_with_ep1()))
+    assert ei.value.code == "ANIME_NOT_FOUND"
+
+
+def test_flow_pointer_latest_never_matches(monkeypatch):
+    # 「最新一集」may be NEWER than the downloaded one -> must re-resolve
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: CoordinatorResult(NOT_FOUND))
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="无职转生", episode="latest",
+                                library=_lib_with_ep1()))
+    assert ei.value.code == "ANIME_NOT_FOUND"
+
+
+def test_flow_pointer_consumed_after_played(monkeypatch):
+    # once played, the pointer is gone: a title-only rephrase resolves again
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: CoordinatorResult(NEED_EPISODE))
+    lib = _lib_with_ep1()
+    lib.mark_played(episode_key("无职转生", 3, 1))
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="无职转生", episode=None, library=lib))
+    assert ei.value.code == "ANIME_NEED_EPISODE"

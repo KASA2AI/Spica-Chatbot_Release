@@ -1,0 +1,29 @@
+# Windows HEAVY runtime deps for Spica (W4-b) -- the GPU stack for OCR/STT/TTS.
+# NOT part of requirements-windows-base.txt: base stays CPU-installable (W2-a/W3
+# semantics unchanged); this file upgrades the MAIN heavy env only (numpy<2 side).
+# RVC/song lives in a SEPARATE numpy>=2 env -- see docs/windows_heavy_install.md
+# and requirements-rvc.txt (its Windows wheels were probed in W4-a, 7/7 present).
+#
+# Install ORDER matters (validated by W4-b gate 1 on the real machine, 2026-07-06):
+#
+#   1) swap the CPU onnxruntime for the GPU build (the two dists conflict):
+#        python -m pip uninstall -y onnxruntime
+#        python -m pip install -r requirements-windows-heavy.txt
+#   2) torch + torchaudio come from the cu124 index, NOT default PyPI (a bare
+#      `pip install torch` would fetch the wrong build) -- install SEPARATELY:
+#        python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+#
+# KNOWN pip-check inconsistency (accepted + recorded, W4-a §4.E / gate-1 §4):
+# faster-whisper and rapidocr-onnxruntime declare the "onnxruntime" DIST name;
+# after the GPU swap `pip check` reports it missing while runtime imports stay
+# green (the module is provided by onnxruntime-gpu). Do NOT "fix" it by
+# reinstalling the CPU package -- that would shadow the GPU EPs.
+#
+# tensorrt-cu12 install note: pypi.nvidia.com occasionally serves a transient
+# sha256 mismatch on the -libs sub-wheel (seen in W4-a) -- RETRY once before
+# treating a failure as real.
+#
+# numpy stays <2 in this env (GPT-SoVITS forward constraint); gate 1 verified the
+# stack below does not bump numpy 1.26.4.
+onnxruntime-gpu==1.26.0
+tensorrt-cu12==10.16.1.11

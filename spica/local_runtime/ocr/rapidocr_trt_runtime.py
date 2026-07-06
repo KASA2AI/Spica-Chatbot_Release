@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import logging
+import os
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -41,6 +42,14 @@ from spica.local_runtime.ocr.trt_options import (
 
 _LOGGER = logging.getLogger(__name__)
 _LIBS_PRELOADED = False
+# W4-b Windows keep-alives: os.add_dll_directory handles AND ctypes.WinDLL objects
+# must stay referenced for the process lifetime -- a dropped handle un-registers
+# the directory; a dropped DLL object may unmap the library.
+_WIN_DLL_DIR_HANDLES: list[Any] = []
+_WIN_LOADED_DLLS: list[Any] = []
+# The Windows names of the TRT libs the Linux route loads as libnvinfer*.so.10
+# (nvinfer_10.dll confirmed on the real machine -- docs/windows_w4_probe.md §4.D).
+_WIN_TRT_DLLS = ("nvinfer_10.dll", "nvinfer_plugin_10.dll", "nvonnxparser_10.dll")
 
 
 def _ctypes_load_all(so_paths) -> int:
@@ -69,6 +78,12 @@ def preload_inference_libs() -> None:
     if _LIBS_PRELOADED:
         return
     _LIBS_PRELOADED = True  # mark first: a partial/failed scan must not retry every build
+    if os.name == "nt":
+        # W4-b: Windows resolves DLLs by LoadLibrary search, not global symbols --
+        # its own helper (gate-1 validated ordering: cuDNN before nvinfer). The
+        # Linux route below is untouched (zero behavior drift).
+        _preload_inference_libs_windows()
+        return
     total = 0
     try:  # CUDA libs from the pip nvidia-* namespace packages (cudnn/cublas/cuda_runtime)
         import nvidia
@@ -90,6 +105,86 @@ def preload_inference_libs() -> None:
         pass
     if total:
         _LOGGER.info("preloaded %d CUDA/TensorRT shared libs for rapidocr_trt_ep", total)
+
+
+def _win_spec_dirs(package: str) -> list[Path]:
+    """A package's on-disk dirs via ``find_spec`` WITHOUT importing it (never
+    ``import torch`` just to fix a DLL search path -- W4-b ruling). Handles
+    namespace packages (nvidia) via ``submodule_search_locations``."""
+    import importlib.util
+
+    try:
+        spec = importlib.util.find_spec(package)
+    except Exception:  # noqa: BLE001 -- a broken package must not kill preload
+        return []
+    if spec is None:
+        return []
+    if spec.submodule_search_locations:
+        return [Path(p) for p in spec.submodule_search_locations]
+    if spec.origin:
+        return [Path(spec.origin).parent]
+    return []
+
+
+def _win_candidate_cuda_dirs() -> list[Path]:
+    """Dirs that may carry cuDNN 9 / CUDA runtime DLLs on Windows, most likely
+    first: pip nvidia-* wheels ship them under ``*/bin``; the torch wheel bundles
+    them in ``torch/lib``; ctranslate2 bundles cudnn64_9.dll next to itself
+    (all three verified in the W4-a probe, docs/windows_w4_probe.md)."""
+    dirs: list[Path] = []
+    for base in _win_spec_dirs("nvidia"):
+        try:
+            dirs.extend(sorted(d for d in base.glob("*/bin") if d.is_dir()))
+        except OSError:
+            continue
+    for base in _win_spec_dirs("torch"):
+        lib = base / "lib"
+        if lib.is_dir():
+            dirs.append(lib)
+    dirs.extend(d for d in _win_spec_dirs("ctranslate2") if d.is_dir())
+    return dirs
+
+
+def _win_register_and_load(directories: list[Path], dll_names: tuple[str, ...]) -> int:
+    """Register every dir on the process DLL search path, then force-load each
+    named DLL from the first dir that carries it. Handles + DLL objects go into
+    the module-level keep-alive lists. Best-effort throughout."""
+    for directory in directories:
+        try:
+            _WIN_DLL_DIR_HANDLES.append(os.add_dll_directory(str(directory)))
+        except OSError:
+            continue
+    loaded = 0
+    for name in dll_names:
+        for directory in directories:
+            path = directory / name
+            if not path.is_file():
+                continue
+            try:
+                _WIN_LOADED_DLLS.append(ctypes.WinDLL(str(path)))
+                loaded += 1
+                break  # first resident copy of this DLL wins
+            except OSError:
+                continue  # a copy that won't load is skipped; try the next dir
+    return loaded
+
+
+def _preload_inference_libs_windows() -> None:
+    """Windows variant (W4-b, gate-1 validated): ORT's CUDA/TRT EPs resolve
+    ``cudnn64_9.dll`` / ``nvinfer_10.dll`` via the standard LoadLibrary search,
+    which does NOT include wheel dirs -- without help the EPs are listed but fail
+    init and silently fall back (W4-a §4.D/§4.E). ORDER MATTERS: cuDNN first so
+    nvinfer's own dependency chain resolves. Env-free, best-effort, no torch
+    import; mirrors the backend's Windows CUDA preload, extended with TRT."""
+    total = _win_register_and_load(_win_candidate_cuda_dirs(), ("cudnn64_9.dll",))
+    trt_dirs = [d for d in _win_spec_dirs("tensorrt_libs") if d.is_dir()]
+    total += _win_register_and_load(trt_dirs, _WIN_TRT_DLLS)
+    if _WIN_DLL_DIR_HANDLES or total:
+        _LOGGER.info(
+            "windows preload for rapidocr_trt_ep: %d dirs registered, %d DLLs resident",
+            len(_WIN_DLL_DIR_HANDLES),
+            total,
+        )
 
 
 def _label_provider(providers: list[str]) -> str:

@@ -17,6 +17,11 @@ _ENGINE_LOCK = RLock()  # guards engine *creation* (the singleton)
 # lock; two inferences never run concurrently on the shared _ENGINE (Phase 0 ⑤).
 _INFER_LOCK = RLock()
 _CUDA_PRELOADED = False
+# W4-b Windows keep-alives: os.add_dll_directory handles AND ctypes.WinDLL objects
+# must stay referenced for the process lifetime -- a dropped handle un-registers
+# the directory; a dropped DLL object may unmap the library.
+_WIN_DLL_DIR_HANDLES: list[Any] = []
+_WIN_LOADED_DLLS: list[Any] = []
 
 
 def ocr_image(image: Any) -> dict[str, Any]:
@@ -91,6 +96,14 @@ def _preload_cuda_libraries() -> None:
     if _CUDA_PRELOADED:
         return
     _CUDA_PRELOADED = True  # mark first: a partial/failed scan must not retry every call
+    import os
+
+    if os.name == "nt":
+        # W4-b: Windows resolves DLLs by LoadLibrary search, not global symbols --
+        # a different mechanism entirely, so it gets its own helper. The Linux
+        # route below is untouched (zero behavior drift).
+        _preload_cuda_libraries_windows()
+        return
     try:
         import ctypes
         from pathlib import Path
@@ -115,6 +128,82 @@ def _preload_cuda_libraries() -> None:
                 continue  # a lib that won't load is skipped; the rest still help
     if loaded:
         _LOGGER.info("preloaded %d nvidia CUDA libraries for RapidOCR GPU", loaded)
+
+
+def _win_spec_dirs(package: str) -> list:
+    """A package's on-disk dirs via ``find_spec`` WITHOUT importing it (never
+    ``import torch`` just to fix a DLL search path -- W4-b ruling). Handles
+    namespace packages (nvidia) via ``submodule_search_locations``."""
+    import importlib.util
+    from pathlib import Path
+
+    try:
+        spec = importlib.util.find_spec(package)
+    except Exception:  # noqa: BLE001 -- a broken package must not kill preload
+        return []
+    if spec is None:
+        return []
+    if spec.submodule_search_locations:
+        return [Path(p) for p in spec.submodule_search_locations]
+    if spec.origin:
+        return [Path(spec.origin).parent]
+    return []
+
+
+def _win_candidate_cuda_dirs() -> list:
+    """Dirs that may carry cuDNN 9 / CUDA runtime DLLs on Windows, most likely
+    first: pip nvidia-* wheels ship them under ``*/bin``; the torch wheel bundles
+    them in ``torch/lib``; ctranslate2 bundles cudnn64_9.dll next to itself
+    (all three verified in the W4-a probe, docs/windows_w4_probe.md)."""
+    dirs = []
+    for base in _win_spec_dirs("nvidia"):
+        try:
+            dirs.extend(sorted(d for d in base.glob("*/bin") if d.is_dir()))
+        except OSError:
+            continue
+    for base in _win_spec_dirs("torch"):
+        lib = base / "lib"
+        if lib.is_dir():
+            dirs.append(lib)
+    dirs.extend(d for d in _win_spec_dirs("ctranslate2") if d.is_dir())
+    return dirs
+
+
+def _preload_cuda_libraries_windows() -> None:
+    """Windows variant (W4-b, gate-1 validated): ORT's CUDA EP resolves
+    ``cudnn64_9.dll`` via the standard LoadLibrary search, which does NOT include
+    wheel dirs -- without help the EP is listed but fails init and silently falls
+    back to CPU (W4-a §4.E). So: register every candidate dir
+    (``os.add_dll_directory``) AND force-load the core cuDNN DLL
+    (``ctypes.WinDLL``) so it is already mapped when the EP asks. Handles and DLL
+    objects are kept alive at module level. Env-free, best-effort, no torch
+    import (``find_spec`` locates the dirs)."""
+    import ctypes
+    import os
+
+    candidates = _win_candidate_cuda_dirs()
+    for directory in candidates:
+        try:
+            _WIN_DLL_DIR_HANDLES.append(os.add_dll_directory(str(directory)))
+        except OSError:
+            continue
+    loaded = False
+    for directory in candidates:
+        dll = directory / "cudnn64_9.dll"
+        if not dll.is_file():
+            continue
+        try:
+            _WIN_LOADED_DLLS.append(ctypes.WinDLL(str(dll)))
+            loaded = True
+            break  # one resident copy is enough
+        except OSError:
+            continue  # a copy that won't load is skipped; try the next candidate
+    if _WIN_DLL_DIR_HANDLES or loaded:
+        _LOGGER.info(
+            "windows CUDA preload: %d dirs registered, cudnn64_9 resident=%s",
+            len(_WIN_DLL_DIR_HANDLES),
+            loaded,
+        )
 
 
 def _get_engine() -> Any:

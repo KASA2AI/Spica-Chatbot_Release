@@ -361,7 +361,7 @@ anime:
 | **2 adapters** | bilibili_space / mikan（RSS-only）/ qbittorrent / system_default 四 adapter（合同测试 mock 网络层） | mock 合同测试绿；真机脚本各跑通一次 |
 | **3 工具+装配** | watch_anime 垫片 + `assemblies/anime.py`（install + 写权限闭包）+ anime_events + AnimeConfig/secrets + 基线 diff + **enabled 默认 false** | 工具经 registry 状态供给、供给测试绿、ToolError 全路径、config 零漂移；**真机此时不触发下载**（P1-12） |
 | **4 UI+完成行为** | anime_worker / controller / 事件桥 / playback_policy 接线 / 忙态降级 / 系统 turn 播报 + 重试 / 生命周期 | 真机端到端：语音点片→下载→自动播 & 慢下播报→「放吧」→播；**过后翻 enabled=true**（P1-12） |
-| **5 打磨** | 磁盘提醒、崩溃对账接线、stall 处理、cookie 生命周期、文档收尾（CLAUDE.md §0 立项状态更新） | 手动验收清单全过 |
+| **5 打磨** | 磁盘提醒、崩溃对账接线、stall 处理、cookie 生命周期、**搜索质量 hardening（简称别名/零命中变体重试/`[NN(MM)]` 双编号/假歧义归并——2026 春季番真样本实测见 `SEARCH_QUALITY_FINDINGS.md`，含 golden case 清单）**、文档收尾（CLAUDE.md §0 立项状态更新） | 手动验收清单全过 |
 
 顺序呼应 CLAUDE.md §5：**先手喂样本把纯逻辑跑绿（Phase 1），最后才接最脏最飘的真实来源（Phase 2+）**。
 

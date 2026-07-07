@@ -27,6 +27,15 @@ _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
 # (verified in Phase 0). Strictly 40 hex -- so we build the magnet without ever
 # fetching the .torrent (P0-3, magnet-only).
 _INFOHASH_RE = re.compile(r"([0-9a-fA-F]{40})")
+# search-quality §2.3: mikan's server-side keyword match is punctuation-sensitive
+# ("Re从零开始的异世界生活" -> 0 hits; "从零开始的异世界生活" -> 94). On a 0-candidate
+# result we retry ONCE with the longest contiguous CJK run of the query.
+_CJK_RUN_RE = re.compile(r"[一-鿿]+")
+
+
+def _longest_cjk_run(text: str) -> str:
+    runs = _CJK_RUN_RE.findall(text)
+    return max(runs, key=len) if runs else ""
 
 
 def _default_session() -> Any:
@@ -65,6 +74,20 @@ class MikanRssSource:
                deadline: float | None = None) -> list[AnimeCandidate]:
         self._deadline_at = (None if deadline is None
                              else self._clock() + deadline)
+        cands = self._search_once(title_query)
+        # 0-candidate fallback (§2.3): retry ONCE with the longest CJK run when the
+        # server was REACHABLE but matched nothing (a raise -- unreachable / bad
+        # XML -- propagates from _search_once and never reaches here). The retry
+        # shares the same per-search deadline (_budget_timeout still gates it).
+        if not cands:
+            fallback = _longest_cjk_run(title_query)
+            if fallback and fallback != title_query:
+                retried = self._search_once(fallback)
+                if retried:
+                    return retried
+        return cands
+
+    def _search_once(self, title_query: str) -> list[AnimeCandidate]:
         last_net_err: Any = None
         parse_err: Any = None
         for base in self._base_urls:

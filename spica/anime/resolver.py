@@ -73,6 +73,10 @@ _SEASON_PATTERNS = [
 _EP_PATTERNS = [
     re.compile(r"第\s*([0-9〇零一二三四五六七八九十]+)\s*[话話集]"),
     re.compile(r"(?:^|\s)-\s*(\d{1,3})(?:v\d)?(?=\D|$)"),
+    # dual numbering 「[13(85)]」= season-internal 13 + absolute 85 -> take the
+    # season-internal number 13 (search-quality §2.2). MUST precede the generic
+    # 「[NN]」pattern below (which anyway stops at the「(」and never matches this).
+    re.compile(r"\[\s*(\d{1,3})\s*\(\s*\d{1,4}\s*\)\s*\]"),
     re.compile(r"\[\s*(\d{1,3})(?:v\d)?\s*\]"),
     re.compile(r"(?:EP?|Episode)\s*(\d{1,3})", re.I),
 ]
@@ -112,6 +116,21 @@ _TAG_TOKEN_RE = re.compile(
 _SUBGROUP_SUFFIX_RE = re.compile(
     r"(字幕组|字幕社|工作室|制作组|製作組|练习组|練習組|汉化组|漢化組|发布组|發佈組|压制组|壓制組)$"
 )
+# A subtitle / quality / release-descriptor token: a bracket ``/``-segment that
+# matches is a TAG, never an anime title. Split by script so ASCII tags match only
+# as WHOLE tokens: a bare search() for short codes ("SC"/"TC"/"GB") would flag
+# English alias names whose letters merely CONTAIN them -- "School Days" (sc),
+# "Witch Watch" (tc) -- and drop the real title (review follow-up). CJK descriptors
+# stay substring-matched (they rarely collide with a real title).
+_SEG_TAG_CJK_RE = re.compile(
+    r"蓝光|藍光|简繁|简体|繁体|简中|繁中|简日|繁日|双语|字幕|"
+    r"内封|內封|内嵌|內嵌|外挂|外掛|生肉|熟肉|招募")
+# Matched with fullmatch() against each [A-Za-z0-9]+ token of the segment -- all
+# unambiguous quality/codec descriptors (no 2-letter subtitle codes here, so no
+# collision with real English titles).
+_SEG_TAG_ASCII_RE = re.compile(
+    r"\d{3,4}p|4k|webrip|bdrip|hevc|avc|aac|flac|nvenc|x26[45]|\d+bit",
+    re.I)
 
 
 def _leading_bracket_kind(open_br: str, content: str) -> str:
@@ -139,6 +158,49 @@ def _detect_batch(title: str) -> bool:
         if lo < hi:  # a real ascending episode range, not「H-264」
             return True
     return False
+
+
+def _is_tag_segment(seg: str) -> bool:
+    """A bracket ``/``-segment that is a subtitle / quality / subgroup TAG, not an
+    anime title (§2.1 guard). CJK descriptors match as substrings; ASCII tags match
+    only as WHOLE tokens, so English alias names (School Days / Witch Watch) whose
+    letters merely CONTAIN a short code are not misflagged (review follow-up)."""
+    s = seg.strip()
+    if not s:
+        return True
+    if _SEG_TAG_CJK_RE.search(s) or _SUBGROUP_SUFFIX_RE.search(s):
+        return True
+    return any(_SEG_TAG_ASCII_RE.fullmatch(tok)
+               for tok in re.findall(r"[A-Za-z0-9]+", s))
+
+
+def _select_name_source(after_season: str) -> str:
+    """Search-quality §2.1: the 「【组】★促销★[中文 / 別名 / English]」form hides the
+    real title inside a LATER [..] whose content is a「/」-joined alias list, while
+    the leading text is the subgroup + promo (so name extraction picks up the组名
+    instead and the two release forms of one anime split into false ambiguity).
+
+    Prefer that bracket as the name source, but ONLY when it is unambiguously a
+    title-alias list -- otherwise return ``after_season`` untouched (the ordinary
+    extraction is the SAFE default; a wrong pick silently loses name_matches):
+    - the bracket content has a「/」and a CJK char (an alias list, not「[1080p]」), and
+    - the text BEFORE it has no「/」(a normal「中文 / Romaji」title already flows
+      through the free-text split unchanged), and
+    - NO「/」-segment is a subtitle/quality/subgroup tag, so 「[繁日双语 / 1080p]」/
+      「[简繁日内封字幕 / 1080p]」/「[字幕组 / 1080p]」(≥3 CJK yet a tag) are excluded, and
+    - the first「/」-segment has ≥3 CJK chars, so short tags like「[简/繁]」stay out."""
+    for m in _BRACKET_GROUP_RE.finditer(after_season):
+        inner = m.group(0)[1:-1]
+        if "/" not in inner or not re.search(r"[一-鿿]", inner):
+            continue
+        if "/" in after_season[:m.start()]:
+            continue                      # leading text is already a title
+        segs = [s.strip() for s in inner.split("/")]
+        if any(_is_tag_segment(s) for s in segs):
+            continue                      # a subtitle/quality/tag bracket, not a title
+        if len(re.findall(r"[一-鿿]", segs[0])) >= 3:
+            return inner
+    return after_season
 
 
 def _extract_season(text: str) -> tuple[int | None, str]:
@@ -234,8 +296,12 @@ def parse_source_title(title: str) -> SourceTitle:
     season, after_season = _extract_season(work)
     episode = None if is_special else _extract_episode(after_season)
 
+    # name source: normally ``after_season``, but the 「【组】★促销★[中文 / 別名]」
+    # form (search-quality §2.1) buries the real title in a later bracket -- prefer
+    # it so both release forms of one anime cluster (not falsely ambiguous).
+    name_src = _select_name_source(after_season)
     # name-only working copy: NOW drop remaining bracket groups + episode markers.
-    name_body = _BRACKET_GROUP_RE.sub(" ", after_season)
+    name_body = _BRACKET_GROUP_RE.sub(" ", name_src)
     for pat in _EP_PATTERNS:
         name_body = pat.sub(" ", name_body)
     name_zh, name_ja = name_body, ""
@@ -306,6 +372,9 @@ def _norm(s: str) -> str:
 # (review tail #4).
 _ALIASES: list[tuple[str, ...]] = [
     ("无职转生", "無職転生", "mushokutensei"),
+    # 转生史莱姆 is a popular short form that is NOT a contiguous substring of the
+    # full title (转生…史莱姆 split by 变成) -- the alias group folds them (§2.4).
+    ("关于我转生变成史莱姆这档事", "转生史莱姆", "tenseishitaraslimedattaken"),
 ]
 
 
@@ -439,6 +508,17 @@ def resolve(
 
     # 3) episode resolve
     if ref.episode == LATEST:
+        # cross-title gate BEFORE max() (P2-1): max() over the whole pool would
+        # collapse several DIFFERENT anime onto whichever offers the highest
+        # episode number -> a silent wrong match. Cluster first; a pool spanning
+        # distinct anime is ambiguous, never a guess (D10/P1-10). One anime across
+        # subgroups is a single cluster and falls through to the max() below.
+        clusters = _cluster_by_title(pool)
+        if len(clusters) > 1:
+            reps = tuple(rank_candidates(m, quality, subtitle_pref)[0]
+                         for m in clusters)
+            return MatchResult(status="ambiguous", candidates=reps,
+                               reason="multiple distinct titles matched")
         eps = [c.parsed.episode for c in pool if c.parsed.episode is not None]
         if not eps:
             return MatchResult(status="none", reason="no dated episode to call latest")

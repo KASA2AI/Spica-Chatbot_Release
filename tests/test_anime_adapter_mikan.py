@@ -191,3 +191,47 @@ def test_materialize_no_side_effect():
     assert res.locator == cand.locator          # pure repackage
     assert res.source == "mikan"
     assert len(sess.calls) == n_calls           # no extra HTTP
+
+
+# -- search-quality §2.3: 0-candidate fallback to the longest CJK run ----------
+
+class SequenceSession:
+    """Returns each supplied XML body on successive GETs (last one sticks)."""
+
+    def __init__(self, texts):
+        self.texts = list(texts)
+        self.calls: list[str] = []
+
+    def get(self, url, timeout=None, **kw):
+        self.calls.append(url)
+        text = self.texts[min(len(self.calls) - 1, len(self.texts) - 1)]
+        return FakeResp(text, 200)
+
+
+def test_zero_candidates_retries_longest_cjk_run():
+    # user口吻「Re从零开始的异世界生活」→ mikan server returns 0; retry once with the
+    # longest contiguous CJK run「从零开始的异世界生活」(§2.3).
+    sess = SequenceSession([EMPTY_RSS, RSS])
+    src = MikanRssSource(["https://mikanani.me"], session=sess)
+    cands = src.search("Re从零开始的异世界生活")
+    assert len(cands) == 1                                    # fallback hit
+    assert len(sess.calls) == 2                               # exactly one retry
+    assert urllib.parse.quote("从零开始的异世界生活") in sess.calls[1]
+
+
+def test_all_cjk_query_no_second_request_when_empty():
+    # an all-CJK query has no shorter CJK run -> fallback == query -> no retry
+    sess = SequenceSession([EMPTY_RSS])
+    src = MikanRssSource(["https://mikanani.me"], session=sess)
+    assert src.search("关于我转生变成史莱姆这档事") == []
+    assert len(sess.calls) == 1
+
+
+def test_network_error_does_not_trigger_fallback():
+    # only "reachable but 0 candidates" retries; a raise propagates unretried
+    sess = FakeSession({"mikanani.me": ConnectionError("down")})
+    src = MikanRssSource(["https://mikanani.me"], session=sess)
+    with pytest.raises(AnimeSourceError) as ei:
+        src.search("Re从零开始的异世界生活")
+    assert ei.value.code == "SOURCE_UNREACHABLE"
+    assert len(sess.calls) == 1                               # no fallback GET

@@ -343,3 +343,57 @@ def test_flow_pointer_consumed_after_played(monkeypatch):
     with pytest.raises(WatchAnimeError) as ei:
         run_watch_request(**_kw(query="无职转生", episode=None, library=lib))
     assert ei.value.code == "ANIME_NEED_EPISODE"
+
+
+# -- P2-4: use_recent_unplayed cross-checks a NON-empty query -------------------
+
+def test_flow_recent_unplayed_matching_query_plays(monkeypatch):
+    # a non-empty query that NAMES the MRU still plays it under the flag (the
+    # cross-check passes) + marks played; never touches the network.
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: pytest.fail("pointer hit must not resolve"))
+    played, marked = [], []
+    out = run_watch_request(**_kw(query="无职转生", episode=None,
+                                  library=_lib_with_ep1(),
+                                  play_file=played.append,
+                                  mark_played=marked.append,
+                                  use_recent_unplayed=True))
+    assert played == ["/dl/ep1.mkv"]
+    assert marked == [episode_key("无职转生", 3, 1)]
+    assert out["status"] == "playing"
+
+
+def test_flow_recent_unplayed_conflicting_query_falls_through(monkeypatch):
+    # P2-4: a non-empty query that CONTRADICTS the MRU must NOT play it -- it
+    # falls through to the ordinary resolve path (D1), pointer NOT consumed.
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: CoordinatorResult(NEED_EPISODE))
+    played, marked = [], []
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="间谍过家家", episode=None,
+                                library=_lib_with_ep1(),
+                                play_file=played.append,
+                                mark_played=marked.append,
+                                use_recent_unplayed=True))
+    assert ei.value.code == "ANIME_NEED_EPISODE"
+    assert played == []                        # never played the wrong anime
+    assert marked == []                        # pointer not consumed
+
+
+def test_flow_recent_unplayed_conflicting_query_hits_busy(monkeypatch):
+    # a conflicting query under the flag falls through to the ordinary busy gate
+    # (F8) -- still must not play the MRU nor consume the pointer.
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: pytest.fail("busy gate sits before resolve"))
+    played, marked = [], []
+    with pytest.raises(WatchAnimeError) as ei:
+        run_watch_request(**_kw(query="间谍过家家", episode=None,
+                                library=_lib_with_ep1(),
+                                play_file=played.append,
+                                mark_played=marked.append,
+                                use_recent_unplayed=True,
+                                in_flight=lambda: {"progress": 0.5,
+                                                   "title": "别的番"}))
+    assert ei.value.code == "ANIME_DOWNLOAD_BUSY"
+    assert played == []
+    assert marked == []

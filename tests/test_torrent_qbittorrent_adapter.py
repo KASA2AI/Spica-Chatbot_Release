@@ -117,6 +117,38 @@ def test_add_magnet_fails_body_raises(tmp_path):
     assert ei.value.code == "ADD_FAILED"
 
 
+class _FailsAddSession(FakeSession):
+    """qbt rejects every add with 200 + 'Fails.' (a duplicate infohash)."""
+
+    def post(self, url, data=None, timeout=None, **kw):
+        self.calls.append((url, data))
+        self.posts.append((url, data))
+        if "auth/login" in url:
+            return FakeResp(200, text="Ok.")
+        return FakeResp(200, text="Fails.")
+
+
+def test_add_magnet_duplicate_reuses_task_in_category(tmp_path):
+    # P2-3: "Fails." on a duplicate add is idempotent when THIS btih already
+    # lives in our category -> reuse the running task, never a dead-end.
+    sess = _FailsAddSession(info_tasks=[
+        {"hash": _HEX, "state": "downloading", "progress": 0.3}])
+    task = _client(tmp_path, sess).add_magnet(_MAGNET)
+    assert task == _HEX                              # reused, not ADD_FAILED
+    # it verified reuse via the category-filtered info endpoint
+    info_call = next(p for u, p in sess.calls if "torrents/info" in u)
+    assert info_call == {"category": "spica-anime"}
+
+
+def test_add_magnet_duplicate_not_in_category_raises(tmp_path):
+    # "Fails." with the btih NOT among our category tasks is a real rejection
+    sess = _FailsAddSession(info_tasks=[
+        {"hash": "0" * 40, "state": "downloading", "progress": 0.1}])
+    with pytest.raises(TorrentClientError) as ei:
+        _client(tmp_path, sess).add_magnet(_MAGNET)
+    assert ei.value.code == "ADD_FAILED"
+
+
 def test_extract_btih_helper():
     assert _extract_btih_40hex(_MAGNET) == _HEX
     assert _extract_btih_40hex(f"magnet:?xt=urn:btih:{_BASE32}") is None

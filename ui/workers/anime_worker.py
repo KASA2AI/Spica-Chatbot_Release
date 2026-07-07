@@ -198,6 +198,16 @@ class AnimeDownloadWorker(QThread):
                         error="qbittorrent 登录失败（AUTH_FAILED）："
                               "请检查 Web UI 用户名/密码配置")
                 if e.code in _TRANSIENT_QBT:      # reconnect, never fail (P1-10)
+                    # P2-2: a LONG outage still owes the user one notice -- the
+                    # normal (progress-driven) stall check below is skipped on
+                    # this continue path, so fire it here too. last_change never
+                    # advances while unreachable, so this trips once per dry
+                    # spell and resets when progress resumes (never permanent
+                    # silent 0% busy).
+                    if (not stall_reported
+                            and self._clock() - last_change >= self._stall_seconds):
+                        self.stalled.emit(self.request_id, self._stall_seconds / 60.0)
+                        stall_reported = True
                     self._interruptible_sleep(self._poll_seconds)
                     continue
                 if e.code == "API_ERROR":         # bounded retry, then fail (F2)

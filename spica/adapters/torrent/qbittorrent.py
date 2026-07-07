@@ -79,9 +79,17 @@ class QBittorrentClient:
             "savepath": self._save_dir,   # pinned; never a caller argument
             "paused": "false",            # actually START (review #1)
         })
-        # qbt answers HTTP 200 with body "Fails." when the add is rejected (F7)
+        # qbt answers HTTP 200 with body "Fails." when the add is rejected (F7).
+        # A duplicate infohash is the common cause (P2-3): if THIS btih is already
+        # a task in OUR category the add is idempotent -> reuse it, so a re-request
+        # of an already-downloading episode is not a dead end. Any other "Fails."
+        # (btih not in our category) stays a real ADD_FAILED. Category scope is
+        # unchanged -- _category_tasks() still filters to spica-anime only.
         body = (getattr(resp, "text", "") or "").strip()
         if body != "Ok.":
+            for t in self._category_tasks():
+                if str(t.get("hash", "")).lower() == btih:
+                    return btih            # already ours + running -> reuse
             raise TorrentClientError("ADD_FAILED", f"qbt rejected add: {body!r}")
         return btih                        # lowercase 40-hex task_id
 

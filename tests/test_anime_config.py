@@ -53,6 +53,14 @@ def test_phase5_knobs_still_deferred():
         assert not hasattr(a, absent), f"{absent} should be deferred to Phase 5"
 
 
+def test_anime_config_empty_mikan_urls_accepted():
+    # P2-6 (D2): an empty mikan_base_urls is TOLERATED at config load (not
+    # rejected by a validator) -- the assembly skips that source instead of
+    # crashing startup. Fixes the "容忍不拒" semantics.
+    a = AnimeConfig(mikan_base_urls=[])
+    assert a.mikan_base_urls == []
+
+
 def test_secrets_have_anime_fields_default_none():
     s = Secrets()
     assert s.bilibili_cookie is None

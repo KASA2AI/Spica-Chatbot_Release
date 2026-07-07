@@ -117,15 +117,28 @@ def run_watch_request(
 
     # 「放吧」explicit escape (P1-11②): the LLM could not reconstruct the title
     # (e.g. after a restart) -- play the freshest unplayed download outright.
+    # A NON-empty query, though, must be cross-checked: the flag being over-set
+    # while the query names a DIFFERENT anime/episode would otherwise play the
+    # wrong file and consume the wrong pointer (P2-4). Empty query -> unchanged;
+    # matching query -> play the MRU; contradicting query -> fall through to the
+    # ordinary resolve path (D1), never consuming the pointer.
+    ref: EpisodeRef | None = None
     if use_recent_unplayed:
         mru = library.most_recent_unplayed()
         if mru is None:
             raise WatchAnimeError(
                 "ANIME_NOTHING_PENDING", "没有刚下好还没看的番哦")
-        return _play(play_file, mru.file_path, mru.episode_key, mru.title,
-                     mark_played=mark_played)
+        if not query.strip():
+            return _play(play_file, mru.file_path, mru.episode_key, mru.title,
+                         mark_played=mark_played)
+        ref = merge_episode_ref(query, episode)
+        if _pointer_matches(ref, mru):
+            return _play(play_file, mru.file_path, mru.episode_key, mru.title,
+                         mark_played=mark_played)
+        # a non-empty query contradicting the pointer -> ordinary request below
 
-    ref = merge_episode_ref(query, episode)
+    if ref is None:
+        ref = merge_episode_ref(query, episode)
 
     # fast path: a concrete, already-downloaded episode -> play, skip the network.
     # The key MUST be the canonical one (F2) or the library dedup silently misses.

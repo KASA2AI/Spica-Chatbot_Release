@@ -111,15 +111,21 @@ class FakePlayer:
         self.played.append(p)
 
 
-def _host(tmp_path, *, enabled=True):
+def _host(tmp_path, *, enabled=True, mikan_base_urls=None, bilibili_spaces=None):
     dl = tmp_path / "dl"
     dl.mkdir(exist_ok=True)
+    extra = {}
+    if mikan_base_urls is not None:
+        extra["mikan_base_urls"] = mikan_base_urls
+    if bilibili_spaces is not None:
+        extra["bilibili_spaces"] = bilibili_spaces
     h = SimpleNamespace()
     h.config = SimpleNamespace(anime=AnimeConfig(
         enabled=enabled,
         download_dir=str(dl),
         library_file=str(tmp_path / "store" / "library.json"),
         cookies_file=str(tmp_path / "cookies.txt"),
+        **extra,
     ))
     h.secrets = SimpleNamespace(bilibili_cookie=None, qbittorrent_password=None)
     h.registry = CapabilityRegistry()
@@ -324,3 +330,24 @@ def test_in_flight_seam_absent_attr_is_tolerated(tmp_path, monkeypatch):
     assert not hasattr(h, "_anime_in_flight")
     rid = _request_download(h, monkeypatch)        # resolves fine -> downloading
     assert rid
+
+
+# -- A2: empty source lists must not crash startup (P2-6) ----------------------
+
+def test_install_empty_mikan_urls_disabled_does_not_crash(tmp_path):
+    # install() runs UNCONDITIONALLY in AppHost.initialize, even when anime is
+    # disabled; an empty mikan_base_urls must skip that source, never raise (P2-6).
+    h = _host(tmp_path, enabled=False, mikan_base_urls=[])
+    anime_assembly.install(h)                      # real sources built -> no crash
+
+
+def test_install_both_source_lists_empty_enabled_resolves_source_error(tmp_path):
+    # both lists empty + enabled: watch_anime still registers but every resolve
+    # returns a STABLE ANIME_SOURCE_ERROR (no sources), never a startup crash.
+    h = _host(tmp_path, enabled=True, mikan_base_urls=[], bilibili_spaces=[])
+    anime_assembly.install(h)
+    handler = h.registry.tool_handler("watch_anime")
+    assert handler is not None
+    with pytest.raises(ScreenToolError) as ei:
+        handler(query="无职转生第三季第一集", episode=None, use_recent_unplayed=None)
+    assert ei.value.code == "ANIME_SOURCE_ERROR"

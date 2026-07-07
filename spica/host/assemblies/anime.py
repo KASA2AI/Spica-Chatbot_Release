@@ -170,12 +170,20 @@ def _available(host: Any) -> bool:
 
 def _build_sources(cfg: Any, secrets: Any) -> list[AnimeSourcePort]:
     # bilibili main, mikan fallback (coordinator order). Constructors do NO I/O.
+    # An EMPTY config list skips that source (P2-6, D2): a bare `mikan_base_urls:
+    # []` must not crash startup (MikanRssSource enforces non-empty internally --
+    # that invariant stays). Both empty -> no sources -> resolve returns a stable
+    # ANIME_SOURCE_ERROR, never a startup crash.
     cookie = getattr(secrets, "bilibili_cookie", None)
     timeout = float(getattr(cfg, "source_timeout_seconds", 15) or 15)
-    bilibili = BilibiliSpaceSource(list(cfg.bilibili_spaces), cookie=cookie,
-                                   timeout=timeout)
-    mikan = MikanRssSource(list(cfg.mikan_base_urls), timeout=timeout)
-    return [bilibili, mikan]
+    sources: list[AnimeSourcePort] = []
+    spaces = list(cfg.bilibili_spaces)
+    if spaces:
+        sources.append(BilibiliSpaceSource(spaces, cookie=cookie, timeout=timeout))
+    urls = list(cfg.mikan_base_urls)
+    if urls:
+        sources.append(MikanRssSource(urls, timeout=timeout))
+    return sources
 
 
 def _build_torrent(cfg: Any, secrets: Any) -> QBittorrentClient:

@@ -226,6 +226,38 @@ def test_magnet_unreachable_stays_long_transient(qapp, tmp_path):
     assert event.error is None
 
 
+def test_magnet_unreachable_beyond_stall_emits_stall_once_then_recovers(
+        qapp, tmp_path):
+    # P2-2: a qbt outage longer than stall_timeout must surface a SINGLE stall
+    # (no permanent silent 0% busy), keep reconnecting, and still complete on
+    # recovery -- never a failure verdict.
+    ft = FakeTorrent([TorrentClientError("UNREACHABLE", "down")] * 10
+                     + [_completed(str(tmp_path / "ep1.mkv"))])
+    w = _worker(tmp_path, torrent=ft, stall_timeout_minutes=1.0)
+    stalls = []
+    w.stalled.connect(lambda rid, m: stalls.append(m))
+    event = w.execute()
+    assert len(stalls) == 1                         # once per dry spell, not spam
+    assert event.error is None                      # reconnect, never fail (P1-10)
+    assert event.save_path == str(tmp_path / "ep1.mkv")
+
+
+def test_magnet_unreachable_stall_resets_after_progress(qapp, tmp_path):
+    # once progress moves again the stall latch resets, so a SECOND dry spell can
+    # re-notify -- an outage, recovery, then a fresh stall fires a second stall.
+    ft = FakeTorrent(
+        [TorrentClientError("UNREACHABLE", "down")] * 10   # spell 1 -> stall
+        + [_downloading(0.5)]                              # progress -> reset
+        + [TorrentClientError("UNREACHABLE", "down")] * 10  # spell 2 -> stall
+        + [_completed(str(tmp_path / "ep1.mkv"))])
+    w = _worker(tmp_path, torrent=ft, stall_timeout_minutes=1.0)
+    stalls = []
+    w.stalled.connect(lambda rid, m: stalls.append(m))
+    event = w.execute()
+    assert len(stalls) == 2                          # reset let the 2nd fire
+    assert event.error is None
+
+
 # -- F3: the qbt poll sleep must be interruptible ----------------------------------
 
 def test_qbt_poll_sleep_is_sliced_and_interruptible(qapp, tmp_path):

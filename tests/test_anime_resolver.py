@@ -202,6 +202,34 @@ def test_resolve_latest_takes_max_episode():
     assert res.chosen.parsed.episode == 2
 
 
+def test_latest_cross_title_pool_is_ambiguous():
+    # P2-1: 「转生最新一集」pulls in TWO different anime (same eff-season, no season
+    # marker). LATEST must NOT max() across them onto whichever has the highest
+    # episode number (a silent wrong match) -- cluster first, then ask (D10/P1-10).
+    ref = parse_query("转生最新一集")
+    cands = [
+        _cand("[A] 无职转生 - 12 [1080p][简繁]"),
+        _cand("[B] 转生贵族的异世界冒险 - 05 [1080p][简繁]"),
+    ]
+    res = resolve(ref, cands)
+    assert res.status == "ambiguous"
+    assert len(res.candidates) == 2
+
+
+def test_latest_single_anime_multiple_subgroups_matched():
+    # the cross-title gate must NOT create false ambiguity for one anime offered
+    # by several subgroups at the latest episode.
+    ref = parse_query("无职转生第三季最新一集")
+    cands = [
+        _cand("[ANi] 无职转生 第三季 - 02 [1080P][CHT]"),
+        _cand("[LoliHouse] 无职转生 3期 / Mushoku Tensei S3 - 02 [1080p][简繁内封]"),
+    ]
+    res = resolve(ref, cands)
+    assert res.status == "matched"
+    assert res.chosen.parsed.episode == 2
+    assert res.chosen.parsed.subgroup == "LoliHouse"   # 简繁 beats CHT
+
+
 def test_resolve_batch_filtered_out():
     ref = parse_query("无职转生第三季第一集")
     cands = [_cand("[某组] 无职转生 第三季 01-12 合集 [1080p][简繁]")]
@@ -274,6 +302,26 @@ def test_alias_romaji_and_zh_same_group():
     romaji_src = parse_source_title("[X] Mushoku Tensei S3 - 01 [1080p][简繁]")
     assert name_matches("无职转生", romaji_src)
     assert name_matches("無職転生", romaji_src)
+
+
+# -- search-quality §2.4: popular short-form alias (转生史莱姆) -----------------
+
+def test_alias_slime_short_form_matches_full():
+    # 「转生史莱姆」is not a contiguous substring of the full title (转生…史莱姆
+    # are split by 变成), so only the alias group folds them together.
+    src = parse_source_title(
+        "[豌豆字幕组&LoliHouse] 关于我转生变成史莱姆这档事 第四季 / "
+        "Tensei Shitara Slime Datta Ken 4th Season - 13 [1080p][简繁]")
+    assert name_matches("转生史莱姆", src)
+
+
+def test_alias_slime_canonical_key_folds():
+    from spica.anime.resolver import canonical_episode_key
+    short = canonical_episode_key(
+        parse_query("转生史莱姆第四季第一集").title_query, 4, 1)
+    full = canonical_episode_key(
+        parse_query("关于我转生变成史莱姆这档事第四季第一集").title_query, 4, 1)
+    assert short == full
 
 
 # -- review tail #1: alias-aware clustering (shared identity basis) -----------
@@ -366,6 +414,92 @@ def test_bracket_episode_parses():
     st = parse_source_title("[Sakurato] 无职转生 3期 [02] [1080p][简繁内封]")
     assert st.episode == 2
     assert st.season == 3
+
+
+# -- search-quality §2.2: dual numbering 「[13(85)]」 --------------------------
+
+def test_double_numbering_season_internal_episode():
+    # 豌豆组「[13(85)]」= season-internal 13 + absolute 85; take 13 (previously
+    # parsed as episode=None, which dropped the whole subgroup form).
+    st = parse_source_title(
+        "【豌豆字幕组】[关于我转生变成史莱姆这档事 第四季 / "
+        "Tensei Shitara Slime Datta Ken S4][13(85)][繁体][1080P][MP4]")
+    assert st.season == 4
+    assert st.episode == 13
+
+
+def test_plain_bracket_episode_unaffected_by_dual_pattern():
+    # the dual-numbering pattern must not disturb a plain 「[02]」episode
+    assert parse_source_title("[X] 某番 3期 [02] [1080p]").episode == 2
+
+
+# -- search-quality §2.1: 「【组】★促销★[中文 / 別名]」name extraction ----------
+
+def test_promo_bracket_title_form_extracts_name():
+    # the real title lives in the [中文 / 別名 / English] bracket, not the leading
+    # subgroup+promo text -- extract it so the form matches/clusters correctly.
+    st = parse_source_title(
+        "【喵萌奶茶屋】★04月新番★[欺诈游戏 / 诈欺游戏 / LIAR GAME][13][1080p][繁日双语]")
+    assert st.name_zh == "欺诈游戏"
+    assert st.episode == 13
+
+
+def test_fraud_game_two_release_forms_cluster_not_ambiguous():
+    # the two 喵萌奶茶屋 release forms are ONE anime -> a single cluster -> matched,
+    # not a false 「multiple distinct titles」ambiguity (combines with A5 LATEST).
+    ref = parse_query("欺诈游戏最新一集")
+    cands = [
+        _cand("[喵萌奶茶屋&LoliHouse] 欺诈游戏 / 诈欺游戏 / LIAR GAME - 13 "
+              "[WebRip 1080p HEVC-10bit AAC][简繁日内封字幕]"),
+        _cand("【喵萌奶茶屋】★04月新番★[欺诈游戏 / 诈欺游戏 / LIAR GAME]"
+              "[13][1080p][繁日双语]"),
+    ]
+    res = resolve(ref, cands)
+    assert res.status == "matched"
+    assert res.chosen.parsed.episode == 13
+
+
+# reverse golden: subtitle/quality/alias-shaped tag brackets are NOT a name source
+def test_normal_title_with_tag_brackets_unchanged():
+    st = parse_source_title(
+        "[LoliHouse] 无职转生 3期 / Mushoku Tensei S3 - 02 "
+        "[WebRip 1080p][简繁内封字幕]")
+    assert st.name_zh == "无职转生"          # 3期 consumed by season, name intact
+
+
+def test_slash_subtitle_tag_not_taken_as_title():
+    # 「[简/繁]」and 「[GB/BIG5]」look like alias lists but are subtitle tags --
+    # the ≥3-CJK / CJK-present guard keeps them out of name extraction.
+    st1 = parse_source_title("[X] 某动画名称 - 05 [简/繁][1080p]")
+    assert "某动画名称" in st1.name_zh
+    st2 = parse_source_title("[X] 另一部动画 - 05 [GB/BIG5][1080p]")
+    assert "另一部动画" in st2.name_zh
+
+
+def test_long_subtitle_slash_quality_bracket_not_taken_as_title():
+    # review follow-up: a 「长字幕词 / 质量」bracket has ≥3 CJK in the first segment
+    # yet is a TAG, not a title -- the tag-segment guard must keep the real leading
+    # title (else the candidate silently loses name_matches -> false NOT_FOUND).
+    st1 = parse_source_title("[喵萌奶茶屋] 某番动画 [繁日双语 / 1080p] - 01")
+    assert st1.name_zh == "某番动画"
+    st2 = parse_source_title("[喵萌奶茶屋] 樱花庄的宠物 [简繁日内封字幕 / 1080p] - 01")
+    assert st2.name_zh == "樱花庄的宠物"
+    st3 = parse_source_title("[喵萌奶茶屋] 轻音物语 [某某字幕组 / 1080p] - 01")
+    assert st3.name_zh == "轻音物语"
+
+
+def test_english_alias_short_code_collision_kept_as_title():
+    # review follow-up: an English alias segment must NOT be flagged as a tag just
+    # because its letters CONTAIN a short subtitle code -- "Witch"/"Watch" contain
+    # "tc", "School" contains "sc". ASCII tags match at whole-TOKEN level, so the
+    # [中文 / English] bracket stays the real title source (else 魔女守望/日在校园
+    # silently lose name_matches -> false NOT_FOUND).
+    st1 = parse_source_title(
+        "【喵萌奶茶屋】★04月新番★[魔女守望 / Witch Watch][01][1080p][简日双语]")
+    assert st1.name_zh == "魔女守望"
+    st2 = parse_source_title(
+        "【喵萌奶茶屋】★04月新番★[日在校园 / School Days][01][1080p][简日双语]")
+    assert st2.name_zh == "日在校园"
 
 
 def test_bilibili_fullwidth_tag_stripped_but_name_kept():

@@ -111,7 +111,7 @@
 #                                #   BILIBILI_COOKIE / QBITTORRENT_PASSWORD
 #   enabled: false               # 默认关;Phase 4 端到端过后才翻 true
 #   download_dir: ~/Videos/SpicaAnime
-#   player_command: ""           # 空 = xdg-open / os.startfile;可填 vlc
+#   player_command: vlc          # VLC 默认播放(AV1/HEVC/MKV 更稳);可填空串走 xdg-open / os.startfile
 #   bilibili_spaces: ["3493112693394137"]
 #   mikan_base_urls: ["https://mikanani.me"]
 #   quality: 1080p
@@ -234,3 +234,4 @@ stt:                                     # 本地语音转文字(Plan B):faster-
   download_root: null                    # null=HF 默认缓存;model 填本地目录时此项不用
 anime:                                   # spica 看番:Phase 4 端到端验收通过,已启用。完整键见上方注释模板
   enabled: true
+  player_command: vlc

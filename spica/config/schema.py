@@ -381,7 +381,7 @@ class AnimeConfig(BaseModel):
 
     enabled: bool = False                 # Phase 4 真机端到端过后才翻 true
     download_dir: str = "~/Videos/SpicaAnime"
-    player_command: str = ""              # 空 = xdg-open / os.startfile
+    player_command: str = "vlc"           # VLC handles AV1/HEVC/MKV more reliably
     bilibili_spaces: list[str] = Field(default_factory=lambda: ["3493112693394137"])
     mikan_base_urls: list[str] = Field(
         default_factory=lambda: ["https://mikanani.me"])

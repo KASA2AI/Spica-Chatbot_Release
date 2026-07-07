@@ -161,16 +161,12 @@ class BilibiliSpaceSource:
         cands: list[AnimeCandidate] = []
         for uid in self._uids:
             try:
-                videos = self._space_videos(uid, mkey)
+                uid_cands = self._search_uid(uid, mkey, title_query)
             except AnimeSourceError as e:
                 errors.append(e)             # this space failed -> try the next
                 continue
             any_ok = True
-            for v in videos:
-                st = parse_source_title(v["title"])
-                if not name_matches(title_query, st):   # resolver-based prefilter
-                    continue
-                cands.extend(self._expand_parts(v, st))
+            cands.extend(uid_cands)
         if not any_ok and errors:
             raise errors[0]
         return cands
@@ -245,27 +241,45 @@ class BilibiliSpaceSource:
             self._seed_buvid()
         raise AnimeSourceError("RISK_CONTROL", f"arc/search code={last}")
 
-    def _space_videos(self, uid: str, mkey: str) -> list[dict]:
-        videos: list[dict] = []
+    def _search_uid(self, uid: str, mkey: str,
+                    title_query: str) -> list[AnimeCandidate]:
+        """Paginate the space, expanding name-matched videos to per-part
+        candidates AS EACH PAGE ARRIVES, and stop as soon as a page yields a
+        candidate. Expanding early -- before later pages burn the deadline --
+        keeps a hit on an early page instead of losing it to a subsequent
+        ``_pagelist()`` that finds no budget left (the reported mikan-fallback
+        bug). Failure modes preserved: a FIRST-page failure with nothing fetched
+        raises (the space really failed); a later-page failure keeps whatever was
+        already expanded (F11) and never raises. The resolver-based
+        ``name_matches`` prefilter is unchanged (review #3)."""
+        cands: list[AnimeCandidate] = []
+        fetched_any = False
         for pn in range(1, self._max_pages + 1):
             if pn > 1:             # inter-page throttle (F9, §5.2)
                 self._sleep(0.5)
             try:
                 d = self._arc_search(uid, pn, mkey)
             except AnimeSourceError as e:
-                if videos:         # keep already-fetched pages (F11): a mid-
-                    _LOG.warning(  # pagination failure must not void the source
-                        "bilibili space %s page %d failed (%s); "
-                        "keeping %d videos from earlier pages",
-                        uid, pn, e.code, len(videos))
+                if fetched_any:    # mid-pagination failure: keep what we expanded
+                    _LOG.warning(  # (F11) -- must not void an otherwise-good source
+                        "bilibili space %s page %d failed (%s); keeping "
+                        "%d candidate(s) from earlier pages",
+                        uid, pn, e.code, len(cands))
                     break
                 raise              # first page failed -> the space really failed
+            fetched_any = True
             vlist = d.get("data", {}).get("list", {}).get("vlist", []) or []
             if not vlist:
                 break
-            videos.extend({"bvid": v.get("bvid"), "title": v.get("title", "")}
-                          for v in vlist)
-        return videos
+            for v in vlist:
+                st = parse_source_title(v.get("title", ""))
+                if not name_matches(title_query, st):   # resolver-based prefilter
+                    continue
+                cands.extend(self._expand_parts(
+                    {"bvid": v.get("bvid"), "title": v.get("title", "")}, st))
+            if cands:              # main-source hit -> stop paging; don't burn the
+                break              # deadline on later pages we don't need
+        return cands
 
     def _pagelist(self, bvid: str) -> list[dict]:
         t = self._budget_timeout()               # outside the try (F6)

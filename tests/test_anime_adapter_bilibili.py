@@ -242,7 +242,15 @@ def test_retry_backoff_sleeps_between_retries():
 
 def test_inter_page_throttle_sleeps_between_pages():
     naps: list[float] = []
-    sess = FakeSession(_one_page_arc({"bvid": "BV1fmMP6NEvw", "title": MUSHOKU}))
+    # page 1 has NO matching video, so pagination advances to page 2 (where the
+    # inter-page throttle fires). An early match now stops paging -- see
+    # test_early_match_returns_before_pagination_burns_deadline -- so this test
+    # deliberately withholds a page-1 match to exercise the throttle.
+    def arc(params):
+        if params.get("pn") == 1:
+            return _vlist({"bvid": "BVx1", "title": "【游戏实况】某主播录像"})
+        return _vlist()                               # page 2 empty -> ends
+    sess = FakeSession(arc)
     src = BilibiliSpaceSource(["3493112693394137"], session=sess, max_pages=2,
                               sleep=naps.append)
     src.search("无职转生")
@@ -423,3 +431,81 @@ def test_expansion_still_produces_ep1_ep2_after_name_fix():
     cands = src.search("无职转生")
     assert {c.parsed.episode: c.locator for c in cands} == {
         1: "BV1fmMP6NEvw:1", 2: "BV1fmMP6NEvw:2"}
+
+
+# -- deadline-burn regression (fallback bug): an early name-matched page must be
+#    expanded + returned BEFORE later-page pagination exhausts the per-source
+#    deadline. Old code collected ALL pages first, then expanded -- so a hit on
+#    an early page was lost when later paging burned the budget and the
+#    subsequent _pagelist() had none left, and the coordinator fell to mikan. ----
+
+_UNRELATED = "【游戏实况】某主播的直播录像 合集"
+
+
+def test_early_match_returns_before_pagination_burns_deadline():
+    clock = {"now": 0.0}
+
+    class SlowSession(FakeSession):
+        def get(self, url, params=None, timeout=None, **kw):
+            clock["now"] += 2.0            # every request burns 2s of the budget
+            return super().get(url, params=params, timeout=timeout, **kw)
+
+    def arc(params):
+        # page 2 carries the real 无职转生 collection; every OTHER page returns a
+        # non-matching video so a full-scan keeps paginating until the deadline
+        # is gone, then its later _pagelist() finds no budget left.
+        return (_vlist({"bvid": "BV1fmMP6NEvw", "title": MUSHOKU})
+                if params.get("pn") == 2
+                else _vlist({"bvid": f"BVunrel{params.get('pn')}",
+                             "title": _UNRELATED}))
+
+    sess = SlowSession(arc)
+    src = BilibiliSpaceSource(["3493112693394137"], session=sess, max_pages=10,
+                              sleep=_nosleep, clock=lambda: clock["now"])
+    cands = src.search("无职转生", deadline=15.0)
+    by_ep = {c.parsed.episode: c.locator for c in cands}
+    assert by_ep.get(1) == "BV1fmMP6NEvw:1"      # the hit is returned, not lost
+    assert by_ep.get(2) == "BV1fmMP6NEvw:2"
+    r = resolve(parse_query("无职转生第三季第一集"), cands)
+    assert r.status == "matched" and r.chosen.locator == "BV1fmMP6NEvw:1"
+    # stopped paginating right after the match (p1 miss + p2 hit), not all 10
+    assert sess.n_calls("arc/search") == 2
+
+
+def test_no_match_keeps_scanning_pages_then_returns_empty():
+    # early-stop must NOT trigger without a candidate: pagination proceeds
+    # normally and the source yields nothing (coordinator then falls back).
+    def arc(params):
+        pn = params.get("pn")
+        if pn in (1, 2):
+            return _vlist({"bvid": f"BVx{pn}", "title": _UNRELATED})
+        return _vlist()                    # page 3 empty -> pagination ends
+    sess = FakeSession(arc)
+    src = BilibiliSpaceSource(["3493112693394137"], session=sess, max_pages=5,
+                              sleep=_nosleep)
+    assert src.search("无职转生") == []
+    assert sess.n_calls("arc/search") == 3          # scanned p1,p2, empty p3
+
+
+def test_first_page_failure_raises_not_silent_empty():
+    # nothing fetched -> the space really failed -> raise (never a silent empty
+    # that a caller could mistake for "reachable but no such anime").
+    sess = FakeSession(lambda params: FakeResp({"code": -352}))
+    src = BilibiliSpaceSource(["3493112693394137"], session=sess, max_pages=3,
+                              max_retries=2, sleep=_nosleep)
+    with pytest.raises(AnimeSourceError) as ei:
+        src.search("无职转生")
+    assert ei.value.code == "RISK_CONTROL"
+
+
+def test_later_page_failure_after_no_match_returns_empty_not_raise():
+    # F11 under early-stop: a page>=2 failure (page 1 fetched but matched
+    # nothing) must NOT raise -- return empty so the coordinator can fall back.
+    def arc(params):
+        if params.get("pn") == 1:
+            return _vlist({"bvid": "BVx1", "title": _UNRELATED})
+        return FakeResp({"code": -352})    # page 2: persistent risk control
+    sess = FakeSession(arc)
+    src = BilibiliSpaceSource(["3493112693394137"], session=sess, max_pages=3,
+                              max_retries=2, sleep=_nosleep)
+    assert src.search("无职转生") == []             # graceful, no raise

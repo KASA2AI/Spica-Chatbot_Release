@@ -12,6 +12,7 @@ def test_anime_config_defaults():
     a = AnimeConfig()
     assert a.enabled is False
     assert a.download_dir == "~/Videos/SpicaAnime"
+    assert a.player_command == "vlc"
     assert a.bilibili_spaces == ["3493112693394137"]
     assert a.mikan_base_urls == ["https://mikanani.me"]
     assert a.quality == "1080p"

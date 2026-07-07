@@ -19,11 +19,17 @@ from memory.store import SQLiteMemoryStore
 from spica.config.schema import AppConfig, CharacterConfig, StreamConfig
 from spica.conversation.prompt_builder import (
     BILINGUAL_DISPLAY_RULES,
+    BILINGUAL_OUTPUT_REMINDER,
     SYSTEM_PROMPT_TEMPLATE,
+    bilingual_output_reminder,
     build_spica_prompt,
     build_system_prompt,
 )
-from spica.conversation.text_normalizer import split_dialog_translation
+from spica.conversation.text_normalizer import (
+    build_bilingual_display,
+    split_dialog_translation,
+)
+from spica.runtime.tool_round import build_tool_followup_prompt
 from spica.core.chat_engine import ChatEngine
 from spica.core.events import DoneEvent, UnitReadyEvent, UnitTextReadyEvent
 from spica.core.proactive import may_become_no_comment
@@ -301,6 +307,30 @@ class BilingualStreamingTests(unittest.TestCase):
         self.assertEqual([call["text"] for call in services.tts_adapter.calls], ["只有中文没有日语。"])
         self.assertEqual(done["answer"], "只有中文没有日语。")
 
+    def test_zh_partial_compliance_never_drops_a_spoken_sentence(self):
+        # The real-world symptom: the model translated はい / ええ but DROPPED
+        # うん's ⟦⟧. The subtitle must show BOTH translations AND keep うん as
+        # Japanese (never a silent drop, never a whole-unit flip); TTS / done stay
+        # pure Japanese with no ⟦ and no Chinese leaking into the voice.
+        services, events = self._run(
+            "はい。⟦好。⟧うん。ええ。⟦是的。⟧", dialog_display_language="zh", play_unit_min_chars=6
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+        done = [e for e in events if e["event"] == "done"][-1]["data"]
+        joined = "".join(d["display_text"] for d in text_events)
+        self.assertNotIn("⟦", joined)
+        self.assertNotIn("⟧", joined)
+        self.assertIn("好", joined)            # translated sentence shows Chinese
+        self.assertIn("是的", joined)          # translated sentence shows Chinese
+        self.assertIn("うん", joined)          # untranslated sentence survives as JP
+        for call in services.tts_adapter.calls:
+            self.assertNotIn("⟦", call["text"])
+            self.assertNotIn("好", call["text"])
+            self.assertNotIn("是的", call["text"])
+        self.assertNotIn("⟦", done["answer"])
+        self.assertNotIn("好", done["answer"])
+        self.assertIn("うん", done["answer"])  # memory keeps the pure-Japanese line
+
 
 class BilingualTypedEventBoundaryTests(unittest.TestCase):
     """Through ChatEngine.stream_voice_runtime: the typed RuntimeEvent dataclasses
@@ -340,6 +370,105 @@ class DialogDisplayLanguageConfigTests(unittest.TestCase):
     def test_typo_fails_loud(self):
         with self.assertRaises(Exception):
             CharacterConfig(dialog_display_language="cn")
+
+
+class BuildBilingualDisplayTests(unittest.TestCase):
+    """Per-sentence display: ⟦中文⟧ where the model gave one, that sentence's
+    Japanese otherwise -- so no spoken sentence disappears from the subtitle."""
+
+    def test_all_sentences_translated_show_chinese(self):
+        self.assertEqual(
+            build_bilingual_display("日语1。⟦中文1。⟧日语2。⟦中文2。⟧"), "中文1。中文2。"
+        )
+
+    def test_untranslated_tail_falls_back_to_that_sentence_japanese(self):
+        self.assertEqual(build_bilingual_display("日语1。⟦中文1。⟧日语2。"), "中文1。日语2。")
+
+    def test_no_markers_returns_japanese_unchanged(self):
+        self.assertEqual(build_bilingual_display("日语1。日语2。"), "日语1。日语2。")
+
+    def test_grouped_multi_sentence_translation_shows_pure_chinese(self):
+        # The model groups several Japanese sentences under ONE ⟦中文⟧ (real prod
+        # output). The whole run must render as the Chinese -- NOT leading-Japanese
+        # + Chinese (the mixed-subtitle bug this file's real-frame case exposed).
+        self.assertEqual(
+            build_bilingual_display(
+                "ふぅん……麦。こんな時間に珍しいわね。⟦哼……麦。这个时间来还真少见呢。⟧"
+            ),
+            "哼……麦。这个时间来还真少见呢。",
+        )
+
+    def test_grouped_then_untranslated_tail(self):
+        # A translated run followed by a sentence the model left untranslated.
+        self.assertEqual(
+            build_bilingual_display("あ。い。⟦啊。以。⟧う。"), "啊。以。う。"
+        )
+
+    def test_unclosed_translation_tail(self):
+        self.assertEqual(build_bilingual_display("日语1。⟦中文1"), "中文1")
+
+    def test_all_translation_only(self):
+        self.assertEqual(build_bilingual_display("⟦只有中文。⟧"), "只有中文。")
+
+    def test_comma_is_not_a_sentence_boundary(self):
+        self.assertEqual(build_bilingual_display("おはよう、麦。⟦早上好，麦。⟧"), "早上好，麦。")
+
+
+class BilingualPromptHardeningTests(unittest.TestCase):
+    def test_zh_json_example_shows_the_bilingual_shape(self):
+        prompt = build_system_prompt("麦", dialog_display_language="zh")
+        self.assertIn("日语台词。⟦中文翻译。⟧", prompt)          # the JSON answer example
+        self.assertNotIn('"answer": "日语回答文本"', prompt)     # pure-JP example is gone
+
+    def test_ja_json_example_is_unchanged(self):
+        prompt = build_system_prompt("麦")
+        self.assertIn('"answer": "日语回答文本"', prompt)
+        self.assertNotIn("⟦中文翻译。⟧", prompt)
+
+    def test_full_prompt_reminder_is_the_last_block_in_zh(self):
+        prompt = build_spica_prompt(
+            user_input="こんにちは",
+            recent_context=[],
+            long_term_memories=[],
+            character_profile="profile",
+            dialog_display_language="zh",
+        )
+        self.assertIn("[OUTPUT_FORMAT_REMINDER]", prompt)
+        # The reminder is a real recency anchor: it sits AFTER the user input.
+        self.assertLess(
+            prompt.index("[CURRENT_USER_INPUT]"), prompt.index("[OUTPUT_FORMAT_REMINDER]")
+        )
+        self.assertTrue(prompt.rstrip().endswith(BILINGUAL_OUTPUT_REMINDER))
+
+    def test_ja_full_prompt_has_no_reminder(self):
+        prompt = build_spica_prompt(
+            user_input="こんにちは",
+            recent_context=[],
+            long_term_memories=[],
+            character_profile="profile",
+        )
+        self.assertNotIn("[OUTPUT_FORMAT_REMINDER]", prompt)
+
+    def test_reminder_helper_gates_on_language(self):
+        self.assertEqual(bilingual_output_reminder("zh"), BILINGUAL_OUTPUT_REMINDER)
+        self.assertEqual(bilingual_output_reminder("ja"), "")
+        self.assertEqual(bilingual_output_reminder(), "")
+
+
+class BilingualToolFollowupTests(unittest.TestCase):
+    """The tool-followup prompt (streaming production chain) must re-anchor the
+    bilingual format LAST in zh mode, and stay byte-identical in ja mode."""
+
+    def test_zh_followup_reanchors_bilingual_format_after_tool_sections(self):
+        prompt = build_tool_followup_prompt("[SYSTEM] ...", [], dialog_display_language="zh")
+        self.assertIn("[OUTPUT_FORMAT_REMINDER]", prompt)
+        self.assertLess(prompt.index("[NEXT_STEP]"), prompt.index("[OUTPUT_FORMAT_REMINDER]"))
+        self.assertTrue(prompt.rstrip().endswith(BILINGUAL_OUTPUT_REMINDER))
+
+    def test_ja_followup_is_unchanged(self):
+        prompt = build_tool_followup_prompt("[SYSTEM] ...", [])
+        self.assertNotIn("[OUTPUT_FORMAT_REMINDER]", prompt)
+        self.assertTrue(prompt.rstrip().endswith("不要解释工具链。"))
 
 
 if __name__ == "__main__":

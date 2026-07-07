@@ -18,6 +18,7 @@ import logging
 from typing import Any, Iterator
 
 from spica.runtime.stages import _compact_tool_history_for_prompt, record_screen_tool_result
+from spica.conversation.prompt_builder import bilingual_output_reminder
 from common.timing import elapsed_ms, now_ms
 from spica.runtime.context import TurnContext, is_turn_cancelled
 from spica.runtime.llm_stream import record_usage
@@ -148,7 +149,7 @@ def prepare_prompt_for_streaming(
             if not _any_chainable(tools, calls_sink):
                 # Single-shot tools (watch/note/inspect): one followup, streamed.
                 put_status("thinking", "thinking")
-                followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup)
+                followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language)
                 for delta in deps.model.stream(followup, ctx):
                     if is_turn_cancelled(ctx.request):
                         break
@@ -203,7 +204,7 @@ def prepare_prompt_for_streaming(
     if not _any_chainable(tools, normalized_calls):
         # Single-shot tools only: today's single-round path, byte for byte.
         put_status("thinking", "thinking")
-        return build_tool_followup_prompt(prompt_input, tool_history, compact_lookup), None
+        return build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language), None
     return _run_chain_rounds(
         ctx, deps, obs, tools, put_status, prompt_input, tool_history, _probe_responses
     )
@@ -242,13 +243,13 @@ def _run_chain_rounds(
     """
     compact_lookup = getattr(tools, "compact_output", None)
     max_rounds = max(1, int(deps.config.max_tool_rounds))
-    followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup)
+    followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language)
     for round_number in range(2, max_rounds + 1):
         calls, text = probe(followup, round_number)
         if not calls:
             return followup, text
         _run_tool_calls(ctx, obs, tools, put_status, calls, history=tool_history)
-        followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup)
+        followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language)
     logger.warning(
         "tool loop exceeded max_tool_rounds=%d; forcing a final answer without tools",
         max_rounds,
@@ -256,7 +257,10 @@ def _run_chain_rounds(
     obs.event("tool_loop_exceeded", 0.0, rounds=max_rounds)
     put_status("thinking", "thinking")
     return (
-        build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, force_final=True),
+        build_tool_followup_prompt(
+            prompt_input, tool_history, compact_lookup, force_final=True,
+            dialog_display_language=deps.config.character.dialog_display_language,
+        ),
         None,
     )
 
@@ -313,6 +317,7 @@ def build_tool_followup_prompt(
     tool_history: list[dict[str, Any]],
     compact_lookup: Any = None,
     force_final: bool = False,
+    dialog_display_language: str = "ja",
 ) -> str:
     sections = [
         str(prompt_input),
@@ -327,4 +332,10 @@ def build_tool_followup_prompt(
         # Loop-budget exceeded (P1): the graceful forced final -- streamed, no
         # tools offered, and the prompt says so explicitly.
         sections.append("不要再调用工具，基于已有结果回答。")
+    # zh mode: re-anchor the per-sentence ⟦中文⟧ format LAST -- [TOOL_RESULTS] /
+    # [NEXT_STEP] pushed the system-prompt rule far up, so the followup answer would
+    # otherwise regress to pure Japanese. "" in ja mode keeps this byte-identical.
+    reminder = bilingual_output_reminder(dialog_display_language)
+    if reminder:
+        sections.append(reminder)
     return "\n\n".join(sections)

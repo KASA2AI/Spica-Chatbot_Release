@@ -44,6 +44,43 @@ def split_dialog_translation(text: str) -> tuple[str, str]:
     return spoken, subtitle
 
 
+def build_bilingual_display(text: str) -> str:
+    """Per-sentence display string for zh mode.
+
+    Walk ``日语。⟦中文。⟧日语。⟦中文。⟧`` and, for each ``⟦中文⟧`` the model gave,
+    show that translation; where a Japanese sentence has NO following ``⟦⟧`` show
+    that sentence's Japanese instead. This keeps EVERY spoken sentence represented
+    in the subtitle -- unlike the old ``subtitle or spoken`` which, once a unit
+    held any translation, dropped the untranslated Japanese sentences entirely,
+    and once a unit held none, flipped the whole unit to Japanese. Text without
+    ``⟦`` returns the cleaned text unchanged (all-Japanese fallback).
+    """
+    source = text or ""
+    if DIALOG_TRANSLATION_OPEN not in source:
+        return re.sub(r"\s+", " ", source).strip()
+    parts: list[str] = []
+    index = 0
+    while index < len(source):
+        open_at = source.find(DIALOG_TRANSLATION_OPEN, index)
+        if open_at < 0:
+            parts.append(source[index:])  # trailing Japanese, no translation
+            break
+        japanese = source[index:open_at]
+        close_at = source.find(DIALOG_TRANSLATION_CLOSE, open_at + 1)
+        translation = source[open_at + 1:] if close_at < 0 else source[open_at + 1:close_at]
+        # The ⟦中文⟧ translates the ENTIRE preceding Japanese run: the model groups
+        # several sentences under ONE translation (real output e.g.
+        # "ふぅん……麦。こんな時間に珍しいわね。⟦哼……麦。这个时间来还真少见呢。⟧"), so show the
+        # Chinese and drop that whole run. Only an EMPTY ⟦⟧ (no translation given)
+        # falls back to showing the Japanese run.
+        parts.append(translation if translation.strip() else japanese)
+        if close_at < 0:
+            break
+        index = close_at + 1
+    display = "".join(parts).replace(DIALOG_TRANSLATION_CLOSE, "")
+    return re.sub(r"\s+", " ", display).strip()
+
+
 def normalize_square_brackets_for_speech(text: str) -> str:
     source = text or ""
 

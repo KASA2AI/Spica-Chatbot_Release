@@ -53,6 +53,34 @@ BILINGUAL_DISPLAY_RULES = """
 10. 双语字幕模式：answer 里每一句日语台词后面必须紧跟这句台词的中文翻译，中文翻译用 ⟦⟧ 括起来，例如："おはよう。⟦早上好。⟧今日は何する？⟦今天做什么？⟧"。⟦⟧ 里只放中文翻译，语气贴合台词，不加解释或注音；日语台词本身仍遵守上面所有规则。第 5 条的 500 字符上限只统计日语台词，不含 ⟦⟧ 内的中文。如果按指示回答 NO_COMMENT，则只输出 NO_COMMENT，不加 ⟦⟧ 翻译。
 """.strip()
 
+# zh-mode JSON format block: identical to _PROMPT_FORMAT except the answer
+# EXAMPLE shows the required 日语⟦中文⟧ shape. That example sits AFTER rule #10 in
+# the assembled prompt and is the most concrete signal the model copies, so a
+# pure-Japanese example here was exactly what nudged it to drop the translations.
+_PROMPT_FORMAT_ZH = _PROMPT_FORMAT.replace(
+    '"answer": "日语回答文本"',
+    '"answer": "日语台词。⟦中文翻译。⟧日语台词。⟦中文翻译。⟧"',
+)
+
+# Recency-anchored bilingual reminder. In zh mode this block is appended at the
+# VERY END of the fully-assembled prompt (build_spica_prompt) AND of the tool
+# followup prompt (tool_round.build_tool_followup_prompt) -- after
+# [CURRENT_USER_INPUT] / [TOOL_RESULTS]. Rule #10 and the JSON-example shape sit
+# near the TOP and get diluted by profile/memory/context/tool blocks; this
+# trailing line is what actually holds the per-sentence ⟦中文⟧ format across long
+# or tool-augmented answers. ja mode returns "" (byte-identity preserved).
+BILINGUAL_OUTPUT_REMINDER = (
+    "[OUTPUT_FORMAT_REMINDER]\n"
+    "answer 必须逐句采用「日语句子。⟦中文翻译。⟧」的形式：每一句日语后面都紧跟这句的"
+    "中文翻译，用 ⟦⟧ 括起来，从第一句到最后一句都不能漏。只有需要回答 NO_COMMENT 时"
+    "例外（只输出 NO_COMMENT，不加 ⟦⟧）。"
+)
+
+
+def bilingual_output_reminder(dialog_display_language: str = "ja") -> str:
+    """zh-mode trailing recency reminder block, or '' in ja mode (byte-identity)."""
+    return BILINGUAL_OUTPUT_REMINDER if dialog_display_language == "zh" else ""
+
 
 def build_system_prompt(
     interlocutor_name: str | None = None,
@@ -61,7 +89,7 @@ def build_system_prompt(
 ) -> str:
     template = SYSTEM_PROMPT_TEMPLATE
     if dialog_display_language == "zh":
-        template = "\n\n".join([_PROMPT_RULES, BILINGUAL_DISPLAY_RULES, _PROMPT_FORMAT])
+        template = "\n\n".join([_PROMPT_RULES, BILINGUAL_DISPLAY_RULES, _PROMPT_FORMAT_ZH])
     return render_character_template(
         template,
         char=character_name or DEFAULT_CHARACTER_NAME,
@@ -163,36 +191,40 @@ def build_spica_prompt(
 ) -> str:
     name = normalize_interlocutor_name(interlocutor_name)
     char = character_name or DEFAULT_CHARACTER_NAME
-    return "\n\n".join(
-        [
-            "[SYSTEM]",
-            build_system_prompt(
-                name,
-                character_name=char,
-                dialog_display_language=dialog_display_language,
-            ),
-            "[CHARACTER_PROFILE]",
-            character_profile or DEFAULT_CHARACTER_PROFILE,
-            "[INTERLOCUTOR_PROFILE]",
-            build_interlocutor_profile(name, character_name=char),
-            "[LONG_TERM_MEMORY]",
-            _format_memories(
-                long_term_memories,
-                max_items=memory_limit,
-                max_chars=memory_budget_chars,
-                interlocutor_name=name,
-                character_name=char,
-            ),
-            "[RECENT_CONTEXT]",
-            _format_recent_context(
-                recent_context,
-                turn_char_limit=recent_turn_char_limit,
-                interlocutor_name=name,
-                character_name=char,
-            ),
-            "[CURRENT_MESSAGE_TIME]",
-            format_local_time_for_prompt(user_local_time),
-            "[CURRENT_USER_INPUT]",
-            user_input,
-        ]
-    )
+    sections = [
+        "[SYSTEM]",
+        build_system_prompt(
+            name,
+            character_name=char,
+            dialog_display_language=dialog_display_language,
+        ),
+        "[CHARACTER_PROFILE]",
+        character_profile or DEFAULT_CHARACTER_PROFILE,
+        "[INTERLOCUTOR_PROFILE]",
+        build_interlocutor_profile(name, character_name=char),
+        "[LONG_TERM_MEMORY]",
+        _format_memories(
+            long_term_memories,
+            max_items=memory_limit,
+            max_chars=memory_budget_chars,
+            interlocutor_name=name,
+            character_name=char,
+        ),
+        "[RECENT_CONTEXT]",
+        _format_recent_context(
+            recent_context,
+            turn_char_limit=recent_turn_char_limit,
+            interlocutor_name=name,
+            character_name=char,
+        ),
+        "[CURRENT_MESSAGE_TIME]",
+        format_local_time_for_prompt(user_local_time),
+        "[CURRENT_USER_INPUT]",
+        user_input,
+    ]
+    # zh mode: trailing recency anchor AFTER the user input (the real end of the
+    # assembled prompt). "" in ja mode -> byte-identical to the historical output.
+    reminder = bilingual_output_reminder(dialog_display_language)
+    if reminder:
+        sections.append(reminder)
+    return "\n\n".join(sections)

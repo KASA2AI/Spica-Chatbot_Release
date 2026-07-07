@@ -34,6 +34,8 @@ from spica.runtime.stages import (
 from spica.conversation.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from spica.runtime.services import AgentServices
 from spica.conversation.text_normalizer import (
+    DIALOG_TRANSLATION_OPEN,
+    build_bilingual_display,
     build_tts_text,
     normalize_square_brackets_for_speech,
     split_dialog_translation,
@@ -186,12 +188,21 @@ def _produce_stream_events(
             # entirely, so a literal ⟦abc⟧ in a plain answer is never touched.
             subtitle_text = ""
             if bilingual_dialog:
-                spoken_text, subtitle_text = split_dialog_translation((display_text or "").strip())
+                stripped = (display_text or "").strip()
+                spoken_text, pure_subtitle = split_dialog_translation(stripped)
                 if not spoken_text:
                     # Degenerate all-⟦中文⟧ unit (the model broke the pair
                     # format): the translation becomes the spoken+displayed side
                     # so the unit still plays instead of being silently dropped.
-                    spoken_text, subtitle_text = subtitle_text, ""
+                    # subtitle_text stays "" -> display falls back to display_text.
+                    spoken_text = pure_subtitle
+                elif DIALOG_TRANSLATION_OPEN in stripped:
+                    # Bilingual display: show the ⟦中文⟧ translation for each
+                    # translated Japanese run, falling back to the Japanese for any
+                    # run the model left untranslated (see build_bilingual_display).
+                    # A unit with NO ⟦⟧ leaves subtitle_text "" and the display
+                    # falls back to the normalized Japanese below.
+                    subtitle_text = build_bilingual_display(stripped)
                 display_text = normalize_square_brackets_for_speech(spoken_text)
             else:
                 display_text = normalize_square_brackets_for_speech((display_text or "").strip())

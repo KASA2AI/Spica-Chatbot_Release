@@ -236,3 +236,5 @@ stt:                                     # 本地语音转文字(Plan B):faster-
 anime:                                   # spica 看番:Phase 4 端到端验收通过,已启用。完整键见上方注释模板
   enabled: true
   player_command: vlc
+character:
+  dialog_display_language: zh

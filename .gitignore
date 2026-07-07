@@ -45,6 +45,10 @@ agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/*
 # P0b resolved-config baselines (machine-local paths + hashed secrets)
 data/config_migration/
 
+# Anime-watch local runtime state / credentials
+data/cookies.txt
+data/anime/
+
 # Local-runtime build artifacts (LOCAL_RUNTIME_PLAN §7.3): ONNX/TRT engines are
 # large + non-portable (engine != cross-GPU/OS); parity reports + benchmarks are
 # machine-local. Ship the build system, not the artifacts -- target machine compiles.

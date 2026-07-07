@@ -30,6 +30,7 @@
 #   profile_override: null       # env SPICA_CHARACTER_PROFILE
 #   skill_dir: null              # env SPICA_SKILL_DIR
 #   package_dir: null
+#   dialog_display_language: ja  # 对话框显示语言(仅显示): ja=日语原文 / zh=逐句⟦中文⟧字幕; 语音永远日语。yaml-only,无 env (铁律 #4)
 
 # stream:
 #   play_unit_min_chars: 18      # env PLAY_UNIT_MIN_CHARS

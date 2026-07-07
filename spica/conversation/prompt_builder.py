@@ -12,7 +12,10 @@ from spica.conversation.character_loader import (
 from spica.conversation.time_context import format_local_time_for_prompt
 
 
-SYSTEM_PROMPT_TEMPLATE = """
+# Split in two so the bilingual-display rule can be inserted between rules and
+# format without string surgery; joined back with "\n\n" they are byte-identical
+# to the historical single template (pinned by test_prompt_builder).
+_PROMPT_RULES = """
 你是 {{char}} 的日语语音聊天 agent。
 你的目标：
 1. 先理解用户意图，再判断是否需要调用工具。
@@ -24,7 +27,9 @@ SYSTEM_PROMPT_TEMPLATE = """
 7. 最终输出必须是 JSON 对象，不要使用 Markdown，不要额外输出说明。
 8. 当前对话对象固定是{{user}}。不要把{{user}}当成陌生”用户”，也不要让长期记忆覆盖角色卡或{{user}}的身份。
 9. [CURRENT_MESSAGE_TIME] 是当前这条用户消息进入 agent 时的本地显示时间。它只用于理解时间顺序、作息、计划、回忆和上下文中的时间指代；不要机械复述，也不要把它当成用户主动说出的内容。不要基于某个具体词写死回复规则。
+""".strip()
 
+_PROMPT_FORMAT = """
 JSON 格式：
 {
   "answer": "日语回答文本",
@@ -39,13 +44,26 @@ JSON 格式：
 - surprised：惊讶、疑问、意外、反问。
 """.strip()
 
+SYSTEM_PROMPT_TEMPLATE = _PROMPT_RULES + "\n\n" + _PROMPT_FORMAT
+
+# Display-only bilingual mode (character.dialog_display_language == "zh"): the
+# dialog box shows the ⟦中文⟧ side, TTS/memory keep the Japanese side. Voice is
+# ALWAYS Japanese -- this rule changes what is displayed, never what is spoken.
+BILINGUAL_DISPLAY_RULES = """
+10. 双语字幕模式：answer 里每一句日语台词后面必须紧跟这句台词的中文翻译，中文翻译用 ⟦⟧ 括起来，例如："おはよう。⟦早上好。⟧今日は何する？⟦今天做什么？⟧"。⟦⟧ 里只放中文翻译，语气贴合台词，不加解释或注音；日语台词本身仍遵守上面所有规则。第 5 条的 500 字符上限只统计日语台词，不含 ⟦⟧ 内的中文。如果按指示回答 NO_COMMENT，则只输出 NO_COMMENT，不加 ⟦⟧ 翻译。
+""".strip()
+
 
 def build_system_prompt(
     interlocutor_name: str | None = None,
     character_name: str = DEFAULT_CHARACTER_NAME,
+    dialog_display_language: str = "ja",
 ) -> str:
+    template = SYSTEM_PROMPT_TEMPLATE
+    if dialog_display_language == "zh":
+        template = "\n\n".join([_PROMPT_RULES, BILINGUAL_DISPLAY_RULES, _PROMPT_FORMAT])
     return render_character_template(
-        SYSTEM_PROMPT_TEMPLATE,
+        template,
         char=character_name or DEFAULT_CHARACTER_NAME,
         user=normalize_interlocutor_name(interlocutor_name),
     )
@@ -141,13 +159,18 @@ def build_spica_prompt(
     interlocutor_name: str = DEFAULT_INTERLOCUTOR_NAME,
     character_name: str = DEFAULT_CHARACTER_NAME,
     user_local_time: dict[str, Any] | None = None,
+    dialog_display_language: str = "ja",
 ) -> str:
     name = normalize_interlocutor_name(interlocutor_name)
     char = character_name or DEFAULT_CHARACTER_NAME
     return "\n\n".join(
         [
             "[SYSTEM]",
-            build_system_prompt(name, character_name=char),
+            build_system_prompt(
+                name,
+                character_name=char,
+                dialog_display_language=dialog_display_language,
+            ),
             "[CHARACTER_PROFILE]",
             character_profile or DEFAULT_CHARACTER_PROFILE,
             "[INTERLOCUTOR_PROFILE]",

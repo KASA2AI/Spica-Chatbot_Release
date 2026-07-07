@@ -58,6 +58,14 @@ class CharacterConfig(BaseModel):
     # builder's DEFAULT_CHARACTER_PROFILE / DEFAULT_CHARACTER_NAME fallback.
     character_profile: str | None = None
     character_name: str | None = None
+    # Dialog-box DISPLAY language -- display only, NEVER the spoken language
+    # (the voice always stays Japanese; TTS/memory/events keep the Japanese
+    # side). "ja" (default): the dialog box shows the spoken Japanese line,
+    # byte-identical to the pre-switch behaviour. "zh": the prompt asks for an
+    # inline ⟦中文⟧ translation after every Japanese sentence and the dialog box
+    # displays that translation instead. yaml-only knob: NO env name (铁律 #4 --
+    # nothing added to env_roster). A typo fails loud at startup (Literal).
+    dialog_display_language: Literal["ja", "zh"] = "ja"
 
 
 class StreamConfig(BaseModel):

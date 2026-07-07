@@ -192,6 +192,7 @@ class TurnDeps:
                 character_id=cfg.get("character_id"),
                 character_profile=cfg.get("character_profile"),
                 character_name=cfg.get("character_name"),
+                dialog_display_language=cfg.get("dialog_display_language") or "ja",
             ),
             stream=StreamConfig(
                 play_unit_min_chars=int(cfg.get("play_unit_min_chars") or 18),

@@ -33,7 +33,11 @@ from spica.runtime.stages import (
 )
 from spica.conversation.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from spica.runtime.services import AgentServices
-from spica.conversation.text_normalizer import build_tts_text, normalize_square_brackets_for_speech
+from spica.conversation.text_normalizer import (
+    build_tts_text,
+    normalize_square_brackets_for_speech,
+    split_dialog_translation,
+)
 from common.timing import now_ms
 from spica.runtime.context import StreamedAnswer, TurnContext, is_turn_cancelled
 from spica.runtime.deps import TurnDeps
@@ -123,6 +127,13 @@ def _produce_stream_events(
         observer = DefaultTurnObserver(ctx.timing, logger=services.logger)
         jobs = ThreadJobRunner() if owns_exec else deps.jobs
         deps = replace(deps, observer=observer, jobs=jobs)
+        # Display-only bilingual mode gate (dialog_display_language == "zh").
+        # Resolved ONCE here so every closure below reads the same value. False
+        # (default "ja") means NOT ONE ⟦⟧ code path runs -- submit_unit, the
+        # sentinel check, the splitters, and the terminal parse all take their
+        # original branch, so a plain answer that happens to contain a literal
+        # ⟦abc⟧ stays byte-identical (display/tts/memory unchanged).
+        bilingual_dialog = str(deps.config.character.dialog_display_language or "ja") == "zh"
         ready_futures: list[concurrent.futures.Future[Any]] = []
         # C1 ordered release: finalize workers push (index, payload) onto this
         # INTERNAL queue; only the producer thread drains it through the Sequencer
@@ -167,7 +178,23 @@ def _produce_stream_events(
                     output_queue.put({"event": "unit_ready", "data": ready_event})
 
         def submit_unit(display_text: str) -> None:
-            display_text = normalize_square_brackets_for_speech((display_text or "").strip())
+            # Bilingual display (bilingual_dialog, i.e. dialog_display_language ==
+            # "zh"): a unit arrives as 日语⟦中文⟧ pairs. The Japanese side keeps
+            # EVERY internal role (normalize, TTS, emotion guess, visual
+            # classifier, created_units); the ⟦⟧ side only replaces display_text
+            # in the outgoing event payloads. In ja mode the split is SKIPPED
+            # entirely, so a literal ⟦abc⟧ in a plain answer is never touched.
+            subtitle_text = ""
+            if bilingual_dialog:
+                spoken_text, subtitle_text = split_dialog_translation((display_text or "").strip())
+                if not spoken_text:
+                    # Degenerate all-⟦中文⟧ unit (the model broke the pair
+                    # format): the translation becomes the spoken+displayed side
+                    # so the unit still plays instead of being silently dropped.
+                    spoken_text, subtitle_text = subtitle_text, ""
+                display_text = normalize_square_brackets_for_speech(spoken_text)
+            else:
+                display_text = normalize_square_brackets_for_speech((display_text or "").strip())
             if not display_text:
                 return
 
@@ -192,6 +219,7 @@ def _produce_stream_events(
             unit = {
                 "index": index,
                 "display_text": display_text,
+                "subtitle_text": subtitle_text,
                 "tts_text": tts_text,
                 "emotion": emotion,
                 "previous_units": previous_units,
@@ -202,7 +230,7 @@ def _produce_stream_events(
                 "unit_text_ready",
                 {
                     "index": index,
-                    "display_text": display_text,
+                    "display_text": subtitle_text or display_text,
                     "tts_text": tts_text,
                     "emotion": emotion,
                     "timing": {
@@ -276,9 +304,12 @@ def _produce_stream_events(
         observer.mark("prompt_input_chars", len(str(prompt_input or "")))
 
         prompt_for_stream, prefetched = prepare_prompt_for_streaming(ctx, services, put_status, deps)
+        # bilingual_dialog was resolved once at the top; False (default "ja")
+        # keeps every splitter path byte-identical, "zh" treats ⟦中文⟧ as atomic.
         splitter = PlayUnitSplitter(
             min_chars=deps.config.stream.play_unit_min_chars,
             max_chars=deps.config.stream.play_unit_max_chars,
+            bilingual_brackets=bilingual_dialog,
         )
         extractor = JsonAnswerExtractor()
         raw_model_parts: list[str] = []
@@ -303,7 +334,16 @@ def _produce_stream_events(
             answer.raw_model_output = "".join(raw_model_parts)
             answer_delta = extractor.feed(answer.raw_model_output)
             if hold_for_sentinel:
-                if may_become_no_comment(extractor.answer):
+                # Sentinel-compat is judged on the SPOKEN (Japanese) side ONLY in
+                # zh mode: a model that appends ⟦…⟧ to NO_COMMENT must not release
+                # the hold early. In ja mode the raw extractor answer is checked
+                # verbatim (no split), byte-identical to pre-bilingual behaviour.
+                sentinel_probe = (
+                    split_dialog_translation(extractor.answer)[0]
+                    if bilingual_dialog
+                    else extractor.answer
+                )
+                if may_become_no_comment(sentinel_probe):
                     return  # withhold: the answer may still be the sentinel
                 hold_for_sentinel = False
                 answer_delta = extractor.answer  # diverged: release everything withheld
@@ -328,6 +368,7 @@ def _produce_stream_events(
             splitter = PlayUnitSplitter(
                 min_chars=deps.config.stream.play_unit_min_chars,
                 max_chars=deps.config.stream.play_unit_max_chars,
+                bilingual_brackets=bilingual_dialog,
             )
 
         if isinstance(prefetched, str):
@@ -372,7 +413,16 @@ def _produce_stream_events(
 
         answer.raw_model_output = "".join(raw_model_parts)
         answer.parsed_reply = parse_model_reply(answer.raw_model_output or "")
-        answer.answer = normalize_square_brackets_for_speech(answer.parsed_reply["answer"])
+        # ja mode: the terminal answer is the normalized text verbatim (no split),
+        # byte-identical to pre-bilingual behaviour even if it contains a literal
+        # ⟦abc⟧. zh mode: keep the SPOKEN (Japanese) side only, so recent/long-term
+        # memory and the done event stay pure Japanese.
+        normalized_answer = normalize_square_brackets_for_speech(answer.parsed_reply["answer"])
+        if bilingual_dialog:
+            spoken_answer, subtitle_answer = split_dialog_translation(normalized_answer)
+            answer.answer = spoken_answer or subtitle_answer or normalized_answer
+        else:
+            answer.answer = normalized_answer
         answer.parsed_reply["answer"] = answer.answer
         answer.emotion = normalize_emotion(ctx.request.emotion_override or answer.parsed_reply["emotion"])
         # P5 (D-P5-5): a system turn that answered the NO_COMMENT sentinel is
@@ -386,11 +436,17 @@ def _produce_stream_events(
             answer.parsed_reply["answer"] = NO_COMMENT_SENTINEL
             ctx.metadata["system_turn_silent"] = True
         if not system_silent and not created_units and answer.answer:
+            # The no-units fallback re-feeds the NORMALIZED answer: in zh mode it
+            # still carries the ⟦⟧ pairs so the rebuilt units get subtitles
+            # through submit_unit (v1 has no done-event subtitle channel --
+            # DoneEvent contract untouched); in ja mode it equals answer.answer,
+            # byte-identical to the original fallback feed.
             fallback_splitter = PlayUnitSplitter(
                 min_chars=splitter.min_chars,
                 max_chars=splitter.max_chars,
+                bilingual_brackets=bilingual_dialog,
             )
-            for unit_text in fallback_splitter.feed(answer.answer) + fallback_splitter.flush():
+            for unit_text in fallback_splitter.feed(normalized_answer) + fallback_splitter.flush():
                 submit_unit(unit_text)
 
         if not system_silent and not is_turn_cancelled(ctx.request):
@@ -505,7 +561,7 @@ def _finalize_unit(
     )
     data = {
         "index": unit["index"],
-        "display_text": unit["display_text"],
+        "display_text": unit.get("subtitle_text") or unit["display_text"],
         "tts_text": unit["tts_text"],
         "emotion": unit["emotion"],
         "visual": visual,

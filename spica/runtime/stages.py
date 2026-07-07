@@ -288,6 +288,7 @@ def build_prompt_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
         interlocutor_name=str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME),
         character_name=str(deps.config.character.character_name or DEFAULT_CHARACTER_NAME),
         user_local_time=ctx.user_local_time if ctx.request.include_user_time_context else None,
+        dialog_display_language=str(deps.config.character.dialog_display_language or "ja"),
     )
     if ctx.screen_observation:
         prompt_input = _inject_screen_observation(prompt_input, ctx.screen_observation)

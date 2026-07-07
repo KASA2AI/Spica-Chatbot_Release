@@ -6,6 +6,43 @@ import re
 BRACKET_SENTENCE_BOUNDARIES = set("。！？!?…")
 BRACKET_PAUSE_MARKS = set("、，,；;：:")
 
+# Display-only bilingual dialog markers (character.dialog_display_language ==
+# "zh"): the model appends a ⟦中文⟧ translation after each Japanese sentence.
+# The Japanese side stays the spoken/memory text; the ⟦⟧ side is display-only.
+DIALOG_TRANSLATION_OPEN = "⟦"
+DIALOG_TRANSLATION_CLOSE = "⟧"
+
+
+def split_dialog_translation(text: str) -> tuple[str, str]:
+    """Split ``日本語。⟦中文。⟧`` pairs into (spoken_japanese, chinese_subtitle).
+
+    Text without ``⟦`` is returned untouched as ``(text, "")`` -- the ja-mode
+    byte-identity short-circuit. An unclosed ``⟦`` (stream cut mid-translation)
+    treats the rest as translation; a stray ``⟧`` is dropped from the spoken side.
+    """
+    source = text or ""
+    if DIALOG_TRANSLATION_OPEN not in source:
+        return source, ""
+    spoken_parts: list[str] = []
+    subtitle_parts: list[str] = []
+    index = 0
+    while index < len(source):
+        open_at = source.find(DIALOG_TRANSLATION_OPEN, index)
+        if open_at < 0:
+            spoken_parts.append(source[index:])
+            break
+        spoken_parts.append(source[index:open_at])
+        close_at = source.find(DIALOG_TRANSLATION_CLOSE, open_at + 1)
+        if close_at < 0:
+            subtitle_parts.append(source[open_at + 1:])
+            break
+        subtitle_parts.append(source[open_at + 1:close_at])
+        index = close_at + 1
+    spoken = "".join(spoken_parts).replace(DIALOG_TRANSLATION_CLOSE, "")
+    spoken = re.sub(r"\s+", " ", spoken).strip()
+    subtitle = re.sub(r"\s+", " ", "".join(subtitle_parts)).strip()
+    return spoken, subtitle
+
 
 def normalize_square_brackets_for_speech(text: str) -> str:
     source = text or ""

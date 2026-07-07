@@ -13,8 +13,17 @@ from __future__ import annotations
 
 import re
 
+from spica.conversation.text_normalizer import (
+    DIALOG_TRANSLATION_CLOSE,
+    DIALOG_TRANSLATION_OPEN,
+)
+
 _TERMINATORS = set("。！？!?")
 _CLOSERS = set("」』）)]”’\"'")
+# One ⟦中文⟧ translation span (unclosed tail included) -- bilingual mode only.
+_TRANSLATION_SPAN_RE = re.compile(
+    f"{DIALOG_TRANSLATION_OPEN}[^{DIALOG_TRANSLATION_CLOSE}]*{DIALOG_TRANSLATION_CLOSE}?"
+)
 
 
 class JsonAnswerExtractor:
@@ -75,9 +84,20 @@ class JsonAnswerExtractor:
 
 
 class PlayUnitSplitter:
-    def __init__(self, min_chars: int = 18, max_chars: int = 96) -> None:
+    def __init__(
+        self,
+        min_chars: int = 18,
+        max_chars: int = 96,
+        bilingual_brackets: bool = False,
+    ) -> None:
         self.min_chars = max(1, int(min_chars))
         self.max_chars = max(self.min_chars, int(max_chars))
+        # Bilingual display mode (character.dialog_display_language == "zh"):
+        # a ⟦中文⟧ translation follows each Japanese sentence. When True,
+        # terminators inside ⟦⟧ never cut, a ⟦⟧ right after a terminator stays
+        # attached to that sentence, and unit sizing counts the Japanese side
+        # only. When False (default) every path below is the original code.
+        self.bilingual_brackets = bool(bilingual_brackets)
         self.buffer = ""
         self.current = ""
         self.completed_sentence_count = 0
@@ -104,6 +124,8 @@ class PlayUnitSplitter:
         return [unit for unit in units if unit]
 
     def _take_complete_sentences(self) -> list[str]:
+        if self.bilingual_brackets:
+            return self._take_complete_bilingual_sentences()
         sentences: list[str] = []
         index = 0
         while index < len(self.buffer):
@@ -121,15 +143,65 @@ class PlayUnitSplitter:
             index = 0
         return sentences
 
+    def _take_complete_bilingual_sentences(self) -> list[str]:
+        # Bilingual variant: a terminator inside ⟦⟧ never ends a sentence, and a
+        # ⟦translation⟧ right after the terminator belongs to that sentence. A
+        # sentence at the exact buffer end is NOT emitted yet -- the next delta
+        # may open its ⟦⟧ (flush() releases the tail at end of stream).
+        sentences: list[str] = []
+        index = 0
+        depth = 0
+        while index < len(self.buffer):
+            char = self.buffer[index]
+            if char == DIALOG_TRANSLATION_OPEN:
+                depth += 1
+                index += 1
+                continue
+            if char == DIALOG_TRANSLATION_CLOSE:
+                depth = max(0, depth - 1)
+                index += 1
+                continue
+            if depth > 0 or char not in _TERMINATORS:
+                index += 1
+                continue
+
+            end = index + 1
+            while end < len(self.buffer) and self.buffer[end] in _CLOSERS:
+                end += 1
+            probe = end
+            while probe < len(self.buffer) and self.buffer[probe].isspace():
+                probe += 1
+            if probe >= len(self.buffer):
+                break  # a ⟦translation⟧ may still follow -- wait for more stream
+            if self.buffer[probe] == DIALOG_TRANSLATION_OPEN:
+                close = self.buffer.find(DIALOG_TRANSLATION_CLOSE, probe + 1)
+                if close < 0:
+                    break  # translation still streaming -- wait
+                end = close + 1
+            sentence = self._clean_text(self.buffer[:end])
+            if sentence:
+                sentences.append(sentence)
+            self.buffer = self.buffer[end:]
+            index = 0
+            depth = 0
+        return sentences
+
+    def _visible_len(self, text: str) -> int:
+        # Unit sizing counts the SPOKEN (Japanese) side only: ⟦中文⟧ spans are
+        # display-only and must not distort the min/max pacing tuned for TTS.
+        if not self.bilingual_brackets:
+            return len(text)
+        return len(_TRANSLATION_SPAN_RE.sub("", text or ""))
+
     def _consume_part(self, part: str, force: bool = False) -> list[str]:
         part = self._clean_text(part)
         if not part:
             return []
 
-        candidate_len = len(self.current) + len(part)
+        candidate_len = self._visible_len(self.current) + self._visible_len(part)
         if self.current and (
             candidate_len <= self.max_chars
-            or (len(self.current) < self.min_chars and candidate_len <= self.max_chars + self.min_chars)
+            or (self._visible_len(self.current) < self.min_chars and candidate_len <= self.max_chars + self.min_chars)
         ):
             self.current += part
         elif self.current:
@@ -147,13 +219,19 @@ class PlayUnitSplitter:
 
     def _can_emit(self, text: str) -> bool:
         compact = re.sub(r"\s+", "", text or "")
+        if self.bilingual_brackets:
+            compact = _TRANSLATION_SPAN_RE.sub("", compact)
         if len(compact) < self.min_chars:
             return False
         return compact not in {"もちろん。", "はい。", "ええ。", "そうですね。"}
 
     def _split_overlong(self, sentence: str) -> list[str]:
         sentence = self._clean_text(sentence)
-        if len(sentence) <= self.max_chars:
+        if self._visible_len(sentence) <= self.max_chars:
+            return [sentence]
+        if self.bilingual_brackets and DIALOG_TRANSLATION_OPEN in sentence:
+            # Keep the 日语⟦中文⟧ pair atomic: sub-splitting by pause marks would
+            # cut inside ⟦⟧. The TTS engine re-chunks internally anyway.
             return [sentence]
 
         parts = [

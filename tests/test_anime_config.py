@@ -26,9 +26,10 @@ def test_appconfig_has_anime_section():
     assert isinstance(AppConfig().anime, AnimeConfig)
 
 
-def test_resolved_config_anime_enabled_false():
-    # app.yaml ships anime.enabled: false -> resolves false (== default: zero diff)
-    assert ConfigManager().load().anime.enabled is False
+def test_resolved_config_anime_enabled_true():
+    # Phase 4 端到端验收通过后翻 true：app.yaml ships anime.enabled: true -> resolves
+    # true (deliberate non-default override; resolved-config diff = this one key).
+    assert ConfigManager().load().anime.enabled is True
 
 
 def test_phase4_worker_knobs_defaults():

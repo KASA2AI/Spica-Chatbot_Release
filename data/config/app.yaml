@@ -232,5 +232,5 @@ stt:                                     # 本地语音转文字(Plan B):faster-
   vad_filter: false
   warmup_on_startup: true                # 随 TTS 一起启动预热(模型只加载一次,绝不每次调用重载);false=首次说话懒加载
   download_root: null                    # null=HF 默认缓存;model 填本地目录时此项不用
-anime:                                   # spica 看番 (Phase 3):装配已就绪,默认关。完整键见上方注释模板
-  enabled: false
+anime:                                   # spica 看番:Phase 4 端到端验收通过,已启用。完整键见上方注释模板
+  enabled: true

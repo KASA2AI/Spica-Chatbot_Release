@@ -1,0 +1,65 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.env
+*.env
+xiaosan.env
+
+.DS_Store
+
+# Local scratch / debug scripts
+temp.py
+# Scratch dir (ad-hoc test inputs / OCR benchmark frames -- never committed)
+temp/
+
+# IDE / tooling caches
+.idea/
+.pytest_cache/
+
+# Runtime outputs (generated voice + song cache)
+static/
+
+# Local SQLite memory DB
+spica_data/*.sqlite3
+spica_data/*.sqlite3-*
+
+# Large local character assets (binary); role-card text under Spica_skill stays tracked
+spica_data/diffs/
+spica_data/voice/
+spica_data/output_wav_test/
+
+# Local faster-whisper model weights (1.6GB binary; download separately, not in repo)
+spica_data/models/faster-whisper-large-v3-turbo/model.bin
+
+# Per-run debug artifacts (stdout dumps / timing / crash logs)
+spica_data/run_*.out
+spica_data/timing_*.log
+spica_data/timing_*.crash.txt
+
+# Upstream engines / vendored deps (accessed only via wrappers)
+agent_tools/function_tools/song/Applio/
+agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/*
+!agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/.gitkeep
+
+# P0b resolved-config baselines (machine-local paths + hashed secrets)
+data/config_migration/
+
+# Anime-watch local runtime state / credentials
+data/cookies.txt
+data/anime/
+
+# Local-runtime build artifacts (LOCAL_RUNTIME_PLAN §7.3): ONNX/TRT engines are
+# large + non-portable (engine != cross-GPU/OS); parity reports + benchmarks are
+# machine-local. Ship the build system, not the artifacts -- target machine compiles.
+artifacts/onnx/
+artifacts/trt/
+artifacts/parity/
+artifacts/benchmarks/
+artifacts/tts_slim/
+artifacts/rvc_slim/
+*.engine
+*.plan
+*.timing.cache
+# ORT TensorRT EP subgraph dumps (trt_dump_subgraphs writes these to CWD during diagnostics)
+TensorrtExecutionProvider_*.onnx

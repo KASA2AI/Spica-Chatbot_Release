@@ -1,0 +1,45 @@
+# RVC / song voice-conversion runtime dependencies (RVC Isolation Step3.1).
+#
+# This is the numpy-2.x SIDE. It is for the RVC/separator worker env ONLY.
+# DO NOT install into the GPT-SoVITS / TTS env -- that env needs numpy<2 and this
+# would break it (audio-separator forces numpy>=2). See the conflict analysis in
+# docs/LOCAL_RUNTIME_RVC_ENV_REALITY.md and the spike in docs/LOCAL_RUNTIME_CLEAN_ENV_SPIKE.md.
+#
+# NOT Applio's full requirements.txt -- that pulls webui/training (gradio 5.x /
+# numpy 2.4.4 / transformers 5.x) the RVC INFERENCE path never imports. This list is
+# the empirically-measured inference + separation subset (clean env spica-clean-py311,
+# Python 3.11, RTX4090 / cu124) -- pip check CLEAN, RVC produced a wav, separator OK.
+#
+# torch trio is installed SEPARATELY (CUDA wheel index) BEFORE this file:
+#   pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 \
+#       --index-url https://download.pytorch.org/whl/cu124
+# Full steps + smoke tests: docs/LOCAL_RUNTIME_RVC_INSTALL.md
+
+# --- core numerics / audio (numpy 2.x: audio-separator requires >=2) ---
+numpy==2.4.6
+scipy==1.17.1
+librosa==0.10.2
+soundfile==0.13.1
+soxr==1.1.0
+
+# --- RVC inference (Applio core + rvc/{infer,lib}) ---
+transformers==4.50.0      # contentvec / hubert embedder loader
+faiss-cpu==1.14.2         # spica.index speaker retrieval
+torchcrepe==0.0.24
+torchfcpe==0.0.4
+onnxruntime-gpu==1.26.0
+python-dotenv==1.2.2      # Applio core.py module-level import
+noisereduce==3.0.3        # rvc/infer module-level import
+pedalboard==0.9.23        # rvc/infer module-level import
+psutil==7.2.2
+tensorboard==2.21.0       # pulled by core.py -> launch_tensorboard (module-level, unused at inference)
+wget==3.2                 # module-level in Applio tools
+beautifulsoup4==4.15.0    # module-level in Applio tools
+ffmpeg-python==0.2.0
+
+# --- vocal separation (song pre-step) ---
+audio-separator==0.44.2   # declares numpy>=2 -- this is WHY this env is numpy 2.x
+
+# NOTE pyncm (netease download) is intentionally NOT pinned here: it is not on the
+# common PyPI mirrors (USTC/Tsinghua) and is NOT in the RVC inference path. Install it
+# from pythonhosted only if the song-download step is needed.

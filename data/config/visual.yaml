@@ -1,0 +1,31 @@
+enabled: true
+diff_root: ../../spica_data/diffs
+rules_path: ../../spica_data/diffs/expression_hand_pose_rules.json
+background_path: ../../spica_data/diffs/preview_png.png
+costume_mode: random
+selected_costume: 校服spica
+split_punctuation: 。！？!?、，,；;…
+segments:
+  min_chars: 16
+  max_chars: 90
+  max_units: 2
+  merge_short_segments: false
+selection:
+  enable_smoothing: false
+  min_hold_segments: 1
+  max_changes: 99
+character:
+  default_expression_id: '000'
+  default_hand_pose: normal
+  height_vh: 95
+  right_percent: 17
+  bottom_percent: 0
+dialog:
+  speaker: Spica
+  filter_path: ../../spica_data/diffs/ui/_mw_filter01.png
+  filter_tint: '#A7E8FF'
+  filter_opacity: 0.18
+  background: '#EAF8FF'
+  opacity: 0.72
+  text_color: '#183246'
+  accent_color: '#1997B5'

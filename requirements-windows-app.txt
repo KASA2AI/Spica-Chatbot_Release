@@ -1,0 +1,81 @@
+# Windows SINGLE app env -- TTS (GPT-SoVITS) + RVC/song layer (W4-b follow-on).
+# The top layer on top of requirements-windows-base.txt + requirements-windows-heavy.txt,
+# reproducing the production Linux `gptsovits` env in ONE Windows env (numpy<2).
+#
+# INSTALL with the constraints lock so numpy stays 1.26.4 and transitives match
+# gptsovits (order matters -- torch trio + base + heavy FIRST; see
+# docs/windows_heavy_install.md §3):
+#
+#   python -m pip install -c constraints-windows-app.txt -r requirements-windows-app.txt
+#   python -m pip install -c constraints-windows-app.txt --no-deps audio-separator==0.44.2
+#
+# Two Windows-specific substitutions vs the Linux env (both drop-in, same import name):
+#   - pyopenjtalk  -> pyopenjtalk-plus (Linux 0.4.1 has NO Windows wheel; the -plus
+#                     fork ships a cp311 win_amd64 wheel and imports as `pyopenjtalk`).
+#   - audio-separator: installed SEPARATELY --no-deps (it declares numpy>=2, metadata
+#                     only -- runtime is green at 1.26.4, as the gptsovits env proves).
+#
+# Versions are the gptsovits set; the constraints lock re-pins them + every transitive.
+# DRAFT until the Windows single-env install validates C/G (docs/windows_w4b_smoke.md).
+
+# --- GPT-SoVITS text frontend + audio core ---
+soundfile==0.13.1
+librosa==0.10.2
+numba==0.65.1
+scipy==1.17.1
+av==17.0.1
+ffmpeg-python==0.2.0
+noisereduce==3.0.3
+pytorch-lightning==2.6.4
+# text frontend: Chinese g2p + segmentation + language split
+jieba==0.42.1
+pypinyin==0.55.0
+cn2an==0.5.24
+g2p-en==2.1.0
+wordsegment==1.3.1
+split-lang==2.1.1
+fast-langdetect==1.0.1
+OpenCC==1.3.1
+# Japanese g2p -- Windows fork of pyopenjtalk (imports as `pyopenjtalk`)
+pyopenjtalk-plus==0.4.1.post8
+# vendored inference_webui.py top-level-imports gradio even headless (known smell)
+gradio==4.44.1
+
+# --- vendored-code hard deps the top-level list alone did NOT pull ---
+# The W4-b §6.3 runbook smoke found these: the vendored GPT-SoVITS / Applio trees
+# and the --no-deps audio-separator `import` them, but they are not transitive
+# deps of anything listed above -> they must be listed explicitly (all pinned in
+# constraints-windows-app.txt from the gptsovits freeze). Do NOT drop these --
+# without them the TTS (C) / RVC (G) real-machine synth fails at import.
+# GPT-SoVITS (f5_tts / inference_webui / text frontend):
+x-transformers==2.19.6
+rotary-embedding-torch==0.8.9
+einx==0.4.3
+ml_dtypes==0.5.4
+peft==0.19.1
+jaconv==0.5.0
+# jieba_fast: tone_sandhi.py does `import jieba_fast` (hard, no fallback). It is a
+# Cython C-extension with NO win_amd64 wheel on PyPI -> Windows builds it from the
+# sdist and REQUIRES a C compiler (MSVC Build Tools). See docs/windows_heavy_install.md §3.
+jieba_fast==0.53
+# Applio (RVC core.py -> tensorboard/model_download):
+tensorboard==2.20.0
+beautifulsoup4==4.14.3
+wget==3.2
+# audio-separator (installed --no-deps below) imports these directly:
+onnx==1.21.0
+onnx2torch==1.5.15
+
+# --- RVC / song (same env; worker_python stays None) ---
+faiss-cpu==1.14.2
+torchcrepe==0.0.24
+torchfcpe==0.0.4
+pedalboard==0.9.23
+soxr==1.1.0
+# audio-separator==0.44.2  -> installed SEPARATELY --no-deps (see header)
+# netease search/download for sing_song (song/netease.py hard-imports pyncm). NOT
+# on any pip index (pypi /simple/ 404) -> a direct pythonhosted wheel URL, which a
+# requirements file allows (constraints does not, so it was stripped there). Same
+# 1.8.1 the gptsovits env runs; without it sing_song's song search fails on a
+# clean Windows env (W4-b §6.3 finding #8).
+pyncm @ https://files.pythonhosted.org/packages/58/f4/05d7a0116bd70dcef0f7214c0e9ee6a50a124525eaefc5c2bb0c5085f0b7/pyncm-1.8.1-py3-none-any.whl#sha256=839f9f0e534d4892b7b9ad0378f13c4595f900653e11f00d758f1aed957c4374

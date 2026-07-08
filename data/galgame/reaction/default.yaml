@@ -1,0 +1,32 @@
+# P5 剧情反应系统 -- 基础词表（数据文件，非配置载体：不进 app.yaml、不走 manager）。
+# 语言跟随游戏文本（LimeLight 中文）。per-game 覆盖：同目录 <game_id>.yaml，
+# 同名 category 整体替换、新 category 追加、signals 按键合并（D-P5-9）。
+#
+# categories: 命中任一词（substring，匹配前做全半角/空白 normalize）记一次该类
+#   weight，同类多词命中不叠加。
+# signals: 权重在此（数据驱动），触发条件钉在代码里（reaction.py）：
+#   choice_pending        -- beat 因选项检测切分（FSM 状态信号，非文本正则）
+#   exclamation_density   -- beat 内强标点（！？…）≥ 2 个
+#   speaker_swarm         -- beat 内具名说话人 ≥ 3 人
+#
+# 调参入口：步4 用 scripts/reaction_score_report.py 的真机分数分布对照三档阈值
+# （low 5 / normal 4 / high 3，见 reaction.py REACTION_MODE_TABLE）调整 weight 或词表。
+
+categories:
+  twist:        # 反转/揭露/重大变故 -- 最高料
+    weight: 4
+    words: [其实, 真相, 骗了, 骗人, 秘密, 居然, 竟然, 没想到, 原来是, 失忆, 消失了, 死了]
+  romance:      # 恋爱高光
+    weight: 3
+    words: [喜欢你, 最喜欢, 告白, 接吻, 亲了, 抱住, 牵手, 恋人, 心跳, 脸红, 约会]
+  tension:      # 紧张/冲突/泪点
+    weight: 3
+    words: [救命, 危险, 快逃, 住手, 求你, 眼泪, 哭了, 对不起, 原谅, 害怕]
+  comedy:       # 吐槽点/搞笑
+    weight: 2
+    words: [笨蛋, 白痴, 变态, 什么鬼, 搞什么, 干嘛啊, 莫名其妙, 想入非非]
+
+signals:
+  choice_pending: 3
+  exclamation_density: 1
+  speaker_swarm: 1

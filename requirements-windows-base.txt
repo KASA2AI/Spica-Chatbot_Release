@@ -1,0 +1,51 @@
+# Windows base environment for Spica (W2-a bootstrap, extended by W3 voice deps).
+# Target: conda env `spica-win` (python=3.11) on the Windows acceptance machine.
+# Verify with: python scripts/windows/check_imports.py
+#
+# Deliberately NOT in this file:
+#   - torch / CUDA stacks / onnxruntime-gpu / TensorRT  -> W4 (heavy runtimes)
+#   - pywin32 / any Win32 API packages                  -> not needed (W2 locator/launcher is ctypes-only)
+#   - upstream "webrtcvad"                              -> never: it ships no cp311 win_amd64 wheel
+#     (W3-a probe); use the webrtcvad-wheels fork listed below -- the import
+#     module is still `webrtcvad`.
+#
+# Sections: REQUIRED must all import green (check_imports gate). Since W3,
+# PyAudio and webrtcvad-wheels are REQUIRED (hard deps of the Windows voice
+# loop); the PREFLIGHT section is currently empty.
+
+# --- REQUIRED ---
+PySide6>=6.6,<7
+openai>=2,<3
+httpx>=0.27,<1
+pydantic>=2.7,<3
+PyYAML>=6,<7
+python-dotenv>=1,<2
+# numpy<2: forward constraint from vendored GPT-SoVITS (W4 heavy runtime shares this env family).
+numpy>=1.24,<2
+Pillow>=10,<12
+mss>=9,<11
+rapidocr-onnxruntime>=1.4,<2
+# Explicit CPU onnxruntime (W2-a ruling: do not rely on rapidocr-onnxruntime's
+# transitive pull; check_imports prints get_available_providers() from it).
+# GPU execution providers are W4 scope.
+onnxruntime>=1.17,<2
+faster-whisper>=1.1,<2
+# W3: microphone capture is now a hard dependency of the Windows voice loop
+# (promoted from PREFLIGHT; validated on the real machine in W2-a as 0.2.14).
+PyAudio>=0.2.11,<0.3
+# W3: software VAD for the generic-mic recorder. MUST be the -wheels fork:
+# upstream "webrtcvad" has no cp311 win_amd64 wheel (W3-a probe evidence).
+webrtcvad-wheels>=2.0.14,<3
+# Anime-watch (看动漫) Python deps. `requests` is a DIRECT dep of the anime
+# source/torrent adapters (lazy-imported; also already pulled transitively by
+# huggingface_hub). `yt-dlp` is the bilibili downloader (invoked as a subprocess,
+# not imported): kept as a FLOOR not an exact pin -- bilibili's extractor breaks
+# monthly, so yt-dlp is a rolling upgrade (ANIME_WATCH_PLAN §12). Both are pure
+# Python (universal wheels). EXTERNAL tools the feature also needs on the machine
+# -- qBittorrent (WebUI), ffmpeg (yt-dlp stream merge), a player (VLC) -- are NOT
+# pip and are covered in docs/windows_heavy_install.md.
+requests>=2.32,<3
+yt-dlp>=2026.7
+
+# --- PREFLIGHT ---
+# (empty since W3 promoted PyAudio to REQUIRED)

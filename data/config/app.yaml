@@ -1,0 +1,240 @@
+# Spica typed app config (P0b step 3) -- the single app-level config carrier.
+#
+# Resolution order per value: env override > this file > built-in default
+# (see spica/config/manager.py + spica/config/schema.py). Every key below is
+# COMMENTED OUT and annotated with its built-in default: an all-comment file
+# parses to {} and resolves exactly like no file at all, so creating this
+# template changed nothing (Layer A snapshot gate: zero diff).
+#
+# Uncomment a key only to change it. Secrets NEVER go here (xiaosan.env only).
+# NOTE: the settings centre's update_config() rewrites this file via a full
+# model dump (comments are lost) -- a known Phase 3 mechanism, registered in
+# the P0b step-3 review.
+
+# llm:
+#   provider: openai_compatible
+#   model: gpt-4.1-mini          # env MODEL
+#   base_url: null               # env OPENAI_BASE_URL
+
+# memory:
+#   provider: sqlite
+#   recent_memory_turns: 3       # env RECENT_MEMORY_TURNS
+#   recent_context_limit: 3      # env RECENT_CONTEXT_LIMIT
+#   long_term_memory_limit: 5    # env LONG_TERM_MEMORY_LIMIT
+#   long_term_memory_budget_chars: 1200  # env LONG_TERM_MEMORY_BUDGET_CHARS
+#   recent_turn_char_limit: 360  # env RECENT_TURN_CHAR_LIMIT
+#   max_long_term_memories: 200  # env MAX_LONG_TERM_MEMORIES
+
+# character:
+#   interlocutor_name: null      # env SPICA_USER_NAME
+#   profile_override: null       # env SPICA_CHARACTER_PROFILE
+#   skill_dir: null              # env SPICA_SKILL_DIR
+#   package_dir: null
+#   dialog_display_language: ja  # 对话框显示语言(仅显示): ja=日语原文 / zh=逐句⟦中文⟧字幕; 语音永远日语。yaml-only,无 env (铁律 #4)
+
+# stream:
+#   play_unit_min_chars: 18      # env PLAY_UNIT_MIN_CHARS
+#   play_unit_max_chars: 96      # env PLAY_UNIT_MAX_CHARS
+#   visual_stream_workers: 2     # env VISUAL_STREAM_WORKERS
+
+# galgame:                                # 陪玩调参;env 无名,只此文件 (铁律 #4)。解开某键放进下方 live galgame 块即生效
+#   summary_model: null
+#   summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
+#   ocr_interval_seconds: 0.2           # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
+#   prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
+#   game_buffer_tail_limit: 40            # 默认 0(不截断):[CURRENT_GAME_BUFFER] 只保留最近 N 行未总结台词,防 prompt 随时长无限膨胀(更早的靠摘要兜底);只截 prompt 视图,总结器仍读全量
+#   reaction_reply_char_limit: 200         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")
+#   reaction_budget_window_seconds: 150   # 默认 600:吐槽频率统计滑窗(秒)
+#   reaction_excerpt_line_char_limit: 80  # 默认 60:吐槽 directive 剧情摘录单行字数上限
+#   reaction_excerpt_total_char_limit: 300  # 默认 300:剧情摘录总字数上限
+#   play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
+#   # 吐槽三档表(做法X:整块保持注释=用代码内置表 REACTION_MODE_TABLE,Layer A 零diff;解开才接管)。
+#   #   reaction_mode 选哪档 → 哪档生效,另两档备查。改坏了照各行"# 默认"注释还原。
+#   # 出厂默认: low=5/1/180  normal=4/3/90  high=3/6/45   (min_score / max_per_window / cooldown_seconds)
+#   reaction_table:
+#     low:
+#       min_score: 5             # 默认 5
+#       max_per_window: 1        # 默认 1
+#       cooldown_seconds: 180    # 默认 180
+#     normal:
+#       min_score: 4             # 默认 4
+#       max_per_window: 3        # 默认 3
+#       cooldown_seconds: 90     # 默认 90
+#     high:
+#       min_score: 3             # 默认 3
+#       max_per_window: 6        # 默认 6
+#       cooldown_seconds: 45     # 默认 45
+
+# stt:                           # 本地语音转文字 (Plan B):faster-whisper 取代 Google STT。yaml-only 无 env (铁律 #4)
+#   backend: faster_whisper      # faster_whisper(默认本地)| google(旧回退,无超时会卡,仅显式选用)
+#   model: large-v3-turbo        # repo 名走 HF 缓存,或填本地目录路径(完全离线)
+#   device: cuda                 # cuda | cpu
+#   compute_type: float16        # float16(GPU)| int8(CPU)
+#   language: zh
+#   beam_size: 5
+#   vad_filter: false
+#   warmup_on_startup: true      # 随 TTS 启动预热(模型只加载一次);false=首次说话懒加载
+#   download_root: null          # null=HF 默认缓存;可指向预下载目录
+
+# screen:                        # legacy carrier: config/screen_vision_config.json
+#   enabled: true                # env SPICA_SCREEN_ENABLED
+#   provider: moondream_local    # env SPICA_SCREEN_PROVIDER
+#   model_id: vikhyatk/moondream2  # env SPICA_SCREEN_MODEL_ID
+#   revision: "2025-06-21"       # env SPICA_SCREEN_REVISION
+#   device: cuda                 # env SPICA_SCREEN_DEVICE
+#   dtype: bfloat16              # env SPICA_SCREEN_DTYPE
+#   max_side: 768                # env SPICA_SCREEN_MAX_SIDE (clamped 128..4096)
+#   reasoning: false             # env SPICA_SCREEN_REASONING
+#   preload: false               # env SPICA_SCREEN_PRELOAD
+#   ocr_enabled: true            # env SPICA_SCREEN_OCR_ENABLED
+#   ocr_engine: rapidocr         # env SPICA_SCREEN_OCR_ENGINE
+#   capture_format: png          # env SPICA_SCREEN_CAPTURE_FORMAT
+#   infer_timeout_sec: 30        # env SPICA_SCREEN_INFER_TIMEOUT_SEC
+#   log_timing: true             # env SPICA_SCREEN_LOG_TIMING
+#   debug_save_images: false     # env SPICA_SCREEN_DEBUG_SAVE
+
+# song:                          # legacy carrier: agent_tools/.../song/song_config.json
+#   # UNTYPED override dict, deep-merged over song/config.py DEFAULT_CONFIG
+#   # (search/download/separator/rvc.voices/mix -- see that file for defaults).
+#   search:
+#     limit: 20
+#     bitrate: 320000
+
+# plugins: []                    # legacy carrier: data/config/plugins.yaml
+#   # entries: "name" shorthand or {name: ..., enabled: true}
+
+# max_tool_rounds: 3             # env MAX_TOOL_ROUNDS
+
+# platform:                      # W1 平台开关 (yaml-only,无 env -- 铁律 #4)
+#   os: auto                     # auto | linux | windows (auto = 装配期按 sys.platform 折算)
+
+# anime:                         # spica 看番装配 (Phase 3, yaml-only 无 env)。secrets 走 xiaosan.env:
+#                                #   BILIBILI_COOKIE / QBITTORRENT_PASSWORD
+#   enabled: false               # 默认关;Phase 4 端到端过后才翻 true
+#   download_dir: static/generated_anime   # 默认;repo 根下 static/(gitignore),按番名分子目录 <anime>/<episode>。相对路径锚 repo 根
+#   player_command: vlc          # VLC 默认播放(AV1/HEVC/MKV 更稳);可填空串走 xdg-open / os.startfile
+#   bilibili_spaces: ["3493112693394137"]
+#   mikan_base_urls: ["https://mikanani.me"]
+#   quality: 1080p
+#   subtitle_preference: ["简繁", "简体"]
+#   source_timeout_seconds: 15
+#   resolve_budget_seconds: 45
+#   qbittorrent_url: http://127.0.0.1:8080
+#   qbittorrent_username: admin  # password 是 secret (QBITTORRENT_PASSWORD)
+#   auto_play_threshold_seconds: 300   # D5: 快下自动播阈值;超时/忙/陪玩中改播报
+#   qbittorrent_poll_seconds: 5        # 下载 worker 轮询间隔
+#   stall_timeout_minutes: 30          # 无进度判卡 -> 系统 turn 询问(不自动删/换源)
+#   ytdlp_format: "bv*[height<=1080]+ba/b[height<=1080]"
+#   cookies_file: data/cookies.txt     # yt-dlp cookies 文件(可缺省=匿名);相对路径按仓库根
+#   library_file: data/anime/library.json  # 已下载索引落盘(host 唯一写点);相对路径按仓库根
+#   # disk_limit_gb 归 Phase 5 磁盘提醒,暂不固化。
+
+# --- migrated by migrate_config_p0b ---
+screen:
+  enabled: true
+  provider: moondream_hf
+  model_id: vikhyatk/moondream2
+  revision: '2025-06-21'
+  device: cuda
+  dtype: bfloat16
+  max_side: 768
+  reasoning: false
+  preload: false
+  ocr_enabled: true
+  ocr_engine: rapidocr
+  capture_format: png
+  infer_timeout_sec: 30
+  log_timing: true
+  debug_save_images: false
+ocr:
+  provider: rapidocr_ort
+  fallback_provider: rapidocr
+song:
+  enabled: true
+  generated_root: static/generated_song
+  applio_root: artifacts/rvc_slim/base
+  search:
+    limit: 20
+    bitrate: 320000
+  separator:
+    model_filename: UVR-MDX-NET-Inst_HQ_3.onnx
+    output_format: WAV
+    swap_stems: true
+    extra_kwargs: {}
+  rvc:
+    voice_model: spica
+    voices:
+      spica:
+        model_path: artifacts/rvc_slim/characters/spica/model/spica_200e_57000s.pth
+        index_path: artifacts/rvc_slim/characters/spica/index/spica.index
+        f0_method: rmvpe
+        transpose: 0
+        index_rate: 0.75
+        protect: 0.33
+        device: cuda
+        volume_envelope: 1.0
+        split_audio: false
+        f0_autotune: false
+        f0_autotune_strength: 1.0
+        proposed_pitch: false
+        proposed_pitch_threshold: 155.0
+        clean_audio: false
+        clean_strength: 0.5
+        export_format: WAV
+        embedder_model: contentvec
+        embedder_model_custom: null
+        reference_audio_dir: spica_data/voice/happy/refs
+        sid: 0
+  mix:
+    instrumental_gain: 0.88
+    vocal_gain: 1.0
+    normalize_peak: 0.95
+    output_subtype: PCM_16
+plugins: []
+galgame:
+  reaction_mode: high                 # judge 已启用:normal -> worth≥7 才吐(离线验证=吐真戏)
+  summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结
+  ocr_interval_seconds: 0.6        # 默认 0.3:OCR 采样间隔(秒,"完成后等"模型)
+  prompt_context_recent_limit: 10        # 默认 5:注入 prompt 的 offline摘要/选项/陪玩beat 各取最近几条 (former _GAME_CONTEXT_RECENT_LIMIT)
+  game_buffer_tail_limit: 40            # 默认 0(不截断):[CURRENT_GAME_BUFFER] 只保留最近 N 行未总结台词,防 prompt 随时长无限膨胀(更早的靠摘要兜底);只截 prompt 视图,总结器仍读全量
+  reaction_reply_char_limit: 100         # 默认 40:吐槽回复字数上限(拼进 directive 的"不超过N个字")。200→100:更脆、TTS 短、busy_drop 大减(200 时 ~21% beat 因她还在说上一条被挤空)
+  reaction_budget_window_seconds: 600   # 默认 600:吐槽频率统计滑窗(秒)
+  reaction_excerpt_line_char_limit: 60 # 默认 60:吐槽 directive 剧情摘录单行字数上限
+  reaction_excerpt_total_char_limit: 300  # 默认 300:剧情摘录总字数上限
+  # -- P5 v2 LLM judge:已启用(两步:enabled + worth 标度 reaction_table;缺第二步会狂吐)。
+  #    judge 看场景窗口选"哪个 beat 值得吐"(不漏无词戏),离线已验证。judge 挂了自动回退词表打分(不沉默)。
+  reaction_judge_enabled: true
+  reaction_judge_model: null              # null -> 用主对话模型(config.llm 的 deepseek);换小模型在此填模型名
+  # ★第二步(不能漏):reaction_table 设成 worth 标度(judge 打 0-10 worth,不是词表权重和)。
+  #   reaction_mode 选哪档 → 哪档 min_score 生效(now normal=worth≥7)。max_per_window/cooldown 保持各档原默认。
+  #   注:judge 挂掉的 fallback 用代码内置词表标度表(5/4/3),不受这里影响(两套阈,刻意分开)。
+  reaction_table:
+
+    low:                                  # worth≥8:只吐最戏的(离线 ~4/h)
+      min_score: 8
+      max_per_window: 1
+      cooldown_seconds: 180
+    normal:                               # worth≥7:吐真戏(离线 ~28/h raw,budget 再砍)
+      min_score: 7
+      max_per_window: 3
+      cooldown_seconds: 90
+    high:                                 # worth≥6:较松(离线 ~67/h raw)
+      min_score: 6
+      max_per_window: 10                   # 6→10(方案A):dense 高潮少被预算上限砍
+      cooldown_seconds: 20                 # 45→20(方案A):一吐之后冷却短点,扎堆炸点少漏(judge 仍按 worth≥6 把关)
+  play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
+stt:                                     # 本地语音转文字(Plan B):faster-whisper 取代 Google STT(无网络/不卡死)。yaml-only 无 env(铁律 #4)
+  backend: faster_whisper                # faster_whisper(默认,本地)| google(旧回退,仍无超时会卡,仅显式选用)
+  model: spica_data/models/faster-whisper-large-v3-turbo  # 本地预下目录(完全离线);也可填 "large-v3-turbo" 走 HF 缓存
+  device: cuda
+  compute_type: float16                  # 显存约 2-3GB 常驻;CPU 可改 int8
+  language: zh
+  beam_size: 5
+  vad_filter: false
+  warmup_on_startup: true                # 随 TTS 一起启动预热(模型只加载一次,绝不每次调用重载);false=首次说话懒加载
+  download_root: null                    # null=HF 默认缓存;model 填本地目录时此项不用
+anime:                                   # spica 看番:Phase 4 端到端验收通过,已启用。完整键见上方注释模板
+  enabled: true
+  player_command: vlc
+character:
+  dialog_display_language: zh

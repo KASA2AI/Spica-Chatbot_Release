@@ -1,0 +1,55 @@
+# Windows HEAVY runtime deps for Spica (W4-b) -- the GPU stack for the SINGLE app
+# env (OCR/STT/TTS/screen -- and RVC/song too; see the single-env note below).
+# NOT part of requirements-windows-base.txt: base stays CPU-installable (W2-a/W3
+# semantics unchanged); this file upgrades the ONE heavy env (numpy<2 side).
+#
+# SINGLE ENV (mirrors the production Linux `gptsovits` env, numpy 1.26.4): the WHOLE
+# app -- including RVC/song -- runs in ONE conda env. `rvc/driver.py` defaults
+# `worker_python=None` -> the RVC worker uses the same interpreter, not a second env.
+# audio-separator declares numpy>=2 but that is METADATA ONLY: it imports + runs at
+# numpy 1.26.4 (pip-check RED / runtime GREEN, same class as the onnxruntime dist
+# name). The full pinned TTS+RVC dep set is derived from the Linux gptsovits env as
+# a follow-on manifest (numpy==1.26.4 HELD, numpy>=2 declarers installed --no-deps);
+# do NOT bare-`pip install` audio-separator / g2p_en here -- that bumps numpy to 2.x
+# and breaks GPT-SoVITS (the W4-b §6.3 smoke hit exactly this via g2p_en).
+#
+# Install ORDER matters (validated by W4-b gate 1 on the real machine, 2026-07-06):
+#
+#   1) swap the CPU onnxruntime for the GPU build (the two dists conflict):
+#        python -m pip uninstall -y onnxruntime
+#        python -m pip install -r requirements-windows-heavy.txt
+#   2) torch + torchaudio come from the cu124 index, NOT default PyPI (a bare
+#      `pip install torch` would fetch the wrong build) -- install SEPARATELY:
+#        python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+#
+# KNOWN pip-check inconsistency (accepted + recorded, W4-a §4.E / gate-1 §4):
+# faster-whisper and rapidocr-onnxruntime declare the "onnxruntime" DIST name;
+# after the GPU swap `pip check` reports it missing while runtime imports stay
+# green (the module is provided by onnxruntime-gpu). Do NOT "fix" it by
+# reinstalling the CPU package -- that would shadow the GPU EPs.
+#
+# tensorrt-cu12 install note: pypi.nvidia.com occasionally serves a transient
+# sha256 mismatch on the -libs sub-wheel (seen in W4-a) -- RETRY once before
+# treating a failure as real.
+#
+# numpy stays <2 in this env (GPT-SoVITS forward constraint); gate 1 verified the
+# stack below does not bump numpy 1.26.4.
+
+# --- GPU-EP core (gate-1 validated) ---
+onnxruntime-gpu==1.26.0
+tensorrt-cu12==10.16.1.11
+
+# --- screen / Moondream layer (item E, W4-b §6.3 smoke VERIFIED on CUDA) ---
+# transformers mirrors requirements-screen.txt's pin; accelerate (device_map) +
+# einops are the two extras moondream2 needs at from_pretrained that screen.txt
+# does not carry. All three hold numpy<2.
+transformers>=4.43,<=4.50
+accelerate
+einops
+
+# --- TTS / GPT-SoVITS + RVC/song layer (items C/G) -> follow-on manifest ---
+# NOT listed here: the audio + Japanese-g2p + RVC closure is deep and numpy-fragile
+# (unpinned it bumps numpy to 2.x). It is produced as ONE pinned single-env manifest
+# from the Linux gptsovits working env (numpy==1.26.4 held), tracked in
+# docs/windows_heavy_install.md. Until that lands, TTS真嗓 / song stay unverified on
+# Windows (STT/OCR/Moondream above are fully covered by this file).

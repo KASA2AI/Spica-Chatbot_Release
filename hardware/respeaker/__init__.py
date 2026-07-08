@@ -1,0 +1,2 @@
+"""ReSpeaker hardware integration package."""
+

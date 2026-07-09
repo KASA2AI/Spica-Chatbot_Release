@@ -115,7 +115,7 @@ test -d spica_data/diffs
 
 `artifacts/trt/` 不需要下载或上传；它是本机 TensorRT engine/timing cache，和显卡架构、CUDA/TensorRT/ONNXRuntime 版本相关，需要时会在本机自动生成。
 
-> 📦 **模型资产包下载地址：** [百度网盘](https://pan.baidu.com/s/1GKmnKMEtkQq_b1aSmdTqQw?pwd=m8ee)，提取码：`m8ee`
+> 📦 **模型资产包下载地址：** [百度网盘](https://pan.baidu.com/s/1EFq7t8Lxcy9kDNL7MzU1gg?pwd=nzjy)，提取码：`nzjy`
 
 ### 5. 外部程序（按需）
 

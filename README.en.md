@@ -99,7 +99,7 @@ test -d spica_data/diffs
 
 `artifacts/trt/` does not need to be downloaded or uploaded; it's a machine-local TensorRT engine/timing cache tied to your GPU architecture and CUDA/TensorRT/ONNXRuntime versions, regenerated locally when needed.
 
-> 📦 **Model asset pack download:** [Baidu Netdisk](https://pan.baidu.com/s/1GKmnKMEtkQq_b1aSmdTqQw?pwd=m8ee), extraction code: `m8ee`
+> 📦 **Model asset pack download:** [Baidu Netdisk](https://pan.baidu.com/s/1EFq7t8Lxcy9kDNL7MzU1gg?pwd=nzjy), extraction code: `nzjy`
 
 ### 5. External programs (as needed)
 

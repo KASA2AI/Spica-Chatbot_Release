@@ -99,7 +99,7 @@ test -d spica_data/diffs
 
 `artifacts/trt/` はダウンロード・アップロード不要です。GPU アーキテクチャや CUDA/TensorRT/ONNXRuntime のバージョンに依存するローカルの TensorRT エンジン/タイミングキャッシュで、必要なときにローカルで自動生成されます。
 
-> 📦 **モデルアセットパックのダウンロード：** [Baidu Netdisk](https://pan.baidu.com/s/1GKmnKMEtkQq_b1aSmdTqQw?pwd=m8ee)、抽出コード：`m8ee`
+> 📦 **モデルアセットパックのダウンロード：** [Baidu Netdisk](https://pan.baidu.com/s/1EFq7t8Lxcy9kDNL7MzU1gg?pwd=nzjy)、抽出コード：`nzjy`
 
 ### 5. 外部プログラム（必要に応じて）
 

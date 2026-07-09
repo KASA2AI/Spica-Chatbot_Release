@@ -69,14 +69,17 @@ pip install -r requirements-screen.txt
 
 > 语音合成 / 唱歌 用到较重的本地运行时，安装体量较大，建议在有 GPU 的机器上装。
 
-### 4. 下载模型与立绘（不在仓库里）
+### 4. 下载引擎包与模型（不在仓库里）
 
-模型权重和立绘差分体积较大，**不随代码仓库分发**，请单独下载：
+语音合成 / 唱歌引擎（GPT-SoVITS、RVC 的运行时代码 + 权重）体积大，和识别模型、立绘差分一起**都不随代码仓库分发**。请单独下载并解压到对应目录——**这几个包缺任何一个，对应功能就起不来**：
 
-| 内容 | 解压到 |
-| --- | --- |
-| 语音 / 识别模型包 | `spica_data/models/` |
-| Spica 立绘差分包 | `spica_data/diffs/` |
+| 内容 | 解压到 | 约大小 |
+| --- | --- | ---: |
+| 语音合成引擎 + Spica 声线（GPT-SoVITS slim） | `artifacts/tts_slim/` | ~1.4 GB |
+| 唱歌引擎 + Spica 歌声（RVC slim） | `artifacts/rvc_slim/` | ~620 MB |
+| 语音识别等模型 | `spica_data/models/` | ~1.6 GB |
+| TTS 参考音频 | `spica_data/voice/` | ~12 MB |
+| Spica 立绘差分 | `spica_data/diffs/` | ~720 MB |
 
 > 📦 **下载地址：** _（待填 —— 网盘 / Release 附件 / HuggingFace 链接）_
 

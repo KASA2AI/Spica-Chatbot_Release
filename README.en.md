@@ -53,14 +53,17 @@ pip install -r requirements-screen.txt
 
 > Voice synthesis / singing use a fairly heavy local runtime and take a lot of space to install — a machine with a GPU is recommended.
 
-### 4. Download models and avatar art (not in the repo)
+### 4. Download engines and models (not in the repo)
 
-Model weights and avatar variations are large and are **not shipped with the code repo** — download them separately:
+The voice-synthesis / singing engines (the GPT-SoVITS and RVC runtime code + weights) are large, and together with the recognition models and avatar art they are **not shipped with the code repo**. Download them separately and extract into the matching directories — **if any of these packs is missing, the corresponding feature won't start**:
 
-| Content | Extract to |
-| --- | --- |
-| Voice / recognition model pack | `spica_data/models/` |
-| Spica avatar variation pack | `spica_data/diffs/` |
+| Content | Extract to | ~Size |
+| --- | --- | ---: |
+| Voice-synthesis engine + Spica's voice (GPT-SoVITS slim) | `artifacts/tts_slim/` | ~1.4 GB |
+| Singing engine + Spica's singing voice (RVC slim) | `artifacts/rvc_slim/` | ~620 MB |
+| Speech-recognition & other models | `spica_data/models/` | ~1.6 GB |
+| TTS reference audio | `spica_data/voice/` | ~12 MB |
+| Spica avatar variations | `spica_data/diffs/` | ~720 MB |
 
 > 📦 **Download link:** _(to be filled — cloud drive / Release asset / HuggingFace)_
 

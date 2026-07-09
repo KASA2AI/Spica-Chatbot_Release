@@ -162,4 +162,8 @@ Spica 站在这些优秀开源项目之上：
 
 ## 📄 许可
 
-_（License 待定 —— 请补充。注意上述引用组件各自的许可证条款。）_
+本项目采用 **Spica 源码可见许可（Source-Available License）**——**源码可见但非开源**：允许你本地使用、修改、fork 用于贡献，但**未经书面许可，禁止再分发、商用、发布安装包 / 上架**。Spica 的角色、声线 / 歌声模型、立绘等资产仅供配合本项目使用。完整条款见 [LICENSE](LICENSE)。
+
+> 仓库内 vendored 的第三方组件（GPT-SoVITS / RVC / faster-whisper / RapidOCR / Moondream / yt-dlp 等）各自保留原许可，**不受本许可约束**——见「致谢」及各组件目录内的 LICENSE。
+>
+> 商用请联系 [www.acgkasa.me](https://www.acgkasa.me/)。

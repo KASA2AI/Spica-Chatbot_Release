@@ -1,0 +1,111 @@
+SPICA SOURCE-AVAILABLE LICENSE
+Version 1.0, effective 2026-07-09
+
+Copyright (c) 2026 KASA2AI (https://www.acgkasa.me). All rights reserved.
+
+This is a SOURCE-AVAILABLE license, NOT an open-source license. The source code is
+published so you can read it, run it locally, and contribute back — but it is not
+placed in the public domain, and its redistribution and commercial use are
+restricted as set out below.
+
+
+0. DEFINITIONS
+
+   "The Software" means the Spica project's own source code, configuration, and
+   character assets — including the Spica character design, the persona text, the
+   trained voice / singing models, and the character artwork ("立绘" / diffs) — as
+   distributed by the Licensor.
+
+   "Third-Party Components" means the separately-licensed software bundled with,
+   or downloaded for, the Software (for example GPT-SoVITS, Applio / RVC,
+   faster-whisper, RapidOCR, Moondream, yt-dlp, and any other component that
+   ships with its own LICENSE). Third-Party Components are NOT covered by this
+   license and remain governed by their own licenses.
+
+   "Licensor" means the copyright holder named above.
+
+
+1. GRANT OF LICENSE
+
+   Subject to your compliance with this license, the Licensor grants you a
+   non-exclusive, non-transferable, revocable license to:
+
+   (a) download and inspect the source code;
+   (b) compile and run the Software for personal, internal, or evaluation use;
+   (c) modify the source code for your own personal or internal use;
+   (d) create and maintain a public fork on a source-code collaboration platform
+       (e.g. GitHub) for the purpose of review and contributing changes back;
+   (e) submit proposed changes / pull requests to the official project.
+
+
+2. RESTRICTIONS
+
+   Without the Licensor's prior written permission, you may NOT:
+
+   (a) distribute, publish, sublicense, sell, rent, or otherwise provide the
+       Software to third parties, except for the narrow public-fork allowance in
+       Section 1(d);
+   (b) use the Software, in whole or in part, as or within a commercial product,
+       a paid or ad-supported service, or a marketplace / app-store listing;
+   (c) publish release builds, installers, or redistributable binaries of the
+       Software;
+   (d) present the Software (or a substantial part of it) as a separate,
+       independent project;
+   (e) remove or alter any copyright, license, or attribution notice;
+   (f) use the "Spica" name, the Spica character, or related branding for your own
+       products, or create a confusingly similar product;
+   (g) circumvent any license check or technical protection measure.
+
+
+3. CHARACTER AND VOICE ASSETS
+
+   The Spica character, persona, trained voice / singing models, and artwork are
+   provided for use WITH the Software only. Redistributing these assets on their
+   own, or using them to train, fine-tune, clone, or produce derivative voices,
+   characters, or content for distribution or commercial purposes, requires the
+   Licensor's prior written permission.
+
+
+4. THIRD-PARTY COMPONENTS
+
+   Third-Party Components remain under their own licenses; nothing in this license
+   grants or removes any right beyond what those licenses provide. You must comply
+   with each Third-Party Component's license. See the acknowledgements in the
+   README and the LICENSE file shipped inside each component's directory.
+
+
+5. CONTRIBUTIONS
+
+   By submitting a contribution to the official project, you grant the Licensor a
+   perpetual, worldwide, royalty-free, irrevocable license to use, reproduce,
+   modify, and distribute your contribution as part of the Software.
+
+
+6. TERMINATION
+
+   This license terminates automatically if you breach it. On termination you must
+   stop using and delete your copies of the Software (the public-fork allowance
+   excepted while a good-faith contribution discussion is ongoing).
+
+
+7. DISCLAIMER OF WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+
+8. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER DIRECT, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL, ARISING FROM
+   OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF THE SOFTWARE.
+
+
+9. COMMERCIAL LICENSE
+
+   Commercial use, redistribution, or publication requires a separate written
+   license from the Licensor. Contact: https://www.acgkasa.me
+
+
+By downloading, running, or modifying the Software, you agree to this license.

@@ -29,6 +29,22 @@
 - **NVIDIA GPU recommended** (voice synthesis / speech recognition / screen OCR run smoother on GPU; CPU-only works but is slow)
 - OS: Linux or Windows 10/11
 
+### VRAM usage (measured 2026-07-09)
+
+Test rig: NVIDIA GeForce RTX 4090 24GB, sampled via `nvidia-smi` at ~0.2s intervals. The desktop/system baseline before the test was ~`2193 MiB`; the table records the peak VRAM of Spica's process tree.
+
+| Feature | Peak VRAM |
+| --- | ---: |
+| TTS GPT-SoVITS four-emotion warmup | `2020 MiB` |
+| STT faster-whisper warmup | `2080 MiB` |
+| OCR RapidOCR full-frame | `1114 MiB` |
+| Screen understanding: OCR + Moondream HF | `5284 MiB` |
+| Song separation: audio-separator | `2768 MiB` |
+| RVC subprocess, 20s | `2140 MiB` |
+| All heavy paths stacked (TTS + STT + OCR/Moondream + song separation + RVC) | `11116 MiB` |
+
+Whole-card peak `used` was `13340 MiB`; minus the pre-test baseline, Spica's software process tree peaked at ~`10.9 GiB`. LLM chat / summarization / the reaction judge go to a remote OpenAI-compatible endpoint by default and use essentially no local VRAM; anime download and playback rely mainly on qBittorrent / VLC and are not counted in the Python CUDA process peak.
+
 ### 2. Clone
 
 ```bash
@@ -146,4 +162,8 @@ All components are the property of their respective authors; please comply with 
 
 ## 📄 License
 
-_(License TBD — please fill in. Note the individual licenses of the components referenced above.)_
+This project is under the **Spica Source-Available License** — **source-available, not open source**: you may use, modify, and fork it locally for contribution, but **redistribution, commercial use, and publishing builds / store listings are prohibited without written permission**. Spica's character, voice / singing models, and artwork are for use with this project only. See [LICENSE](LICENSE) for the full terms.
+
+> The vendored third-party components (GPT-SoVITS / RVC / faster-whisper / RapidOCR / Moondream / yt-dlp, etc.) remain under their own licenses and are **not covered** by this license — see the Acknowledgements and the LICENSE inside each component's directory.
+>
+> For commercial use, contact [www.acgkasa.me](https://www.acgkasa.me/).

@@ -4,6 +4,8 @@
 
 **A local desktop voice roleplay companion.** The character is Spica (辻倉朱比華) — a transparent desktop avatar you talk to by voice in real time. She chats with you, plays galgames alongside you, watches anime with you, and sings for you. Everything runs on your own machine; your screen is never uploaded.
 
+> 👉 **Homepage: [www.acgkasa.me](https://www.acgkasa.me/)** — demo videos, debug logs, and video tutorials.
+
 ---
 
 ## ✨ Features

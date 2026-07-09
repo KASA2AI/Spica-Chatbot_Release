@@ -1,8 +1,8 @@
+**简体中文** · [English](README.en.md) · [日本語](README.ja.md)
+
 # Spica
 
 **本地运行的桌面语音角色扮演陪伴应用。** 角色是 Spica（辻倉朱比華）——一个透明桌面立绘 + 实时语音对话的伙伴，能陪你聊天、一起玩 galgame、一起看番、给你唱歌。全部在你自己的机器上跑，屏幕内容不上传。
-
-> A local desktop voice-companion app. Everything runs on your own machine.
 
 ---
 

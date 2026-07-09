@@ -29,6 +29,22 @@
 - 建议 **NVIDIA GPU**（语音合成 / 语音识别 / 屏幕 OCR 走 GPU 更流畅；纯 CPU 也能跑但慢）
 - 操作系统：Linux 或 Windows 10/11
 
+### 显存占用实测（2026-07-09）
+
+测试环境：NVIDIA GeForce RTX 4090 24GB，使用 `nvidia-smi` 约 0.2 秒间隔采样。测试前桌面/系统基线约 `2193 MiB`，下表记录 Spica 相关进程树的显存峰值。
+
+| 功能 | 显存峰值 |
+| --- | ---: |
+| TTS GPT-SoVITS 四情绪 warmup | `2020 MiB` |
+| STT faster-whisper warmup | `2080 MiB` |
+| OCR RapidOCR full-frame | `1114 MiB` |
+| 屏幕理解 OCR + Moondream HF | `5284 MiB` |
+| 点歌分离 audio-separator | `2768 MiB` |
+| RVC subprocess 20s | `2140 MiB` |
+| 全重型链路叠加峰值（TTS + STT + OCR/Moondream + 点歌分离 + RVC） | `11116 MiB` |
+
+整卡最高 used 为 `13340 MiB`；扣除测试前基线后，Spica 本次测得的软件进程树峰值约 `10.9 GiB`。LLM 对话 / 总结 / 吐槽 judge 默认走远端 OpenAI-compatible 接口，本地基本不占显存；看番下载与播放器主要依赖 qBittorrent / VLC，未计入 Python CUDA 进程峰值。
+
 ### 2. 拉代码
 
 ```bash

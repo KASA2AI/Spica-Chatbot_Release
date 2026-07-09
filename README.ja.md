@@ -53,19 +53,53 @@ pip install -r requirements-screen.txt
 
 > 音声合成 / 歌唱はやや重いローカルランタイムを使用し、インストール容量が大きいため、GPU 搭載マシンでのインストールを推奨します。
 
-### 4. エンジンとモデルのダウンロード（リポジトリには含まれません）
+### 4. モデルアセットパックのダウンロード（大きなファイルはリポジトリに含まれません）
 
-音声合成 / 歌唱エンジン（GPT-SoVITS・RVC のランタイムコード + 重み）はサイズが大きく、認識モデルや立ち絵差分と合わせて**コードリポジトリには同梱されていません**。別途ダウンロードし、対応するディレクトリに展開してください——**いずれかのパックが欠けると、その機能は起動しません**：
+**エンジンのソースコード（GPT-SoVITS / RVC）はすでにリポジトリに含まれており、`git clone` で入手できます。** このステップでは、git に置くのに適さない大きなファイル——モデルの重み、音声認識モデル、TTS リファレンス音声、立ち絵差分——を補うだけです。モデルアセットパックをダウンロードし、プロジェクトのルートに展開してください。重みは対応するエンジンのディレクトリに自動的に配置されます：
+
+```bash
+# Spica-Chatbot_Release/ の中で実行
+unzip spica_full_assets_*.zip
+```
+
+展開後のディレクトリはこのようになります：
+
+```text
+Spica-Chatbot_Release/
+  artifacts/
+    tts_slim/
+    rvc_slim/
+  spica_data/
+    models/
+    voice/
+    diffs/
+```
+
+アーカイブを `spica_data/` や `artifacts/` の中に展開しないでください。`spica_data/spica_data/...` のような入れ子構造になり、プログラムがモデルを見つけられなくなります。
+
+パックの内容（すべて git にない大きなファイル）：
 
 | 内容 | 展開先 | 目安サイズ |
 | --- | --- | ---: |
-| 音声合成エンジン + Spica の声（GPT-SoVITS slim） | `artifacts/tts_slim/` | ~1.4 GB |
-| 歌唱エンジン + Spica の歌声（RVC slim） | `artifacts/rvc_slim/` | ~620 MB |
+| 音声合成エンジンの重み + Spica の声（GPT-SoVITS slim） | `artifacts/tts_slim/` | ~1.4 GB |
+| 歌唱エンジンの重み + Spica の歌声（RVC slim） | `artifacts/rvc_slim/` | ~620 MB |
 | 音声認識などのモデル | `spica_data/models/` | ~1.6 GB |
 | TTS リファレンス音声 | `spica_data/voice/` | ~12 MB |
 | Spica 立ち絵差分 | `spica_data/diffs/` | ~720 MB |
 
-> 📦 **ダウンロード先：** _（未記入 —— クラウドストレージ / Release アセット / HuggingFace リンク）_
+以下のコマンドで正しく配置されたか確認できます：
+
+```bash
+test -f artifacts/tts_slim/base/GPT_SoVITS/pretrained_models/chinese-hubert-base/pytorch_model.bin
+test -f artifacts/rvc_slim/base/rvc/models/predictors/rmvpe.pt
+test -f spica_data/models/faster-whisper-large-v3-turbo/model.bin
+test -d spica_data/voice/happy
+test -d spica_data/diffs
+```
+
+`artifacts/trt/` はダウンロード・アップロード不要です。GPU アーキテクチャや CUDA/TensorRT/ONNXRuntime のバージョンに依存するローカルの TensorRT エンジン/タイミングキャッシュで、必要なときにローカルで自動生成されます。
+
+> 📦 **モデルアセットパックのダウンロード：** [Baidu Netdisk](https://pan.baidu.com/s/1GKmnKMEtkQq_b1aSmdTqQw?pwd=m8ee)、抽出コード：`m8ee`
 
 ### 5. 外部プログラム（必要に応じて）
 

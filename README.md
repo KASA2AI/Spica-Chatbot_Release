@@ -69,9 +69,31 @@ pip install -r requirements-screen.txt
 
 > 语音合成 / 唱歌 用到较重的本地运行时，安装体量较大，建议在有 GPU 的机器上装。
 
-### 4. 下载引擎包与模型（不在仓库里）
+### 4. 下载模型资产包（大文件不在仓库里）
 
-语音合成 / 唱歌引擎（GPT-SoVITS、RVC 的运行时代码 + 权重）体积大，和识别模型、立绘差分一起**都不随代码仓库分发**。请单独下载并解压到对应目录——**这几个包缺任何一个，对应功能就起不来**：
+**引擎源码（GPT-SoVITS / RVC）已经在仓库里，`git clone` 就有了。** 这一步只需补上不适合进 git 的大文件——模型权重、语音识别模型、TTS 参考音频、立绘差分。下载模型资产包，直接解压到项目根目录，权重会自动落进对应引擎目录：
+
+```bash
+# 在 Spica-Chatbot_Release/ 目录下执行
+unzip spica_full_assets_*.zip
+```
+
+解压后目录应该长这样：
+
+```text
+Spica-Chatbot_Release/
+  artifacts/
+    tts_slim/
+    rvc_slim/
+  spica_data/
+    models/
+    voice/
+    diffs/
+```
+
+不要把压缩包解进 `spica_data/` 或 `artifacts/` 里面，否则会变成 `spica_data/spica_data/...` 这种错位结构，程序会找不到模型。
+
+资产包内含（都是 git 里没有的大文件）：
 
 | 内容 | 解压到 | 约大小 |
 | --- | --- | ---: |
@@ -81,7 +103,19 @@ pip install -r requirements-screen.txt
 | TTS 参考音频 | `spica_data/voice/` | ~12 MB |
 | Spica 立绘差分 | `spica_data/diffs/` | ~720 MB |
 
-> 📦 **下载地址：** _（待填 —— 网盘 / Release 附件 / HuggingFace 链接）_
+可以用下面几条命令快速确认放对了：
+
+```bash
+test -f artifacts/tts_slim/base/GPT_SoVITS/pretrained_models/chinese-hubert-base/pytorch_model.bin
+test -f artifacts/rvc_slim/base/rvc/models/predictors/rmvpe.pt
+test -f spica_data/models/faster-whisper-large-v3-turbo/model.bin
+test -d spica_data/voice/happy
+test -d spica_data/diffs
+```
+
+`artifacts/trt/` 不需要下载或上传；它是本机 TensorRT engine/timing cache，和显卡架构、CUDA/TensorRT/ONNXRuntime 版本相关，需要时会在本机自动生成。
+
+> 📦 **模型资产包下载地址：** [百度网盘](https://pan.baidu.com/s/1GKmnKMEtkQq_b1aSmdTqQw?pwd=m8ee)，提取码：`m8ee`
 
 ### 5. 外部程序（按需）
 

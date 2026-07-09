@@ -53,19 +53,53 @@ pip install -r requirements-screen.txt
 
 > Voice synthesis / singing use a fairly heavy local runtime and take a lot of space to install — a machine with a GPU is recommended.
 
-### 4. Download engines and models (not in the repo)
+### 4. Download the model asset pack (large files not in the repo)
 
-The voice-synthesis / singing engines (the GPT-SoVITS and RVC runtime code + weights) are large, and together with the recognition models and avatar art they are **not shipped with the code repo**. Download them separately and extract into the matching directories — **if any of these packs is missing, the corresponding feature won't start**:
+**The engine source code (GPT-SoVITS / RVC) is already in the repo — `git clone` gets it.** This step only fills in the large files that don't belong in git: model weights, the speech-recognition model, TTS reference audio, and avatar art. Download the model asset pack and extract it at the project root; the weights drop into the right engine directories automatically:
+
+```bash
+# run inside Spica-Chatbot_Release/
+unzip spica_full_assets_*.zip
+```
+
+After extraction the layout should look like this:
+
+```text
+Spica-Chatbot_Release/
+  artifacts/
+    tts_slim/
+    rvc_slim/
+  spica_data/
+    models/
+    voice/
+    diffs/
+```
+
+Do NOT extract the archive into `spica_data/` or `artifacts/`, or you'll get a nested `spica_data/spica_data/...` and the program won't find the models.
+
+The pack contains (all large files that aren't in git):
 
 | Content | Extract to | ~Size |
 | --- | --- | ---: |
-| Voice-synthesis engine + Spica's voice (GPT-SoVITS slim) | `artifacts/tts_slim/` | ~1.4 GB |
-| Singing engine + Spica's singing voice (RVC slim) | `artifacts/rvc_slim/` | ~620 MB |
+| Voice-synthesis engine weights + Spica's voice (GPT-SoVITS slim) | `artifacts/tts_slim/` | ~1.4 GB |
+| Singing engine weights + Spica's singing voice (RVC slim) | `artifacts/rvc_slim/` | ~620 MB |
 | Speech-recognition & other models | `spica_data/models/` | ~1.6 GB |
 | TTS reference audio | `spica_data/voice/` | ~12 MB |
 | Spica avatar variations | `spica_data/diffs/` | ~720 MB |
 
-> 📦 **Download link:** _(to be filled — cloud drive / Release asset / HuggingFace)_
+You can quickly check everything landed correctly:
+
+```bash
+test -f artifacts/tts_slim/base/GPT_SoVITS/pretrained_models/chinese-hubert-base/pytorch_model.bin
+test -f artifacts/rvc_slim/base/rvc/models/predictors/rmvpe.pt
+test -f spica_data/models/faster-whisper-large-v3-turbo/model.bin
+test -d spica_data/voice/happy
+test -d spica_data/diffs
+```
+
+`artifacts/trt/` does not need to be downloaded or uploaded; it's a machine-local TensorRT engine/timing cache tied to your GPU architecture and CUDA/TensorRT/ONNXRuntime versions, regenerated locally when needed.
+
+> 📦 **Model asset pack download:** [Baidu Netdisk](https://pan.baidu.com/s/1GKmnKMEtkQq_b1aSmdTqQw?pwd=m8ee), extraction code: `m8ee`
 
 ### 5. External programs (as needed)
 

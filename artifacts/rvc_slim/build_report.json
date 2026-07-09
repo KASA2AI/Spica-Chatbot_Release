@@ -1,0 +1,387 @@
+{
+  "schema_version": 1,
+  "runtime_name": "applio_rvc",
+  "character": "spica",
+  "source_root": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio",
+  "output_root": "/home/san/ai_code/Spica-Chatbot/artifacts/rvc_slim",
+  "totals": {
+    "file_count": 47,
+    "total_bytes": 646863997,
+    "total_gb": 0.6024,
+    "size_cap_gb": 1.5,
+    "within_cap": true
+  },
+  "categories": {
+    "license": {
+      "files": 2,
+      "bytes": 6161
+    },
+    "runtime_python": {
+      "files": 35,
+      "bytes": 321332
+    },
+    "config": {
+      "files": 5,
+      "bytes": 190157
+    },
+    "runtime_model_embedder": {
+      "files": 2,
+      "bytes": 378344333
+    },
+    "runtime_model_pitch": {
+      "files": 1,
+      "bytes": 181184272
+    },
+    "character_model": {
+      "files": 1,
+      "bytes": 55229123
+    },
+    "character_index": {
+      "files": 1,
+      "bytes": 31588619
+    }
+  },
+  "files": [
+    {
+      "category": "license",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/LICENSE",
+      "target": "base/LICENSE",
+      "size_bytes": 1067,
+      "sha256": "7823c04ca7103c5e6f20b497ed1f4fcfd08356e7a6766c30121cdafb0823fe44"
+    },
+    {
+      "category": "license",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/README.md",
+      "target": "base/README.md",
+      "size_bytes": 5094,
+      "sha256": "20851fff610cbe3c6af524ea801f4ad6d1a3d95565a0e7714354a4ed4539dfc7"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/core.py",
+      "target": "base/core.py",
+      "size_bytes": 80695,
+      "sha256": "1ee958148158016c07e11c698bc5c1f47dedfa9ba93f2cef36645857363f3d97"
+    },
+    {
+      "category": "config",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/configs/24000.json",
+      "target": "base/rvc/configs/24000.json",
+      "size_bytes": 961,
+      "sha256": "02bf451cc543972c5709f579782bc0d42011e014696c7fe06f7709f1f5fda8b0"
+    },
+    {
+      "category": "config",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/configs/32000.json",
+      "target": "base/rvc/configs/32000.json",
+      "size_bytes": 962,
+      "sha256": "63907268b20fe62022751a69f0a20d0e313758b4024e20cd79234bb9a24aeef2"
+    },
+    {
+      "category": "config",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/configs/40000.json",
+      "target": "base/rvc/configs/40000.json",
+      "size_bytes": 964,
+      "sha256": "0fe59d9cfcaf043b74e81fb87fd420574ff009cd6de5458f202e2c134a1bddad"
+    },
+    {
+      "category": "config",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/configs/48000.json",
+      "target": "base/rvc/configs/48000.json",
+      "size_bytes": 964,
+      "sha256": "b2b26b08298348ef5b77f39596b2248bd08d0e0ec695e3d8ddecf808cc9a5bcc"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/configs/config.py",
+      "target": "base/rvc/configs/config.py",
+      "size_bytes": 3276,
+      "sha256": "7a86b1b92e57322ccd59014ff3a4af16357ab8c1b5c2872aaaaee2200b5b698d"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/infer/infer.py",
+      "target": "base/rvc/infer/infer.py",
+      "size_bytes": 18216,
+      "sha256": "daca70c945a5d83db39babe6ada3ec7c7a512d22f430c0784e1747e263853cd3"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/infer/pipeline.py",
+      "target": "base/rvc/infer/pipeline.py",
+      "size_bytes": 20116,
+      "sha256": "66e5568a8a82e4bfc0c4286282076cf53e3f559080c6780265ee9d5888cf0991"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/__init__.py",
+      "target": "base/rvc/lib/algorithm/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/attentions.py",
+      "target": "base/rvc/lib/algorithm/attentions.py",
+      "size_bytes": 9495,
+      "sha256": "34c2c0b01d1a39c1162954b6c296e19193bbad2f153d6f2bb1a86ffd6f3f2966"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/commons.py",
+      "target": "base/rvc/lib/algorithm/commons.py",
+      "size_bytes": 3870,
+      "sha256": "086405204a4c06f941c9341259d572ea361f79e4de5a4ee1e800e11c5bfab34e"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/discriminators.py",
+      "target": "base/rvc/lib/algorithm/discriminators.py",
+      "size_bytes": 8392,
+      "sha256": "f269a5c7cb79d0a40f614703cd3ef4d51348466912771b7decae33478723bce5"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/encoders.py",
+      "target": "base/rvc/lib/algorithm/encoders.py",
+      "size_bytes": 6979,
+      "sha256": "81631dc60772eb0b287b7fbbf07d2c929836f93ee80fe9bec5d6997635143506"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/generators/__init__.py",
+      "target": "base/rvc/lib/algorithm/generators/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/generators/hifigan.py",
+      "target": "base/rvc/lib/algorithm/generators/hifigan.py",
+      "size_bytes": 8962,
+      "sha256": "1d2c21548c47ed38ef5ce8656ef29c1150d322e4b0e3ec17fda5529bea189c87"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/generators/hifigan_mrf.py",
+      "target": "base/rvc/lib/algorithm/generators/hifigan_mrf.py",
+      "size_bytes": 13607,
+      "sha256": "29bef7717e675611488d1c35bc85c7afa492dbb94b9c6e0892cf07515be80d2a"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/generators/hifigan_nsf.py",
+      "target": "base/rvc/lib/algorithm/generators/hifigan_nsf.py",
+      "size_bytes": 9048,
+      "sha256": "e30e15c1a19879bfdc06cd7ab9df2838a88f090e7fffa7a2e29fadfca7ea6f49"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/generators/refinegan.py",
+      "target": "base/rvc/lib/algorithm/generators/refinegan.py",
+      "size_bytes": 15257,
+      "sha256": "f2dfcb537687418b76a2335fc79aa3e3e596bbec63e56502052915ecea9d0122"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/modules.py",
+      "target": "base/rvc/lib/algorithm/modules.py",
+      "size_bytes": 4169,
+      "sha256": "76a39721b39e20284e52512201f8106248893c3f9a6618c28ec83db4c422064a"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/normalization.py",
+      "target": "base/rvc/lib/algorithm/normalization.py",
+      "size_bytes": 817,
+      "sha256": "a341c27623a2f42c43547a3ed96789aecea20b7f4e6b5420cfe14cc84cb57172"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/residuals.py",
+      "target": "base/rvc/lib/algorithm/residuals.py",
+      "size_bytes": 8682,
+      "sha256": "d632db02e5d0136f65ec1f35df1f8f9710432ab3564612dae80aa748c6d94f8f"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/algorithm/synthesizers.py",
+      "target": "base/rvc/lib/algorithm/synthesizers.py",
+      "size_bytes": 9324,
+      "sha256": "d373936c510fdc80abd5213ae6b18bd0ad35650a7bc338bc1f7ea6916bc82f0d"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/platform.py",
+      "target": "base/rvc/lib/platform.py",
+      "size_bytes": 626,
+      "sha256": "287037f79b92227e5953ba60e8efb5f1dc0aee4191667f26096373cd9f12511a"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/predictors/F0Extractor.py",
+      "target": "base/rvc/lib/predictors/F0Extractor.py",
+      "size_bytes": 3105,
+      "sha256": "88bc65263c40b722c5c8fad7b3e2e24392a7417e2f62d6d960f68db7a4eb0111"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/predictors/FCPE.py",
+      "target": "base/rvc/lib/predictors/FCPE.py",
+      "size_bytes": 29937,
+      "sha256": "f7c317cedcb05746b709bb59bc06df3bafeea31ad4f2350d4343ce197d46b76a"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/predictors/RMVPE.py",
+      "target": "base/rvc/lib/predictors/RMVPE.py",
+      "size_bytes": 19088,
+      "sha256": "0b99750bc25780873f1acc14be9112dd7bf911e8582bc9b291660baf35b0e1a9"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/predictors/f0.py",
+      "target": "base/rvc/lib/predictors/f0.py",
+      "size_bytes": 3056,
+      "sha256": "4546c19948008752aeae37c7bf27d55790e3689289d0851868045a448b247e83"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/analyzer.py",
+      "target": "base/rvc/lib/tools/analyzer.py",
+      "size_bytes": 2447,
+      "sha256": "9b54885d42c05762f7bdd7d2c4595939d687f0d4fd1a452bdf1df7d5732e215a"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/gdown.py",
+      "target": "base/rvc/lib/tools/gdown.py",
+      "size_bytes": 10039,
+      "sha256": "55e344e0034239161f99d6ce2f3a6ebf53e2eff9ca54757484cdf68f81113b6e"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/launch_tensorboard.py",
+      "target": "base/rvc/lib/tools/launch_tensorboard.py",
+      "size_bytes": 773,
+      "sha256": "bed3ae1c7134d53dd7ef56599a088cbafee53be49b1c5f6078eca700d991c67c"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/model_download.py",
+      "target": "base/rvc/lib/tools/model_download.py",
+      "size_bytes": 7295,
+      "sha256": "edb7fdc39150d20d318da0923b6bd4a5292129733c33403f0d5eda0a300b488c"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/prerequisites_download.py",
+      "target": "base/rvc/lib/tools/prerequisites_download.py",
+      "size_bytes": 5916,
+      "sha256": "03ed4eafaacdf22ff3d9bfce1a708fbd5ee456b93a154829b0f33262a97fc5a4"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/pretrained_selector.py",
+      "target": "base/rvc/lib/tools/pretrained_selector.py",
+      "size_bytes": 408,
+      "sha256": "c97364b1a4790ce0fb7317c1d0ff1e7c1dba117afe80494de6b236d9b638e6b2"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/split_audio.py",
+      "target": "base/rvc/lib/tools/split_audio.py",
+      "size_bytes": 3107,
+      "sha256": "7bae66fc26afe8e2d56b75870f365976217c654431c189c0cc90fa17e42b81d4"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/tts.py",
+      "target": "base/rvc/lib/tools/tts.py",
+      "size_bytes": 663,
+      "sha256": "b7907aa0d195ea1eb1a0dce725908e498e4e0d2927ce259f58ac4604402f8eab"
+    },
+    {
+      "category": "config",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/tools/tts_voices.json",
+      "target": "base/rvc/lib/tools/tts_voices.json",
+      "size_bytes": 186306,
+      "sha256": "650ede74f72ff1eb2c9c36f34e2b7ffa8f0445e53b1a318a23215a4119cb8d14"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/utils.py",
+      "target": "base/rvc/lib/utils.py",
+      "size_bytes": 6786,
+      "sha256": "6f18e0d8cefb50f0887372cd9f3764f2d4fc5a6e54fcd9de9f7ae8496ea2f528"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/lib/zluda.py",
+      "target": "base/rvc/lib/zluda.py",
+      "size_bytes": 2965,
+      "sha256": "0895091b65c2ee5ab739a5c82ab8ec5c3dd964dc7076f4b2aaace9f974cece58"
+    },
+    {
+      "category": "runtime_model_embedder",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/models/embedders/contentvec/config.json",
+      "target": "base/rvc/models/embedders/contentvec/config.json",
+      "size_bytes": 1388,
+      "sha256": "2ddde063b795d38d9051a7215a092fecf4cfe148b54251e38de51d88d356898b"
+    },
+    {
+      "category": "runtime_model_embedder",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/models/embedders/contentvec/pytorch_model.bin",
+      "target": "base/rvc/models/embedders/contentvec/pytorch_model.bin",
+      "size_bytes": 378342945,
+      "sha256": "d8dd400e054ddf4e6be75dab5a2549db748cc99e756a097c496c099f65a4854e"
+    },
+    {
+      "category": "runtime_model_pitch",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/models/predictors/rmvpe.pt",
+      "target": "base/rvc/models/predictors/rmvpe.pt",
+      "size_bytes": 181184272,
+      "sha256": "6d62215f4306e3ca278246188607209f09af3dc77ed4232efdd069798c4ec193"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/train/process/model_blender.py",
+      "target": "base/rvc/train/process/model_blender.py",
+      "size_bytes": 2512,
+      "sha256": "25c98230fb4dd20e3b996515f32a22598348086411c785684a444371d69f6de3"
+    },
+    {
+      "category": "runtime_python",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/rvc/train/process/model_information.py",
+      "target": "base/rvc/train/process/model_information.py",
+      "size_bytes": 1704,
+      "sha256": "d31d0913b9c391a7438776fb2a6e4dfa0c0a5bf5675c7e9f8d2b271ef9efbb3b"
+    },
+    {
+      "category": "character_model",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/logs/spica/spica_200e_57000s.pth",
+      "target": "characters/spica/model/spica_200e_57000s.pth",
+      "size_bytes": 55229123,
+      "sha256": "bbe242db9744f82c252a87424e6157a4eee244b75a9201a887a458070beb3d89"
+    },
+    {
+      "category": "character_index",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/function_tools/song/Applio/logs/spica/spica.index",
+      "target": "characters/spica/index/spica.index",
+      "size_bytes": 31588619,
+      "sha256": "5ebdf086121bfb47a65c9ac5a3b03e67c08396f8406fc7f82c64089cbd7463cc"
+    }
+  ],
+  "import_preflight": {
+    "status": "PASS",
+    "error": null
+  },
+  "parity": {
+    "status": "PASS",
+    "rmse": 0.0,
+    "max_abs_diff": 0.0,
+    "mel_mean_db": 0.0,
+    "length_equal": true,
+    "bit_identical": true
+  }
+}

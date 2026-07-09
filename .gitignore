@@ -56,8 +56,31 @@ artifacts/onnx/
 artifacts/trt/
 artifacts/parity/
 artifacts/benchmarks/
-artifacts/tts_slim/
-artifacts/rvc_slim/
+# tts_slim / rvc_slim: SHIP THE ENGINE SOURCE CODE (repo completeness), but keep
+# the large model weights + reference audio OUT of git -- those go in the asset
+# pack (Baidu). Whitelist code/config by extension; everything else stays out.
+artifacts/tts_slim/**
+!artifacts/tts_slim/**/
+!artifacts/tts_slim/**/*.py
+!artifacts/tts_slim/**/*.json
+!artifacts/tts_slim/**/*.txt
+!artifacts/tts_slim/**/*.md
+!artifacts/tts_slim/**/*.yaml
+!artifacts/tts_slim/**/*.csv
+!artifacts/tts_slim/**/*.dict
+!artifacts/tts_slim/**/*.md5
+!artifacts/tts_slim/**/LICENSE
+artifacts/rvc_slim/**
+!artifacts/rvc_slim/**/
+!artifacts/rvc_slim/**/*.py
+!artifacts/rvc_slim/**/*.json
+!artifacts/rvc_slim/**/*.txt
+!artifacts/rvc_slim/**/*.md
+!artifacts/rvc_slim/**/*.yaml
+!artifacts/rvc_slim/**/*.csv
+!artifacts/rvc_slim/**/*.dict
+!artifacts/rvc_slim/**/*.md5
+!artifacts/rvc_slim/**/LICENSE
 *.engine
 *.plan
 *.timing.cache

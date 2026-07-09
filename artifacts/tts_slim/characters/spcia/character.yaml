@@ -1,0 +1,22 @@
+version: v2ProPlus
+gpt_model_path: GPT_weights/spcia-e25.ckpt
+sovits_model_path: SoVITS_weights/spcia_e12_s1932.pth
+ref_language: 日文
+target_language: 日文
+emotions:
+  happy:
+    ref_audio_path: reference/happy/あそこは風の一族が封じた厄災の力が残ってるわ.wav
+    prompt_text_path: reference/happy/prompt.txt
+    inp_refs_path: reference/happy/refs
+  angry:
+    ref_audio_path: reference/angry/風の乱れを戻すにはその土地に根付いた旋律が必要なの.wav
+    prompt_text_path: reference/angry/prompt.txt
+    inp_refs_path: reference/angry/refs
+  sad:
+    ref_audio_path: reference/sad/風の息遣いを感じていれば、こうなることはわかったはずよ。.wav
+    prompt_text_path: reference/sad/prompt.txt
+    inp_refs_path: reference/sad/refs
+  surprised:
+    ref_audio_path: reference/surprised/私にはこれくらいのことしかしてあげられないから.wav
+    prompt_text_path: reference/surprised/prompt.txt
+    inp_refs_path: reference/surprised/refs

@@ -1,0 +1,1393 @@
+{
+  "manifest_version": 1,
+  "language_profile": "ja_only",
+  "character": "spcia",
+  "totals": {
+    "file_count": 194,
+    "total_bytes": 1456705852,
+    "total_gb": 1.3567,
+    "base_bytes": 1119301023,
+    "character_bytes": 337404829,
+    "size_cap_gb": 3.0,
+    "within_cap": true
+  },
+  "files": [
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/__init__.py",
+      "target": "base/GPT_SoVITS/AR/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/data/__init__.py",
+      "target": "base/GPT_SoVITS/AR/data/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/data/bucket_sampler.py",
+      "target": "base/GPT_SoVITS/AR/data/bucket_sampler.py",
+      "size_bytes": 5665,
+      "sha256": "1ecbe529c5a9a8ef4e86a367a4fe2c2b6ce315ffc192828b56df0eee5dcd3e3b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/data/data_module.py",
+      "target": "base/GPT_SoVITS/AR/data/data_module.py",
+      "size_bytes": 2924,
+      "sha256": "1e434efa41f03864fd63e62454c0334a86cd4aa09766508fbce98d51518f0559"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/data/dataset.py",
+      "target": "base/GPT_SoVITS/AR/data/dataset.py",
+      "size_bytes": 12040,
+      "sha256": "6e5f00890ffff5604a0a61d1764e5450eb7b90f465d15c528457d2b2f8e8c450"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/models/__init__.py",
+      "target": "base/GPT_SoVITS/AR/models/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/models/t2s_lightning_module.py",
+      "target": "base/GPT_SoVITS/AR/models/t2s_lightning_module.py",
+      "size_bytes": 4874,
+      "sha256": "6a4d3173181000a6012bbdf055ca8a29ea6e48ce5a09605a579b509a548f8588"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/models/t2s_lightning_module_onnx.py",
+      "target": "base/GPT_SoVITS/AR/models/t2s_lightning_module_onnx.py",
+      "size_bytes": 3590,
+      "sha256": "b4db6c8260dc8ec361487e6d52cfd6d994061d3ba8e0c7a8214d480bcc57bf5a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/models/t2s_model.py",
+      "target": "base/GPT_SoVITS/AR/models/t2s_model.py",
+      "size_bytes": 33569,
+      "sha256": "536e239cde07494af53bddba5c13ec5731671b3775b86589d906d3288ecf7034"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/models/t2s_model_onnx.py",
+      "target": "base/GPT_SoVITS/AR/models/t2s_model_onnx.py",
+      "size_bytes": 13978,
+      "sha256": "2687ae578b37e953ef121058d6c333c03177674726a9151f53a42300e58da07e"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/models/utils.py",
+      "target": "base/GPT_SoVITS/AR/models/utils.py",
+      "size_bytes": 10566,
+      "sha256": "201061ba41cec604d2fbff098a6956f84e7c1a576254263542fa466f98d51443"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/__init__.py",
+      "target": "base/GPT_SoVITS/AR/modules/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/activation.py",
+      "target": "base/GPT_SoVITS/AR/modules/activation.py",
+      "size_bytes": 19742,
+      "sha256": "251a65e9bf09820b030844be281afef3c56056bea27e8b20ec1144d7e4b31dd8"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/activation_onnx.py",
+      "target": "base/GPT_SoVITS/AR/modules/activation_onnx.py",
+      "size_bytes": 6535,
+      "sha256": "a727263e9a95910bf07071d337ef27feb5fbda95edec9f923833f92bde3e41cd"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/embedding.py",
+      "target": "base/GPT_SoVITS/AR/modules/embedding.py",
+      "size_bytes": 2640,
+      "sha256": "cf4c8b3e1d838c130549af7b8e8eddeadf0da1fe2060e87c5db29d489b9bf70a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/embedding_onnx.py",
+      "target": "base/GPT_SoVITS/AR/modules/embedding_onnx.py",
+      "size_bytes": 2030,
+      "sha256": "a7350a21826a5f69210b07d4d21421ca462ddc2e8afcf7aa990c02aa2a11fe6a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/lr_schedulers.py",
+      "target": "base/GPT_SoVITS/AR/modules/lr_schedulers.py",
+      "size_bytes": 2618,
+      "sha256": "5dfad3ef8bef60552b4619b510c84811eca6a9f9952d3e83ab027e29ee15526f"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/optim.py",
+      "target": "base/GPT_SoVITS/AR/modules/optim.py",
+      "size_bytes": 25611,
+      "sha256": "fb89351de254beeb09718823665b2e6a23ccfa3c766fcb881dffdb0aa043817a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/patched_mha_with_cache.py",
+      "target": "base/GPT_SoVITS/AR/modules/patched_mha_with_cache.py",
+      "size_bytes": 19167,
+      "sha256": "537c028d9fa72506066da0f157239ae3a6d7ba942afe8634d0fc787233afac56"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/patched_mha_with_cache_onnx.py",
+      "target": "base/GPT_SoVITS/AR/modules/patched_mha_with_cache_onnx.py",
+      "size_bytes": 2969,
+      "sha256": "4d9b2e47d3cef242b664f90df0a6af55562a84d736e80073a7728514d9195b2d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/scaling.py",
+      "target": "base/GPT_SoVITS/AR/modules/scaling.py",
+      "size_bytes": 12566,
+      "sha256": "7be6b209c636ef55f9fc1f054302c2490b32b3459d35146c13727c180a2f18a7"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/transformer.py",
+      "target": "base/GPT_SoVITS/AR/modules/transformer.py",
+      "size_bytes": 12395,
+      "sha256": "60acf1608642ef890981da732246efa4f34226d3e75d1a9d4bd27b9ac36a6d21"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/modules/transformer_onnx.py",
+      "target": "base/GPT_SoVITS/AR/modules/transformer_onnx.py",
+      "size_bytes": 9441,
+      "sha256": "70d5582c97bfdb9b43ef1880ede8d2ecfe8641d5c35059debb3712ed95eecdb1"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/text_processing/__init__.py",
+      "target": "base/GPT_SoVITS/AR/text_processing/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/text_processing/phonemizer.py",
+      "target": "base/GPT_SoVITS/AR/text_processing/phonemizer.py",
+      "size_bytes": 2581,
+      "sha256": "e6faa7e1b4cb4131cc217182bb0678aaaf0c3a846ffcbee97f89aba77f87ae0e"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/text_processing/symbols.py",
+      "target": "base/GPT_SoVITS/AR/text_processing/symbols.py",
+      "size_bytes": 740,
+      "sha256": "d9d920c30d4effd2561ce50f705ffd4094e663e1b3c1e85027154df6bc44f25b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/utils/__init__.py",
+      "target": "base/GPT_SoVITS/AR/utils/__init__.py",
+      "size_bytes": 1133,
+      "sha256": "e1c7513851c84fb8f4664530dacd38e4c2bf8150d9023b2919da6d9d7ac1bf3c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/utils/initialize.py",
+      "target": "base/GPT_SoVITS/AR/utils/initialize.py",
+      "size_bytes": 1321,
+      "sha256": "f70885f0d3b9f67f20bb271361f925e8edce5f72079e24a48ea91865f15800e8"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/AR/utils/io.py",
+      "target": "base/GPT_SoVITS/AR/utils/io.py",
+      "size_bytes": 893,
+      "sha256": "3d529b1788e38dc4f7af3d007f6a91264182c372d88ae42cec86749ed6071b92"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/activations.py",
+      "target": "base/GPT_SoVITS/BigVGAN/activations.py",
+      "size_bytes": 4513,
+      "sha256": "12cfc80f62a0f905fafa9f6192de18dd13e7913fb0805af8c8c357f2f8e220f6"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/alias_free_activation/cuda/__init__.py",
+      "target": "base/GPT_SoVITS/BigVGAN/alias_free_activation/cuda/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/alias_free_activation/cuda/activation1d.py",
+      "target": "base/GPT_SoVITS/BigVGAN/alias_free_activation/cuda/activation1d.py",
+      "size_bytes": 2431,
+      "sha256": "2ef253e7679af3cc55d0a6740c66a5fa96488c52dcce5156d78e961f7e1addb8"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/alias_free_activation/cuda/load.py",
+      "target": "base/GPT_SoVITS/BigVGAN/alias_free_activation/cuda/load.py",
+      "size_bytes": 2566,
+      "sha256": "851a9984908e55b641f1e626cde4df1a39f28ac72f5141aebe9243884d4cd13d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/alias_free_activation/torch/__init__.py",
+      "target": "base/GPT_SoVITS/BigVGAN/alias_free_activation/torch/__init__.py",
+      "size_bytes": 200,
+      "sha256": "2e3138e1052e377ba2e51ea59c7d5d255a519559001757af21dbec4cb9c22471"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/alias_free_activation/torch/act.py",
+      "target": "base/GPT_SoVITS/BigVGAN/alias_free_activation/torch/act.py",
+      "size_bytes": 825,
+      "sha256": "0b92766f905251989a160f265f672cf76bce1726f7e1d6df63fa7fc403970219"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/alias_free_activation/torch/filter.py",
+      "target": "base/GPT_SoVITS/BigVGAN/alias_free_activation/torch/filter.py",
+      "size_bytes": 3395,
+      "sha256": "4957ea20f81607f4424bff13d0705837056059b4b7702d32a2536249129d59d3"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/alias_free_activation/torch/resample.py",
+      "target": "base/GPT_SoVITS/BigVGAN/alias_free_activation/torch/resample.py",
+      "size_bytes": 1715,
+      "sha256": "548232e2e5f61e2aa847d8c7fcfeaa7a397cfac9762433db789a9f94facae791"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/bigvgan.py",
+      "target": "base/GPT_SoVITS/BigVGAN/bigvgan.py",
+      "size_bytes": 16888,
+      "sha256": "afacf98c9f3c6a188f4d3aca77578c1c6de5c0c3daea26a382c3e76b697de10c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/discriminators.py",
+      "target": "base/GPT_SoVITS/BigVGAN/discriminators.py",
+      "size_bytes": 21095,
+      "sha256": "571bb1ca947227ee70e6e1cba601df066a752fa5be7fd1e97363d3f0455f6d0d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/env.py",
+      "target": "base/GPT_SoVITS/BigVGAN/env.py",
+      "size_bytes": 511,
+      "sha256": "0c458da3132ebcce272eb277f9af489d09f3cf3dd4378ceeeb915b467aa039a5"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/inference.py",
+      "target": "base/GPT_SoVITS/BigVGAN/inference.py",
+      "size_bytes": 2597,
+      "sha256": "be3f4ebeccb27bc1dde55550335e51f199b291bad3972a70980d3256d56f424c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/inference_e2e.py",
+      "target": "base/GPT_SoVITS/BigVGAN/inference_e2e.py",
+      "size_bytes": 2851,
+      "sha256": "b9b45c9ae09e78fb9a62fbdcdafe6b3f6bf1a9fb4961c7dc737eb8bb8cfc5fae"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/loss.py",
+      "target": "base/GPT_SoVITS/BigVGAN/loss.py",
+      "size_bytes": 8020,
+      "sha256": "65210b8d6cfb906c17cdf34a5ef8fe7ab7e4c3052d7d248fb458883e56854107"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/meldataset.py",
+      "target": "base/GPT_SoVITS/BigVGAN/meldataset.py",
+      "size_bytes": 14632,
+      "sha256": "a3170b12b66fc935dd3997068883a643f1ed4b87952875a15f73df87c903ec8b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/tests/test_activation.py",
+      "target": "base/GPT_SoVITS/BigVGAN/tests/test_activation.py",
+      "size_bytes": 1936,
+      "sha256": "b1488335edddf5c59519b2390ec7fbb348de241fa3edc8804ab6635d0eb4e951"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/tests/test_activation_snake_beta.py",
+      "target": "base/GPT_SoVITS/BigVGAN/tests/test_activation_snake_beta.py",
+      "size_bytes": 1949,
+      "sha256": "e7b3f50b3648a8c8dfdf6f032ab819e7a8c1f3c54ada2458111cd4e128f61e93"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/tests/test_cuda_vs_torch_model.py",
+      "target": "base/GPT_SoVITS/BigVGAN/tests/test_cuda_vs_torch_model.py",
+      "size_bytes": 8040,
+      "sha256": "6e9899aa905f670bdce44a8ec3c7d679e68015ab2f6136e33320167f3dbe80eb"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/train.py",
+      "target": "base/GPT_SoVITS/BigVGAN/train.py",
+      "size_bytes": 27375,
+      "sha256": "d42fb2ea339a7a2864763bb212041047f2a0919ecbab4213d72c1d6a83e0a79c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/BigVGAN/utils0.py",
+      "target": "base/GPT_SoVITS/BigVGAN/utils0.py",
+      "size_bytes": 2564,
+      "sha256": "82217648462eda8b9a2da977eb73f904d627d66f406f9eb70694e4b66146524d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/TTS_infer_pack/TTS.py",
+      "target": "base/GPT_SoVITS/TTS_infer_pack/TTS.py",
+      "size_bytes": 70961,
+      "sha256": "122a507076f9fd3dd3ad6b30864c3424ee3e310fc83f4994d696b98ff38b9866"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/TTS_infer_pack/TextPreprocessor.py",
+      "target": "base/GPT_SoVITS/TTS_infer_pack/TextPreprocessor.py",
+      "size_bytes": 9235,
+      "sha256": "3628df1ea494ad8d78fe5d4c1266175cb6bb1650c971dbd953fcd3ba87d80548"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/TTS_infer_pack/__init__.py",
+      "target": "base/GPT_SoVITS/TTS_infer_pack/__init__.py",
+      "size_bytes": 44,
+      "sha256": "1721246a053cc246bc9983827772e33bd8fdd617af2c75acc859c46ec0891f4c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/TTS_infer_pack/text_segmentation_method.py",
+      "target": "base/GPT_SoVITS/TTS_infer_pack/text_segmentation_method.py",
+      "size_bytes": 4899,
+      "sha256": "c07ceb1344cfd8c355235cc8718d284cba4db6d861a2343c5057c818b70a802e"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/download.py",
+      "target": "base/GPT_SoVITS/download.py",
+      "size_bytes": 300,
+      "sha256": "7879662f75fb02b47c97317326afd0d9586db7c62093dfc4ebc8c11dffe8ed18"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/eres2net/ERes2Net.py",
+      "target": "base/GPT_SoVITS/eres2net/ERes2Net.py",
+      "size_bytes": 9870,
+      "sha256": "4c2582ffc59707514c4f2273262c408d424b5043d55511c4769956e11235778a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/eres2net/ERes2NetV2.py",
+      "target": "base/GPT_SoVITS/eres2net/ERes2NetV2.py",
+      "size_bytes": 9734,
+      "sha256": "e6a17f01a36e8133b9c3e15be2358f41951c9d887c5c536dd3788f128801f8fd"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/eres2net/ERes2Net_huge.py",
+      "target": "base/GPT_SoVITS/eres2net/ERes2Net_huge.py",
+      "size_bytes": 11082,
+      "sha256": "45d2bddae25565fcc01acff069bd10fb17ec2a527c8ae813b1b57368af256240"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/eres2net/fusion.py",
+      "target": "base/GPT_SoVITS/eres2net/fusion.py",
+      "size_bytes": 948,
+      "sha256": "e92db5cc722247f98580f2ed221bbd5b108290cda7ff694ae66d1557dbde792f"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/eres2net/kaldi.py",
+      "target": "base/GPT_SoVITS/eres2net/kaldi.py",
+      "size_bytes": 37310,
+      "sha256": "e444877f02586c28ee26c3cac976463dc3c582a81a7f2e4953b3156d881b39b8"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/eres2net/pooling_layers.py",
+      "target": "base/GPT_SoVITS/eres2net/pooling_layers.py",
+      "size_bytes": 3646,
+      "sha256": "f7fb8d8bb4a9080a0b7ffc060a06d622b7eb7e945c145fe801ee051df837e70c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/export_torch_script.py",
+      "target": "base/GPT_SoVITS/export_torch_script.py",
+      "size_bytes": 40223,
+      "sha256": "76b0c2ab2ada12f04fa6cbf20f3363d8c3d5fa4d0850d6fafec1eaa89504ac39"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/export_torch_script_v3.py",
+      "target": "base/GPT_SoVITS/export_torch_script_v3.py",
+      "size_bytes": 34371,
+      "sha256": "f8ae326e20e4a7e39242405e689dba0b140d13898c4f6e8ebfdcd9812c7d52c0"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/export_torch_script_v3v4.py",
+      "target": "base/GPT_SoVITS/export_torch_script_v3v4.py",
+      "size_bytes": 42937,
+      "sha256": "c065d73e206598be3bca996e6fb7eb1b3f9ab3bf19a070f9f656664c8af43325"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/f5_tts/model/__init__.py",
+      "target": "base/GPT_SoVITS/f5_tts/model/__init__.py",
+      "size_bytes": 453,
+      "sha256": "cc308f3667d8e7e80e539678049818f17eabdd0cae14455914f3582218e43a78"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/f5_tts/model/backbones/dit.py",
+      "target": "base/GPT_SoVITS/f5_tts/model/backbones/dit.py",
+      "size_bytes": 6210,
+      "sha256": "3ca187eec764e7481cd880bef647898cebbe3c6f9e91260a24c897d012b6da55"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/f5_tts/model/backbones/mmdit.py",
+      "target": "base/GPT_SoVITS/f5_tts/model/backbones/mmdit.py",
+      "size_bytes": 4208,
+      "sha256": "a3888a4c27269b0ff49ad28faab1048d55b18a3e3181137a242b537178eb7b4f"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/f5_tts/model/backbones/unett.py",
+      "target": "base/GPT_SoVITS/f5_tts/model/backbones/unett.py",
+      "size_bytes": 6956,
+      "sha256": "852e63fcd735376abb5572df733fb3d7ce64af8d3377c4930a0a4d02090be47a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/f5_tts/model/modules.py",
+      "target": "base/GPT_SoVITS/f5_tts/model/modules.py",
+      "size_bytes": 22377,
+      "sha256": "fdb7dc8d4febfcf03c278733df3ce7e0377807e8898be0a2111e7d456bd133ad"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/feature_extractor/__init__.py",
+      "target": "base/GPT_SoVITS/feature_extractor/__init__.py",
+      "size_bytes": 105,
+      "sha256": "5fbffa5194fe677cdbf6e5e14fcb1bf89bf0ec320f34fa4a00db123951de1d08"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/feature_extractor/cnhubert.py",
+      "target": "base/GPT_SoVITS/feature_extractor/cnhubert.py",
+      "size_bytes": 3489,
+      "sha256": "df960190ff97a001f0d557dafec2e4ba70d8e0f2e56641231d588f479c5e4b19"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/feature_extractor/whisper_enc.py",
+      "target": "base/GPT_SoVITS/feature_extractor/whisper_enc.py",
+      "size_bytes": 688,
+      "sha256": "bde344cfa97d29a5c221a738153277a914813aa2ca5ea7909b83189beb5f2b0a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/inference_cli.py",
+      "target": "base/GPT_SoVITS/inference_cli.py",
+      "size_bytes": 4676,
+      "sha256": "db3cb34715ff20126c865fb35d39c74ecdc24795609849e87aaff9d3107f41cd"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/inference_gui.py",
+      "target": "base/GPT_SoVITS/inference_gui.py",
+      "size_bytes": 12212,
+      "sha256": "a7522112c11b17c20d128c5a073592cac886ef043fe5b784a2d990a53071d54d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/inference_webui.py",
+      "target": "base/GPT_SoVITS/inference_webui.py",
+      "size_bytes": 51922,
+      "sha256": "737ea101df68653f6a78fbcbfd6be8ddac7c12be4021621e1ea26135b96931a8"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/inference_webui_fast.py",
+      "target": "base/GPT_SoVITS/inference_webui_fast.py",
+      "size_bytes": 21006,
+      "sha256": "5a51b11168f046066f50aaaa0dea8e90d096de19324617936869c79727445744"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/__init__.py",
+      "target": "base/GPT_SoVITS/module/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/attentions.py",
+      "target": "base/GPT_SoVITS/module/attentions.py",
+      "size_bytes": 23085,
+      "sha256": "62f29564c1e99f69d5421ecefe80c998271123a2cee85241a67174c91fc49b9d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/attentions_onnx.py",
+      "target": "base/GPT_SoVITS/module/attentions_onnx.py",
+      "size_bytes": 14169,
+      "sha256": "d63ccb69827d74f00eef6676a192775241ad491655599ee8db7e7a09b42e0990"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/commons.py",
+      "target": "base/GPT_SoVITS/module/commons.py",
+      "size_bytes": 5824,
+      "sha256": "f1255895385b1655e4afa5d01cf51d5e09e6c31ebb9d4d6726594a9b5af4883c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/core_vq.py",
+      "target": "base/GPT_SoVITS/module/core_vq.py",
+      "size_bytes": 13395,
+      "sha256": "3bc6a5cce209124bb18e6902a2ec6e8212fc0322283f19235a1ac5a9473bb94c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/data_utils.py",
+      "target": "base/GPT_SoVITS/module/data_utils.py",
+      "size_bytes": 41206,
+      "sha256": "1ee636c04b6a0438ec6438167dce16b8505b55f0581080171a942dcc523b9da8"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/losses.py",
+      "target": "base/GPT_SoVITS/module/losses.py",
+      "size_bytes": 1827,
+      "sha256": "1a8030ad13c7c7029378b3c469fbd10b035582a7c89a3dd1380f28225dee2829"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/mel_processing.py",
+      "target": "base/GPT_SoVITS/module/mel_processing.py",
+      "size_bytes": 4642,
+      "sha256": "4f5349e7adc21bea933ac652908f29dc2b7a87336761c5d480f32da25acfbe3b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/models.py",
+      "target": "base/GPT_SoVITS/module/models.py",
+      "size_bytes": 53009,
+      "sha256": "38b8ca0e4b537ff052567a398ae5e79257a03e46fa2dd7645c4afc25b8d81814"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/models_onnx.py",
+      "target": "base/GPT_SoVITS/module/models_onnx.py",
+      "size_bytes": 37794,
+      "sha256": "777a0281e8fa38a642526a4db0d049437e5c984915e7b9c8e6197916f41d72eb"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/modules.py",
+      "target": "base/GPT_SoVITS/module/modules.py",
+      "size_bytes": 28816,
+      "sha256": "1d501146e0e736d7a4aad552f5311cb37d1f1cf3ed6f95138225aa4a08e75933"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/mrte_model.py",
+      "target": "base/GPT_SoVITS/module/mrte_model.py",
+      "size_bytes": 5825,
+      "sha256": "3b7b6ae4eb4139e1e0138c24516a25f9576641623345be5f0ac90c7034ed0a38"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/quantize.py",
+      "target": "base/GPT_SoVITS/module/quantize.py",
+      "size_bytes": 4456,
+      "sha256": "ed9308ff173caf6f32d32054a387576c9e664ea2af62d1585cc200622d9e63f2"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/module/transforms.py",
+      "target": "base/GPT_SoVITS/module/transforms.py",
+      "size_bytes": 7208,
+      "sha256": "cb84be9d8eefa678b85dba0a2c588da21de7516b31a3a993be96c20228491929"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/onnx_export.py",
+      "target": "base/GPT_SoVITS/onnx_export.py",
+      "size_bytes": 14407,
+      "sha256": "e7f5a385199abc959b58fd940e519e484cd671d7e43b43c7cd889526f8baf391"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/prepare_datasets/1-get-text.py",
+      "target": "base/GPT_SoVITS/prepare_datasets/1-get-text.py",
+      "size_bytes": 5251,
+      "sha256": "de50b7d45b1dd1986aa023dad7681541989ba8fa2b28cd7270702101d1bec4aa"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/prepare_datasets/2-get-hubert-wav32k.py",
+      "target": "base/GPT_SoVITS/prepare_datasets/2-get-hubert-wav32k.py",
+      "size_bytes": 4270,
+      "sha256": "e46d39e0c3f5f298507ff40540a38f6d50de0ae30a259759862f7efa61a60586"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/prepare_datasets/2-get-sv.py",
+      "target": "base/GPT_SoVITS/prepare_datasets/2-get-sv.py",
+      "size_bytes": 3653,
+      "sha256": "633837426d5302811f472cfdca5f0651bac7ca734a6aa0ebf0336f0592144b2f"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/prepare_datasets/3-get-semantic.py",
+      "target": "base/GPT_SoVITS/prepare_datasets/3-get-semantic.py",
+      "size_bytes": 3893,
+      "sha256": "d6cd2e5e26f8b72dfcfa8756ff17ac7c1654dea1a1c63c5d2aa52e0e1f67b5ef"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/chinese-hubert-base/config.json",
+      "target": "base/GPT_SoVITS/pretrained_models/chinese-hubert-base/config.json",
+      "size_bytes": 1449,
+      "sha256": "c3e5060a1277e0f078cc6be9da4528a605dba6ece93018981fe2c820e5c7b103"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/chinese-hubert-base/preprocessor_config.json",
+      "target": "base/GPT_SoVITS/pretrained_models/chinese-hubert-base/preprocessor_config.json",
+      "size_bytes": 212,
+      "sha256": "dcd684124d06722947939d41ea6ae58dbf10968c60a11a29f23ddc602c64a29b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/chinese-hubert-base/pytorch_model.bin",
+      "target": "base/GPT_SoVITS/pretrained_models/chinese-hubert-base/pytorch_model.bin",
+      "size_bytes": 188811417,
+      "sha256": "24164f129c66499d1346e2aa55f183250c223161ec2770c0da3d3b08cf432d3c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/config.json",
+      "target": "base/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/config.json",
+      "size_bytes": 963,
+      "sha256": "3d57de2fd7e80d0e5c8ff194f0bbb6baa10df7e43fc262a0cc71298a78b0a3e5"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin",
+      "target": "base/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin",
+      "size_bytes": 651225145,
+      "sha256": "e53a693acc59ace251d143d068096ae0d7b79e4b1b503fa84c9dcf576448c1d8"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/tokenizer.json",
+      "target": "base/GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/tokenizer.json",
+      "size_bytes": 268962,
+      "sha256": "173796956820ea27bd14f76bf28162607ff4254807e2948253eb5b46f5bb643b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
+      "target": "base/GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
+      "size_bytes": 131266198,
+      "sha256": "7e69ec5451bc261cc7844e49e4792a85d7f09c06789ec800fc4a44aec362764e"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt",
+      "target": "base/GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt",
+      "size_bytes": 107528697,
+      "sha256": "4f5a0bf73c61eb41b174e1bb54e7ee3c83233892be8e0af1f187024e8e581a35"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/process_ckpt.py",
+      "target": "base/GPT_SoVITS/process_ckpt.py",
+      "size_bytes": 4193,
+      "sha256": "327c433017946118443d56cd10571a1773d39fc7745c6004ad53f2d1fd500d10"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/s1_train.py",
+      "target": "base/GPT_SoVITS/s1_train.py",
+      "size_bytes": 7297,
+      "sha256": "fa499153871d8ba79dd9e07a4494c5844bfb67875c2791718ea0fd787353bbbe"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/s2_train.py",
+      "target": "base/GPT_SoVITS/s2_train.py",
+      "size_bytes": 24571,
+      "sha256": "1df9f1ed20864b8767b08b89cc4c285722c5b605ac58872871ef4c51f990434b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/s2_train_v3.py",
+      "target": "base/GPT_SoVITS/s2_train_v3.py",
+      "size_bytes": 16247,
+      "sha256": "fe96d9f6dd5d32a9889ffe9710c794cea1a9be5a138314543f1fcdc8ddd0054b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/s2_train_v3_lora.py",
+      "target": "base/GPT_SoVITS/s2_train_v3_lora.py",
+      "size_bytes": 12389,
+      "sha256": "f2080042e291eae521742f064bef09fc3be17200a6c516fc9588a1752164cc2f"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/sv.py",
+      "target": "base/GPT_SoVITS/sv.py",
+      "size_bytes": 1252,
+      "sha256": "7a793ba6602048adc609d099ac144e9cdf68b592e96076a4663157af08ce70f7"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/G2PWModel/config.py",
+      "target": "base/GPT_SoVITS/text/G2PWModel/config.py",
+      "size_bytes": 347,
+      "sha256": "b6154e494355d14a8d2c8a38d07720f77b34479e26aab21a5f63495ae904da76"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/LangSegmenter/__init__.py",
+      "target": "base/GPT_SoVITS/text/LangSegmenter/__init__.py",
+      "size_bytes": 41,
+      "sha256": "325aeb7453d371e8e30bebf51937e2897d7df593ff08833ee45f08012b2ea421"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/LangSegmenter/langsegmenter.py",
+      "target": "base/GPT_SoVITS/text/LangSegmenter/langsegmenter.py",
+      "size_bytes": 8809,
+      "sha256": "ff9bf21502c6fa8e6ea7d97abf1621981cd9c456795190d4c6f576c25a62b54f"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/__init__.py",
+      "target": "base/GPT_SoVITS/text/__init__.py",
+      "size_bytes": 917,
+      "sha256": "8d72e92e3f5f868e64242c686e52863f69bd1fc1d4c3fa38d994cc82f174bf6b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/cantonese.py",
+      "target": "base/GPT_SoVITS/text/cantonese.py",
+      "size_bytes": 5870,
+      "sha256": "777b593d86b2d89a7a0bdc5f01dbbd9d67132d8270097161dba3288ae31c20e7"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/chinese.py",
+      "target": "base/GPT_SoVITS/text/chinese.py",
+      "size_bytes": 6014,
+      "sha256": "9ceae1540e10a32ec8d874b10d0b07912b208c81db492938604c4540771703da"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/chinese2.py",
+      "target": "base/GPT_SoVITS/text/chinese2.py",
+      "size_bytes": 10219,
+      "sha256": "5650c6d776f26af5461f98428d769ad46b3507e4282ae2ad9f4cf82181f311fa"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/cleaner.py",
+      "target": "base/GPT_SoVITS/text/cleaner.py",
+      "size_bytes": 3348,
+      "sha256": "c37c7768a635d7a4ac191cd2cb2dcbeb0544c5e3de60348117fac75fa24cb713"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/en_normalization/expend.py",
+      "target": "base/GPT_SoVITS/text/en_normalization/expend.py",
+      "size_bytes": 9364,
+      "sha256": "092ba73f8198fa332eb445191615c6cb9d5bc72662d874898f8ca7ecbe28306c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/english.py",
+      "target": "base/GPT_SoVITS/text/english.py",
+      "size_bytes": 9803,
+      "sha256": "77837d1dfe2a21664d7cc3162e21f623e09cae93f1c96f0fa91ae97718fc0afb"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/g2pw/__init__.py",
+      "target": "base/GPT_SoVITS/text/g2pw/__init__.py",
+      "size_bytes": 29,
+      "sha256": "9d9634039425e42c0d78e6321fce93d7da62f46cf6a2d52e3201e2d21c6ed631"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/g2pw/dataset.py",
+      "target": "base/GPT_SoVITS/text/g2pw/dataset.py",
+      "size_bytes": 5795,
+      "sha256": "418d417c595a781b4011f3b178b5e7711f012c3817dbadbac984def30ec5bb0c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/g2pw/g2pw.py",
+      "target": "base/GPT_SoVITS/text/g2pw/g2pw.py",
+      "size_bytes": 4986,
+      "sha256": "255300e1878433b4baac99abd79d5a3bf84d4178b4d330115985879bc0e6f046"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/g2pw/onnx_api.py",
+      "target": "base/GPT_SoVITS/text/g2pw/onnx_api.py",
+      "size_bytes": 9641,
+      "sha256": "18e6eee402f45f13651e6a491caa1c5fbe5d6bb0f5a8202b5acd4bf02af19a78"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/g2pw/utils.py",
+      "target": "base/GPT_SoVITS/text/g2pw/utils.py",
+      "size_bytes": 4828,
+      "sha256": "68ce30b84d53385822b798e5032cc5a2f5f57a320586afc1669a9009e82f4d37"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/ja_userdic/user.dict",
+      "target": "base/GPT_SoVITS/text/ja_userdic/user.dict",
+      "size_bytes": 21321666,
+      "sha256": "b44817ce96e24be7bcfdd009d834b5237fe044dc9ed5f2f9709f71da9d506fed"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/ja_userdic/userdict.csv",
+      "target": "base/GPT_SoVITS/text/ja_userdic/userdict.csv",
+      "size_bytes": 17180971,
+      "sha256": "d857e443ee48d9641096816a98996669602895411e4330d7d91d1dbe1103389f"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/ja_userdic/userdict.md5",
+      "target": "base/GPT_SoVITS/text/ja_userdic/userdict.md5",
+      "size_bytes": 32,
+      "sha256": "77540a0350d4201a7e0d9359a5c30b667434dae9bc9e610bb9d9dd61ea4748a5"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/japanese.py",
+      "target": "base/GPT_SoVITS/text/japanese.py",
+      "size_bytes": 9787,
+      "sha256": "2b898d16ac912797d19d78c936f700ef31fa34b298f3e222f8d33a17faa610e2"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/korean.py",
+      "target": "base/GPT_SoVITS/text/korean.py",
+      "size_bytes": 10845,
+      "sha256": "762ecd468d6cb56c82524deabc059cf9dd2185e1fac0f6d5e602b2c8691f03fb"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/opencpop-strict.txt",
+      "target": "base/GPT_SoVITS/text/opencpop-strict.txt",
+      "size_bytes": 4084,
+      "sha256": "d66bbb1380a8ebf17d7ace5bf4b459f3728a469eea2aaeae2aeb3969b88223ff"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/symbols.py",
+      "target": "base/GPT_SoVITS/text/symbols.py",
+      "size_bytes": 4508,
+      "sha256": "c0e4576761cb0a254899208f4990d6e2fbbbc59ccd8bc06e7677229cb3721e44"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/symbols2.py",
+      "target": "base/GPT_SoVITS/text/symbols2.py",
+      "size_bytes": 9796,
+      "sha256": "160f85789ae647bdfd1e5b15daa83f81d6d903dea22dcb131a8cd96894e19626"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/tone_sandhi.py",
+      "target": "base/GPT_SoVITS/text/tone_sandhi.py",
+      "size_bytes": 23791,
+      "sha256": "b651a9cf7a94b66401101876616a85479bb2fb266aa41f85423b9371bbe4137d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/__init__.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/__init__.py",
+      "size_bytes": 664,
+      "sha256": "61e674c9950d1d2a2241a39ecb87bc4172c9b0ed03082ec1dc06ec8dbcaf11e5"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/char_convert.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/char_convert.py",
+      "size_bytes": 66099,
+      "sha256": "df066ce8e2a3385c7f3b4749f02049f2fdbabbfcc76e6784462a99f0347795e7"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/chronology.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/chronology.py",
+      "size_bytes": 3428,
+      "sha256": "bd873579e79976aaa465708791da13b79fd7beeafa6981743f438ec18f7d680a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/constants.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/constants.py",
+      "size_bytes": 2329,
+      "sha256": "33dd3cbe8443454ab51f12f513d4ce4ba43770981cd0605e240f6d942a9b675b"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/num.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/num.py",
+      "size_bytes": 9814,
+      "sha256": "403d613bacc9a8d922db65dd89a6ecb9a283ff4f07b5b38f645005c24387a7e2"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/phonecode.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/phonecode.py",
+      "size_bytes": 1953,
+      "sha256": "d8279ca6ddf1af8f26119a75b4dfbb28c7da0adba5c51f807f4503c59d9816a5"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/quantifier.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/quantifier.py",
+      "size_bytes": 1805,
+      "sha256": "de2d3367906a9df18edcf30698ae286d441c13c090f89d1f492ffdbe0edf93d0"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/text/zh_normalization/text_normlization.py",
+      "target": "base/GPT_SoVITS/text/zh_normalization/text_normlization.py",
+      "size_bytes": 7663,
+      "sha256": "2010a90d73d0e03cc4f99c22a774a4e127fc3a1fe5c0fdc38b03fb3b5754cbb3"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/utils.py",
+      "target": "base/GPT_SoVITS/utils.py",
+      "size_bytes": 10973,
+      "sha256": "46ba575b44fadc92177a8aac38c7d32d0bc394b96364e369009ccb96ba31f1a0"
+    },
+    {
+      "category": "license",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/LICENSE",
+      "target": "base/LICENSE",
+      "size_bytes": 1065,
+      "sha256": "8a064eada186601fc602e45feef61c6abb62246d5ae9c3764dd1fc92d946c3c6"
+    },
+    {
+      "category": "license",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/README.md",
+      "target": "base/README.md",
+      "size_bytes": 20886,
+      "sha256": "00312462eb0e47e3bc04c80175dad69d645173706994e52e3381a46e360f2ea2"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/config.py",
+      "target": "base/config.py",
+      "size_bytes": 7773,
+      "sha256": "6bdf0a0430b3954d5ea85e63e15255cf53f3bfd7bc5195a721d63fc9b7213cfc"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/__init__.py",
+      "target": "base/tools/__init__.py",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/assets.py",
+      "target": "base/tools/assets.py",
+      "size_bytes": 2511,
+      "sha256": "929c86ea71d87c11d564a5296c2a12fc9032cde1fb7f752db38178b807ee3108"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/audio_sr.py",
+      "target": "base/tools/audio_sr.py",
+      "size_bytes": 2284,
+      "sha256": "c45860814826f2b2a23e3d1fefb54e0c894a6446d135abd438fd328c9e33275a"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/cmd-denoise.py",
+      "target": "base/tools/cmd-denoise.py",
+      "size_bytes": 1419,
+      "sha256": "acf7f5bae743124cb0ed184291cb3002236295fbf328b02746867f87e171fb1d"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/i18n.py",
+      "target": "base/tools/i18n/i18n.py",
+      "size_bytes": 1188,
+      "sha256": "d586d7544abc567f9ee14ab68e501745eeca7eac35fe2f1433a6b6c12d3b3059"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/en_US.json",
+      "target": "base/tools/i18n/locale/en_US.json",
+      "size_bytes": 20453,
+      "sha256": "67ad6be1da225141addf4940ed635c8c7ef0ab106b796789312004e058dcdb34"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/es_ES.json",
+      "target": "base/tools/i18n/locale/es_ES.json",
+      "size_bytes": 22939,
+      "sha256": "2655c12777c568d4bfdcfa5c4f2323d2e542cb8b06216875cbad3f72f5d1c5fd"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/fr_FR.json",
+      "target": "base/tools/i18n/locale/fr_FR.json",
+      "size_bytes": 23506,
+      "sha256": "f1f628a1bd35ecd9c77cfee2543c990b571db81dbde6de36029fef6420880590"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/it_IT.json",
+      "target": "base/tools/i18n/locale/it_IT.json",
+      "size_bytes": 23037,
+      "sha256": "9e9311e307e12624e076ca7b19298e9edbbc0b950c74b9fe4bfc76e1e41d9d9c"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/ja_JP.json",
+      "target": "base/tools/i18n/locale/ja_JP.json",
+      "size_bytes": 24528,
+      "sha256": "25d91fb7c98933a281b8fafefef7e9c9d9e2f207d587fd905ddb360c251501ca"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/ko_KR.json",
+      "target": "base/tools/i18n/locale/ko_KR.json",
+      "size_bytes": 22234,
+      "sha256": "eaabeffb8985e431d97dc17d2f3bd4ad27b675eb8e4ff17d9c6fa6e794a99212"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/pt_BR.json",
+      "target": "base/tools/i18n/locale/pt_BR.json",
+      "size_bytes": 22881,
+      "sha256": "9cdea09a441bee20915d22a525d676d31b348d26a0f89330d23a6d9ef6f76827"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/ru_RU.json",
+      "target": "base/tools/i18n/locale/ru_RU.json",
+      "size_bytes": 31190,
+      "sha256": "58c7bc6294863920a26b5b0b221b84c4b218e076722279266384a0c2211e0a11"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/tr_TR.json",
+      "target": "base/tools/i18n/locale/tr_TR.json",
+      "size_bytes": 21874,
+      "sha256": "5553bfae8246500631a6745da6dace12bd1d6d161e2cda9df065b64edb8fc8cc"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/zh_CN.json",
+      "target": "base/tools/i18n/locale/zh_CN.json",
+      "size_bytes": 18459,
+      "sha256": "9ca5f9b557f48f3927406dd0ddd2e9b0c81f658ab716a6149ae2e6669a6808b6"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/zh_HK.json",
+      "target": "base/tools/i18n/locale/zh_HK.json",
+      "size_bytes": 18598,
+      "sha256": "7213472afefb8a6cd0eb813be7422a7267f8feccb97de4ce4c593635acaf78f9"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/zh_SG.json",
+      "target": "base/tools/i18n/locale/zh_SG.json",
+      "size_bytes": 18665,
+      "sha256": "8666325d0cd7a63364be3ff875482fb4309b1f572e1aa3656a9a9c089ff71782"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale/zh_TW.json",
+      "target": "base/tools/i18n/locale/zh_TW.json",
+      "size_bytes": 18596,
+      "sha256": "9fe84124b39cf72061cea4c4d5025c93607ffe32d25aac137b448cf3082e42f1"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/locale_diff.py",
+      "target": "base/tools/i18n/locale_diff.py",
+      "size_bytes": 1461,
+      "sha256": "662becf2ae6c0210a3fe576adec017a1d0d62108c5e885ca264684838bf360e0"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/i18n/scan_i18n.py",
+      "target": "base/tools/i18n/scan_i18n.py",
+      "size_bytes": 5224,
+      "sha256": "7530e7d0bc78f7909ba20a61e6691b684c0cc49c9c7ab0025821da191e65cbb1"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/my_utils.py",
+      "target": "base/tools/my_utils.py",
+      "size_bytes": 9051,
+      "sha256": "7b181ffa49aa540d457863dee57cd44984147dba54c6b13befa71159f5012e8e"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/slice_audio.py",
+      "target": "base/tools/slice_audio.py",
+      "size_bytes": 2225,
+      "sha256": "cb680f2d77d3f09803e1d8de25968d8ff46a4fbc6b19e8c1b5153c7f8befbca3"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/slicer2.py",
+      "target": "base/tools/slicer2.py",
+      "size_bytes": 8970,
+      "sha256": "5c69c5729b440babefa4ecbeb540dcfd2216091e1f370c8d38631f1d6fffb269"
+    },
+    {
+      "category": "base",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/tools/subfix_webui.py",
+      "target": "base/tools/subfix_webui.py",
+      "size_bytes": 14512,
+      "sha256": "a7fa694977a476837ef2ef26cc09d091716a7d46b9fbeccaf0ed35cf62669adb"
+    },
+    {
+      "category": "character_gpt",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_weights_v2ProPlus/spcia-e25.ckpt",
+      "target": "characters/spcia/GPT_weights/spcia-e25.ckpt",
+      "size_bytes": 155312893,
+      "sha256": "f5307cee7f1fdafc8e1fac9ba0d1216df115688f2cbdd7317884e7c70fb97810"
+    },
+    {
+      "category": "character_sovits",
+      "source": "/home/san/ai_code/Spica-Chatbot/agent_tools/tts/vendors/GPT-SoVITS-v2pro-20250604-nvidia50/SoVITS_weights_v2ProPlus/spcia_e12_s1932.pth",
+      "target": "characters/spcia/SoVITS_weights/spcia_e12_s1932.pth",
+      "size_bytes": 172764966,
+      "sha256": "74eb638c2b23de7af93017eeea7d0df838ab2e76a546cc6da307f875565d1aae"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/happy/あそこは風の一族が封じた厄災の力が残ってるわ.wav",
+      "target": "characters/spcia/reference/happy/あそこは風の一族が封じた厄災の力が残ってるわ.wav",
+      "size_bytes": 468390,
+      "sha256": "66f6464478ce637a6431a9f4992d85f90998fe33451c566aa4ad84bf2fa816de"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/happy/prompt.txt",
+      "target": "characters/spcia/reference/happy/prompt.txt",
+      "size_bytes": 67,
+      "sha256": "44255c24a417c66d8412032405e9d5caf16c92e71c5d2478a7205f2c87b82883"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/angry/風の乱れを戻すにはその土地に根付いた旋律が必要なの.wav",
+      "target": "characters/spcia/reference/angry/風の乱れを戻すにはその土地に根付いた旋律が必要なの.wav",
+      "size_bytes": 449730,
+      "sha256": "690307320e28a98cfc8d7bafcd9a64d0bdc5377a256de4c387349882cec65e5b"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/angry/prompt.txt",
+      "target": "characters/spcia/reference/angry/prompt.txt",
+      "size_bytes": 76,
+      "sha256": "22e4e41ca1ea5c0ba0063dc8d17e7f83ccb9a08735f8ff3399b95abd8a079c05"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/sad/風の息遣いを感じていれば、こうなることはわかったはずよ。.wav",
+      "target": "characters/spcia/reference/sad/風の息遣いを感じていれば、こうなることはわかったはずよ。.wav",
+      "size_bytes": 403418,
+      "sha256": "ed2a4baec61ede3f3201a8569c883c5b4b7a00edef33043583f331157cd2bcb0"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/sad/prompt.txt",
+      "target": "characters/spcia/reference/sad/prompt.txt",
+      "size_bytes": 85,
+      "sha256": "fbf2042fca7530625f9e8c38855d987df08f564d8c61a69461de72714992782d"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/surprised/私にはこれくらいのことしかしてあげられないから.wav",
+      "target": "characters/spcia/reference/surprised/私にはこれくらいのことしかしてあげられないから.wav",
+      "size_bytes": 424226,
+      "sha256": "fceec47f79bf2dd0f83bfcf24300e05988cdd7028d6dd5f5344b599beadad3a1"
+    },
+    {
+      "category": "character_reference",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/surprised/prompt.txt",
+      "target": "characters/spcia/reference/surprised/prompt.txt",
+      "size_bytes": 70,
+      "sha256": "45a939a3f915579cf0e891f7f9087d6d8d4ad3e84aedd9a48353b6629efde5d0"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/happy/refs/ここで静かにその力を消費させていく場所.wav",
+      "target": "characters/spcia/reference/happy/refs/ここで静かにその力を消費させていく場所.wav",
+      "size_bytes": 415254,
+      "sha256": "97abb2c473a8352b5384fdc36f602810d3a3b6c0e905954d5cf4d6aeca437457"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/happy/refs/アルミオスは現世なら自然に回復できるけど、風の回廊だと時間がかかってしまうの。.wav",
+      "target": "characters/spcia/reference/happy/refs/アルミオスは現世なら自然に回復できるけど、風の回廊だと時間がかかってしまうの。.wav",
+      "size_bytes": 618666,
+      "sha256": "72bdae1684d37ac211778e6d5489963a17f05e3db09db1ca0199057f30fdae89"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/happy/refs/私たちは一定のアルミアスを消費して風の回廊への門を開くのよ.wav",
+      "target": "characters/spcia/reference/happy/refs/私たちは一定のアルミアスを消費して風の回廊への門を開くのよ.wav",
+      "size_bytes": 548462,
+      "sha256": "5f0a5390823b0db2caaa454daaf764a5d7ad13051e54b68773e97ec9e95ee61c"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/happy/refs/風の回廊は人に害を及ぼす強大な力を封じる地よ.wav",
+      "target": "characters/spcia/reference/happy/refs/風の回廊は人に害を及ぼす強大な力を封じる地よ.wav",
+      "size_bytes": 549646,
+      "sha256": "8450ed956fd2073709e25169585ee10e31af9b6379ad64f5945d298f6b952069"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/angry/refs/この場所に封じてある悪い力をおとなしくさせているの.wav",
+      "target": "characters/spcia/reference/angry/refs/この場所に封じてある悪い力をおとなしくさせているの.wav",
+      "size_bytes": 442722,
+      "sha256": "21d2b1605fb906e5f0dbbd803113e9ef33fd54aef85f8c408f1143c7d2c36cd9"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/angry/refs/そういう使命のために与えられた特性なのかもしれない.wav",
+      "target": "characters/spcia/reference/angry/refs/そういう使命のために与えられた特性なのかもしれない.wav",
+      "size_bytes": 408042,
+      "sha256": "1a23a0f3ad7b0bb953b19294419ed742f299cc479ff2a18a9ef29542522b06f2"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/angry/refs/アルミオスは現世なら自然に回復できるけど、風の回廊だと時間がかかってしまうの。.wav",
+      "target": "characters/spcia/reference/angry/refs/アルミオスは現世なら自然に回復できるけど、風の回廊だと時間がかかってしまうの。.wav",
+      "size_bytes": 618666,
+      "sha256": "72bdae1684d37ac211778e6d5489963a17f05e3db09db1ca0199057f30fdae89"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/angry/refs/私たちは一定のアルミアスを消費して風の回廊への門を開くのよ.wav",
+      "target": "characters/spcia/reference/angry/refs/私たちは一定のアルミアスを消費して風の回廊への門を開くのよ.wav",
+      "size_bytes": 548462,
+      "sha256": "5f0a5390823b0db2caaa454daaf764a5d7ad13051e54b68773e97ec9e95ee61c"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/sad/refs/もっと心を無にして風に身を任せなさい.wav",
+      "target": "characters/spcia/reference/sad/refs/もっと心を無にして風に身を任せなさい.wav",
+      "size_bytes": 355122,
+      "sha256": "e4d03e09883e2983a54784f2824c76aac1f64cf6e273d44ebeb53159c1ba2cb7"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/sad/refs/台風をただの強めの風にすることくらいはできるわ.wav",
+      "target": "characters/spcia/reference/sad/refs/台風をただの強めの風にすることくらいはできるわ.wav",
+      "size_bytes": 377086,
+      "sha256": "6028b864f8d980588c9ff6e3b6548686dc385061b2b2e8e11983f758b7d4c7eb"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/sad/refs/悪意ある風は、時にあなたを、とんでもないところに連れて行ってしまう。.wav",
+      "target": "characters/spcia/reference/sad/refs/悪意ある風は、時にあなたを、とんでもないところに連れて行ってしまう。.wav",
+      "size_bytes": 591702,
+      "sha256": "3f63dfb01671c8606ed73b42801be8667ad2300a9d7d42c8dfbd220ba1181ee6"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/sad/refs/発電所の施設なんて作られたら風が乱れるところだったわ.wav",
+      "target": "characters/spcia/reference/sad/refs/発電所の施設なんて作られたら風が乱れるところだったわ.wav",
+      "size_bytes": 416970,
+      "sha256": "92b3dad48f57bf25b596538761cb64f722f611fe0445b5b07648bbc598695ceb"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/surprised/refs/あなたは帰る場所を見つけた方がいいのかもしれないわ.wav",
+      "target": "characters/spcia/reference/surprised/refs/あなたは帰る場所を見つけた方がいいのかもしれないわ.wav",
+      "size_bytes": 413022,
+      "sha256": "04eafbfb6da28e693ffa1db5265608c673c0af66a4cc51cd8f5f33c9159942b1"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/surprised/refs/これだけ綺麗に洗えばもう大丈夫よ.wav",
+      "target": "characters/spcia/reference/surprised/refs/これだけ綺麗に洗えばもう大丈夫よ.wav",
+      "size_bytes": 305542,
+      "sha256": "f0c4d23b1198f60d0bad7aec2fe95e205ea56b3ab6b6eaab51859fa9a0bfd9d9"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/surprised/refs/傷も一応感知してるから大丈夫だと思うけど心配だからそばで見ているのよ.wav",
+      "target": "characters/spcia/reference/surprised/refs/傷も一応感知してるから大丈夫だと思うけど心配だからそばで見ているのよ.wav",
+      "size_bytes": 623710,
+      "sha256": "bad9a5efe0aebcf08eb18f65f75905850f6f553ae5799f8d49b567e817a87e0f"
+    },
+    {
+      "category": "character_inp_refs",
+      "source": "/home/san/ai_code/Spica-Chatbot/spica_data/voice/surprised/refs/家族が大事なら自分の命も大事にするの.wav",
+      "target": "characters/spcia/reference/surprised/refs/家族が大事なら自分の命も大事にするの.wav",
+      "size_bytes": 347834,
+      "sha256": "2f2687357ee0c7449a7eac3449272d88fbf8ddb7a958ea6868f76260d59346e5"
+    }
+  ],
+  "licenses": {
+    "copied": [],
+    "missing": [
+      "GPT_SoVITS/pretrained_models/chinese-hubert-base",
+      "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large",
+      "GPT_SoVITS/pretrained_models/fast_langdetect",
+      "GPT_SoVITS/pretrained_models/sv"
+    ]
+  },
+  "writable_paths": [
+    "./weight.json (P0)"
+  ],
+  "parity": "PENDING",
+  "inp_refs_packed": 16,
+  "generated": [
+    "characters/spcia/character.yaml",
+    "build_report.json",
+    "weight.json  (runtime-written at load -- P0, base root must be writable)"
+  ]
+}

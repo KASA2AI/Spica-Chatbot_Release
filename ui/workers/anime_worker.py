@@ -155,11 +155,6 @@ def _analyze_ytdlp_failure(tail: str) -> _YtDlpFailure:
         f"yt-dlp 下载失败：{tail[-300:].strip() or '未知错误'}")
 
 
-def _classify_ytdlp_failure(tail: str) -> str:
-    """Compatibility wrapper returning only the localized message."""
-    return _analyze_ytdlp_failure(tail).message
-
-
 @dataclass(frozen=True)
 class _OutputLine:
     observed_at: float

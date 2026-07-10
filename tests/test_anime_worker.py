@@ -25,12 +25,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from spica.anime.models import DownloadStatus  # noqa: E402
 from spica.ports.torrent_client import TorrentClientError  # noqa: E402
 import ui.workers.anime_worker as anime_worker_module  # noqa: E402
-from ui.workers.anime_worker import (  # noqa: E402
-    AnimeDownloadWorker,
-    _YtDlpFailureKind,
-    _analyze_ytdlp_failure,
-    _classify_ytdlp_failure,
-)
+from ui.workers.anime_worker import AnimeDownloadWorker  # noqa: E402
 
 MAGNET = "magnet:?xt=urn:btih:" + "a" * 40
 
@@ -222,6 +217,14 @@ def _worker(tmp_path, *, locator=MAGNET, torrent=None, popen=None,
         poll_seconds=1.0, stall_timeout_minutes=stall_timeout_minutes,
         cookies_file=cookies_file, resume_task_id=resume_task_id,
         popen=popen, clock=_clock(), sleep=lambda s: None, **kw)
+
+
+def _worker_with_popen_only(tmp_path, popen):
+    return AnimeDownloadWorker(
+        request_id="REQ", episode_key="无职转生|s3|e1",
+        title="无职转生 第三季", series_title="无职转生",
+        locator="BV1234567890:1", torrent=None,
+        download_dir=str(tmp_path), popen=popen)
 
 
 def _downloading(p: float) -> DownloadStatus:
@@ -654,6 +657,13 @@ def test_ytdlp_socket_timeout_restarts_the_whole_extractor(qapp, tmp_path):
      "(caused by ProxyError('proxy lookup failed'))"),
     ("ERROR: A network error has occurred. "
      "(caused by <IncompleteRead: 18 bytes read, 982 more expected>)"),
+    "ERROR: [download] Got error: HTTP Error 403: Forbidden",
+    "ERROR: [download] Got error: HTTP Error 404: Not Found",
+    ("ERROR: [download] Got error: HTTP Error 416: "
+     "Requested Range Not Satisfiable"),
+    ("ERROR: [SSL: UNEXPECTED_EOF_WHILE_READING] "
+     "EOF occurred in violation of protocol"),
+    "ERROR: HTTP Error 503: Service Unavailable",
 ])
 def test_ytdlp_network_failure_restarts_extractor_and_second_attempt_succeeds(
         qapp, tmp_path, first_error):
@@ -666,9 +676,7 @@ def test_ytdlp_network_failure_restarts_extractor_and_second_attempt_succeeds(
         spawned.append((list(argv), kw))
         return procs[len(spawned) - 1]
 
-    worker = _worker(
-        tmp_path, locator="BV1234567890:1", popen=popen,
-    )
+    worker = _worker_with_popen_only(tmp_path, popen)
     reconnects = []
     worker.reconnecting.connect(
         lambda rid, used, maximum, reason:
@@ -682,21 +690,62 @@ def test_ytdlp_network_failure_restarts_extractor_and_second_attempt_succeeds(
     assert reconnects == [(1, 2, "network")]
 
 
-def test_ytdlp_terminal_auth_wins_over_network_words(qapp, tmp_path):
+@pytest.mark.parametrize(("first_error", "expected_error"), [
+    ("ERROR: 该视频为充电专属视频", "充电"),
+    ("ERROR: This video is for premium members only; login required; "
+     "[WinError 10054] connection closed", "大会员专属"),
+    ("ERROR: Login required; getaddrinfo failed", "需要登录"),
+    ("ERROR: cookies expired; connection reset", "需要登录"),
+    ("ERROR: This video is unavailable; Unable to download API page", "不可用"),
+    ("ERROR: This video may be deleted or geo-restricted", "不可用"),
+    ("ERROR: No space left on device after connection reset", "本地保存或合并失败"),
+    ("ERROR: ffmpeg postprocessing failed after IncompleteRead", "本地保存或合并失败"),
+    ("ERROR: [Errno 13] Permission denied: '/home/account/anime.part'; "
+     "getaddrinfo failed",
+     "本地保存或合并失败"),
+])
+def test_ytdlp_terminal_failure_does_not_restart_extractor(
+        qapp, tmp_path, first_error, expected_error):
     spawned = []
 
     def popen(argv, **kw):
         spawned.append((argv, kw))
-        return FakeProc([
-            "ERROR: Login required; account request timed out while checking cookies",
-        ], rc=1)
+        return FakeProc([first_error], rc=1)
 
-    event = _worker(
-        tmp_path, locator="BV1234567890:1", popen=popen,
-    ).execute()
+    worker = _worker_with_popen_only(tmp_path, popen)
+    reconnects = []
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason:
+        reconnects.append((used, maximum, reason)))
 
-    assert event.error is not None and "登录" in event.error
+    event = worker.execute()
+
+    assert event.error is not None and expected_error in event.error
     assert len(spawned) == 1
+    assert reconnects == []
+
+
+def test_ytdlp_unknown_failure_returns_generic_error_without_retry(
+        qapp, tmp_path):
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return FakeProc(["ERROR: some random failure"], rc=1)
+
+    worker = _worker_with_popen_only(tmp_path, popen)
+    reconnects = []
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason:
+        reconnects.append((used, maximum, reason)))
+
+    event = worker.execute()
+
+    assert event.error is not None
+    assert event.error.startswith("yt-dlp 下载失败：")
+    assert "some random failure" in event.error
+    assert len(spawned) == 1
+    assert reconnects == []
 
 
 def test_ytdlp_low_speed_and_network_share_two_reconnects(qapp, tmp_path):
@@ -1340,89 +1389,6 @@ def test_ytdlp_cancel_terminates_and_keeps_part(qapp, tmp_path):
     assert w.execute() is None              # cancelled -> nothing emitted
     assert procs[0].terminated == 1         # subprocess terminated...
     assert part.exists()                    # ...and the .part survives
-
-
-def test_classify_ytdlp_failure_categories():
-    assert "充电" in _classify_ytdlp_failure("该视频为充电专属视频")
-    assert "登录" in _classify_ytdlp_failure("ERROR: login required")
-    assert "cookie" in _classify_ytdlp_failure("cookies expired").lower() or \
-        "登录" in _classify_ytdlp_failure("cookies expired")
-    assert "yt-dlp" in _classify_ytdlp_failure("some random failure")
-
-
-def test_ytdlp_failure_classification_is_typed_and_ordered():
-    auth = _analyze_ytdlp_failure(
-        "Login required: cookie check timed out")
-    unavailable = _analyze_ytdlp_failure(
-        "ERROR: This video is unavailable")
-    network = _analyze_ytdlp_failure(
-        "ERROR: HTTP Error 503: Service Unavailable")
-    unknown = _analyze_ytdlp_failure("some random failure")
-
-    assert auth.kind is _YtDlpFailureKind.AUTH
-    assert unavailable.kind is _YtDlpFailureKind.UNAVAILABLE
-    assert network.kind is _YtDlpFailureKind.NETWORK
-    assert unknown.kind is _YtDlpFailureKind.OTHER
-
-
-def test_ytdlp_real_entitlement_and_unavailable_wording_are_terminal():
-    entitlement = _analyze_ytdlp_failure(
-        "ERROR: This video is for premium members only; login required")
-    unavailable = _analyze_ytdlp_failure(
-        "ERROR: This video may be deleted or geo-restricted")
-
-    assert entitlement.kind is _YtDlpFailureKind.ENTITLEMENT
-    assert unavailable.kind is _YtDlpFailureKind.UNAVAILABLE
-
-
-@pytest.mark.parametrize(("message", "expected"), [
-    ("Premium members only; [WinError 10054] connection closed",
-     _YtDlpFailureKind.ENTITLEMENT),
-    ("Login required; getaddrinfo failed", _YtDlpFailureKind.AUTH),
-    ("This video is unavailable; Unable to download API page",
-     _YtDlpFailureKind.UNAVAILABLE),
-    ("ffmpeg postprocessing failed after IncompleteRead",
-     _YtDlpFailureKind.LOCAL),
-])
-def test_ytdlp_terminal_failures_win_over_network_markers(message, expected):
-    assert _analyze_ytdlp_failure(message).kind is expected
-
-
-@pytest.mark.parametrize("message", [
-    ("ERROR: [download] Got error: "
-     "[WinError 10053] An established connection was aborted by the software "
-     "in your host machine>"),
-    ("ERROR: [download] Got error: "
-     "[WinError 10054] An existing connection was forcibly closed by the "
-     "remote host>"),
-    ("ERROR: [download] Got error: "
-     "[WinError 10060] A connection attempt failed because the connected "
-     "party did not properly respond>"),
-    ("ERROR: [download] Got error: "
-     "[WinError 10061] No connection could be made because the target machine "
-     "actively refused it>"),
-    ("ERROR: [download] Got error: "
-     "[WinError 11001] No such host is known>"),
-])
-def test_ytdlp_windows_socket_errors_are_retryable_network_errors(message):
-    assert _analyze_ytdlp_failure(message).kind is _YtDlpFailureKind.NETWORK
-
-
-@pytest.mark.parametrize("message", [
-    "ERROR: [download] Got error: HTTP Error 403: Forbidden",
-    "ERROR: [download] Got error: HTTP Error 404: Not Found",
-    "ERROR: [download] Got error: HTTP Error 416: Requested Range Not Satisfiable",
-    "ERROR: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol",
-])
-def test_ytdlp_cdn_and_tls_failures_are_retryable_network_errors(message):
-    assert _analyze_ytdlp_failure(message).kind is _YtDlpFailureKind.NETWORK
-
-
-def test_ytdlp_local_permission_error_is_not_misclassified_as_account_auth():
-    failure = _analyze_ytdlp_failure(
-        "ERROR: [Errno 13] Permission denied: '/home/account/anime.part'")
-
-    assert failure.kind is _YtDlpFailureKind.LOCAL
 
 
 # -- boundary: the worker holds no write authority ---------------------------------

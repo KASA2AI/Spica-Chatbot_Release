@@ -635,7 +635,9 @@ class SubprocessRunnerTest(unittest.TestCase):
         )
         self.assertEqual(result["status"], "FAIL")
         self.assertIn("rc=7", result["reason"])
-        self.assertIn("boom", result["reason"])
+        # 止战方案: 原文不进报告, 只有固定元数据
+        self.assertNotIn("boom", result["reason"])
+        self.assertEqual(result["detail"]["stderr_lines_captured"], 1)
 
 
 class FakeWorkerInjectionTest(unittest.TestCase):
@@ -1192,10 +1194,10 @@ class ReportRedactionTest(unittest.TestCase):
             rendered = self_check.render_report(
                 "full", [{"name": "x", **result}], as_json=True)
         self.assertEqual(result["status"], "FAIL")
-        # 在解析后的结构里查(序列化转义会让裸字符串搜索假绿)
+        # 止战方案: stderr 原文根本不进报告(不再依赖变体匹配)
         doc = json.loads(rendered)
-        self.assertNotIn(canary, doc["results"][0]["reason"])
-        self.assertIn("REDACTED:OPENAI_API_KEY", doc["results"][0]["reason"])
+        self.assertNotIn(canary, json.dumps(doc, ensure_ascii=False))
+        self.assertIn("原文不进报告", doc["results"][0]["reason"])
 
     def test_secret_as_dict_key_is_redacted(self):
         # 第八轮 review P1: redact_obj 只清 value 不清 key。
@@ -1485,9 +1487,166 @@ class TenthRoundFixesTest(unittest.TestCase):
                 ok, note = self_check._cleanup_tree(proc, None)
             self.assertFalse(ok)
             self.assertIn("taskkill 兜底失败", note)
-            ok2, note2 = self_check._cleanup_tree(proc, object())  # windll 缺失
+            ok2, note2 = self_check._cleanup_tree(proc, object())  # kernel32 缺失
             self.assertFalse(ok2)
-            self.assertIn("失败", note2)
+            self.assertIn("未确认", note2)
+
+    @unittest.skipIf(sys.platform == "win32", "Linux 上测 Windows 控制流")
+    def test_windows_terminate_close_false_is_not_reported_success(self):
+        # 用户裁定的最小 fake: job 在场、Terminate/Close 返回 false -> 不得报成功。
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        proc = SimpleNamespace(pid=12345, wait=lambda timeout=None: 0)
+        fake_k32 = MagicMock()
+        fake_k32.TerminateJobObject.return_value = 0
+        fake_k32.CloseHandle.return_value = 0
+        with patch.object(self_check.os, "name", "nt"), \
+                patch.object(self_check, "_win_kernel32", return_value=fake_k32):
+            ok, note = self_check._cleanup_tree(proc, 0x1234)
+        self.assertFalse(ok)
+        self.assertIn("返回失败", note)
+
+
+
+
+class EleventhRoundFixesTest(unittest.TestCase):
+    """第十一轮(删减版)回归钉。"""
+
+    def _crash_worker(self, stderr_payload_expr: str) -> list[str]:
+        code = ("import sys\n"
+                f"print({stderr_payload_expr}, file=sys.stderr)\n"
+                "sys.exit(5)\n")
+        return [sys.executable, "-c", code]
+
+    def test_no_marker_report_carries_no_stderr_content_at_all(self):
+        # P1-1 三种复现输入(repr 引号混排 / CR 归一化 / 超窗多行)一并终结:
+        # 报告只含固定元数据, 任何片段都不可能泄漏。
+        from unittest.mock import patch
+
+        cases = {
+            "OPENAI_API_KEY": "PARENT_LEFT'Q\"PARENT_RIGHT",
+            "JUDGE_API_KEY": "CR_LEFT\rCR_RIGHT",
+            "QBITTORRENT_PASSWORD": "\n".join(f"ML{i}-SEG" for i in range(60)),
+        }
+        for env_name, canary in cases.items():
+            with self.subTest(env_name=env_name), \
+                    patch.dict(os.environ, {env_name: canary}):
+                result = self_check.run_subprocess_check(
+                    self._crash_worker("repr(" + repr(canary) + ")"),
+                    timeout_s=30, sample_vram=False)
+                rendered = self_check.render_report(
+                    "full", [{"name": "x", **result}], as_json=True)
+                doc = json.loads(rendered)
+                blob = json.dumps(doc, ensure_ascii=False)
+                for fragment in ("PARENT_LEFT", "PARENT_RIGHT", "CR_LEFT",
+                                 "CR_RIGHT", "ML0-SEG", "ML59-SEG"):
+                    self.assertNotIn(fragment, blob)
+
+    def test_prctl_degraded_sentinel_downgrades_green_results(self):
+        # prctl 失败(用户裁定语义): 检查照做, 绿色结论强制 DEGRADED。
+        code = (
+            "import json, os, sys\n"
+            "print('SELF_CHECK_SUPERVISOR_PRCTL_DEGRADED: sub=-1 pd=-1', file=sys.stderr)\n"
+            "nonce = os.environ.get('SPICA_SELF_CHECK_MARKER_NONCE', '')\n"
+            f"marker = {self_check.RESULT_MARKER!r} + ((nonce + ':') if nonce else '')\n"
+            "print('\\n' + marker + json.dumps({'status': 'PASS', 'detail': {}}))\n"
+        )
+        result = self_check.run_subprocess_check(
+            [sys.executable, "-c", code], timeout_s=30, sample_vram=False)
+        self.assertEqual(result["status"], "DEGRADED")
+        self.assertIn("containment 降级", result["reason"])
+        self.assertIn("containment", result["detail"])
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX mask path")
+    def test_caller_signal_mask_is_restored_exactly(self):
+        # P2-2: 调用前已阻塞 SIGTERM 的调用方, 返回后必须仍保持阻塞。
+        import signal as signal_mod
+
+        original = signal_mod.pthread_sigmask(signal_mod.SIG_BLOCK,
+                                              {signal_mod.SIGTERM})
+        try:
+            result = self_check.run_subprocess_check(
+                _fake_worker_cmd({"status": "PASS", "detail": {}}),
+                timeout_s=30, sample_vram=False)
+            self.assertEqual(result["status"], "PASS")
+            current = signal_mod.pthread_sigmask(signal_mod.SIG_BLOCK, set())
+            self.assertIn(signal_mod.SIGTERM, current)  # 未被覆写为 UNBLOCK
+        finally:
+            signal_mod.pthread_sigmask(signal_mod.SIG_SETMASK, original)
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX path")
+    def test_sigkilled_supervisor_with_empty_snapshot_is_unconfirmed(self):
+        # P2-3: supervisor 被 SIGKILL 且无快照 -> 不得谎称 swept。
+        from types import SimpleNamespace
+
+        proc = SimpleNamespace(pid=99999999, poll=lambda: -9,
+                               wait=lambda timeout=None: -9)
+        ok, note = self_check._cleanup_tree(proc, None, {})
+        self.assertFalse(ok)
+        self.assertIn("未确认", note)
+
+    def test_unicode_line_separators_in_payload_survive(self):
+        # P2-5: U+0085/U+2028/U+2029 是合法 JSON 内容, 不得被拆坏。
+        payload = {"status": "PASS",
+                   "detail": {"text": "a\u0085b\u2028c\u2029d"}}
+        result = self_check.run_subprocess_check(
+            _fake_worker_cmd(payload), timeout_s=30, sample_vram=False)
+        self.assertEqual(result["status"], "PASS", result.get("reason"))
+        self.assertEqual(result["detail"]["text"], "a\u0085b\u2028c\u2029d")
+
+    def test_screen_disabled_registry_matches_production_offering(self):
+        # P2-6: screen.enabled=false 时插件经公共 tool_schemas() 看到的世界
+        # 必须与生产一致(inspect_screen 不 offered)。
+        from tempfile import TemporaryDirectory
+
+        plugin = (
+            "def register(registry):\n"
+            "    names = set()\n"
+            "    for s in registry.tool_schemas():\n"
+            "        names.add(s.get('name') or (s.get('function') or {}).get('name'))\n"
+            "    assert 'inspect_screen' not in names, 'screen disabled but offered'\n"
+            "    from agent_tools.tts.adapters import TextOnlyTTSAdapter\n"
+            "    registry.register_tts('parity_voice',\n"
+            "                          lambda config=None, service=None: TextOnlyTTSAdapter())\n"
+        )
+        from agent_tools.function_tools.screen.config import ScreenPipelineConfig
+
+        disabled_cfg = ScreenPipelineConfig(
+            enabled=False, provider="moondream_local", model_id="m", revision="r",
+            device="cuda", dtype="bfloat16", max_side=768, reasoning=False,
+            preload=False, ocr_enabled=False, ocr_engine="rapidocr",
+            capture_format="png", infer_timeout_sec=30.0, log_timing=False,
+            debug_save_images=False)
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "plugins"
+            (root / "parity").mkdir(parents=True)
+            (root / "parity" / "__init__.py").write_text(plugin)
+            manifest = Path(tmp) / "plugins.yaml"
+            manifest.write_text("plugins:\n  - parity\n")
+            registry, errors = self_check._tts_check_registry(
+                plugins_root=root, manifest_path=manifest,
+                screen_config=disabled_cfg)
+        self.assertEqual(errors, {})
+        self.assertIsNotNone(registry.resolve_tts("parity_voice", config={}, service=None))
+
+    def test_uvr_prerequisites_ignore_ambient_model_dir_env(self):
+        # hermetic: uvr_missing_prerequisites 用传入目录, 不被 env 偷换。
+        import shutil
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        fixture = Path(__file__).parent / "fixtures" / "uvr_download_checks_min.json"
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as decoy:
+            shutil.copy(fixture, Path(tmp) / "download_checks.json")
+            (Path(tmp) / "htdemucs_ft.yaml").write_bytes(b"x")
+            with patch.dict(os.environ, {"AUDIO_SEPARATOR_MODEL_DIR": decoy}):
+                missing = self_check.uvr_missing_prerequisites(tmp, "htdemucs_ft.yaml")
+                # helper 内部临时摘除后必须原样恢复(在 patch 块内断言)
+                self.assertEqual(os.environ.get("AUDIO_SEPARATOR_MODEL_DIR"), decoy)
+        names = {Path(m).name for m in missing}
+        self.assertEqual(names, {"f7e0c4bc-ba3fe64a.th", "d12395a8-e57c48e6.th",
+                                 "92cfc3b6-ef3bcb9c.th", "04573f0d-f3cf25b2.th"})
 
 
 if __name__ == "__main__":

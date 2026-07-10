@@ -14,7 +14,7 @@
 状态语义:
   PASS              真跑通过(仅 --full 会给出), 或轻量档事实核查完全通过(config/gpu/secrets)
   DEGRADED          能跑但不在期望环境(如配置 cuda 实际落 CPU / 文件缺失)
-  FAIL              跑不通(含超时; 进程树已清理)
+  FAIL              跑不通(含超时; 进程树清理为 best-effort, 未确认时结果降级并注明)
   SKIPPED_DISABLED  被 enabled 开关关掉(--all 强制检查)
   UNVERIFIED        轻量档下无法不加载模型验证的项(只报事实, 不算失败)
 
@@ -112,7 +112,8 @@ def parse_worker_stdout(stdout: str, nonce: str | None = None) -> dict[str, Any]
     (插件 atexit 等)不能覆盖真实结果(第八轮 review P2)。"""
     marker = RESULT_MARKER + (nonce + ":" if nonce else "")
     payload = None
-    for line in stdout.splitlines():
+    for line in stdout.split("\n"):  # 只认真实 \n: U+0085/U+2028/U+2029 是合法
+        # JSON 内容, Unicode-aware splitlines 会把 payload 拆坏(第十一轮 P2-5)
         # 行内**左起**逐个 marker 尝试整段解析(第七轮 review P2): payload 字符串
         # 里合法出现的 marker 位于 JSON 内部, 从真 marker 起整段 loads 天然正确;
         # rfind 会从字符串内的假 marker 起把 JSON 拦腰截断。解析失败绝不覆盖
@@ -309,7 +310,8 @@ _LINE_CAP_CHARS = 1_000_000
 # 孙进程杀不到 -- 进程组 != 进程树。本 supervisor 以 PR_SET_CHILD_SUBREAPER
 # 作为后代孤儿的归养点: worker 无论正常退出还是崩溃, 其(任意深度、任意会话的)
 # 遗孤都会在各自父进程死亡时归养到 supervisor, 由它逐层清扫后再以 worker 的
-# rc 退出。确定性, 不依赖采样窗口。绝不向 stdout 写任何东西(marker 通道)。
+# rc 退出。正常路径(supervisor 存活)下确定性; supervisor 自身被 SIGKILL 属
+# best-effort waiver(父端快照补杀 + 如实报清理未确认)。绝不向 stdout 写任何东西(marker 通道)。
 _POSIX_SUPERVISOR = r"""
 import ctypes, os, signal, subprocess, sys, time
 try:
@@ -318,13 +320,17 @@ try:
     signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM, signal.SIGINT})
 except (ValueError, OSError):
     pass
-libc = ctypes.CDLL(None, use_errno=True)
 EXPECTED_PARENT = int(sys.argv[1])
-rc_sub = libc.prctl(36, 1, 0, 0, 0)   # PR_SET_CHILD_SUBREAPER
-rc_pd = libc.prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG: 父死自杀式清扫
+try:
+    libc = ctypes.CDLL(None, use_errno=True)
+    rc_sub = libc.prctl(36, 1, 0, 0, 0)   # PR_SET_CHILD_SUBREAPER
+    rc_pd = libc.prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG
+except Exception as exc:  # libc/prctl 不存在也不崩: 降级继续检查(第十一轮)
+    rc_sub = rc_pd = -1
 if rc_sub != 0 or rc_pd != 0:
+    # 哨兵供父进程识别 -> 结果强制 <=DEGRADED(containment 降级, 检查照做)
     print("SELF_CHECK_SUPERVISOR_PRCTL_DEGRADED: sub=%s pd=%s" % (rc_sub, rc_pd),
-          file=sys.stderr)
+          file=sys.stderr, flush=True)
 worker = None
 TERMINATED = False
 def _on_term(_s, _f):
@@ -493,6 +499,16 @@ def _pid_starttime(pid: int) -> str | None:
         return None
 
 
+def _win_kernel32() -> Any:
+    """kernel32 获取点(测试注入缝)。Linux 上返回 None。"""
+    try:
+        import ctypes
+
+        return ctypes.windll.kernel32  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _cleanup_tree(proc: subprocess.Popen, job: Any,
                   tracked_pids: set | None = None) -> tuple[bool, str]:
     """尽力清掉整棵 worker 进程树; 返回 (确认清理, 说明)。失败必须让调用方
@@ -506,10 +522,12 @@ def _cleanup_tree(proc: subprocess.Popen, job: Any,
                 return False, f"Windows 无 Job Object 且 taskkill 兜底失败: {exc}"
             return False, "Windows 无 Job Object -- 已 taskkill /T 兜底, 完整性无法保证"
         try:
+            kernel32 = _win_kernel32()
+            if kernel32 is None:
+                return False, "kernel32 不可用 -- Job 清理未确认"
             import ctypes
             from ctypes import wintypes
 
-            kernel32 = ctypes.windll.kernel32
             kernel32.TerminateJobObject.restype = wintypes.BOOL
             kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
             kernel32.CloseHandle.restype = wintypes.BOOL
@@ -538,8 +556,11 @@ def _cleanup_tree(proc: subprocess.Popen, job: Any,
                 os.kill(pid, 0)
             except (ProcessLookupError, PermissionError):
                 continue
-            if expected_start is not None and _pid_starttime(pid) != expected_start:
-                identity_mismatch += 1  # PID 已被复用: 绝不误杀, 如实上报
+            current_start = _pid_starttime(pid)
+            if (expected_start is None or current_start is None
+                    or current_start != expected_start):
+                # 身份未知或不符都不杀(第十一轮 P2-3): 宁漏杀不误杀, 如实上报
+                identity_mismatch += 1
                 continue
             leftovers.append(pid)
             try:
@@ -551,8 +572,14 @@ def _cleanup_tree(proc: subprocess.Popen, job: Any,
                     pass
         if leftovers or identity_mismatch:
             return False, (f"supervisor 异常死亡: 按快照补杀 {len(leftovers)} 个残留, "
-                           f"{identity_mismatch} 个因 PID 身份不符跳过 -- 清理未确认"
+                           f"{identity_mismatch} 个因身份未知/不符跳过 -- 清理未确认"
                            "(快照窗口外的后代无法覆盖, best-effort)")
+        rc = proc.poll()
+        if rc is not None and rc < 0:
+            # 被信号杀死(SIGKILL 等)的 supervisor 没机会清扫; 快照又为空 --
+            # 不得返回"swept"(第十一轮 P2-3), 如实报清理未确认(waiver: best-effort)。
+            return False, (f"supervisor 被信号终止(rc={rc})且快照无可补杀对象 -- "
+                           "清理未确认(best-effort waiver)")
         return True, "supervisor already exited (swept on its way out)"
     except Exception as exc:  # noqa: BLE001
         return False, f"SIGTERM supervisor 失败: {exc}"
@@ -574,8 +601,9 @@ def _cleanup_tree(proc: subprocess.Popen, job: Any,
 def _drain_stream(stream: Any, tail: deque, marker_lines: list | None,
                   marker: str = RESULT_MARKER) -> None:
     """有界流式读取(P3): 只保留尾部 ring buffer 和 marker 行, 大量输出不撑爆
-    内存也不死锁(readers 持续排空管道)。脱敏先于单行截断(第九轮 P1: 截断点
-    落进 secret 中间会留下脱敏器匹配不到的片段)。marker 候选按**带 nonce 的**
+    内存也不死锁(readers 持续排空管道)。流层**不做**脱敏(会打碎 marker/JSON/
+    哨兵); 结构化 payload 走 redact_obj, crash 路径不携带 stderr 原文(第十一轮
+    止战方案)。marker 候选按**带 nonce 的**
     marker 过滤(第九轮 P2: 明文 marker 洪水不得把真结果挤出候选窗)。"""
     try:
         for raw in iter(stream.readline, ""):
@@ -625,26 +653,25 @@ def run_subprocess_check(
     env["SPICA_SELF_CHECK_MARKER_NONCE"] = nonce
     # spawn/赋值窗口对 SIGTERM/SIGINT 原子化(第十轮 P1): handler 在 proc 赋值前
     # 触发会让已启动的 supervisor 无引用可清理。仅 POSIX 主线程可 mask。
-    masked = False
+    original_mask = None
     if os.name != "nt":
-        try:
-            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
-            masked = True
+        try:  # 保存原掩码, 出口 SIG_SETMASK 精确恢复(第十一轮 P2: 不覆写调用方语义)
+            original_mask = signal.pthread_sigmask(
+                signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
         except (ValueError, OSError):
-            pass
+            original_mask = None
     try:
-        try:
-            proc = subprocess.Popen(
-                full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                encoding="utf-8", errors="replace",  # 非法字节不再杀死 reader(P2)
-                cwd=str(REPO_ROOT), env=env, **popen_kwargs,
-            )
-        except OSError as exc:
-            raise SelfCheckInternalError(f"无法启动 worker 子进程: {exc}") from exc
-    finally:
-        if masked:
-            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM, signal.SIGINT})
+        proc = subprocess.Popen(
+            full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace",  # 非法字节不再杀死 reader(P2)
+            cwd=str(REPO_ROOT), env=env, **popen_kwargs,
+        )
+    except OSError as exc:
+        if original_mask is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, original_mask)
+        raise SelfCheckInternalError(f"无法启动 worker 子进程: {exc}") from exc
     job: Any = None
+    tracked: dict = {}
     stdout_tail: deque = deque(maxlen=_STDOUT_TAIL_LINES)
     stderr_tail: deque = deque(maxlen=_STDERR_TAIL_LINES)
     marker_lines: list = []
@@ -668,8 +695,6 @@ def run_subprocess_check(
             reader.start()
         # 后代快照追踪(第九轮 P1): supervisor 被 SIGKILL/OOM 干掉时, 父进程凭
         # 此快照补杀残留(快照窗口外的如实报告)。
-        tracked: dict = {}
-
         def _snapshot() -> None:
             for pid in _descendant_pids(proc.pid):
                 if pid not in tracked:
@@ -694,11 +719,22 @@ def run_subprocess_check(
                 target=_vram_sampler, args=(proc.pid, stop, vram), daemon=True
             )
             sampler.start()
+        if original_mask is not None:
+            # 解除掩码放在 cleanup 保护域内(第十一轮 P2-1): pending SIGTERM 在
+            # 此抛 KI -> 下方 BaseException 先清树再传播, 嵌入式调用不遗留。
+            signal.pthread_sigmask(signal.SIG_SETMASK, original_mask)
+            original_mask = None
     except BaseException as exc:
-        _cleanup_tree(proc, job)
+        _cleanup_tree(proc, job, tracked)
         if isinstance(exc, Exception):
             raise SelfCheckInternalError(f"worker 基础设施初始化失败: {exc}") from exc
         raise
+    finally:
+        if original_mask is not None:  # 兜底恢复(幂等)
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, original_mask)
+            except (ValueError, OSError):
+                pass
     cleaned: tuple[bool, str] | None = None
     try:
         try:
@@ -744,14 +780,17 @@ def run_subprocess_check(
     stdout_text = "\n".join(marker_lines if marker_lines else list(stdout_tail))
     payload = parse_worker_stdout(stdout_text, nonce=nonce)
     if payload is None:
-        stderr_text = redact_secrets("\n".join(stderr_tail))  # 重组后再脱敏:
-        # 跨行 secret 在保留换行的原文上完整匹配(第十轮 P1)
-        tail = [line for line in stderr_text.splitlines()[-3:] if line.strip()]
+        # 止战方案(第十一轮 P1): crash/no-marker 路径不携带任何 raw stderr 原文
+        # (repr/CR 归一化/超窗多行 secret 的变体军备赛就此终结), 只报固定元数据。
+        # 结构化 worker payload 照走 redact_obj。
+        stderr_lines = sum(1 for line in stderr_tail if line.strip())
+        detail = _infra_detail()
+        detail["stderr_lines_captured"] = stderr_lines
         return {
             "status": STATUS_FAIL,
             "reason": f"worker exited rc={proc.returncode} without a result "
-                      f"(stderr tail: {' | '.join(tail) if tail else 'empty'})"[:600],
-            "detail": _infra_detail(),
+                      f"(stderr: {stderr_lines} 行已捕获, 原文不进报告)",
+            "detail": detail,
         }
     if not isinstance(payload, dict):
         # a legal-but-non-object JSON (array/string) must become a FAIL, not an
@@ -789,6 +828,12 @@ def run_subprocess_check(
     detail.setdefault("duration_s", payload.get("duration_s", duration))
     detail.update(vram)
     reason = str(payload.get("reason") or "")
+    if any("SELF_CHECK_SUPERVISOR_PRCTL_DEGRADED" in line for line in stderr_tail):
+        # containment 降级(prctl 不可用): 检查结论保留, 但绿色状态不可信
+        detail["containment"] = "prctl 不可用 -- 进程树清理保证降级(best-effort)"
+        if status in (STATUS_PASS, STATUS_UNVERIFIED, STATUS_SKIPPED):
+            status = STATUS_DEGRADED
+            reason = (reason + "; " if reason else "") + "containment 降级(prctl 不可用)"
     if not cleanup_ok:
         detail["tree_cleanup"] = cleanup_note  # 明确报告, 不静默声称已清理
         if status in (STATUS_PASS, STATUS_UNVERIFIED, STATUS_SKIPPED):
@@ -1169,7 +1214,7 @@ def _register_host_tool_stubs(registry: Any, errors: dict[str, str]) -> None:
 
 
 def _tts_check_registry(
-    plugins_root: Any = None, manifest_path: Any = None
+    plugins_root: Any = None, manifest_path: Any = None, screen_config: Any = None
 ) -> tuple[Any, dict[str, str]]:
     """(registry, plugin_errors): 生产 capability catalogue 的轻量切片
     (register_core_capability_catalogue, 单一来源, 零对象构造) + 生产同款插件
@@ -1186,9 +1231,9 @@ def _tts_check_registry(
     errors: dict[str, str] = {}
     try:
         # 生产同款完整内建目录(含 inspect_screen 工具, 第八轮 review P2: 插件
-        # 可以依赖它)。已知差距: host 闭包工具(watch/note/sing_song)需要 AppHost
-        # 实例, 不在此目录 -- 依赖它们的插件在自检下会报错并如实带出。
-        register_builtin_adapters(registry)
+        # 可以依赖它)。host 闭包工具(watch/note/sing_song)以同 schema 拒执行 stub
+        # 提供(见 _register_host_tool_stubs), offered 状态与生产对齐。
+        register_builtin_adapters(registry, screen_config=screen_config)
     except Exception as exc:  # noqa: BLE001 -- 无关内建失败不殃及 TTS 结论
         errors["<builtins>"] = str(exc)
         registry = CapabilityRegistry()
@@ -1233,7 +1278,10 @@ def _worker_tts() -> dict[str, Any]:
     # registry 两个属性; registry = builtins TTS 切片 + 插件注册(生产对齐)。
     host = AppHost.__new__(AppHost)
     host.config = ConfigManager().load()
-    host.registry, plugin_errors = _tts_check_registry()
+    from agent_tools.function_tools.screen.config import resolve_effective_screen_config
+
+    host.registry, plugin_errors = _tts_check_registry(
+        screen_config=resolve_effective_screen_config())  # 生产同源(第十一轮 P2-6)
     package = load_character_package(
         host.config.character.package_dir or DEFAULT_SPICA_SKILL_DIR
     )
@@ -1515,11 +1563,18 @@ def uvr_missing_prerequisites(model_dir: str | Path, model_filename: str) -> lis
         try:
             from audio_separator.separator import Separator  # noqa: PLC0415
 
-            probe = Separator(
-                output_dir=str(REPO_ROOT / "static/generated_song/tmp"),
-                model_file_dir=str(base),
-            )
-            groups = probe.list_supported_model_files()
+            saved_env = os.environ.pop("AUDIO_SEPARATOR_MODEL_DIR", None)
+            try:  # 解析必须用传入目录, 不被 ambient env 偷换(第十一轮 hermetic)
+                kwargs = {"output_dir": str(REPO_ROOT / "static/generated_song/tmp"),
+                          "model_file_dir": str(base)}
+                try:
+                    probe = Separator(info_only=True, **kwargs)  # 避免 Torch/ORT 探测
+                except TypeError:
+                    probe = Separator(**kwargs)
+                groups = probe.list_supported_model_files()
+            finally:
+                if saved_env is not None:
+                    os.environ["AUDIO_SEPARATOR_MODEL_DIR"] = saved_env
             for models in groups.values():
                 for info in models.values():
                     files = list(info.get("download_files") or [])

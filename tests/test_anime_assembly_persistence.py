@@ -303,6 +303,22 @@ def test_mark_played_persists_and_is_played(tmp_path):
     assert saved["played"] is True
 
 
+def test_reregister_played_episode_preserves_played_state(tmp_path):
+    h = _host(tmp_path)
+    _install(h)
+    f = _media_file(h)
+    h.anime_register_download("first", "无职转生|s3|e1", str(f))
+    h.anime_mark_played("无职转生|s3|e1")
+
+    entry = h.anime_register_download(
+        "later", "无职转生|s3|e1", str(f))
+
+    assert entry.played is True
+    assert h.anime_is_played("无职转生|s3|e1") is True
+    [saved] = json.loads((tmp_path / "store" / "library.json").read_text("utf-8"))
+    assert saved["played"] is True
+
+
 def test_restart_loads_persisted_library(tmp_path):
     h1 = _host(tmp_path)
     _install(h1)

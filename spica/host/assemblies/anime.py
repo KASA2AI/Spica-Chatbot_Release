@@ -336,10 +336,12 @@ def install(
                 title, season, episode = (
                     parsed if parsed is not None else (episode_key, 1, 0))
                 source = ""
+            existing = library.find(episode_key)
             entry = LibraryEntry(
                 episode_key=episode_key, title=title, season=season,
                 episode=episode, file_path=str(final),
-                size_bytes=final.stat().st_size, source=source)
+                size_bytes=final.stat().st_size, source=source,
+                played=bool(existing is not None and existing.played))
             library.add(entry)
             _persist_library_locked()
             pending[:] = [p for p in pending

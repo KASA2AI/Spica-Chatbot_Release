@@ -420,7 +420,9 @@ class AnimeConfig(BaseModel):
     qbittorrent_url: str = "http://127.0.0.1:8080"
     qbittorrent_username: str = "admin"   # password 是 secret (QBITTORRENT_PASSWORD)
     # -- Phase 4 (UI worker + 完成行为 + 持久化) --
-    auto_play_threshold_seconds: float = 300.0   # D5 智能阈值: 快下自动播
+    # Consent threshold only: <= value auto-plays once safe; > value asks.
+    auto_play_threshold_seconds: float = Field(
+        default=50.0, ge=0.0, allow_inf_nan=False)
     qbittorrent_poll_seconds: float = 5.0        # worker 轮询间隔
     stall_timeout_minutes: float = 30.0          # 无进度判卡 (本轮只播报询问)
     ytdlp_format: str = "bv*[height<=1080]+ba/b[height<=1080]"

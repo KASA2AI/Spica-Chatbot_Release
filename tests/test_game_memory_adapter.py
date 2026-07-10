@@ -170,6 +170,80 @@ class GameMemoryAdapterTest(unittest.TestCase):
         self.assertEqual([b.beat_id for b in beats], ["B1"])
 
 
+class CharacterRelationDurableIdentityTest(unittest.TestCase):
+    """AR-C0 §9.1: durable identity is (game_id, playthrough_id, relation_id).
+
+    The session layer derives relation_id from character names only
+    (session.py:539 ``rel::{a}::{b}``), so the same id legitimately recurs
+    across games/playthroughs and must never silently overwrite.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.adapter = GameMemorySqliteAdapter(Path(self._tmp.name) / "galgame.sqlite3")
+
+    @staticmethod
+    def _relation(game_id: str, summary: str, playthrough_id: str = "default",
+                  updated_at: str = "2026-07-10T10:00:00") -> CharacterRelation:
+        return CharacterRelation(
+            relation_id="rel::A::B", game_id=game_id, playthrough_id=playthrough_id,
+            character_a="A", character_b="B", relation_summary=summary,
+            updated_at=updated_at)
+
+    def test_same_relation_id_across_games_coexists(self):
+        # §9 #1 -- the original confirmed failure, verbatim: g1 then g2 write
+        # rel::A::B; both rows must survive and read back their own summary.
+        self.adapter.upsert_character_relation(self._relation("g1", "g1 relation"))
+        self.adapter.upsert_character_relation(self._relation("g2", "g2 relation"))
+
+        g1_rels = self.adapter.character_relations("g1")
+        g2_rels = self.adapter.character_relations("g2")
+        self.assertEqual([r.relation_summary for r in g1_rels], ["g1 relation"])
+        self.assertEqual([r.relation_summary for r in g2_rels], ["g2 relation"])
+
+    def test_same_relation_id_across_playthroughs_coexists(self):
+        # §9 #2 -- same game, different playthrough: route-a / route-b both keep
+        # their own row for the same relation id.
+        self.adapter.upsert_character_relation(
+            self._relation("g1", "route-a relation", playthrough_id="route-a"))
+        self.adapter.upsert_character_relation(
+            self._relation("g1", "route-b relation", playthrough_id="route-b"))
+
+        route_a = self.adapter.character_relations("g1", "route-a")
+        route_b = self.adapter.character_relations("g1", "route-b")
+        self.assertEqual([r.relation_summary for r in route_a], ["route-a relation"])
+        self.assertEqual([r.relation_summary for r in route_b], ["route-b relation"])
+
+    def test_same_scope_rewrite_updates_in_place(self):
+        # §9 #3 -- second write to the same scoped key updates its own row (no
+        # row growth) and leaves every other scope untouched.
+        self.adapter.upsert_character_relation(self._relation("g1", "first pass"))
+        self.adapter.upsert_character_relation(self._relation("g2", "g2 relation"))
+        self.adapter.upsert_character_relation(
+            self._relation("g1", "re-summarized", updated_at="2026-07-10T11:00:00"))
+
+        g1_rels = self.adapter.character_relations("g1")
+        self.assertEqual(len(g1_rels), 1)
+        self.assertEqual(g1_rels[0].relation_summary, "re-summarized")
+        self.assertEqual(g1_rels[0].updated_at, "2026-07-10T11:00:00")
+        self.assertEqual(
+            [r.relation_summary for r in self.adapter.character_relations("g2")],
+            ["g2 relation"])
+
+    def test_query_isolation_across_scopes(self):
+        # §9 #4 -- queries only see their own (game_id, playthrough_id) scope.
+        self.adapter.upsert_character_relation(self._relation("g1", "default scope"))
+        self.adapter.upsert_character_relation(
+            self._relation("g1", "route-a scope", playthrough_id="route-a"))
+
+        self.assertEqual(
+            [r.relation_summary for r in self.adapter.character_relations("g1")],
+            ["default scope"])
+        self.assertEqual(self.adapter.character_relations("g1", "route-z"), [])
+        self.assertEqual(self.adapter.character_relations("unknown-game"), [])
+
+
 class StorageIsolationTest(unittest.TestCase):
     def test_galgame_db_is_separate_file_and_does_not_touch_memory_store(self):
         with TemporaryDirectory() as tmp:

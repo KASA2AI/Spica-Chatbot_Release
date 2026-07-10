@@ -69,6 +69,45 @@ class FakeWorker(QObject):
         self.finished.emit()
 
 
+class _FakeTimeoutSignal:
+    def __init__(self):
+        self._callback = None
+
+    def connect(self, callback):
+        self._callback = callback
+
+    def emit(self):
+        if self._callback is not None:
+            self._callback()
+
+
+class FakeSingleShotTimer:
+    """Deterministic boundary fake for Qt's one-shot clock."""
+
+    def __init__(self):
+        self.timeout = _FakeTimeoutSignal()
+        self._active = False
+        self.single_shot = False
+        self.delays: list[int] = []
+
+    def setSingleShot(self, value):
+        self.single_shot = bool(value)
+
+    def start(self, delay_ms):
+        self._active = True
+        self.delays.append(int(delay_ms))
+
+    def stop(self):
+        self._active = False
+
+    def isActive(self):
+        return self._active
+
+    def fire(self):
+        self._active = False
+        self.timeout.emit()
+
+
 class _BlockingProcessOutput:
     """Pipe boundary that reaches EOF only when the controlled process exits."""
 
@@ -165,6 +204,10 @@ class Harness:
             return SimpleNamespace(episode_key=key, title="无职转生", season=3,
                                    episode=1, file_path=path)
 
+        def mark_played(key):
+            self.marked.append(key)
+            self.played_keys.add(key)
+
         def factory(**kw):
             w = FakeWorker(**kw)
             self.workers.append(w)
@@ -175,7 +218,7 @@ class Harness:
             request_proactive_turn=try_speak,
             play_file=play_file,
             register_download=register,
-            mark_played=self.marked.append,
+            mark_played=mark_played,
             note_task_id=lambda rid, tid: self.noted.append((rid, tid)),
             list_pending=lambda: [dict(p) for p in self.pending],
             drop_pending=self.dropped.append,
@@ -183,7 +226,7 @@ class Harness:
             is_busy=lambda: self.busy,
             galgame_active=lambda: self.galgame,
             anime_config=lambda: SimpleNamespace(
-                auto_play_threshold_seconds=300.0, qbittorrent_poll_seconds=5.0,
+                auto_play_threshold_seconds=50.0, qbittorrent_poll_seconds=5.0,
                 stall_timeout_minutes=30.0, ytdlp_format="fmt",
                 source_timeout_seconds=23.0,
                 ytdlp_min_rate_kib_per_second=321.0),
@@ -267,19 +310,145 @@ def test_ready_fast_and_idle_auto_plays_via_host_closure(qapp):
     assert h.marked == ["无职转生|s3|e1"]           # played -> pointer consumed
     assert h.spoken == []                          # no announce on auto-play
     assert h.controller.in_flight_state() is None
+    assert h.status[-1] == "✅ 下好了，已开始播放：无职转生"
 
 
-@pytest.mark.parametrize("mutate,reason", [
-    (lambda h: setattr(h, "busy", True), "busy"),
-    (lambda h: setattr(h, "galgame", True), "galgame"),
-])
-def test_ready_busy_or_galgame_announces_instead(qapp, mutate, reason):
+def test_duplicate_ready_event_does_not_play_twice(qapp):
     h = Harness()
-    mutate(h)
     h.controller.handle_anime_request_event(_request_event())
-    h.workers[0].ready.emit(_ready(elapsed=10.0))
+    ready = _ready(elapsed=30.0)
+
+    h.workers[0].ready.emit(ready)
+    h.workers[0].ready.emit(ready)
+
+    assert h.registered == [
+        ("REQ1", "无职转生|s3|e1", "/dl/ep1.mkv"),
+    ]
+    assert h.played == ["/dl/ep1.mkv"]
+    assert h.marked == ["无职转生|s3|e1"]
+    assert h.spoken == []
+
+
+def test_ready_for_already_played_episode_replaces_downloading_status(qapp):
+    h = Harness()
+    h.played_keys.add("无职转生|s3|e1")
+    h.controller.handle_anime_request_event(_request_event())
+
+    h.workers[0].ready.emit(_ready(elapsed=30.0))
+
+    assert h.played == []
+    assert h.spoken == []
+    assert h.status[-1] == "✅ 下好了，已经播放过：无职转生"
+
+
+def test_ready_fast_while_busy_waits_then_auto_plays_without_asking(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    h.busy = True
+    h.controller.handle_anime_request_event(_request_event())
+
+    h.workers[0].ready.emit(_ready(elapsed=30.0))
+
+    assert h.played == []
+    assert h.spoken == []
+    assert timer.isActive()
+
+    h.busy = False
+    timer.fire()
+
+    assert h.played == ["/dl/ep1.mkv"]
+    assert h.marked == ["无职转生|s3|e1"]
+    assert h.spoken == []
+
+
+def test_ready_slow_while_busy_waits_then_asks_once(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    h.busy = True
+    h.controller.handle_anime_request_event(_request_event())
+
+    h.workers[0].ready.emit(_ready(elapsed=51.0))
+
+    assert h.played == []
+    assert h.spoken == []
+    assert timer.isActive()
+
+    h.busy = False
+    timer.fire()
+
     assert h.played == []
     assert len(h.spoken) == 1
+    assert "第3季" in h.spoken[0].directive
+    assert not timer.isActive()
+
+
+def test_ready_fast_during_galgame_waits_then_auto_plays_without_asking(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    h.galgame = True
+    h.controller.handle_anime_request_event(_request_event())
+    h.workers[0].ready.emit(_ready(elapsed=30.0))
+
+    assert h.played == []
+    assert h.spoken == []
+    assert timer.isActive()
+
+    h.galgame = False
+    timer.fire()
+
+    assert h.played == ["/dl/ep1.mkv"]
+    assert h.marked == ["无职转生|s3|e1"]
+    assert h.spoken == []
+
+
+def test_ready_slow_during_galgame_waits_then_asks_once(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    h.galgame = True
+    h.controller.handle_anime_request_event(_request_event())
+    h.workers[0].ready.emit(_ready(elapsed=51.0))
+
+    assert h.played == []
+    assert h.spoken == []
+    assert timer.isActive()
+
+    h.galgame = False
+    timer.fire()
+
+    assert h.played == []
+    assert len(h.spoken) == 1
+    assert not timer.isActive()
+
+
+def test_multiple_completions_waiting_for_idle_never_auto_play_in_sequence(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    h.busy = True
+
+    h.controller.handle_anime_request_event(
+        _request_event(rid="A", key="番剧|s1|e1"))
+    h.workers[0].ready.emit(
+        _ready(rid="A", key="番剧|s1|e1", save_path="/dl/A.mkv"))
+    h.workers[0].finish()
+
+    h.controller.handle_anime_request_event(
+        _request_event(rid="B", key="番剧|s1|e2"))
+    h.workers[1].ready.emit(
+        _ready(rid="B", key="番剧|s1|e2", save_path="/dl/B.mkv"))
+    h.workers[1].finish()
+
+    h.busy = False
+    timer.fire()
+
+    assert h.played == []
+    assert len(h.spoken) == 1
+    assert timer.isActive()
+
+    timer.fire()
+
+    assert h.played == []
+    assert len(h.spoken) == 2
+    assert not timer.isActive()
 
 
 def test_ready_slow_announces_with_normalized_title(qapp):
@@ -326,47 +495,60 @@ def test_ready_registration_rejection_announces_not_plays(qapp):
     assert "没通过" in req.directive
 
 
-# -- P1-5 completion retry ---------------------------------------------------------
+# -- completion idle scheduling ---------------------------------------------------
 
-def _announce_dropped(h):
+def _confirmation_waiting_after_arbiter_race(h, timer):
     h.speak_result = False
     h.controller.handle_anime_request_event(_request_event())
-    h.workers[0].ready.emit(_ready(elapsed=1000.0))
-    assert len(h.spoken) == 1                       # first try, dropped
-    assert len(h.controller._retries) == 1          # backoff timer armed
-    return list(h.controller._retries.keys())[0]
+    h.workers[0].ready.emit(_ready(elapsed=51.0))
+    assert len(h.spoken) == 1                       # request lost the idle race
+    assert timer.isActive()
 
 
-def test_retry_after_busy_drop_until_success(qapp):
-    h = Harness()
-    key = _announce_dropped(h)
-    directive = h.spoken[0].directive
-    # tick 1: still busy -> re-armed
-    h.controller._on_retry_fired(key, "无职转生|s3|e1", directive, attempt=1)
-    assert len(h.spoken) == 2
-    assert len(h.controller._retries) == 1
-    # tick 2: she is free now -> spoken, retry chain ends
+def test_confirmation_retries_promptly_after_arbiter_race(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    _confirmation_waiting_after_arbiter_race(h, timer)
+    assert 0 < timer.delays[-1] <= 250
+
     h.speak_result = True
-    h.controller._on_retry_fired(key, "无职转生|s3|e1", directive, attempt=2)
-    assert len(h.spoken) == 3
-    assert h.controller._retries == {}
+    timer.fire()
+
+    assert len(h.spoken) == 2
+    assert not timer.isActive()
 
 
-def test_retry_stops_when_episode_consumed(qapp):
-    h = Harness()
-    key = _announce_dropped(h)
-    directive = h.spoken[0].directive
+def test_pending_confirmation_stops_when_episode_was_played(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    _confirmation_waiting_after_arbiter_race(h, timer)
     h.played_keys.add("无职转生|s3|e1")             # 「放吧」consumed it meanwhile
-    h.controller._on_retry_fired(key, "无职转生|s3|e1", directive, attempt=1)
-    assert len(h.spoken) == 1                       # no further announce
-    assert h.controller._retries == {}
+
+    timer.fire()
+
+    assert len(h.spoken) == 1
+    assert not timer.isActive()
+    assert h.status[-1] == ""
 
 
-def test_retry_stops_on_user_activity(qapp):
-    h = Harness()
-    _announce_dropped(h)
-    h.controller.notify_user_activity()             # typed OR voice entry
-    assert h.controller._retries == {}
+def test_user_activity_delays_but_does_not_drop_required_confirmation(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    _confirmation_waiting_after_arbiter_race(h, timer)
+    h.busy = True
+
+    h.controller.notify_user_activity()
+    timer.fire()
+
+    assert len(h.spoken) == 1
+    assert timer.isActive()
+
+    h.busy = False
+    h.speak_result = True
+    timer.fire()
+
+    assert len(h.spoken) == 2
+    assert not timer.isActive()
 
 
 # -- stall (v1: informational ask only) ---------------------------------------------
@@ -399,7 +581,7 @@ def test_reconnecting_updates_status_without_proactive_speech(
     assert h.spoken == []
 
 
-def test_degraded_status_survives_progress_then_ready_clears_visible_state(qapp):
+def test_degraded_status_is_replaced_by_visible_auto_play_completion(qapp):
     h = Harness()
     h.controller.handle_anime_request_event(_request_event())
     worker = h.workers[0]
@@ -415,7 +597,7 @@ def test_degraded_status_survives_progress_then_ready_clears_visible_state(qapp)
     worker.ready.emit(_ready(elapsed=10.0))
 
     assert h.controller.in_flight_state() is None
-    assert h.status[-1] == ""
+    assert h.status[-1] == "✅ 下好了，已开始播放：无职转生"
     assert h.registered == [
         ("REQ1", "无职转生|s3|e1", "/dl/ep1.mkv"),
     ]
@@ -557,6 +739,42 @@ def test_shutdown_cancels_workers_and_retries(qapp):
     h.controller.shutdown(10)
     assert worker.cancelled == 1
     assert h.controller._retries == {}
+
+
+def test_shutdown_cancels_deferred_auto_play(qapp):
+    timer = FakeSingleShotTimer()
+    h = Harness(completion_timer=timer)
+    h.busy = True
+    h.controller.handle_anime_request_event(_request_event())
+    h.workers[0].ready.emit(_ready(elapsed=30.0))
+    assert timer.isActive()
+
+    h.controller.shutdown(10)
+    h.busy = False
+    timer.fire()
+
+    assert h.played == []
+    assert h.spoken == []
+    assert not timer.isActive()
+
+
+def test_shutdown_ignores_ready_already_queued_from_worker_thread(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    worker = h.workers[0]
+
+    emitter = threading.Thread(target=lambda: worker.ready.emit(_ready()))
+    emitter.start()
+    emitter.join(timeout=1)
+    assert not emitter.is_alive()
+
+    h.controller.shutdown(10)
+    qapp.processEvents()
+
+    assert h.registered == []
+    assert h.played == []
+    assert h.marked == []
+    assert h.spoken == []
 
 
 def test_shutdown_force_kills_and_reaps_terminate_resistant_extractor(

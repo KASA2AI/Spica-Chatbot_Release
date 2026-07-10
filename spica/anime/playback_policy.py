@@ -1,27 +1,28 @@
-"""Completion-behavior decision (Phase 1) -- pure function, no Qt, no I/O.
+"""Completion-consent decision (Phase 1) -- pure function, no Qt, no I/O.
 
 Extracted from the UI controller so it is unit-testable (P2-16). Given a finished
-download, decide whether Spica auto-plays or announces-and-waits (D5 / P1-7):
+download, decide whether Spica auto-plays or asks for confirmation (D5 / P1-7):
 
-- auto-play ONLY when ALL hold: elapsed <= threshold (fast), not busy (not
-  speaking/singing), galgame not active (a player window popping up would trip
-  the companion privacy gate and pause play), and this run is not a
-  restart-reconciled task of unknown age (P1-9: those are always announced).
-- otherwise announce (a system turn), which the controller then retries if the
-  proactive arbiter drops it while busy (P1-5).
+- elapsed <= threshold means auto-play intent;
+- elapsed > threshold, unknown age, or startup reconciliation means confirmation.
+
+Transient UI safety state (Spica speaking/singing, user speaking, or galgame
+active) deliberately does not belong here. AnimeController delays execution
+until it is safe without changing the consent decision.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 AUTO_PLAY = "auto_play"
-ANNOUNCE = "announce"
+REQUIRE_CONFIRMATION = "require_confirmation"
 
 
 @dataclass(frozen=True)
 class PlaybackDecision:
-    action: str        # AUTO_PLAY | ANNOUNCE
+    action: str        # AUTO_PLAY | REQUIRE_CONFIRMATION
     reason: str = ""
 
 
@@ -29,18 +30,15 @@ def decide_playback(
     *,
     elapsed_seconds: float | None,
     threshold_seconds: float,
-    is_busy: bool,
-    galgame_active: bool,
     reconciled_unknown_age: bool = False,
 ) -> PlaybackDecision:
     """See module docstring. ``elapsed_seconds=None`` means the age is unknown
-    (in-flight across a restart) -> treated as slow (announce)."""
-    if reconciled_unknown_age or elapsed_seconds is None:
-        return PlaybackDecision(ANNOUNCE, "unknown age / reconciled")
-    if is_busy:
-        return PlaybackDecision(ANNOUNCE, "busy")
-    if galgame_active:
-        return PlaybackDecision(ANNOUNCE, "galgame active")
+    (in-flight across a restart) and therefore requires confirmation."""
+    if (not math.isfinite(threshold_seconds) or threshold_seconds < 0
+            or reconciled_unknown_age or elapsed_seconds is None
+            or not math.isfinite(elapsed_seconds) or elapsed_seconds < 0):
+        return PlaybackDecision(
+            REQUIRE_CONFIRMATION, "unknown, invalid, or reconciled age")
     if elapsed_seconds > threshold_seconds:
-        return PlaybackDecision(ANNOUNCE, "slow download")
-    return PlaybackDecision(AUTO_PLAY, "fast and idle")
+        return PlaybackDecision(REQUIRE_CONFIRMATION, "slow download")
+    return PlaybackDecision(AUTO_PLAY, "within auto-play threshold")

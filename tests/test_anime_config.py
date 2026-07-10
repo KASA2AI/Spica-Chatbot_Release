@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from spica.config.env_roster import consumed_env_names
 from spica.config.manager import ConfigManager
 from spica.config.schema import AnimeConfig, AppConfig
@@ -29,22 +31,30 @@ def test_appconfig_has_anime_section():
 
 def test_resolved_config_anime_enabled_true():
     # Phase 4 端到端验收通过后翻 true：app.yaml ships anime.enabled: true -> resolves
-    # true (deliberate non-default override; resolved-config diff = this one key).
+    # true (a deliberate non-default file override).
     assert ConfigManager().load().anime.enabled is True
 
 
 def test_phase4_worker_knobs_defaults():
-    # Phase 4 landed the worker/completion/persistence knobs (yaml-only typed,
-    # defaults == the hardcoded values of this round -> zero resolved diff
-    # beyond the new anime.* keys).
+    # Phase 4 landed the worker/completion/persistence knobs (yaml-only typed).
     a = AnimeConfig()
-    assert a.auto_play_threshold_seconds == 300.0
+    assert a.auto_play_threshold_seconds == 50.0
     assert a.qbittorrent_poll_seconds == 5.0
     assert a.stall_timeout_minutes == 30.0
     assert a.ytdlp_format == "bv*[height<=1080]+ba/b[height<=1080]"
     assert a.ytdlp_min_rate_kib_per_second == 512.0
     assert a.cookies_file == "data/cookies.txt"
     assert a.library_file == "data/anime/library.json"
+
+
+def test_resolved_anime_auto_play_threshold_is_50_seconds():
+    assert ConfigManager().load().anime.auto_play_threshold_seconds == 50.0
+
+
+@pytest.mark.parametrize("threshold", [-1.0, float("nan"), float("inf")])
+def test_invalid_auto_play_threshold_is_rejected(threshold):
+    with pytest.raises(ValueError):
+        AnimeConfig(auto_play_threshold_seconds=threshold)
 
 
 def test_phase5_knobs_still_deferred():

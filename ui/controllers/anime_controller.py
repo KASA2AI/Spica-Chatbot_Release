@@ -14,18 +14,20 @@ Sits between the host->UI bridge and the download worker:
   the controller never touches the library or its files itself (P1-6), and
   auto-play only ever goes through the host play closure -> MediaPlayerPort
   (P0-4c: the adapter stays the single validation point).
-- completion behaviour = ``spica.anime.playback_policy.decide_playback`` (D5 /
-  P1-7): AUTO_PLAY -> host play closure (+ mark_played); ANNOUNCE -> a system
-  turn via ``ProactiveTurnRequest`` -> arbiter ``try_speak``.
-- P1-5 completion retry: ``try_speak`` returning False means silently dropped,
-  but 「下好了」 must not be lost -- retry on a backoff QTimer until it speaks,
-  the episode is consumed (played via 「放吧」), or the user speaks first
-  (``notify_user_activity`` from BOTH the typed and the voice entry). The
-  directive embeds the normalized 「标题 第x季 第x集」 so the LLM can
-  reconstruct the watch_anime parameters next turn. ``proactive.py`` untouched.
+- completion consent = ``spica.anime.playback_policy.decide_playback`` (D5 /
+  P1-7): elapsed <= 50 seconds keeps AUTO_PLAY intent; slower/unknown work keeps
+  confirmation intent. Runtime busy state never changes that decision.
+- one controller-owned single-shot timer drains completion intents after chat,
+  song, user speech, or galgame activity becomes idle. Fast downloads preserve
+  their auto-play intent instead of being converted into a confirmation. If
+  several completions accumulate, all require confirmation rather than opening
+  multiple player processes in sequence.
+  Confirmation still uses ``ProactiveTurnRequest`` -> arbiter ``try_speak``;
+  an arbiter race stays queued for the next short check. User activity delays,
+  but never deletes, a completion intent; 「放吧」 consumes it via ``is_played``.
 - startup reconcile (P1-9): for each persisted pending record WITH a qbt
   task_id, resume polling (elapsed unknown -> ``reconciled_unknown_age=True``
-  -> policy guarantees ANNOUNCE, never auto-play). Records without a task_id
+  -> policy guarantees confirmation, never auto-play). Records without a task_id
   (an interrupted yt-dlp run) are dropped with a warning -- the ``.part`` file
   remains and a re-request resumes it.
 - stall (v1 scope): a single informational system-turn ask + status chip. No
@@ -36,19 +38,32 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer
 
-from spica.anime.playback_policy import AUTO_PLAY, decide_playback
+from spica.anime.playback_policy import (
+    AUTO_PLAY,
+    REQUIRE_CONFIRMATION,
+    decide_playback,
+)
 from spica.core.proactive import ProactiveTurnRequest
 from spica.ports.media_player import MediaPlayerError
 from ui.workers.anime_worker import AnimeDownloadWorker
 
 logger = logging.getLogger(__name__)
 
-# P1-5 retry backoff (seconds); past the end it keeps cycling at the last value.
-_RETRY_BACKOFF_S: tuple[float, ...] = (15.0, 30.0, 60.0, 120.0)
+_COMPLETION_IDLE_POLL_MS = 250
+# Download/validation failure notices keep the pre-existing low-frequency
+# retry policy. Successful completion auto/confirmation never uses this path.
+_NOTICE_RETRY_BACKOFF_S: tuple[float, ...] = (15.0, 30.0, 60.0, 120.0)
+
+
+@dataclass(frozen=True)
+class _PendingCompletion:
+    action: str
+    entry: Any
 
 
 class AnimeController(QObject):
@@ -72,6 +87,7 @@ class AnimeController(QObject):
         download_dir: str,
         cookies_file: str = "",
         worker_factory: Callable[..., Any] | None = None,
+        completion_timer: Any | None = None,
     ) -> None:
         super().__init__(parent)
         self._set_status = set_anime_status
@@ -91,6 +107,7 @@ class AnimeController(QObject):
         self._cookies_file = cookies_file
         self._worker_factory = worker_factory or AnimeDownloadWorker
 
+        self._shutting_down = False
         self._workers: list[Any] = []        # request worker + resume workers
         self._in_flight: dict | None = None  # swapped whole (GIL-atomic read)
         self._degraded_requests: set[str] = set()
@@ -98,8 +115,13 @@ class AnimeController(QObject):
         # (single flight -- two threads must never share the qbt client).
         self._reconcile_queue: list[dict] = []
         self._reconciled_ids: set[str] = set()
+        self._handled_ready_ids: set[str] = set()
         # episode_key (or synthetic error key) -> (QTimer, attempt, directive)
         self._retries: dict[str, tuple[QTimer, int, str]] = {}
+        self._pending_completions: dict[str, _PendingCompletion] = {}
+        self._completion_timer = completion_timer or QTimer(self)
+        self._completion_timer.setSingleShot(True)
+        self._completion_timer.timeout.connect(self._on_completion_timer)
 
     # -- F8 seam (called from the ChatWorker thread via host._anime_in_flight) --
 
@@ -112,6 +134,8 @@ class AnimeController(QObject):
     # -- AnimeRequestEvent (bridge dispatch, GUI thread) -------------------------
 
     def handle_anime_request_event(self, event: Any) -> None:
+        if self._shutting_down:
+            return
         if self._has_active_worker():
             # the host busy gate should have refused already -- emit/attach race
             logger.warning("anime request %s dropped: a download is active",
@@ -164,6 +188,8 @@ class AnimeController(QObject):
 
     def _on_worker_progress(self, request_id: str, progress: float,
                             phase: str) -> None:
+        if self._shutting_down:
+            return
         current = self._in_flight or {}
         title = str(current.get("title") or self._title_for(request_id))
         self._set_in_flight(progress, title)
@@ -177,10 +203,14 @@ class AnimeController(QObject):
             self._set_status(f"⬇ 下载中 {int(progress * 100)}%：{title}")
 
     def _on_worker_task_started(self, request_id: str, task_id: str) -> None:
+        if self._shutting_down:
+            return
         # persist the qbt hash so a restart can reconcile this task (P1-9)
         self._note_task_id(request_id, task_id)
 
     def _on_worker_stalled(self, request_id: str, minutes: float) -> None:
+        if self._shutting_down:
+            return
         title = self._title_for(request_id)
         self._set_status(f"⏸ 下载卡住了：{title}")
         # single informational ask (v1): no retry queue, no auto-cancel/switch.
@@ -193,18 +223,28 @@ class AnimeController(QObject):
 
     def _on_worker_reconnecting(self, request_id: str, used: int,
                                 maximum: int, reason: str) -> None:
+        if self._shutting_down:
+            return
         title = self._title_for(request_id)
         condition = "当前连接过慢" if reason == "low_speed" else "当前连接中断"
         self._set_status(
             f"{condition}，正在重新连接 {used}/{maximum}：{title}")
 
     def _on_worker_degraded(self, request_id: str) -> None:
+        if self._shutting_down:
+            return
         self._degraded_requests.add(request_id)
         title = self._title_for(request_id)
         self._set_status(
             f"当前连接持续较慢，已停止自动重连，继续下载：{title}")
 
     def _on_worker_ready(self, event: Any, worker: Any) -> None:
+        if self._shutting_down:
+            return
+        if event.request_id in self._handled_ready_ids:
+            logger.debug("duplicate anime ready ignored: %s", event.request_id)
+            return
+        self._handled_ready_ids.add(event.request_id)
         self._in_flight = None
         self._degraded_requests.discard(event.request_id)
         reconciled = event.request_id in self._reconciled_ids
@@ -244,29 +284,86 @@ class AnimeController(QObject):
                            f"（{exc}），先别播。跟麦说一声。"))
             return
 
+        if self._is_played(entry.episode_key):
+            self._set_status(f"✅ 下好了，已经播放过：{entry.title}")
+            return
+
+        self._set_status(f"✅ 下好了：{entry.title}")
         cfg = self._anime_config()
         decision = decide_playback(
             elapsed_seconds=event.elapsed_seconds,
-            threshold_seconds=float(getattr(
-                cfg, "auto_play_threshold_seconds", 300.0)),
-            is_busy=self._is_busy(),
-            galgame_active=self._galgame_active(),
+            threshold_seconds=float(cfg.auto_play_threshold_seconds),
             reconciled_unknown_age=reconciled,
         )
         if decision.action == AUTO_PLAY:
-            try:
-                self._play_file(entry.file_path)   # host closure -> port checks
-            except MediaPlayerError as exc:
-                logger.warning("auto-play failed (%s); falling back to announce",
-                               exc)
-            else:
-                self._mark_played(entry.episode_key)
-                self._set_status("")
+            if self._is_busy() or self._galgame_active():
+                self._set_status(
+                    f"✅ 下好了，空闲后自动播放：{entry.title}")
+                self._queue_completion(AUTO_PLAY, entry)
                 return
-        self._set_status(f"✅ 下好了：{entry.title}")
+            if self._auto_play_entry(entry):
+                return
         self._announce_completion(entry)
 
+    def _auto_play_entry(self, entry: Any) -> bool:
+        try:
+            self._play_file(entry.file_path)   # host closure -> port checks
+        except MediaPlayerError as exc:
+            logger.warning("auto-play failed (%s); falling back to announce",
+                           exc)
+            return False
+        self._mark_played(entry.episode_key)
+        self._set_status(f"✅ 下好了，已开始播放：{entry.title}")
+        return True
+
+    def _arm_completion_timer(self) -> None:
+        if (self._pending_completions
+                and not self._completion_timer.isActive()):
+            self._completion_timer.start(_COMPLETION_IDLE_POLL_MS)
+
+    def _on_completion_timer(self) -> None:
+        self._drain_pending_completions()
+
+    def _queue_completion(self, action: str, entry: Any) -> None:
+        if any(key != entry.episode_key
+               for key in self._pending_completions):
+            # More than one completion is ambiguous: never launch several
+            # player processes in sequence just because the UI became idle.
+            self._pending_completions = {
+                key: _PendingCompletion(
+                    action=REQUIRE_CONFIRMATION, entry=pending.entry)
+                for key, pending in self._pending_completions.items()
+            }
+            action = REQUIRE_CONFIRMATION
+        self._pending_completions[entry.episode_key] = _PendingCompletion(
+            action=action, entry=entry)
+        self._drain_pending_completions()
+
+    def _drain_pending_completions(self) -> None:
+        if self._is_busy() or self._galgame_active():
+            self._arm_completion_timer()
+            return
+        for key, pending in list(self._pending_completions.items()):
+            if self._is_played(key):
+                self._pending_completions.pop(key, None)
+                if not self._pending_completions:
+                    self._set_status("")
+                continue
+            if pending.action == AUTO_PLAY:
+                self._pending_completions.pop(key, None)
+                if not self._auto_play_entry(pending.entry):
+                    self._set_status(f"✅ 下好了：{pending.entry.title}")
+                    self._pending_completions[key] = _PendingCompletion(
+                        action=REQUIRE_CONFIRMATION, entry=pending.entry)
+                break
+            if self._try_speak(self._completion_request(pending.entry)):
+                self._pending_completions.pop(key, None)
+            break
+        self._arm_completion_timer()
+
     def _on_worker_finished(self, worker: Any) -> None:
+        if self._shutting_down:
+            return
         self._degraded_requests.discard(
             str(getattr(worker, "request_id", "")))
         if worker in self._workers:
@@ -284,15 +381,20 @@ class AnimeController(QObject):
                 return getattr(w, "title", "") or "这一集"
         return "这一集"
 
-    # -- completion announce + P1-5 retry ----------------------------------------
+    # -- completion confirmation + non-completion notice retry ------------------
 
     def _announce_completion(self, entry: Any) -> None:
+        self._queue_completion(REQUIRE_CONFIRMATION, entry)
+
+    @staticmethod
+    def _completion_request(entry: Any) -> ProactiveTurnRequest:
         # the normalized 「标题 第x季 第x集」 lets the LLM reconstruct the
         # watch_anime parameters when 麦 answers 「放吧」 (P1-11①).
         directive = (f"你帮麦下载的动漫《{entry.title}》第{entry.season}季 "
                      f"第{entry.episode}集 下载完成了，可以看了。"
                      "问问麦要不要现在看。")
-        self._announce_with_retry(key=entry.episode_key, directive=directive)
+        return ProactiveTurnRequest(
+            source="anime", directive=directive, policy="drop_if_busy")
 
     def _announce_with_retry(self, *, key: str | None, directive: str) -> None:
         retry_key = key if key is not None else f"__err_{id(directive)}"
@@ -307,7 +409,8 @@ class AnimeController(QObject):
             source="anime", directive=directive, policy="drop_if_busy"))
         if ok:
             return
-        delay = _RETRY_BACKOFF_S[min(attempt, len(_RETRY_BACKOFF_S) - 1)]
+        delay = _NOTICE_RETRY_BACKOFF_S[
+            min(attempt, len(_NOTICE_RETRY_BACKOFF_S) - 1)]
         timer = QTimer(self)
         timer.setSingleShot(True)
         timer.timeout.connect(
@@ -326,12 +429,16 @@ class AnimeController(QObject):
             pending[0].stop()
 
     def notify_user_activity(self) -> None:
-        """The user spoke first (typed OR voice entry): drop every pending
-        announce retry (P1-5 stop condition). The 「放吧」 pointer still covers
-        the episode when 麦 asks for it later."""
+        """Let the new user turn claim busy before checking completions again.
+
+        Completion auto/confirmation intent is durable for this app session.
+        Legacy failure notices remain disposable when the user speaks first.
+        """
         for timer, _, _ in self._retries.values():
             timer.stop()
         self._retries.clear()
+        if self._pending_completions:
+            self._completion_timer.start(_COMPLETION_IDLE_POLL_MS)
 
     # -- startup reconcile (P1-9) -------------------------------------------------
 
@@ -392,7 +499,10 @@ class AnimeController(QObject):
     def shutdown(self, wait_ms: int = 1500) -> None:
         """P1-9 exit: stop retry timers; terminate yt-dlp keeping .part; stop
         qbt polling only (the external service keeps downloading)."""
+        self._shutting_down = True
         self.notify_user_activity()
+        self._completion_timer.stop()
+        self._pending_completions.clear()
         # a finished signal during shutdown must not start the next reconcile
         self._reconcile_queue.clear()
         for worker in list(self._workers):

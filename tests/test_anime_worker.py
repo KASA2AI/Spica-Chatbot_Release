@@ -362,7 +362,7 @@ def test_magnet_cancel_stops_polling_only(qapp, tmp_path):
 
 
 def test_resume_mode_polls_existing_task_elapsed_none(qapp, tmp_path):
-    # restart reconcile (P1-9): unknown age -> elapsed None (=> ANNOUNCE only)
+    # restart reconcile (P1-9): unknown age -> elapsed None (=> confirmation only)
     ft = FakeTorrent([_completed(str(tmp_path / "ep1.mkv"))])
     w = _worker(tmp_path, locator="", torrent=ft, resume_task_id="b" * 40)
     event = w.execute()

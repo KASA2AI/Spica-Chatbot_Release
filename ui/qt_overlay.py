@@ -928,8 +928,8 @@ class OverlayWindow(QWidget):
             return
 
         self.input_panel.input.clear()
-        # P1-5 stop condition: the user spoke first (typed entry) -> pending
-        # anime completion-announce retries are dropped.
+        # Give the new typed turn priority. Anime completion intent survives;
+        # its controller waits until the aggregate conversation becomes idle.
         if self.anime_controller is not None:
             self.anime_controller.notify_user_activity()
         if self.interaction_controller is not None:
@@ -953,8 +953,7 @@ class OverlayWindow(QWidget):
                 self.input_panel.set_voice_transcript(text)
                 self._voice_transcript_shown = text
                 QTimer.singleShot(_VOICE_TRANSCRIPT_LINGER_MS, self._clear_voice_transcript)
-        # P1-5 stop condition: the user spoke first (voice entry) -- same drop
-        # as the typed path in send_message.
+        # Same priority handoff for voice input; completion intent is retained.
         if self.anime_controller is not None:
             self.anime_controller.notify_user_activity()
         if self.interaction_controller is not None:

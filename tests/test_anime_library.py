@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from spica.anime.library import AnimeLibrary, LibraryEntry, episode_key
 from spica.anime.models import anime_dirname
 from spica.anime.playback_policy import (
-    ANNOUNCE,
     AUTO_PLAY,
+    REQUIRE_CONFIRMATION,
     decide_playback,
 )
 
@@ -172,32 +174,34 @@ def test_json_round_trip():
 
 # -- playback policy (D5 / P1-7 / P1-9) --------------------------------------
 
-def test_auto_play_when_fast_and_idle():
-    d = decide_playback(elapsed_seconds=120, threshold_seconds=300,
-                        is_busy=False, galgame_active=False)
+def test_auto_play_intent_when_download_finishes_within_50_seconds():
+    d = decide_playback(elapsed_seconds=30, threshold_seconds=50)
     assert d.action == AUTO_PLAY
 
 
-def test_announce_when_slow():
-    d = decide_playback(elapsed_seconds=600, threshold_seconds=300,
-                        is_busy=False, galgame_active=False)
-    assert d.action == ANNOUNCE
+def test_exactly_50_seconds_still_auto_plays():
+    d = decide_playback(elapsed_seconds=50, threshold_seconds=50)
+    assert d.action == AUTO_PLAY
 
 
-def test_announce_when_busy():
-    d = decide_playback(elapsed_seconds=10, threshold_seconds=300,
-                        is_busy=True, galgame_active=False)
-    assert d.action == ANNOUNCE
+def test_more_than_50_seconds_requires_confirmation():
+    d = decide_playback(elapsed_seconds=50.001, threshold_seconds=50)
+    assert d.action == REQUIRE_CONFIRMATION
 
 
-def test_announce_when_galgame_active():
-    d = decide_playback(elapsed_seconds=10, threshold_seconds=300,
-                        is_busy=False, galgame_active=True)
-    assert d.action == ANNOUNCE
+@pytest.mark.parametrize("elapsed", [-0.001, float("nan"), float("inf")])
+def test_invalid_elapsed_time_requires_confirmation(elapsed):
+    d = decide_playback(elapsed_seconds=elapsed, threshold_seconds=50)
+    assert d.action == REQUIRE_CONFIRMATION
+
+
+@pytest.mark.parametrize("threshold", [-1.0, float("nan"), float("inf")])
+def test_invalid_threshold_requires_confirmation(threshold):
+    d = decide_playback(elapsed_seconds=1, threshold_seconds=threshold)
+    assert d.action == REQUIRE_CONFIRMATION
 
 
 def test_announce_when_reconciled_unknown_age():
-    d = decide_playback(elapsed_seconds=None, threshold_seconds=300,
-                        is_busy=False, galgame_active=False,
+    d = decide_playback(elapsed_seconds=None, threshold_seconds=50,
                         reconciled_unknown_age=True)
-    assert d.action == ANNOUNCE
+    assert d.action == REQUIRE_CONFIRMATION

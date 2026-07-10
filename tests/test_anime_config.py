@@ -42,6 +42,7 @@ def test_phase4_worker_knobs_defaults():
     assert a.qbittorrent_poll_seconds == 5.0
     assert a.stall_timeout_minutes == 30.0
     assert a.ytdlp_format == "bv*[height<=1080]+ba/b[height<=1080]"
+    assert a.ytdlp_min_rate_kib_per_second == 512.0
     assert a.cookies_file == "data/cookies.txt"
     assert a.library_file == "data/anime/library.json"
 
@@ -52,6 +53,12 @@ def test_phase5_knobs_still_deferred():
     for absent in ("disk_limit_gb", "bilibili_fallback_search",
                    "preferred_subgroups"):
         assert not hasattr(a, absent), f"{absent} should be deferred to Phase 5"
+
+
+def test_ytdlp_low_speed_reconnect_can_be_disabled():
+    assert AnimeConfig(
+        ytdlp_min_rate_kib_per_second=0,
+    ).ytdlp_min_rate_kib_per_second == 0
 
 
 def test_anime_config_empty_mikan_urls_accepted():

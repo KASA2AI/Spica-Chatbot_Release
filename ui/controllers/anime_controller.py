@@ -93,6 +93,7 @@ class AnimeController(QObject):
 
         self._workers: list[Any] = []        # request worker + resume workers
         self._in_flight: dict | None = None  # swapped whole (GIL-atomic read)
+        self._degraded_requests: set[str] = set()
         # F1: resumable pendings wait here; ONE resume worker runs at a time
         # (single flight -- two threads must never share the qbt client).
         self._reconcile_queue: list[dict] = []
@@ -132,6 +133,10 @@ class AnimeController(QObject):
             stall_timeout_minutes=float(getattr(cfg, "stall_timeout_minutes", 30.0)),
             ytdlp_format=str(getattr(
                 cfg, "ytdlp_format", "bv*[height<=1080]+ba/b[height<=1080]")),
+            source_timeout_seconds=float(getattr(
+                cfg, "source_timeout_seconds", 15.0)),
+            ytdlp_min_rate_kib_per_second=float(getattr(
+                cfg, "ytdlp_min_rate_kib_per_second", 512.0)),
             cookies_file=self._cookies_file,
             parent=self,
         )
@@ -145,6 +150,8 @@ class AnimeController(QObject):
         worker.progress.connect(self._on_worker_progress)
         worker.task_started.connect(self._on_worker_task_started)
         worker.stalled.connect(self._on_worker_stalled)
+        worker.reconnecting.connect(self._on_worker_reconnecting)
+        worker.degraded.connect(self._on_worker_degraded)
         worker.ready.connect(
             lambda ev, w=worker: self._on_worker_ready(ev, w))
         worker.finished.connect(
@@ -160,7 +167,11 @@ class AnimeController(QObject):
         current = self._in_flight or {}
         title = str(current.get("title") or self._title_for(request_id))
         self._set_in_flight(progress, title)
-        self._set_status(f"⬇ 下载中 {int(progress * 100)}%：{title}")
+        if request_id in self._degraded_requests:
+            self._set_status(
+                f"当前连接持续较慢，继续下载 {int(progress * 100)}%：{title}")
+        else:
+            self._set_status(f"⬇ 下载中 {int(progress * 100)}%：{title}")
 
     def _on_worker_task_started(self, request_id: str, task_id: str) -> None:
         # persist the qbt hash so a restart can reconcile this task (P1-9)
@@ -177,8 +188,22 @@ class AnimeController(QObject):
             policy="drop_if_busy",
         ))
 
+    def _on_worker_reconnecting(self, request_id: str, used: int,
+                                maximum: int, reason: str) -> None:
+        title = self._title_for(request_id)
+        condition = "当前连接过慢" if reason == "low_speed" else "当前连接中断"
+        self._set_status(
+            f"{condition}，正在重新连接 {used}/{maximum}：{title}")
+
+    def _on_worker_degraded(self, request_id: str) -> None:
+        self._degraded_requests.add(request_id)
+        title = self._title_for(request_id)
+        self._set_status(
+            f"当前连接持续较慢，已停止自动重连，继续下载：{title}")
+
     def _on_worker_ready(self, event: Any, worker: Any) -> None:
         self._in_flight = None
+        self._degraded_requests.discard(event.request_id)
         reconciled = event.request_id in self._reconciled_ids
         self._reconciled_ids.discard(event.request_id)
         title = getattr(worker, "title", "") or "这一集"
@@ -239,6 +264,8 @@ class AnimeController(QObject):
         self._announce_completion(entry)
 
     def _on_worker_finished(self, worker: Any) -> None:
+        self._degraded_requests.discard(
+            str(getattr(worker, "request_id", "")))
         if worker in self._workers:
             self._workers.remove(worker)
         try:
@@ -373,5 +400,5 @@ class AnimeController(QObject):
         for worker in list(self._workers):
             if worker.isRunning() and not worker.wait(wait_ms):
                 worker.force_kill()
-                worker.wait(500)
+                worker.wait(max(1000, int(wait_ms)))
         self._workers.clear()

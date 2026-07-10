@@ -1,10 +1,12 @@
 """Phase 4: AnimeController -- event->worker, completion policy, P1-5 retry,
-startup reconcile (P1-9). All host closures and workers are fakes; signals are
-delivered synchronously (same thread, direct connection)."""
+startup reconcile (P1-9). Host closures and workers are normally fakes; the
+shutdown boundary uses the real worker with an injected process."""
 
 from __future__ import annotations
 
 import os
+import subprocess
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from spica.core.anime_events import AnimeReadyEvent, AnimeRequestEvent  # noqa: E402
 from spica.ports.media_player import MediaPlayerError  # noqa: E402
 from ui.controllers.anime_controller import AnimeController  # noqa: E402
+from ui.workers.anime_worker import AnimeDownloadWorker  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -29,6 +32,8 @@ class FakeWorker(QObject):
     progress = Signal(str, float, str)
     ready = Signal(object)
     stalled = Signal(str, float)
+    reconnecting = Signal(str, int, int, str)
+    degraded = Signal(str)
     task_started = Signal(str, str)
     finished = Signal()
 
@@ -62,6 +67,60 @@ class FakeWorker(QObject):
     def finish(self):
         self._running = False
         self.finished.emit()
+
+
+class _BlockingProcessOutput:
+    """Pipe boundary that reaches EOF only when the controlled process exits."""
+
+    def __init__(self):
+        self._closed = threading.Event()
+        self.read_started = threading.Event()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.read_started.set()
+        if not self._closed.wait(3):
+            raise RuntimeError("controlled process output was not closed")
+        raise StopIteration
+
+    def close(self):
+        self._closed.set()
+
+
+class _TerminateResistantProcess:
+    """Popen boundary whose terminate is ignored but kill exits and reaps."""
+
+    def __init__(self):
+        self.stdout = _BlockingProcessOutput()
+        self.terminate_called = threading.Event()
+        self.kill_called = threading.Event()
+        self.reaped = threading.Event()
+        self._exited = threading.Event()
+
+    def poll(self):
+        if not self._exited.is_set():
+            return None
+        # subprocess.Popen.poll() performs the non-blocking reap when exit is
+        # observed, so the boundary fake records the same externally relevant
+        # lifecycle outcome.
+        self.reaped.set()
+        return -9
+
+    def wait(self, timeout=None):
+        if not self._exited.wait(timeout):
+            raise subprocess.TimeoutExpired("controlled-yt-dlp", timeout)
+        self.reaped.set()
+        return -9
+
+    def terminate(self):
+        self.terminate_called.set()
+
+    def kill(self):
+        self.kill_called.set()
+        self._exited.set()
+        self.stdout.close()
 
 
 def _request_event(rid="REQ1", key="无职转生|s3|e1"):
@@ -124,7 +183,9 @@ class Harness:
             galgame_active=lambda: self.galgame,
             anime_config=lambda: SimpleNamespace(
                 auto_play_threshold_seconds=300.0, qbittorrent_poll_seconds=5.0,
-                stall_timeout_minutes=30.0, ytdlp_format="fmt"),
+                stall_timeout_minutes=30.0, ytdlp_format="fmt",
+                source_timeout_seconds=23.0,
+                ytdlp_min_rate_kib_per_second=321.0),
             torrent_provider=lambda: "TORRENT",
             download_dir="/dl",
             cookies_file="/repo/data/cookies.txt",
@@ -145,6 +206,8 @@ def test_request_event_starts_worker_and_sets_in_flight(qapp):
     assert w.kw["torrent"] == "TORRENT"
     assert w.kw["download_dir"] == "/dl"
     assert w.kw["cookies_file"] == "/repo/data/cookies.txt"
+    assert w.kw["source_timeout_seconds"] == 23.0
+    assert w.kw["ytdlp_min_rate_kib_per_second"] == 321.0
     assert h.controller.in_flight_state() == {"progress": 0.0,
                                               "title": "无职转生 第三季"}
     assert any("下载中" in s for s in h.status)
@@ -299,6 +362,49 @@ def test_stall_announces_once_and_flags_chip(qapp):
     assert h.controller._retries == {}              # no retry queue for stalls
 
 
+@pytest.mark.parametrize("reason,wording", [
+    ("low_speed", "当前连接过慢"),
+    ("network", "当前连接中断"),
+])
+def test_reconnecting_updates_status_without_proactive_speech(
+        qapp, reason, wording):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+
+    h.workers[0].reconnecting.emit("REQ1", 1, 2, reason)
+
+    assert wording in h.status[-1]
+    assert "正在重新连接 1/2" in h.status[-1]
+    assert "无职转生 第三季" in h.status[-1]
+    assert "换节点" not in h.status[-1]
+    assert h.spoken == []
+
+
+def test_degraded_status_survives_progress_then_ready_clears_visible_state(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    worker = h.workers[0]
+
+    worker.degraded.emit("REQ1")
+    worker.progress.emit("REQ1", 0.42, "downloading")
+
+    assert "连接持续较慢" in h.status[-1]
+    assert "继续下载" in h.status[-1]
+    assert "42%" in h.status[-1]
+    assert h.spoken == []
+
+    worker.ready.emit(_ready(elapsed=10.0))
+
+    assert h.controller.in_flight_state() is None
+    assert h.status[-1] == ""
+    assert h.registered == [
+        ("REQ1", "无职转生|s3|e1", "/dl/ep1.mkv"),
+    ]
+    assert h.played == ["/dl/ep1.mkv"]
+    assert h.marked == ["无职转生|s3|e1"]
+    assert h.spoken == []
+
+
 # -- startup reconcile (P1-9) --------------------------------------------------------
 
 def test_reconcile_registers_and_announces_never_plays(qapp):
@@ -432,3 +538,40 @@ def test_shutdown_cancels_workers_and_retries(qapp):
     h.controller.shutdown(10)
     assert worker.cancelled == 1
     assert h.controller._retries == {}
+
+
+def test_shutdown_force_kills_and_reaps_terminate_resistant_extractor(
+        qapp, tmp_path):
+    proc = _TerminateResistantProcess()
+    workers = []
+
+    def popen(argv, **kwargs):
+        del argv, kwargs
+        return proc
+
+    def worker_factory(**kwargs):
+        worker = AnimeDownloadWorker(**kwargs, popen=popen)
+        workers.append(worker)
+        return worker
+
+    h = Harness(worker_factory=worker_factory, download_dir=str(tmp_path))
+    request = AnimeRequestEvent(
+        request_id="REQ1", query="无职转生第三季第一集",
+        title="无职转生 第三季", episode_key="无职转生|s3|e1",
+        source="bilibili", locator="BV1234567890:1")
+    worker = None
+    try:
+        h.controller.handle_anime_request_event(request)
+        [worker] = workers
+        assert proc.stdout.read_started.wait(1)
+
+        h.controller.shutdown(wait_ms=50)
+
+        assert proc.terminate_called.is_set()
+        assert proc.kill_called.is_set()
+        assert proc.reaped.wait(1)
+        assert not worker.isRunning()
+    finally:
+        if worker is not None and worker.isRunning():
+            proc.kill()
+            worker.wait(1000)

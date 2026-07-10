@@ -6,7 +6,13 @@ popen/clock/sleep) -- no thread is started, no network, no subprocess.
 
 from __future__ import annotations
 
+import json
 import os
+import queue
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -18,8 +24,11 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from spica.anime.models import DownloadStatus  # noqa: E402
 from spica.ports.torrent_client import TorrentClientError  # noqa: E402
+import ui.workers.anime_worker as anime_worker_module  # noqa: E402
 from ui.workers.anime_worker import (  # noqa: E402
     AnimeDownloadWorker,
+    _YtDlpFailureKind,
+    _analyze_ytdlp_failure,
     _classify_ytdlp_failure,
 )
 
@@ -71,7 +80,8 @@ class FakeProc:
         self.killed = 0
         self._done = False
 
-    def wait(self):
+    def wait(self, timeout=None):
+        del timeout
         self._done = True
         return self.rc
 
@@ -80,9 +90,126 @@ class FakeProc:
 
     def terminate(self):
         self.terminated += 1
+        self._done = True
 
     def kill(self):
         self.killed += 1
+        self._done = True
+
+
+_PIPE_EOF = object()
+
+
+class BlockingStdout:
+    """Queue-backed pipe whose iterator records the sole reading thread."""
+
+    def __init__(self, lines=(), *, finish=False, first_read_gate=None,
+                 close_unblocks=True):
+        self._items = queue.Queue()
+        for line in lines:
+            self._items.put(f"{line}\n")
+        self._finished = False
+        self._first_read_gate = first_read_gate
+        self._first_read = True
+        self._close_unblocks = close_unblocks
+        self._on_eof = None
+        self.read_started = threading.Event()
+        self.line_read = threading.Event()
+        self.reader_thread_ids = []
+        self.close_calls = 0
+        if finish:
+            self.finish()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.reader_thread_ids.append(threading.get_ident())
+        self.read_started.set()
+        if self._first_read and self._first_read_gate is not None:
+            self._first_read = False
+            if not self._first_read_gate.wait(2):
+                raise RuntimeError("test reader gate timed out")
+        try:
+            item = self._items.get(timeout=2)
+        except queue.Empty as exc:
+            raise RuntimeError("test pipe remained blocked") from exc
+        if item is _PIPE_EOF:
+            if self._on_eof is not None:
+                self._on_eof()
+            raise StopIteration
+        self.line_read.set()
+        return item
+
+    def feed(self, line):
+        self._items.put(f"{line}\n")
+
+    def finish(self):
+        if not self._finished:
+            self._finished = True
+            self._items.put(_PIPE_EOF)
+
+    def close(self):
+        self.close_calls += 1
+        if self._close_unblocks:
+            self.finish()
+
+
+class ControlledProc:
+    def __init__(self, stdout, *, rc=0, exited=False,
+                 terminate_exits=True, kill_exits=True,
+                 exit_after_kills: int | None = None,
+                 terminate_unblocks_pipe=True,
+                 kill_unblocks_pipe=True, natural_exit_on_eof=True):
+        self.stdout = stdout
+        self.rc = rc
+        self.terminated = 0
+        self.killed = 0
+        self.wait_calls = 0
+        self.wait_started = threading.Event()
+        self.reaped = threading.Event()
+        self._exited = threading.Event()
+        self._terminate_exits = terminate_exits
+        self._kill_exits = kill_exits
+        self._exit_after_kills = exit_after_kills
+        self._terminate_unblocks_pipe = terminate_unblocks_pipe
+        self._kill_unblocks_pipe = kill_unblocks_pipe
+        self._natural_exit_on_eof = natural_exit_on_eof
+        self.stdout._on_eof = self._stdout_eof
+        if exited:
+            self._exited.set()
+
+    def _stdout_eof(self):
+        if self._natural_exit_on_eof:
+            self._exited.set()
+
+    def poll(self):
+        return self.rc if self._exited.is_set() else None
+
+    def wait(self, timeout=None):
+        self.wait_calls += 1
+        self.wait_started.set()
+        if not self._exited.wait(timeout):
+            raise subprocess.TimeoutExpired("fake-yt-dlp", timeout)
+        self.reaped.set()
+        return self.rc
+
+    def terminate(self):
+        self.terminated += 1
+        if self._terminate_exits:
+            self._exited.set()
+            if self._terminate_unblocks_pipe:
+                self.stdout.finish()
+
+    def kill(self):
+        self.killed += 1
+        exits_now = (self._kill_exits
+                     or (self._exit_after_kills is not None
+                         and self.killed >= self._exit_after_kills))
+        if exits_now:
+            self._exited.set()
+        if exits_now or self._kill_unblocks_pipe:
+            self.stdout.finish()
 
 
 def _worker(tmp_path, *, locator=MAGNET, torrent=None, popen=None,
@@ -104,6 +231,20 @@ def _downloading(p: float) -> DownloadStatus:
 def _completed(path: str) -> DownloadStatus:
     return DownloadStatus(task_id="a" * 40, state="completed", progress=1.0,
                           save_path=path)
+
+
+def _ytdlp_progress(*, downloaded: int, total: int = 20 * 1024 * 1024,
+                    format_id: str = "100026", status: str = "downloading",
+                    tmpfilename: str = "episode.f100026.mp4.part") -> str:
+    return "SPICA:" + json.dumps({
+        "format_id": format_id,
+        "progress": {
+            "status": status,
+            "downloaded_bytes": downloaded,
+            "total_bytes": total,
+            "tmpfilename": tmpfilename,
+        },
+    })
 
 
 # -- qbt magnet lane -----------------------------------------------------------
@@ -326,17 +467,785 @@ def test_subfolder_falls_back_to_title_when_series_name_absent(qapp, tmp_path):
         str(tmp_path.resolve() / "某番")
 
 
-def test_ytdlp_argv_fixed_and_pinned(qapp, tmp_path):
-    w = _worker(tmp_path, locator="BV1234567890:3")
-    argv = w._ytdlp_argv("BV1234567890", 3)
+def test_ytdlp_cli_contract_is_explicit_and_resumable(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"media")
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return FakeProc([str(out)])
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:3", popen=popen,
+        source_timeout_seconds=23.0,
+    ).execute()
+
+    assert event.error is None
+    [(argv, popen_kw)] = spawned
+    assert argv[1:4] == ["-m", "yt_dlp", "--ignore-config"]
     assert argv[-1] == "https://www.bilibili.com/video/BV1234567890"
     i = argv.index("-P")
     # output pinned AND grouped by anime NAME (series_title), not the release title
     assert argv[i + 1] == str(tmp_path.resolve() / "无职转生")
     j = argv.index("-I")
     assert argv[j + 1] == "3"                          # the requested part only
-    assert "--no-part" not in argv                     # .part kept on terminate
+    assert "--progress" in argv                         # --print otherwise hides it
+    template = argv[argv.index("--progress-template") + 1]
+    assert template == (
+        'download:SPICA:{"format_id":%(info.format_id|null)j,'
+        '"progress":%(progress)j}')
+    assert argv[argv.index("--progress-delta") + 1] == "1"
+    assert float(argv[argv.index("--socket-timeout") + 1]) == 23.0
+    assert argv[argv.index("--retries") + 1] == "1"
+    assert argv[argv.index("--retry-sleep") + 1] == "http:1"
+    assert "--part" in argv and "--continue" in argv
+    assert "--no-part" not in argv and "--no-continue" not in argv
+    assert "--throttled-rate" not in argv
+    assert popen_kw["shell"] is False
     assert "--cookies" not in argv                     # no cookies file -> absent
+
+
+def test_ytdlp_cli_contract_forces_utf8_output(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"media")
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return FakeProc([str(out)])
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert event.error is None
+    [(argv, _popen_kw)] = spawned
+    assert argv[1:6] == [
+        "-m", "yt_dlp", "--ignore-config", "--encoding", "utf-8",
+    ]
+
+
+def test_ytdlp_utf8_output_survives_non_utf8_child_stdio(qapp, tmp_path):
+    """Exercise the real yt-dlp writer and the worker's text-pipe decoder.
+
+    The injected process replaces only the network extraction command with an
+    offline info-json run.  It preserves the encoding option from the worker's
+    real argv and forces the child stdio default to CP936, matching a non-UTF-8
+    Windows codepage.  The separate CLI-contract test above proves that the
+    production command actually supplies that option.
+    """
+    out = tmp_path / "无职转生 第三季 [P01].mkv"
+    out.write_bytes(b"finished-media")
+    info_file = tmp_path / "offline-info.json"
+    info_file.write_text(json.dumps({
+        "id": "encoding-check",
+        "title": str(out),
+        "ext": "mkv",
+        "webpage_url": "https://example.invalid/encoding-check",
+        "url": "https://example.invalid/episode.mkv",
+        "extractor": "generic",
+    }, ensure_ascii=False), encoding="utf-8")
+    worker_commands = []
+
+    def popen(worker_argv, **kwargs):
+        worker_commands.append(list(worker_argv))
+        encoding_args = []
+        if "--encoding" in worker_argv:
+            index = worker_argv.index("--encoding")
+            encoding_args = list(worker_argv[index:index + 2])
+        offline_argv = [
+            sys.executable, "-m", "yt_dlp", "--ignore-config",
+            *encoding_args,
+            "--simulate", "--load-info-json", str(info_file),
+            "--print", "video:%(title)s",
+        ]
+        child_env = dict(os.environ)
+        child_env["PYTHONIOENCODING"] = "cp936"
+        return subprocess.Popen(offline_argv, env=child_env, **kwargs)
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert len(worker_commands) == 1
+    assert event.error is None
+    assert event.save_path == str(out.resolve())
+
+
+def test_ytdlp_low_speed_reconnects_then_second_attempt_succeeds(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    part = tmp_path / "episode.f100026.mp4.part"
+    part.write_bytes(b"partial-media")
+    first = FakeProc([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+    ], rc=1)
+    second = FakeProc([
+        _ytdlp_progress(downloaded=10 * 1024 * 1024),
+        str(out),
+    ])
+    procs = [first, second]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((list(argv), kw))
+        return procs[len(spawned) - 1]
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert event.error is None
+    assert event.save_path == str(out.resolve())
+    assert event.elapsed_seconds is not None
+    assert event.elapsed_seconds >= 50  # starts before attempt 1, not attempt 2
+    assert len(spawned) == 2
+    assert spawned[0][0] == spawned[1][0]
+    assert first.terminated == 1
+    assert first.killed == 0
+    assert part.exists()
+
+
+def test_ytdlp_socket_timeout_restarts_the_whole_extractor(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    procs = [
+        FakeProc(["ERROR: [download] Read timed out."], rc=1),
+        FakeProc([str(out)]),
+    ]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((list(argv), kw))
+        return procs[len(spawned) - 1]
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    reconnects = []
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason:
+        reconnects.append((rid, used, maximum, reason)))
+
+    event = worker.execute()
+
+    assert event.error is None
+    assert event.save_path == str(out.resolve())
+    assert len(spawned) == 2
+    assert spawned[0][0] == spawned[1][0]
+    assert reconnects == [("REQ", 1, 2, "network")]
+
+
+@pytest.mark.parametrize("first_error", [
+    "ERROR: [download] Got error: [WinError 10053] connection aborted",
+    "ERROR: [download] Got error: [WinError 10054] connection closed",
+    "ERROR: [download] Got error: [WinError 10060] connection attempt failed",
+    "ERROR: [download] Got error: [WinError 10061] target refused it",
+    "ERROR: [download] Got error: [WinError 11001] no such host",
+    "ERROR: [download] Got error: [Errno 11001] getaddrinfo failed",
+    ("ERROR: [BiliBiliDynamic] 123456789: Unable to download JSON "
+     "metadata: NameResolutionError('temporary DNS failure') "
+     "(caused by ProxyError('proxy lookup failed'))"),
+    ("ERROR: [youtube] BaW_jenozKc: Unable to download API page: "
+     "NameResolutionError('temporary DNS failure') "
+     "(caused by ProxyError('proxy lookup failed'))"),
+    ("ERROR: A network error has occurred. "
+     "(caused by <IncompleteRead: 18 bytes read, 982 more expected>)"),
+])
+def test_ytdlp_network_failure_restarts_extractor_and_second_attempt_succeeds(
+        qapp, tmp_path, first_error):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    procs = [FakeProc([first_error], rc=1), FakeProc([str(out)])]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((list(argv), kw))
+        return procs[len(spawned) - 1]
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    reconnects = []
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason:
+        reconnects.append((used, maximum, reason)))
+
+    event = worker.execute()
+
+    assert event.error is None
+    assert event.save_path == str(out.resolve())
+    assert len(spawned) == 2
+    assert reconnects == [(1, 2, "network")]
+
+
+def test_ytdlp_terminal_auth_wins_over_network_words(qapp, tmp_path):
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return FakeProc([
+            "ERROR: Login required; account request timed out while checking cookies",
+        ], rc=1)
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert event.error is not None and "登录" in event.error
+    assert len(spawned) == 1
+
+
+def test_ytdlp_low_speed_and_network_share_two_reconnects(qapp, tmp_path):
+    procs = [
+        FakeProc(["ERROR: [download] Read timed out."], rc=1),
+        FakeProc([
+            _ytdlp_progress(downloaded=0),
+            _ytdlp_progress(downloaded=256 * 1024 * 10),
+            _ytdlp_progress(downloaded=256 * 1024 * 20),
+        ], rc=1),
+        FakeProc(["ERROR: HTTP Error 503: Service Unavailable"], rc=1),
+    ]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return procs[len(spawned) - 1]
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    reconnects = []
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason:
+        reconnects.append((used, maximum, reason)))
+
+    event = worker.execute()
+
+    assert event.error is not None
+    assert len(spawned) == 3
+    assert reconnects == [(1, 2, "network"), (2, 2, "low_speed")]
+
+
+def test_ytdlp_third_low_speed_attempt_continues_degraded(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+
+    def slow_lines(*, final_path=None):
+        lines = [
+            _ytdlp_progress(downloaded=0),
+            _ytdlp_progress(downloaded=256 * 1024 * 10),
+            _ytdlp_progress(downloaded=256 * 1024 * 20),
+        ]
+        if final_path is not None:
+            lines.append(str(final_path))
+        return lines
+
+    procs = [
+        FakeProc(slow_lines(), rc=1),
+        FakeProc(slow_lines(), rc=1),
+        FakeProc(slow_lines(final_path=out)),
+    ]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return procs[len(spawned) - 1]
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    degraded = []
+    worker.degraded.connect(degraded.append)
+
+    event = worker.execute()
+
+    assert event.error is None
+    assert event.save_path == str(out.resolve())
+    assert len(spawned) == 3
+    assert degraded == ["REQ"]
+    assert procs[2].terminated == 0
+
+
+def test_ytdlp_bad_progress_json_does_not_restart(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return FakeProc(["SPICA:{not-json", str(out)])
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert event.error is None
+    assert len(spawned) == 1
+
+
+@pytest.mark.parametrize("bad_line", [
+    "SPICA:{not-json",
+    "SPICA:" + json.dumps({"progress": []}),
+    _ytdlp_progress(downloaded=str(256 * 1024 * 15)),
+    _ytdlp_progress(downloaded=float("inf")),
+    _ytdlp_progress(downloaded=-1),
+    _ytdlp_progress(
+        downloaded=256 * 1024 * 15, total=str(20 * 1024 * 1024)),
+    _ytdlp_progress(
+        downloaded=256 * 1024 * 15, total=float(20 * 1024 * 1024)),
+    _ytdlp_progress(downloaded=256 * 1024 * 15, total=float("inf")),
+    _ytdlp_progress(downloaded=256 * 1024 * 15, total=-1),
+    _ytdlp_progress(downloaded=256 * 1024 * 15, total=True),
+    _ytdlp_progress(downloaded=256 * 1024 * 15, format_id=100026),
+    _ytdlp_progress(downloaded=256 * 1024 * 15, tmpfilename=["bad"]),
+], ids=[
+    "bad-json", "bad-progress-type", "downloaded-string",
+    "downloaded-non-finite", "downloaded-negative", "total-string",
+    "total-float", "total-non-finite", "total-negative", "total-bool",
+    "format-id-type", "tmpfilename-type",
+])
+def test_ytdlp_corrupt_progress_resets_the_low_speed_window(
+        qapp, tmp_path, bad_line):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    first = FakeProc([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        bad_line,
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+        str(out),
+    ])
+    procs = [first, FakeProc([str(out)])]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return procs[len(spawned) - 1]
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    reconnects = []
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason: reconnects.append(reason))
+
+    event = worker.execute()
+
+    assert event.error is None
+    assert event.save_path == str(out.resolve())
+    assert len(spawned) == 1
+    assert reconnects == []
+    assert first.terminated == 0
+
+
+def test_ytdlp_regular_log_keeps_the_low_speed_window(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    first = FakeProc([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        "[download] Destination: episode.f100026.mp4.part",
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+        str(out),
+    ], rc=1)
+    procs = [first, FakeProc([str(out)])]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return procs[len(spawned) - 1]
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    reconnects = []
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason: reconnects.append(reason))
+
+    event = worker.execute()
+
+    assert event.error is None
+    assert len(spawned) == 2
+    assert reconnects == ["low_speed"]
+    assert first.terminated == 1
+
+
+@pytest.mark.parametrize("unknown_or_zero_total", [None, 0])
+def test_ytdlp_unknown_or_zero_total_keeps_the_low_speed_window(
+        qapp, tmp_path, unknown_or_zero_total):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    first = FakeProc([
+        _ytdlp_progress(downloaded=0, total=unknown_or_zero_total),
+        _ytdlp_progress(
+            downloaded=256 * 1024 * 10, total=unknown_or_zero_total),
+        _ytdlp_progress(
+            downloaded=256 * 1024 * 20, total=unknown_or_zero_total),
+    ], rc=1)
+    procs = [first, FakeProc([str(out)])]
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return procs[len(spawned) - 1]
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert event.error is None
+    assert len(spawned) == 2
+    assert first.terminated == 1
+
+
+@pytest.mark.parametrize("bad_payload", [
+    {"progress": None},
+    {"progress": []},
+    {"progress": "downloading"},
+    {"progress": {"status": "downloading", "downloaded_bytes": "wat"}},
+    {"progress": {"status": "downloading", "downloaded_bytes": float("inf")}},
+])
+def test_ytdlp_bad_progress_shape_is_ignored(qapp, tmp_path, bad_payload):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return FakeProc(["SPICA:" + json.dumps(bad_payload), str(out)])
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert event.error is None
+    assert len(spawned) == 1
+
+
+def test_ytdlp_does_not_restart_completed_attempt_for_queued_slow_samples(
+        qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    proc = FakeProc([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+        str(out),
+    ])
+    proc._done = True
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return proc
+
+    event = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    ).execute()
+
+    assert event.error is None
+    assert event.save_path == str(out.resolve())
+    assert len(spawned) == 1
+    assert proc.terminated == 0
+
+
+def test_ytdlp_stdout_has_exactly_one_reader_thread(qapp, tmp_path):
+    out = tmp_path / "episode.mp4"
+    out.write_bytes(b"finished-media")
+    stdout = BlockingStdout([str(out)], finish=True)
+    proc = ControlledProc(stdout)
+    caller_thread = threading.get_ident()
+
+    event = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kw: proc,
+    ).execute()
+
+    assert event.error is None
+    assert len(set(stdout.reader_thread_ids)) == 1
+    assert caller_thread not in stdout.reader_thread_ids
+
+
+def test_ytdlp_waits_for_eof_tail_after_process_exit(
+        qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(anime_worker_module, "_READER_JOIN_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(anime_worker_module, "_YTDLP_READER_POLL_SECONDS", 0.005)
+    stdout = BlockingStdout(close_unblocks=False)
+    proc = ControlledProc(stdout, rc=1, exited=True)
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kw: proc,
+    )
+    result = {}
+
+    thread = threading.Thread(
+        target=lambda: result.setdefault("event", worker.execute()))
+    thread.start()
+    assert stdout.read_started.wait(1)
+    time.sleep(0.05)
+    assert thread.is_alive(), "worker decided before the reader delivered EOF"
+    assert stdout.close_calls == 0, "natural exit must not close a draining pipe"
+    stdout.feed("ERROR: This video requires login cookies")
+    assert stdout.line_read.wait(1)
+    assert thread.is_alive(), "worker decided from the tail before the EOF sentinel"
+    stdout.finish()
+    thread.join(2)
+
+    assert not thread.is_alive()
+    assert "登录" in result["event"].error
+
+
+def test_ytdlp_terminate_timeout_escalates_to_kill(
+        qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        anime_worker_module, "_PROCESS_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        anime_worker_module, "_PROCESS_KILL_TIMEOUT_SECONDS", 0.05)
+    stdout = BlockingStdout([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+    ])
+    proc = ControlledProc(stdout, rc=1, terminate_exits=False)
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kw: proc,
+    )
+
+    result = worker._run_ytdlp_attempt(
+        worker._ytdlp_argv("BV1234567890", 1),
+        stop_on_low_speed=True,
+    )
+
+    assert result.low_speed is True
+    assert proc.terminated == 1
+    assert proc.killed == 1
+    assert worker._proc is None
+
+
+def test_ytdlp_reader_cleanup_is_bounded_when_close_does_not_unblock(
+        qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(anime_worker_module, "_READER_JOIN_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(anime_worker_module, "_YTDLP_READER_POLL_SECONDS", 0.01)
+    stdout = BlockingStdout([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+    ], close_unblocks=False)
+    proc = ControlledProc(
+        stdout,
+        rc=1,
+        terminate_unblocks_pipe=False,
+        natural_exit_on_eof=False,
+    )
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kw: proc,
+    )
+    result = {}
+    thread = threading.Thread(
+        target=lambda: result.setdefault(
+            "attempt",
+            worker._run_ytdlp_attempt(
+                worker._ytdlp_argv("BV1234567890", 1),
+                stop_on_low_speed=True,
+            ),
+        ))
+
+    thread.start()
+    thread.join(0.15)
+    bounded = not thread.is_alive()
+    stdout.finish()
+    thread.join(2)
+
+    assert bounded, "worker waited forever for a missing EOF sentinel"
+    assert result["attempt"].lifecycle_error is not None
+    assert worker._proc is None
+
+
+def test_ytdlp_kill_timeout_returns_lifecycle_error(
+        qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        anime_worker_module, "_PROCESS_TERMINATE_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        anime_worker_module, "_PROCESS_KILL_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(anime_worker_module, "_READER_JOIN_TIMEOUT_SECONDS", 0.02)
+    stdout = BlockingStdout([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+    ])
+    proc = ControlledProc(
+        stdout,
+        rc=1,
+        terminate_exits=False,
+        kill_exits=False,
+        exit_after_kills=2,
+        kill_unblocks_pipe=True,
+        natural_exit_on_eof=False,
+    )
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kw: proc,
+    )
+    event = worker.execute()
+
+    assert event.error is not None and "强制终止后仍未退出" in event.error
+    assert proc.terminated >= 1
+    assert proc.killed >= 2
+    assert proc.reaped.wait(1)
+    assert proc.wait_calls >= 3
+    assert proc.poll() is not None
+    assert worker._proc is None
+
+
+def test_ytdlp_cancel_from_reconnect_signal_prevents_next_spawn(qapp, tmp_path):
+    first = FakeProc([
+        _ytdlp_progress(downloaded=0),
+        _ytdlp_progress(downloaded=256 * 1024 * 10),
+        _ytdlp_progress(downloaded=256 * 1024 * 20),
+    ], rc=1)
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return first
+
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=popen,
+    )
+    worker.reconnecting.connect(
+        lambda rid, used, maximum, reason: worker.cancel())
+
+    assert worker.execute() is None
+    assert len(spawned) == 1
+
+
+def test_ytdlp_attempt_cancelled_before_start_does_not_spawn(qapp, tmp_path):
+    spawned = []
+
+    def popen(argv, **kw):
+        spawned.append((argv, kw))
+        return FakeProc([])
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    worker.cancel()
+
+    result = worker._run_ytdlp_attempt(
+        worker._ytdlp_argv("BV1234567890", 1),
+        stop_on_low_speed=True,
+    )
+
+    assert result.cancelled is True
+    assert spawned == []
+
+
+def test_ytdlp_cancel_during_popen_is_adopted_stopped_and_reaped(
+        qapp, tmp_path):
+    stdout = BlockingStdout()
+    proc = ControlledProc(stdout)
+    popen_entered = threading.Event()
+    release_popen = threading.Event()
+    cancel_finished = threading.Event()
+    result = {}
+
+    def popen(argv, **kw):
+        del argv, kw
+        popen_entered.set()
+        if not release_popen.wait(2):
+            raise RuntimeError("test did not release Popen")
+        return proc
+
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+    )
+    attempt_thread = threading.Thread(
+        target=lambda: result.setdefault(
+            "attempt",
+            worker._run_ytdlp_attempt(
+                worker._ytdlp_argv("BV1234567890", 1),
+                stop_on_low_speed=True,
+            ),
+        ))
+    attempt_thread.start()
+    assert popen_entered.wait(1)
+
+    cancel_thread = threading.Thread(
+        target=lambda: (worker.cancel(), cancel_finished.set()))
+    cancel_thread.start()
+    cancel_returned_before_popen = cancel_finished.wait(0.5)
+    release_popen.set()
+    cancel_thread.join(1)
+    attempt_thread.join(2)
+    if attempt_thread.is_alive():
+        proc.kill()
+        stdout.finish()
+        attempt_thread.join(2)
+
+    assert cancel_returned_before_popen, "cancel blocked on the Popen handoff"
+    assert not attempt_thread.is_alive()
+    assert result["attempt"].cancelled is True
+    assert proc.terminated >= 1
+    assert proc.wait_calls >= 1
+    assert proc.poll() is not None
+    assert worker._proc is None
+
+
+def test_ytdlp_process_wait_does_not_hold_the_ownership_lock(
+        qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        anime_worker_module, "_PROCESS_TERMINATE_TIMEOUT_SECONDS", 0.5)
+    stdout = BlockingStdout()
+    proc = ControlledProc(stdout, terminate_exits=False, kill_exits=True)
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1",
+        popen=lambda argv, **kw: proc,
+    )
+    result = {}
+    attempt_thread = threading.Thread(
+        target=lambda: result.setdefault(
+            "attempt",
+            worker._run_ytdlp_attempt(
+                worker._ytdlp_argv("BV1234567890", 1),
+                stop_on_low_speed=True,
+            ),
+        ))
+    attempt_thread.start()
+    assert stdout.read_started.wait(1)
+    worker.cancel()
+    assert proc.wait_started.wait(1)
+
+    force_kill_finished = threading.Event()
+    force_kill_thread = threading.Thread(
+        target=lambda: (worker.force_kill(), force_kill_finished.set()))
+    force_kill_thread.start()
+    force_kill_returned_while_waiting = force_kill_finished.wait(0.2)
+    force_kill_thread.join(1)
+    attempt_thread.join(2)
+    if attempt_thread.is_alive():
+        proc.kill()
+        stdout.finish()
+        attempt_thread.join(2)
+
+    assert force_kill_returned_while_waiting
+    assert not attempt_thread.is_alive()
+    assert result["attempt"].cancelled is True
+    assert proc.killed >= 1
+    assert proc.wait_calls >= 1
+    assert worker._proc is None
 
 
 def test_ytdlp_cookie_value_never_in_argv(qapp, tmp_path):
@@ -366,7 +1275,10 @@ def test_ytdlp_success_parses_progress_and_validates_path(qapp, tmp_path):
     def popen(argv, **kw):
         spawned["argv"] = argv
         spawned["kw"] = kw
-        return FakeProc(["[download]  42.3% of 300MB", str(out)])
+        return FakeProc([
+            _ytdlp_progress(downloaded=423, total=1000),
+            str(out),
+        ])
 
     w = _worker(tmp_path, locator="BV1234567890:1", popen=popen)
     prog = []
@@ -436,6 +1348,81 @@ def test_classify_ytdlp_failure_categories():
     assert "cookie" in _classify_ytdlp_failure("cookies expired").lower() or \
         "登录" in _classify_ytdlp_failure("cookies expired")
     assert "yt-dlp" in _classify_ytdlp_failure("some random failure")
+
+
+def test_ytdlp_failure_classification_is_typed_and_ordered():
+    auth = _analyze_ytdlp_failure(
+        "Login required: cookie check timed out")
+    unavailable = _analyze_ytdlp_failure(
+        "ERROR: This video is unavailable")
+    network = _analyze_ytdlp_failure(
+        "ERROR: HTTP Error 503: Service Unavailable")
+    unknown = _analyze_ytdlp_failure("some random failure")
+
+    assert auth.kind is _YtDlpFailureKind.AUTH
+    assert unavailable.kind is _YtDlpFailureKind.UNAVAILABLE
+    assert network.kind is _YtDlpFailureKind.NETWORK
+    assert unknown.kind is _YtDlpFailureKind.OTHER
+
+
+def test_ytdlp_real_entitlement_and_unavailable_wording_are_terminal():
+    entitlement = _analyze_ytdlp_failure(
+        "ERROR: This video is for premium members only; login required")
+    unavailable = _analyze_ytdlp_failure(
+        "ERROR: This video may be deleted or geo-restricted")
+
+    assert entitlement.kind is _YtDlpFailureKind.ENTITLEMENT
+    assert unavailable.kind is _YtDlpFailureKind.UNAVAILABLE
+
+
+@pytest.mark.parametrize(("message", "expected"), [
+    ("Premium members only; [WinError 10054] connection closed",
+     _YtDlpFailureKind.ENTITLEMENT),
+    ("Login required; getaddrinfo failed", _YtDlpFailureKind.AUTH),
+    ("This video is unavailable; Unable to download API page",
+     _YtDlpFailureKind.UNAVAILABLE),
+    ("ffmpeg postprocessing failed after IncompleteRead",
+     _YtDlpFailureKind.LOCAL),
+])
+def test_ytdlp_terminal_failures_win_over_network_markers(message, expected):
+    assert _analyze_ytdlp_failure(message).kind is expected
+
+
+@pytest.mark.parametrize("message", [
+    ("ERROR: [download] Got error: "
+     "[WinError 10053] An established connection was aborted by the software "
+     "in your host machine>"),
+    ("ERROR: [download] Got error: "
+     "[WinError 10054] An existing connection was forcibly closed by the "
+     "remote host>"),
+    ("ERROR: [download] Got error: "
+     "[WinError 10060] A connection attempt failed because the connected "
+     "party did not properly respond>"),
+    ("ERROR: [download] Got error: "
+     "[WinError 10061] No connection could be made because the target machine "
+     "actively refused it>"),
+    ("ERROR: [download] Got error: "
+     "[WinError 11001] No such host is known>"),
+])
+def test_ytdlp_windows_socket_errors_are_retryable_network_errors(message):
+    assert _analyze_ytdlp_failure(message).kind is _YtDlpFailureKind.NETWORK
+
+
+@pytest.mark.parametrize("message", [
+    "ERROR: [download] Got error: HTTP Error 403: Forbidden",
+    "ERROR: [download] Got error: HTTP Error 404: Not Found",
+    "ERROR: [download] Got error: HTTP Error 416: Requested Range Not Satisfiable",
+    "ERROR: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol",
+])
+def test_ytdlp_cdn_and_tls_failures_are_retryable_network_errors(message):
+    assert _analyze_ytdlp_failure(message).kind is _YtDlpFailureKind.NETWORK
+
+
+def test_ytdlp_local_permission_error_is_not_misclassified_as_account_auth():
+    failure = _analyze_ytdlp_failure(
+        "ERROR: [Errno 13] Permission denied: '/home/account/anime.part'")
+
+    assert failure.kind is _YtDlpFailureKind.LOCAL
 
 
 # -- boundary: the worker holds no write authority ---------------------------------

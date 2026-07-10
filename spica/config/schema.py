@@ -397,8 +397,9 @@ class AnimeConfig(BaseModel):
     """spica 看番装配配置 (Phase 3/4, yaml-only 无 env -- 铁律 #4; secrets 走 xiaosan.env)。
 
     Phase 4 补齐 UI worker / 完成行为 / 持久化的键 (auto_play_threshold_seconds /
-    qbittorrent_poll_seconds / stall_timeout_minutes / ytdlp_format / cookies_file /
-    library_file); disk_limit_gb 归 Phase 5 磁盘提醒。cookies_file / library_file
+    qbittorrent_poll_seconds / stall_timeout_minutes / ytdlp_format /
+    ytdlp_min_rate_kib_per_second / cookies_file / library_file); disk_limit_gb
+    归 Phase 5 磁盘提醒。cookies_file / library_file
     的相对路径按仓库根解析 (装配层 anime.py 统一处理, 同 manager._REPO_ROOT 惯例)。
     """
 
@@ -423,6 +424,7 @@ class AnimeConfig(BaseModel):
     qbittorrent_poll_seconds: float = 5.0        # worker 轮询间隔
     stall_timeout_minutes: float = 30.0          # 无进度判卡 (本轮只播报询问)
     ytdlp_format: str = "bv*[height<=1080]+ba/b[height<=1080]"
+    ytdlp_min_rate_kib_per_second: float = 512.0  # 0 disables low-speed reconnect
     cookies_file: str = "data/cookies.txt"       # yt-dlp --cookies; 文件可缺省(匿名降清晰度)
     library_file: str = "data/anime/library.json"  # host 唯一写点 (P1-6); pending.json 同目录
 

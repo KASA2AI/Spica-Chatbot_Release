@@ -131,6 +131,7 @@
 #   qbittorrent_poll_seconds: 5        # 下载 worker 轮询间隔
 #   stall_timeout_minutes: 30          # 无进度判卡 -> 系统 turn 询问(不自动删/换源)
 #   ytdlp_format: "bv*[height<=1080]+ba/b[height<=1080]"
+#   ytdlp_min_rate_kib_per_second: 512  # 连续 15 秒低于此值时重连;0=关闭
 #   cookies_file: data/cookies.txt     # yt-dlp cookies 文件(可缺省=匿名);相对路径按仓库根
 #   library_file: data/anime/library.json  # 已下载索引落盘(host 唯一写点);相对路径按仓库根
 #   # disk_limit_gb 归 Phase 5 磁盘提醒,暂不固化。

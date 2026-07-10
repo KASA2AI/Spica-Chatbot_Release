@@ -22,7 +22,8 @@ exit code: 0=无 FAIL/DEGRADED; 1=有 DEGRADED; 2=有 FAIL; 3=自检自身错误
 
 环境变量申明(doctor.py 纪律: scripts/ 在 no-getenv 扫描域之外, 但读了什么要在文件头写明):
   - 读: 各 secrets env 名的**在位与否**(值绝不打印/绝不进报告), 见 env_roster.SECRETS_ENV_MAP;
-        OPENAI_BASE_URL / JUDGE_* 端点信息(--llm 时用于连通性检查)。
+        OPENAI_BASE_URL / JUDGE_* 端点信息(--llm 时用于连通性检查);
+        AUDIO_SEPARATOR_MODEL_DIR(镜像 audio-separator 的目录优先级做禁下载预检)。
   - 写(仅子进程 env): HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 /
         SPICA_SELF_CHECK_NO_DOWNLOAD=1(默认禁下载; HF 变量只管 Hugging Face,
         audio-separator 的 GitHub 下载路径靠第三个变量在 worker 内预检),
@@ -40,6 +41,9 @@ import argparse
 import json
 import math
 import os
+import re
+import secrets as _stdlib_secrets
+from collections import deque
 import signal
 import struct
 import subprocess
@@ -99,19 +103,95 @@ def exit_code_for(results: list[dict[str, Any]]) -> int:
     return 0
 
 
-def parse_worker_stdout(stdout: str) -> dict[str, Any] | None:
-    """Last RESULT_MARKER line wins -- heavy libraries print freely before it."""
+def parse_worker_stdout(stdout: str, nonce: str | None = None) -> dict[str, Any] | None:
+    """Last RESULT_MARKER wins -- heavy libraries print freely before it.
+    The marker is matched ANYWHERE in a line, not just at column 0: a library's
+    final write without a trailing newline glues the worker's print onto the
+    same line ("noiseSELF_CHECK_RESULT_JSON:{...}"). ``nonce`` 由父进程按次生成
+    并经 env 传给 worker: 提供时只认带 nonce 的 marker -- 后置输出的公开 marker
+    (插件 atexit 等)不能覆盖真实结果(第八轮 review P2)。"""
+    marker = RESULT_MARKER + (nonce + ":" if nonce else "")
     payload = None
     for line in stdout.splitlines():
-        if line.startswith(RESULT_MARKER):
+        # 行内**左起**逐个 marker 尝试整段解析(第七轮 review P2): payload 字符串
+        # 里合法出现的 marker 位于 JSON 内部, 从真 marker 起整段 loads 天然正确;
+        # rfind 会从字符串内的假 marker 起把 JSON 拦腰截断。解析失败绝不覆盖
+        # 此前的合法结果; 多个真 marker 时最后一个合法者获胜。
+        start = 0
+        while True:
+            index = line.find(marker, start)
+            if index == -1:
+                break
             try:
-                payload = json.loads(line[len(RESULT_MARKER):])
+                payload = json.loads(line[index + len(marker):])
+                break
             except json.JSONDecodeError:
-                payload = None
+                start = index + 1
     return payload
 
 
+def _secret_value_pairs(environ: dict[str, str]) -> list[tuple[str, str]]:
+    from spica.config.env_roster import SECRETS_ENV_MAP
+
+    pairs = [(name, environ.get(name) or "") for name in SECRETS_ENV_MAP.values()]
+    # 任何非空值都处理(短密码同样是密码, 第七轮 review P1); 长值先替换,
+    # 防止短值恰是长值子串时先替换把长值拆碎。
+    return sorted(((n, v) for n, v in pairs if v), key=lambda p: len(p[1]), reverse=True)
+
+
+def redact_secrets(text: str, environ: dict[str, str] | None = None) -> str:
+    """把已知 secret 的 VALUE 从文本里抹掉(值→«REDACTED:ENV名», 定长占位,
+    不泄漏长度或片段)。在**序列化之前**的原始字符串上做——序列化后的 replace
+    对含引号/反斜杠的值失效(dumps 转义后搜不到原值)。"""
+    env = environ if environ is not None else os.environ
+    for env_name, value in _secret_value_pairs(env):
+        token = f"«REDACTED:{env_name}»"
+        variants = {value}
+        try:  # repr/unicode_escape 与 JSON 转义形式同样能还原 secret(第十轮 P1)
+            variants.add(value.encode("unicode_escape").decode("ascii"))
+            variants.add(json.dumps(value)[1:-1])
+        except Exception:  # noqa: BLE001
+            pass
+        for variant in sorted(variants, key=len, reverse=True):
+            if variant and variant in text:
+                text = text.replace(variant, token)
+    return text
+
+
+# 固定协议键(第九轮 P2): secret 恰为 "status"/"reason" 这类词时不得改写 schema
+# (值照常清洗)。
+_PROTOCOL_KEYS = frozenset({
+    "mode", "results", "exit_code", "name", "status", "reason", "detail",
+    "duration_s",
+})
+
+
+def redact_obj(value: Any, environ: dict[str, str] | None = None,
+               _key: str | None = None) -> Any:
+    """递归结构化脱敏: 报告/worker payload 的每个字符串**键与值**在进入
+    json.dumps 之前清洗(第七/八轮 review P1: 序列化后 replace 对转义值失效;
+    secret 作为 dict 键同样泄漏)。唯一例外是协议字段: ``status`` 的合法枚举值
+    原样保留 -- 否则 QBITTORRENT_PASSWORD=PASS 这类常见词密码会把合法状态替换
+    成占位符, 击穿五态/exit-code 契约(第八轮 P2; 此时 reason/detail 里的同词
+    仍会被替换)。"""
+    if isinstance(value, str):
+        if _key == "status" and value in VALID_STATUSES:
+            return value
+        return redact_secrets(value, environ)
+    if isinstance(value, dict):
+        return {
+            (key if (isinstance(key, str) and key in _PROTOCOL_KEYS)
+             else redact_secrets(key, environ) if isinstance(key, str) else key):
+            redact_obj(item, environ, _key=key if isinstance(key, str) else None)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [redact_obj(item, environ) for item in value]
+    return value
+
+
 def render_report(mode: str, results: list[dict[str, Any]], as_json: bool) -> str:
+    results = redact_obj(results)  # 序列化前结构化清洗(两种格式共用)
     if as_json:
         return json.dumps(
             {"mode": mode, "results": results, "exit_code": exit_code_for(results)},
@@ -214,20 +294,304 @@ def _vram_sampler(root_pid: int, stop: threading.Event, out: dict[str, Any]) -> 
         stop.wait(0.5)
 
 
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    """Platform-correct tree kill: POSIX kills the session group; Windows uses
-    taskkill /T (killpg/ps/pgrep would raise there and leak model processes)."""
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-            capture_output=True, timeout=15,
-        )
-    else:
+class SelfCheckInternalError(RuntimeError):
+    """自检自身的基础设施错误(如无法 spawn worker) -- 统一 exit 3, 不与
+    「1=DEGRADED / 2=FAIL」的模型结论码混淆。"""
+
+
+MAX_CHECK_TIMEOUT_S = 86_400.0  # 单项超时上限: 乘积必须有限且可执行(P2-4)
+
+_STDOUT_TAIL_LINES = 200
+_STDERR_TAIL_LINES = 50
+_LINE_CAP_CHARS = 1_000_000
+
+# POSIX 生命周期容器(第七轮 review P1): killpg 只覆盖同 PGID, setsid 脱组的
+# 孙进程杀不到 -- 进程组 != 进程树。本 supervisor 以 PR_SET_CHILD_SUBREAPER
+# 作为后代孤儿的归养点: worker 无论正常退出还是崩溃, 其(任意深度、任意会话的)
+# 遗孤都会在各自父进程死亡时归养到 supervisor, 由它逐层清扫后再以 worker 的
+# rc 退出。确定性, 不依赖采样窗口。绝不向 stdout 写任何东西(marker 通道)。
+_POSIX_SUPERVISOR = r"""
+import ctypes, os, signal, subprocess, sys, time
+try:
+    # 父进程 spawn 窗口的 SIG_BLOCK 掩码会被继承(信号掩码跨 fork/exec 保留):
+    # 不解除的话 supervisor 永远收不到 SIGTERM, 超时清理只能走 SIGKILL 满额等待。
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM, signal.SIGINT})
+except (ValueError, OSError):
+    pass
+libc = ctypes.CDLL(None, use_errno=True)
+EXPECTED_PARENT = int(sys.argv[1])
+rc_sub = libc.prctl(36, 1, 0, 0, 0)   # PR_SET_CHILD_SUBREAPER
+rc_pd = libc.prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG: 父死自杀式清扫
+if rc_sub != 0 or rc_pd != 0:
+    print("SELF_CHECK_SUPERVISOR_PRCTL_DEGRADED: sub=%s pd=%s" % (rc_sub, rc_pd),
+          file=sys.stderr)
+worker = None
+TERMINATED = False
+def _on_term(_s, _f):
+    global TERMINATED
+    TERMINATED = True
+    if worker is not None:
+        worker.kill()
+signal.signal(signal.SIGTERM, _on_term)
+if os.getppid() != EXPECTED_PARENT:
+    # PDEATHSIG 装载与父死亡之间的竞态: arm 后复核, 父已死则不再拉起 worker
+    sys.exit(96)
+try:
+    worker = subprocess.Popen(sys.argv[2:])
+except OSError as exc:
+    print("SELF_CHECK_SUPERVISOR_SPAWN_ERROR: %s" % exc, file=sys.stderr)
+    sys.exit(97)
+if TERMINATED:
+    worker.kill()  # SIGTERM 落在 spawn 赋值窗口内: flag 兜底
+rc = worker.wait()
+ME = os.getpid()
+try:
+    MY_PG = os.getpgid(0)
+except Exception:
+    MY_PG = None
+def _reap():
+    while True:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
+def _children():
+    kids = []
+    try:  # /proc 优先: 不依赖 PATH/ps 二进制, 不把枚举进程自己算进来, 跳过僵尸
+        entries = os.listdir("/proc")
+        for entry in entries:
+            if not entry.isdigit():
+                continue
+            try:
+                with open("/proc/%s/stat" % entry, "rb") as fh:
+                    stat = fh.read().decode("ascii", "replace")
+                after = stat.rsplit(")", 1)[1].split()
+                state, ppid = after[0], int(after[1])
+            except Exception:
+                continue
+            if ppid == ME and state != "Z":
+                kids.append(int(entry))
+        return kids
+    except Exception:
+        pass
+    try:  # 非 Linux 回退: ps, 排除 ps 进程自身(否则每轮都误判有孩子空转到 deadline)
+        proc = subprocess.Popen(["ps", "-eo", "pid,ppid"], stdout=subprocess.PIPE, text=True)
+        out = proc.communicate(timeout=5)[0]
+        for line in out.splitlines()[1:]:
+            parts = line.split()
+            if (len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit()
+                    and int(parts[1]) == ME and int(parts[0]) != proc.pid):
+                kids.append(int(parts[0]))
+    except Exception:
+        pass
+    return kids
+deadline = time.time() + 10
+while time.time() < deadline:
+    _reap()
+    kids = _children()
+    if not kids:
+        break
+    for kid in kids:
+        try:
+            pg = os.getpgid(kid)
+        except Exception:
+            pg = None
+        try:
+            if pg is not None and MY_PG is not None and pg != MY_PG:
+                os.killpg(pg, signal.SIGKILL)  # 脱组后代: 连它的组一起清
+            else:
+                os.kill(kid, signal.SIGKILL)   # 同组 helper: 绝不 killpg(会把自己杀掉)
+        except Exception:
             pass
-    proc.wait()
+    time.sleep(0.05)
+sys.exit(rc if isinstance(rc, int) else 1)
+"""
+
+
+def _windows_job_container(pid: int) -> tuple[Any, bool]:
+    """(job_handle|None, guaranteed): Job Object + KILL_ON_JOB_CLOSE(MS: Job
+    Objects) -- Windows 上结束父进程不会自动结束子进程, 只有 Job 能按组终止。
+    任一 API 失败返回 (None, False), 调用方必须如实报告「无法保证」。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        # 显式 argtypes/restype(第八轮 review): 64 位 HANDLE 缺声明会被默认
+        # c_int 截断。见 Python ctypes 文档与 CreateJobObjectW API。
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.SetInformationJobObject.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None, False
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_ulonglong) for name in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class _BasicLimits(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                        ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_void_p),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class _ExtendedLimits(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", _BasicLimits),
+                        ("IoInfo", _IoCounters),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        info = _ExtendedLimits()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info),
+                                                ctypes.sizeof(info)):
+            kernel32.CloseHandle(job)
+            return None, False
+        handle = kernel32.OpenProcess(0x0101, False, pid)  # SET_QUOTA|TERMINATE
+        if not handle:
+            kernel32.CloseHandle(job)
+            return None, False
+        assigned = kernel32.AssignProcessToJobObject(job, handle)
+        kernel32.CloseHandle(handle)
+        if not assigned:
+            kernel32.CloseHandle(job)
+            return None, False
+        return job, True
+    except Exception:
+        return None, False
+
+
+def _pid_starttime(pid: int) -> str | None:
+    """/proc/<pid>/stat 第 22 字段(starttime)作为 PID 身份指纹: 补杀前校验,
+    PID 被复用则不杀并报清理未确认(第十轮: 不误杀无关进程组)。非 Linux 返回 None。"""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as fh:
+            stat = fh.read().decode("ascii", "replace")
+        return stat.rsplit(")", 1)[1].split()[19]  # 括号后第 20 个字段 = starttime
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _cleanup_tree(proc: subprocess.Popen, job: Any,
+                  tracked_pids: set | None = None) -> tuple[bool, str]:
+    """尽力清掉整棵 worker 进程树; 返回 (确认清理, 说明)。失败必须让调用方
+    如实上报, 不允许静默声称 process tree killed(P2-4)。"""
+    if os.name == "nt":
+        if job is None:
+            try:  # 兜底本身的异常不得越过 cleanup 契约(第十轮 P2)
+                subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                               capture_output=True, timeout=15)
+            except Exception as exc:  # noqa: BLE001
+                return False, f"Windows 无 Job Object 且 taskkill 兜底失败: {exc}"
+            return False, "Windows 无 Job Object -- 已 taskkill /T 兜底, 完整性无法保证"
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            kernel32.TerminateJobObject.restype = wintypes.BOOL
+            kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            kernel32.CloseHandle.restype = wintypes.BOOL
+            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+            terminated = bool(kernel32.TerminateJobObject(job, 1))
+            closed = bool(kernel32.CloseHandle(job))  # KILL_ON_JOB_CLOSE 双保险
+            proc.wait(timeout=15)
+            if terminated and closed:
+                return True, "job object terminated"
+            # 返回值失败必须如实上报(第八轮 review), 不冒充已清理
+            return False, (f"Job API 返回失败(terminate={terminated}, close={closed})"
+                           " -- 进程树清理未确认")
+        except Exception as exc:  # noqa: BLE001
+            return False, f"TerminateJobObject 失败: {exc}"
+    try:
+        os.kill(proc.pid, signal.SIGTERM)  # supervisor: 杀 worker + 清扫归养孤儿
+    except ProcessLookupError:
+        # supervisor 已死: 正常退出=它已清扫; 但若是被 SIGKILL/OOM 干掉则没有
+        # (第九轮 P1)。按父进程追踪到的后代快照补杀, 结果如实。
+        leftovers = []
+        identity_mismatch = 0
+        for pid, expected_start in sorted((tracked_pids or {}).items()):
+            if pid == proc.pid:
+                continue
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, PermissionError):
+                continue
+            if expected_start is not None and _pid_starttime(pid) != expected_start:
+                identity_mismatch += 1  # PID 已被复用: 绝不误杀, 如实上报
+                continue
+            leftovers.append(pid)
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except Exception:  # noqa: BLE001
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:  # noqa: BLE001
+                    pass
+        if leftovers or identity_mismatch:
+            return False, (f"supervisor 异常死亡: 按快照补杀 {len(leftovers)} 个残留, "
+                           f"{identity_mismatch} 个因 PID 身份不符跳过 -- 清理未确认"
+                           "(快照窗口外的后代无法覆盖, best-effort)")
+        return True, "supervisor already exited (swept on its way out)"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"SIGTERM supervisor 失败: {exc}"
+    try:
+        proc.wait(timeout=15)
+        return True, "supervisor swept and exited"
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        return False, f"等待 supervisor 失败: {exc}"
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait(timeout=5)
+        return False, "supervisor 未按时清扫, 已 SIGKILL 其进程组(脱组后代可能残留)"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"强杀 supervisor 组失败: {exc}"
+
+
+def _drain_stream(stream: Any, tail: deque, marker_lines: list | None,
+                  marker: str = RESULT_MARKER) -> None:
+    """有界流式读取(P3): 只保留尾部 ring buffer 和 marker 行, 大量输出不撑爆
+    内存也不死锁(readers 持续排空管道)。脱敏先于单行截断(第九轮 P1: 截断点
+    落进 secret 中间会留下脱敏器匹配不到的片段)。marker 候选按**带 nonce 的**
+    marker 过滤(第九轮 P2: 明文 marker 洪水不得把真结果挤出候选窗)。"""
+    try:
+        for raw in iter(stream.readline, ""):
+            line = raw.rstrip("\n")[:_LINE_CAP_CHARS]  # 流层不脱敏(会打碎 marker
+            # JSON/哨兵, 第十轮 P2); 脱敏在结构化层与 stderr 重组点做
+            tail.append(line)
+            if marker_lines is not None and marker in line:
+                marker_lines.append(line)
+                del marker_lines[:-4]  # 只留最后几条 marker 候选
+    except Exception:  # noqa: BLE001 -- reader 永不抛到主线程
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def run_subprocess_check(
@@ -240,53 +604,154 @@ def run_subprocess_check(
 
     Trust rules (2026-07 review): a nonzero return code is ALWAYS a FAIL, even
     after a PASS report (crash-after-report); an unknown status string is a
-    FAIL, never a silent exit-0."""
+    FAIL, never a silent exit-0. POSIX worker 经 subreaper supervisor 包裹
+    (进程树保证); Windows 经 Job Object(不可用时如实报告无法保证)。"""
+    if not (isinstance(timeout_s, (int, float)) and math.isfinite(timeout_s)
+            and 0 < timeout_s <= MAX_CHECK_TIMEOUT_S):
+        raise SelfCheckInternalError(
+            f"非法 worker 超时: {timeout_s!r} (须有限且 0<t<={MAX_CHECK_TIMEOUT_S:.0f}s)")
     started = time.time()
-    popen_kwargs: dict[str, Any] = (
-        {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
-        else {"start_new_session": True}
-    )
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        cwd=str(REPO_ROOT), env=env, **popen_kwargs,
-    )
+    if os.name == "nt":
+        popen_kwargs: dict[str, Any] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        full_cmd = list(cmd)
+    else:
+        popen_kwargs = {"start_new_session": True}
+        full_cmd = [sys.executable, "-c", _POSIX_SUPERVISOR, str(os.getpid()), *cmd]
+    # 本次运行的 marker nonce(第八轮 review P2): 后置输出的公开 marker(插件
+    # atexit 等)无法伪造带 nonce 的真实结果通道。同进程恶意代码仍可读 env --
+    # 防的是意外/静态输出欺骗, 不是进程内对抗(固有边界)。
+    nonce = _stdlib_secrets.token_hex(8)
+    env = dict(env if env is not None else os.environ)
+    env["SPICA_SELF_CHECK_MARKER_NONCE"] = nonce
+    # spawn/赋值窗口对 SIGTERM/SIGINT 原子化(第十轮 P1): handler 在 proc 赋值前
+    # 触发会让已启动的 supervisor 无引用可清理。仅 POSIX 主线程可 mask。
+    masked = False
+    if os.name != "nt":
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+            masked = True
+        except (ValueError, OSError):
+            pass
+    try:
+        try:
+            proc = subprocess.Popen(
+                full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                encoding="utf-8", errors="replace",  # 非法字节不再杀死 reader(P2)
+                cwd=str(REPO_ROOT), env=env, **popen_kwargs,
+            )
+        except OSError as exc:
+            raise SelfCheckInternalError(f"无法启动 worker 子进程: {exc}") from exc
+    finally:
+        if masked:
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM, signal.SIGINT})
+    job: Any = None
+    stdout_tail: deque = deque(maxlen=_STDOUT_TAIL_LINES)
+    stderr_tail: deque = deque(maxlen=_STDERR_TAIL_LINES)
+    marker_lines: list = []
     vram: dict[str, Any] = {}
     stop = threading.Event()
     sampler = None
-    if sample_vram:
-        sampler = threading.Thread(
-            target=_vram_sampler, args=(proc.pid, stop, vram), daemon=True
-        )
-        sampler.start()
     try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        _kill_process_tree(proc)
-        return {
-            "status": STATUS_FAIL,
-            "reason": f"timeout after {timeout_s:.0f}s (process tree killed)",
-            "detail": dict(vram),
-        }
-    except BaseException:
-        # Ctrl-C / bad-timeout / any parent failure: workers run in their OWN
-        # session (start_new_session) so the terminal SIGINT never reaches
-        # them -- without this kill an interrupted --full leaves GPU workers
-        # alive and holding VRAM (review P1).
-        _kill_process_tree(proc)
+        # spawn 之后的所有基础设施初始化(job/readers/sampler)都在清理保护内:
+        # Thread.start 的资源错误曾逃逸为原生 exit 1 且不清理 worker(第八轮 P1)。
+        if os.name == "nt":
+            job, _job_ok = _windows_job_container(proc.pid)
+        nonced_marker = RESULT_MARKER + nonce + ":"
+        readers = [
+            threading.Thread(target=_drain_stream,
+                             args=(proc.stdout, stdout_tail, marker_lines, nonced_marker),
+                             daemon=True),
+            threading.Thread(target=_drain_stream,
+                             args=(proc.stderr, stderr_tail, None), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        # 后代快照追踪(第九轮 P1): supervisor 被 SIGKILL/OOM 干掉时, 父进程凭
+        # 此快照补杀残留(快照窗口外的如实报告)。
+        tracked: dict = {}
+
+        def _snapshot() -> None:
+            for pid in _descendant_pids(proc.pid):
+                if pid not in tracked:
+                    tracked[pid] = _pid_starttime(pid)  # 记录身份, 防 PID 复用误杀
+
+        def _track() -> None:
+            while not stop.is_set():
+                try:
+                    _snapshot()
+                except Exception:  # noqa: BLE001
+                    pass
+                stop.wait(0.3)
+
+        try:
+            _snapshot()  # 立即首采样: 把 supervisor 秒死的窗口压到毫秒级
+        except Exception:  # noqa: BLE001
+            pass
+        tracker = threading.Thread(target=_track, daemon=True)
+        tracker.start()
+        if sample_vram:
+            sampler = threading.Thread(
+                target=_vram_sampler, args=(proc.pid, stop, vram), daemon=True
+            )
+            sampler.start()
+    except BaseException as exc:
+        _cleanup_tree(proc, job)
+        if isinstance(exc, Exception):
+            raise SelfCheckInternalError(f"worker 基础设施初始化失败: {exc}") from exc
         raise
+    cleaned: tuple[bool, str] | None = None
+    try:
+        try:
+            proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            cleaned = _cleanup_tree(proc, job, tracked)
+            note = ("process tree killed" if cleaned[0]
+                    else f"清理未确认: {cleaned[1]}")
+            return {
+                "status": STATUS_FAIL,
+                "reason": f"timeout after {timeout_s:.0f}s ({note})",
+                "detail": dict(vram),
+            }
+        except BaseException:
+            # Ctrl-C / any parent failure: worker 在独立会话里收不到终端 SIGINT
+            cleaned = _cleanup_tree(proc, job, tracked)
+            raise
     finally:
         stop.set()
         if sampler is not None:
             sampler.join(timeout=2)
+        if cleaned is None:
+            # 正常退出/崩溃路径的树清理: supervisor 正常时早已清扫(此处 no-op
+            # 确认); 失败必须体现在结果里, 不静默(P2-4)。
+            cleaned = _cleanup_tree(proc, job, tracked)
+        for reader in readers:
+            reader.join(timeout=10)
+    cleanup_ok, cleanup_note = cleaned
     duration = round(time.time() - started, 1)
-    payload = parse_worker_stdout(stdout or "")
+
+    def _infra_detail() -> dict[str, Any]:
+        infra: dict[str, Any] = {"duration_s": duration, **vram}
+        if not cleanup_ok:
+            infra["tree_cleanup"] = cleanup_note
+        return infra
+
+    if proc.returncode == 97 and any(
+            "SELF_CHECK_SUPERVISOR_SPAWN_ERROR" in line for line in stderr_tail):
+        # 内层 worker spawn 失败 = 自检基础设施错误(第九轮 P2), 不是模型 FAIL
+        raise SelfCheckInternalError(
+            "无法启动内层 worker 子进程: "
+            + " | ".join(l for l in stderr_tail if "SPAWN_ERROR" in l)[:300])
+    stdout_text = "\n".join(marker_lines if marker_lines else list(stdout_tail))
+    payload = parse_worker_stdout(stdout_text, nonce=nonce)
     if payload is None:
-        tail = (stderr or "").strip().splitlines()[-3:]
+        stderr_text = redact_secrets("\n".join(stderr_tail))  # 重组后再脱敏:
+        # 跨行 secret 在保留换行的原文上完整匹配(第十轮 P1)
+        tail = [line for line in stderr_text.splitlines()[-3:] if line.strip()]
         return {
             "status": STATUS_FAIL,
             "reason": f"worker exited rc={proc.returncode} without a result "
-                      f"(stderr tail: {' | '.join(tail) if tail else 'empty'})",
-            "detail": {"duration_s": duration, **vram},
+                      f"(stderr tail: {' | '.join(tail) if tail else 'empty'})"[:600],
+            "detail": _infra_detail(),
         }
     if not isinstance(payload, dict):
         # a legal-but-non-object JSON (array/string) must become a FAIL, not an
@@ -294,14 +759,14 @@ def run_subprocess_check(
         return {
             "status": STATUS_FAIL,
             "reason": f"worker result is not a JSON object: {type(payload).__name__}",
-            "detail": {"duration_s": duration, **vram},
+            "detail": _infra_detail(),
         }
     if proc.returncode != 0:
         return {
             "status": STATUS_FAIL,
             "reason": f"worker exited rc={proc.returncode} AFTER reporting "
                       f"{payload.get('status')!r} -- crash-after-report is a FAIL",
-            "detail": {"duration_s": duration, **vram},
+            "detail": _infra_detail(),
         }
     status = str(payload.get("status") or "")
     if status not in VALID_STATUSES:
@@ -309,7 +774,7 @@ def run_subprocess_check(
             "status": STATUS_FAIL,
             "reason": f"worker returned invalid status {payload.get('status')!r} "
                       f"(expected one of {sorted(VALID_STATUSES)})",
-            "detail": {"duration_s": duration, **vram},
+            "detail": _infra_detail(),
         }
     raw_detail = payload.get("detail")
     if raw_detail is not None and not isinstance(raw_detail, dict):
@@ -318,12 +783,20 @@ def run_subprocess_check(
         return {
             "status": STATUS_FAIL,
             "reason": f"worker detail is not a JSON object: {type(raw_detail).__name__}",
-            "detail": {"duration_s": duration, **vram},
+            "detail": _infra_detail(),
         }
     detail = dict(raw_detail or {})
     detail.setdefault("duration_s", payload.get("duration_s", duration))
     detail.update(vram)
-    return {"status": status, "reason": str(payload.get("reason") or ""), "detail": detail}
+    reason = str(payload.get("reason") or "")
+    if not cleanup_ok:
+        detail["tree_cleanup"] = cleanup_note  # 明确报告, 不静默声称已清理
+        if status in (STATUS_PASS, STATUS_UNVERIFIED, STATUS_SKIPPED):
+            # 清理未确认时任何"绿色"结论都不可信(第十轮 P1): 统一降 DEGRADED;
+            # 原本已是 DEGRADED/FAIL 的不降低。
+            status = STATUS_DEGRADED
+            reason = (reason + "; " if reason else "") + f"进程树清理未确认: {cleanup_note}"
+    return {"status": status, "reason": reason, "detail": detail}
 
 
 def _worker_command(name: str, allow_downloads: bool) -> list[str]:
@@ -490,20 +963,70 @@ def check_stt_light(app: Any) -> dict[str, Any]:
         return {"name": "stt", "status": STATUS_SKIPPED,
                 "detail": {"backend": cfg.backend},
                 "reason": "本地 STT 关闭(backend=google 线上回退)"}
+    try:  # 缺包 = 本地 STT 任何形态都跑不了(第十轮 P2: 不只裸 size 分支)
+        import faster_whisper  # noqa: F401,PLC0415
+    except ImportError:
+        return {"name": "stt", "status": STATUS_DEGRADED,
+                "detail": {"model": cfg.model, "device": cfg.device,
+                           "compute_type": cfg.compute_type},
+                "reason": "faster-whisper 未安装, 本地 STT 无法运行"}
     model_path = Path(cfg.model)
     if not model_path.is_absolute():
         model_path = REPO_ROOT / cfg.model
     model_is_dir = model_path.is_dir()
     detail = {"model": cfg.model, "device": cfg.device, "compute_type": cfg.compute_type,
               "local_model_dir": model_is_dir}
-    if "/" not in cfg.model and not model_is_dir:
-        detail["local_model_dir"] = "n/a(HF repo id)"
+    if model_is_dir:
+        if not (model_path / "model.bin").is_file():
+            # 目录在但缺 CTranslate2 布局的 model.bin: 真加载立即失败(第九轮 P2)
+            return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
+                    "reason": f"本地模型目录缺 model.bin: {model_path}"}
         return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
                 "reason": "轻量档不加载模型(--full 真跑)"}
-    status = STATUS_UNVERIFIED if model_is_dir else STATUS_DEGRADED
-    return {"name": "stt", "status": status, "detail": detail,
-            "reason": "轻量档不加载模型(--full 真跑)" if model_is_dir
-            else f"本地模型目录不存在: {model_path}"}
+    # faster-whisper 的 model 可以是尺寸名或 org/name Hub ID -- 这类值目录不存
+    # 在是正常的(走 HF 缓存)。但: ①显式本地路径(./ ../ 绝对/反斜杠)不能误判成
+    # Hub ID; ②裸名必须在 faster-whisper 的官方 size 表里(未知裸名离线即
+    # ValueError, 第八轮 P2); ③HF 段不得以 . 或 - 开头(-bad/model、org/.bad
+    # 必然非法)。
+    looks_explicit_path = (
+        Path(cfg.model).is_absolute()
+        or cfg.model.startswith(("./", "../", ".\\", "..\\"))
+        or "\\" in cfg.model
+    )
+    if not looks_explicit_path:
+        if "/" not in cfg.model:
+            # 裸名必须在 faster-whisper 官方 size 表(未知裸名离线即 ValueError);
+            # faster-whisper 本身装不上 = 本地 STT 根本跑不了(第九轮 P2)。
+            try:
+                from faster_whisper.utils import _MODELS  # noqa: PLC0415
+            except ImportError:
+                return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
+                        "reason": "faster-whisper 未安装, 本地 STT 无法运行"}
+            if cfg.model not in _MODELS:
+                return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
+                        "reason": f"不是合法的 faster-whisper size 名: {cfg.model}"
+                                  "(加载时会直接 ValueError)"}
+            detail["local_model_dir"] = "n/a(size 名)"
+            return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
+                    "reason": "轻量档不加载模型(--full 真跑)"}
+        # org/name: 用官方 validator(第九轮 P2: 自造正则对 _org/name 假红、对
+        # org/name./org/na--me/.git 假绿), 官方不可用时如实标注无法判定。
+        try:
+            from huggingface_hub.utils import validate_repo_id  # noqa: PLC0415
+
+            validate_repo_id(cfg.model)
+        except ImportError:
+            detail["local_model_dir"] = "n/a(HF hub id, 未经官方校验)"
+            return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
+                    "reason": "huggingface_hub 不可用, ID 合法性未校验"}
+        except Exception as exc:  # noqa: BLE001 -- HFValidationError 家族
+            return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
+                    "reason": f"非法 HF repo id: {cfg.model} ({exc})"[:200]}
+        detail["local_model_dir"] = "n/a(HF hub id)"
+        return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
+                "reason": "轻量档不加载模型(--full 真跑)"}
+    return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
+            "reason": f"本地模型目录不存在或模型名非法: {model_path}"}
 
 
 def check_moondream_light(screen_cfg: Any) -> dict[str, Any]:
@@ -606,6 +1129,89 @@ def _torch_cuda_evidence() -> dict[str, Any]:
         return {"torch_cuda_available": "unknown"}
 
 
+def _register_host_tool_stubs(registry: Any, errors: dict[str, str]) -> None:
+    """生产在插件加载前还注册了三个 host 闭包工具(watch/note/sing_song, 权限在
+    AppHost)。自检没有 host 实例, 注册**同 schema 的拒绝执行 stub**(第九轮 P2):
+    插件对「工具是否存在」的依赖与生产等价; 若插件真去调用, 得到明确拒绝。"""
+    try:
+        from agent_tools.function_tools.screen.schema import ScreenToolError
+        from spica.adapters.tools.note_game_observation import NoteGameObservationTool
+        from spica.adapters.tools.sing_song import SingSongTool
+        from spica.adapters.tools.watch_game_screen import WATCH_GAME_SCREEN_SCHEMA
+
+        def _refuse(**_kwargs: Any) -> dict[str, Any]:
+            raise ScreenToolError(
+                "SELF_CHECK_STUB", "自检环境无 AppHost, host 闭包工具不可执行。")
+
+        registry.register_tool(WATCH_GAME_SCREEN_SCHEMA, _refuse,
+                               available=lambda: False, intent_gated=False)
+        registry.register_tool(
+            NoteGameObservationTool(lambda: None, lambda *a, **k: None).schema(),
+            _refuse, available=lambda: False, intent_gated=False, effect="write")
+        def _song_enabled_like_production() -> bool:
+            try:
+                from agent_tools.function_tools.song.config import (
+                    resolve_effective_song_config,
+                    song_enabled,
+                )
+
+                return song_enabled(resolve_effective_song_config())
+            except Exception:  # noqa: BLE001
+                return False
+
+        # available 镜像生产谓词(第十轮 P2: 插件经公共 tool_schemas() 依赖
+        # sing_song 的 offered 状态时, 自检必须与生产一致)
+        registry.register_tool(SingSongTool(lambda q: None).schema(), _refuse,
+                               available=_song_enabled_like_production,
+                               intent_gated=True, effect="act")
+    except Exception as exc:  # noqa: BLE001 -- stub 失败降级并记录
+        errors.setdefault("<host-tool-stubs>", str(exc))
+
+
+def _tts_check_registry(
+    plugins_root: Any = None, manifest_path: Any = None
+) -> tuple[Any, dict[str, str]]:
+    """(registry, plugin_errors): 生产 capability catalogue 的轻量切片
+    (register_core_capability_catalogue, 单一来源, 零对象构造) + 生产同款插件
+    注册 -- 插件的 register() 可以像生产一样依赖 LLM 等 builtin(第七轮 review
+    P2)。插件错误如实返回(PluginHost.errors()), 由调用方在 provider 解析失败时
+    带进 FAIL 结论; 单个坏插件不摧毁检查。"""
+    from spica.host.builtins import (
+        register_builtin_adapters,
+        register_core_capability_catalogue,
+    )
+    from spica.plugins.registry import CapabilityRegistry
+
+    registry = CapabilityRegistry()
+    errors: dict[str, str] = {}
+    try:
+        # 生产同款完整内建目录(含 inspect_screen 工具, 第八轮 review P2: 插件
+        # 可以依赖它)。已知差距: host 闭包工具(watch/note/sing_song)需要 AppHost
+        # 实例, 不在此目录 -- 依赖它们的插件在自检下会报错并如实带出。
+        register_builtin_adapters(registry)
+    except Exception as exc:  # noqa: BLE001 -- 无关内建失败不殃及 TTS 结论
+        errors["<builtins>"] = str(exc)
+        registry = CapabilityRegistry()
+        register_core_capability_catalogue(registry)
+    _register_host_tool_stubs(registry, errors)
+    try:
+        from spica.plugins.host import PluginHost  # noqa: PLC0415
+
+        kwargs: dict[str, Any] = {}
+        if plugins_root is not None:
+            kwargs["plugins_root"] = plugins_root
+        if manifest_path is not None:
+            kwargs["manifest_path"] = manifest_path
+        plugin_host = PluginHost(registry, **kwargs)
+        plugin_host.load()
+        errors.update(plugin_host.errors())  # merge, 不覆盖 <builtins> 记录(第九轮 P3)
+    except Exception as exc:  # noqa: BLE001 -- degrade, never fake a TTS FAIL
+        errors.setdefault("<plugin-host>", str(exc))  # merge, 不覆盖 <builtins>
+        print(redact_secrets(f"[self-check] 插件注册失败(继续用内建目录): {exc}"),
+              file=sys.stderr)
+    return registry, errors
+
+
 def _worker_tts() -> dict[str, Any]:
     """Warm the TTS PRODUCTION would assemble -- via the host's OWN assembly
     seam (``AppHost._resolve_tts_assembly``: character-package tts.yaml +
@@ -622,16 +1228,12 @@ def _worker_tts() -> dict[str, Any]:
         AppHost,
         load_character_package,
     )
-    from spica.host.builtins import register_tts_providers
-    from spica.plugins.registry import CapabilityRegistry
-
-    # __new__ 而非 AppHost(): __init__ 会构造 screen 工具/PluginHost 等无关件,
-    # 它们的异常会在进入 TTS 装配缝之前把结果记成 TTS FAIL(review P2)。缝只读
-    # config 和 registry 两个属性; registry 只注册 builtins 的 TTS 切片(单一来源)。
+    # __new__ 而非 AppHost(): __init__ 会构造 screen 工具等无关件, 它们的异常
+    # 会在进入 TTS 装配缝之前把结果记成 TTS FAIL(review P2)。缝只读 config 和
+    # registry 两个属性; registry = builtins TTS 切片 + 插件注册(生产对齐)。
     host = AppHost.__new__(AppHost)
     host.config = ConfigManager().load()
-    host.registry = CapabilityRegistry()
-    register_tts_providers(host.registry)
+    host.registry, plugin_errors = _tts_check_registry()
     package = load_character_package(
         host.config.character.package_dir or DEFAULT_SPICA_SKILL_DIR
     )
@@ -644,7 +1246,16 @@ def _worker_tts() -> dict[str, Any]:
             and os.environ.get("SPICA_SELF_CHECK_FORCE_DISABLED") == "1"):
         host.config.tts.enabled = True
         forced = True
-    provider, _tool, adapter = host._resolve_tts_assembly(tts_config)
+    try:
+        provider, _tool, adapter = host._resolve_tts_assembly(tts_config)
+    except (KeyError, ValueError) as exc:
+        # 配置的 provider 解析失败: 若配置依赖的插件恰好注册失败, 把准确原因
+        # 带出来(经 worker 出口结构化脱敏), 不静默继续到 KeyError 才裸崩。
+        reason = f"配置的 TTS provider 解析失败: {exc}"
+        if plugin_errors:
+            reason += f"; 插件错误: {plugin_errors}"
+        return {"status": STATUS_FAIL, "reason": reason,
+                "detail": {"plugin_errors": plugin_errors}}
     public_config = getattr(adapter, "public_config", None)
     warmup = getattr(adapter, "warmup", None)
     if adapter is None or public_config is None or warmup is None:
@@ -862,6 +1473,76 @@ def _worker_ocr() -> dict[str, Any]:
     return {"status": STATUS_PASS, "detail": detail}
 
 
+def uvr_effective_model_dir(
+    sep_config: dict[str, Any], environ: dict[str, str] | None = None
+) -> str | None:
+    """audio-separator 实际读模型的目录, 优先级严格镜像 0.44.2 的 Separator
+    (separator.py:167): ①AUDIO_SEPARATOR_MODEL_DIR env **优先于** kwarg;
+    ②extra_kwargs.model_file_dir(生产 separate_vocals 透传); ③探测默认目录
+    (此路径才构造 Separator; ①②时绝不探测)。None = 无法确定(预检放行,
+    由真跑自己失败)。"""
+    env = environ if environ is not None else os.environ
+    env_dir = env.get("AUDIO_SEPARATOR_MODEL_DIR")
+    if env_dir:
+        return str(env_dir)
+    extra = sep_config.get("extra_kwargs") or {}
+    override = extra.get("model_file_dir")
+    if override:
+        return str(override)
+    try:
+        from audio_separator.separator import Separator  # noqa: PLC0415
+
+        probe = Separator(output_dir=str(REPO_ROOT / "static/generated_song/tmp"))
+        model_dir = getattr(probe, "model_file_dir", None)
+        return str(model_dir) if model_dir else None
+    except Exception:
+        return None
+
+
+def uvr_missing_prerequisites(model_dir: str | Path, model_filename: str) -> list[str]:
+    """``load_model`` 缺失时会从 GitHub 下载的**全部**前置文件。通用前置(0.44.2
+    源码核对): 主模型文件、download_checks.json(list_supported_model_files 无条件
+    fetch)、非 yaml 模型的 vr_model_data.json + mdx_model_data.json
+    (load_model_data_using_hash)。此外每个模型有自己的 ``download_files``
+    (yaml 模型的 .th 权重、Roformer ckpt 的配套 yaml 等, 第八轮 review P1)——
+    download_checks.json 在场时用**真实 Separator 的解析器**离线枚举(文件已在,
+    list_supported_model_files 的 download_file_if_not_exists 全部跳过, 零网络)。
+    返回缺失路径列表; 空 = 禁下载可安全放行。"""
+    base = Path(str(model_dir))
+    required = {model_filename, "download_checks.json"}
+    has_companion_yaml = False
+    if (base / "download_checks.json").is_file():
+        try:
+            from audio_separator.separator import Separator  # noqa: PLC0415
+
+            probe = Separator(
+                output_dir=str(REPO_ROOT / "static/generated_song/tmp"),
+                model_file_dir=str(base),
+            )
+            groups = probe.list_supported_model_files()
+            for models in groups.values():
+                for info in models.values():
+                    files = list(info.get("download_files") or [])
+                    if info.get("filename") == model_filename or model_filename in files:
+                        for item in files:
+                            name = (str(item).split("/")[-1]
+                                    if str(item).startswith("http") else str(item))
+                            required.add(name)
+                            if name.lower().endswith(".yaml"):
+                                has_companion_yaml = True
+        except Exception:
+            # 枚举失败(schema 变动等): 退回通用前置 -- 宁可漏报也不误报,
+            # 但通用前置仍拦住最大的下载面。
+            pass
+    if (not model_filename.lower().endswith(".yaml")) and not has_companion_yaml:
+        # 只有真正走 hash 路径(无 companion yaml 的非 yaml 模型)才需要这两个
+        # json(第九轮 P2: MDXC/Roformer ckpt+yaml 不读它们, 强加会假 FAIL)。
+        required |= {"vr_model_data.json", "mdx_model_data.json"}
+    # is_file 而非 exists(第九轮 P1): 同名目录能骗过 exists, 真实 0.44.2 用
+    # os.path.isfile 判断后仍会下载。
+    return sorted(str(base / name) for name in required if not (base / name).is_file())
+
+
 def _worker_song_uvr() -> dict[str, Any]:
     import soundfile
 
@@ -872,22 +1553,19 @@ def _worker_song_uvr() -> dict[str, Any]:
     sep = cfg.get("separator", {})
     model_filename = str(sep.get("model_filename") or "")
     if os.environ.get("SPICA_SELF_CHECK_NO_DOWNLOAD") == "1":
-        # audio-separator pulls missing UVR weights from GitHub (HF_HUB_OFFLINE
-        # does NOT cover it) -- pre-check the model file so default mode never
-        # silently downloads.
-        model_dir = None
-        try:
-            from audio_separator.separator import Separator  # noqa: PLC0415
-
-            probe = Separator(output_dir=str(REPO_ROOT / "static/generated_song/tmp"))
-            model_dir = getattr(probe, "model_file_dir", None)
-        except Exception:
-            pass
-        if model_dir is not None and not (Path(str(model_dir)) / model_filename).exists():
-            return {"status": STATUS_FAIL,
-                    "reason": f"UVR 模型文件缺失且默认禁下载: {model_dir}/{model_filename} "
-                              "(--allow-model-downloads 放开)",
-                    "detail": {"model_filename": model_filename}}
+        # audio-separator pulls missing files from GitHub (HF_HUB_OFFLINE does
+        # NOT cover it) -- pre-check ALL of load_model's download-able
+        # prerequisites (model + metadata jsons) in the EFFECTIVE dir
+        # (env > extra_kwargs > default, 镜像 0.44.2 Separator 的优先级)。
+        model_dir = uvr_effective_model_dir(sep)
+        if model_dir is not None:
+            missing = uvr_missing_prerequisites(model_dir, model_filename)
+            if missing:
+                return {"status": STATUS_FAIL,
+                        "reason": f"UVR 前置文件缺失且默认禁下载: {'; '.join(missing)} "
+                                  "(--allow-model-downloads 放开)",
+                        "detail": {"model_filename": model_filename,
+                                   "model_dir": str(model_dir)}}
     work = REPO_ROOT / "static/generated_song/tmp/self_check_uvr"
     try:
         fixture = write_sine_wav(work / "fixture.wav")
@@ -1063,7 +1741,8 @@ def _worker_llm() -> dict[str, Any]:
         if llm_reply_missing(outcome):
             suspicious.append(role)
     if failures:
-        return {"status": STATUS_FAIL, "reason": "; ".join(failures)[:400], "detail": detail}
+        return {"status": STATUS_FAIL,
+                "reason": redact_secrets("; ".join(failures))[:400], "detail": detail}
     if suspicious:
         return {"status": STATUS_DEGRADED,
                 "reason": f"请求成功但回复为空: {','.join(suspicious)}", "detail": detail}
@@ -1086,10 +1765,18 @@ def run_worker_and_print(name: str) -> int:
     try:
         payload = WORKERS[name]()
     except Exception as exc:  # noqa: BLE001 -- everything becomes a typed FAIL result
-        payload = {"status": STATUS_FAIL,
-                   "reason": f"{type(exc).__name__}: {exc}"[:500], "detail": {}}
+        payload = {"status": STATUS_FAIL,  # 脱敏先于截断(第九轮 P1: 截断可把
+                   # secret 切成脱敏器匹配不到的片段)
+                   "reason": redact_secrets(f"{type(exc).__name__}: {exc}")[:500],
+                   "detail": {}}
     payload["duration_s"] = round(time.time() - started, 1)
-    print(RESULT_MARKER + json.dumps(payload, ensure_ascii=False), flush=True)
+    # 结构化脱敏(第七轮 review P1): 隐藏 --worker 输出不经 render_report,
+    # str(exc)/detail 可能携带 secret -- 在 dumps 之前清洗。
+    payload = redact_obj(payload)
+    # 前置换行是第二重保险: 即使某个库最后一次写 stdout 没换行, marker 也独占一行
+    nonce = os.environ.get("SPICA_SELF_CHECK_MARKER_NONCE", "")
+    marker = RESULT_MARKER + (nonce + ":" if nonce else "")
+    print("\n" + marker + json.dumps(payload, ensure_ascii=False), flush=True)
     return 0
 
 
@@ -1178,16 +1865,39 @@ def _apply_gpu_evidence_rule(name: str, result: dict[str, Any]) -> dict[str, Any
     return result
 
 
+def _raise_keyboard_interrupt(_signum: int, _frame: Any) -> None:
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None) -> int:
     load_secrets()  # 铁律 #10: 进程入口在构造任何对象之前先灌注环境(AST 测试钉住)
+    previous_handler: Any = None
+    handler_installed = False
+    try:
+        # 第九轮 P1: CI cancel/systemd stop 发 SIGTERM -- 转成 KI 走同一条
+        # 「清理 worker 树再 exit 3」的路径, 否则独立 session 里的整棵树遗留。
+        previous_handler = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+        handler_installed = True
+    except (ValueError, OSError):
+        pass  # 非主线程/受限环境: 装不上 handler 就保持原语义
     try:
         return _main(argv)
     except KeyboardInterrupt:
         # 覆盖所有阶段(轻量检查/配置加载/守卫/重检查循环), 统一约定 exit 3;
         # 进行中的 worker 进程树已由 run_subprocess_check 的 BaseException 分支清理。
-        print("[self-check] 已中断(Ctrl-C)——如有进行中的 worker 其进程树已清理。",
-              file=sys.stderr)
+        print("[self-check] 已中断——已尝试清理进行中的 worker 进程树"
+              "(结果 best-effort, 见上方日志)。", file=sys.stderr)
         return 3
+    except SelfCheckInternalError as exc:
+        print(redact_secrets(f"[self-check] FATAL: {exc}"), file=sys.stderr)
+        return 3
+    finally:
+        if handler_installed:
+            try:  # 不污染调用进程(第十轮 P2): main 返回后恢复原 handler
+                signal.signal(signal.SIGTERM, previous_handler)
+            except (ValueError, OSError, TypeError):
+                pass
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -1221,7 +1931,8 @@ def _main(argv: list[str] | None = None) -> int:
     try:
         app, screen_cfg, song_cfg, tts_cfg = _load_configs()
     except Exception as exc:  # noqa: BLE001 -- config broken = self-check cannot proceed
-        print(f"[self-check] FATAL: 配置加载失败: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(redact_secrets(f"[self-check] FATAL: 配置加载失败: {type(exc).__name__}: {exc}"),
+              file=sys.stderr)
         return 3
 
     only = [s.strip() for s in args.only.split(",") if s.strip()]
@@ -1245,6 +1956,15 @@ def _main(argv: list[str] | None = None) -> int:
         return 3
 
     names = only or [n for n in HEAVY_CHECKS]
+    for name in names:
+        # P2(第七轮): scale 本身有限不够, 乘积也必须有限且可执行 -- 1e308×480=inf
+        # 曾在 spawn 之后才以 OverflowError 原生 exit 1 崩掉并泄漏 worker。
+        product = DEFAULT_TIMEOUTS_S[name] * args.timeout_scale
+        if not (math.isfinite(product) and 0 < product <= MAX_CHECK_TIMEOUT_S):
+            print(f"[self-check] FATAL: --timeout-scale={args.timeout_scale} 使 {name} "
+                  f"的超时非法: {product!r} (须有限且 <={MAX_CHECK_TIMEOUT_S:.0f}s)",
+                  file=sys.stderr)
+            return 3
     enabled = _enabled_map(app, screen_cfg, song_cfg)
     results = run_full_checks(names, enabled, args)  # KI -> main() 统一转 exit 3
     print(render_report("full", results, args.json))

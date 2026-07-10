@@ -25,22 +25,22 @@ from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS
 def register_tts_providers(registry: CapabilityRegistry) -> None:
     """The TTS slice of the builtin catalogue, reusable on its own: "text_only"
     is the tts.enabled=false assembly (no model, ok results with no audio);
-    "dummy" stays the test/demo placeholder. scripts/self_check.py's TTS worker
-    registers ONLY this slice so an unrelated builtin's construction failure
-    (screen tools etc.) can never read as a TTS failure."""
+    "dummy" stays the test/demo placeholder. scripts/self_check.py registers
+    the FULL builtin catalogue for production parity and falls back to the
+    core slice only when an unrelated builtin's construction fails."""
     for provider in (*CURRENT_GPTSOVITS_PROVIDERS, "dummy", "text_only"):
         registry.register_tts(
             provider, lambda config=None, service=None: build_tts(config, service)
         )
 
 
-def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) -> None:
-    """Register the built-in capability adapters by name (Phase 5).
-
-    Resolving by the name in config (e.g. ``config.llm.provider``) is what makes
-    "swap the engine by changing a config name" work; this is also the seam
-    Phase 8 plugins register into.
-    """
+def register_core_capability_catalogue(registry: CapabilityRegistry) -> None:
+    """The construction-free slice of the builtin catalogue: llm/tts/visual/
+    memory FACTORY registrations only (no object is built here). Reusable on
+    its own by diagnostic tooling (scripts/self_check.py's TTS worker), so a
+    plugin's ``register()`` can depend on these builtins exactly like in
+    production -- while the screen tool's real construction stays out of the
+    slice (an unrelated builtin's failure must never read as a TTS failure)."""
     registry.register_llm(
         "openai_compatible",
         lambda client=None, reasoning_effort="default": OpenAICompatibleAdapter(
@@ -52,6 +52,16 @@ def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) 
     registry.register_memory(
         "sqlite", lambda store=None, recent=None: SqliteMemoryAdapter(store, recent)
     )
+
+
+def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) -> None:
+    """Register the built-in capability adapters by name (Phase 5).
+
+    Resolving by the name in config (e.g. ``config.llm.provider``) is what makes
+    "swap the engine by changing a config name" work; this is also the seam
+    Phase 8 plugins register into.
+    """
+    register_core_capability_catalogue(registry)
     # C7: inspect_screen is the first real tool -- a ToolPort over the local
     # screen-analysis adapter, registered so the runtime resolves it via the
     # registry (not a static TOOL_SCHEMAS list). N0 gate + local-only preserved.

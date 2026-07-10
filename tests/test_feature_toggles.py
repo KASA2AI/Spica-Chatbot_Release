@@ -258,6 +258,25 @@ class TtsAssemblyGateTest(unittest.TestCase):
         tool_ctor.assert_not_called()  # GPT-SoVITS constructor NEVER invoked
         self.assertIsInstance(adapter, TextOnlyTTSAdapter)
 
+    def test_disabled_ignores_a_plugin_override_of_text_only(self):
+        # 第六轮 review P2: 插件可向 registry 注册同名 "text_only" -- 关闭 TTS 的
+        # 无模型保证不允许被任何 registry 状态推翻, disabled 必须直构真的
+        # TextOnlyTTSAdapter, 而不是从可覆盖的 registry resolve。
+        class _HeavyFakeAdapter:
+            name = "heavy_fake"
+
+        host = self._host(False)
+        host.registry = CapabilityRegistry()
+        host.registry.register_tts(
+            "text_only", lambda config=None, service=None: _HeavyFakeAdapter()
+        )
+        provider, tool, adapter = host._resolve_tts_assembly(
+            {"provider": "gptsovits_current"}
+        )
+        self.assertEqual(provider, "text_only")
+        self.assertIsNone(tool)
+        self.assertIsInstance(adapter, TextOnlyTTSAdapter)
+
     def test_initialize_routes_through_both_assembly_seams(self):
         # facade-on-path pin: 抽出的两个测试缝必须真的在 initialize() 的路径上,
         # 否则「seam 存在但没人调」就是假绿(仿 PatchValidityTest 的用意, AST 版)。
@@ -378,6 +397,274 @@ class MoondreamClearRaceTest(unittest.TestCase):
             finally:
                 release.set()
                 mm.clear_moondream_manager()
+
+    def test_reset_close_waits_for_inflight_inference(self):
+        # 第六轮 review P2: reset(close) 只拿 load/state 锁, 不等 in-flight 推理
+        # -- 旧 backend 在 manager 已 closed/unloaded 后仍在推理。
+        import threading
+
+        from agent_tools.function_tools.screen import model_manager as mm
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        class _Backend:
+            def query(self, image, prompt):
+                entered.set()
+                release.wait(timeout=10)
+                return SimpleNamespace(text="ok")
+
+        with patch.object(mm, "load_moondream_backend", return_value=_Backend()), \
+                patch.object(mm.MoondreamModelManager, "_validate_config", lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_assert_cuda_available",
+                             lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_prepare_image",
+                             lambda self, image: image):
+            manager = mm.MoondreamModelManager(_screen_cfg(True))
+            manager.load()
+            outcomes: list = []
+
+            def _query():
+                try:
+                    outcomes.append(manager.query(object(), "q"))
+                except Exception as exc:  # noqa: BLE001
+                    outcomes.append(exc)
+
+            infer = threading.Thread(target=_query)
+            infer.start()
+            self.assertTrue(entered.wait(timeout=10))
+            closer = threading.Thread(target=lambda: manager.reset(close=True))
+            closer.start()
+            closer.join(timeout=0.3)
+            self.assertTrue(closer.is_alive())  # reset 必须等推理完(旧代码已返回)
+            release.set()
+            infer.join(10)
+            closer.join(10)
+            self.assertEqual(outcomes, ["ok"])  # 已开始的推理完整收尾
+            self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)
+
+    def test_query_paused_before_infer_lock_refuses_after_close(self):
+        # 第六轮 review P2 的第二形态: query 在 _infer_lock 外已拿到旧 backend
+        # 后暂停, reset(close) 完成 -- 排队的推理必须拒绝, 绝不再碰旧 backend,
+        # 失败也不得把 closed manager 状态改写成 error。
+        import threading
+
+        from agent_tools.function_tools.screen import model_manager as mm
+
+        paused = threading.Event()
+        resume = threading.Event()
+        backend_calls: list = []
+
+        class _Backend:
+            def query(self, image, prompt):
+                backend_calls.append(1)
+                return SimpleNamespace(text="ok")
+
+        def slow_prompt(self, question, reasoning=False):
+            paused.set()
+            resume.wait(timeout=10)
+            return "prompt"
+
+        with patch.object(mm, "load_moondream_backend", return_value=_Backend()), \
+                patch.object(mm.MoondreamModelManager, "_validate_config", lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_assert_cuda_available",
+                             lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_prepare_image",
+                             lambda self, image: image), \
+                patch.object(mm.MoondreamModelManager, "_build_prompt", slow_prompt):
+            manager = mm.MoondreamModelManager(_screen_cfg(True))
+            manager.load()
+            errors: list = []
+
+            def _query():
+                try:
+                    manager.query(object(), "q")
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+            t = threading.Thread(target=_query)
+            t.start()
+            self.assertTrue(paused.wait(timeout=10))
+            manager.reset(close=True)  # infer 锁此刻空闲 -> reset 立即完成
+            resume.set()
+            t.join(10)
+            self.assertEqual(backend_calls, [])  # 旧 backend 绝不再被推理
+            self.assertEqual(len(errors), 1)
+            self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)  # 未被改写成 error
+
+    def test_close_request_visible_to_queued_inference_before_reset_waits(self):
+        # 第七轮 review P2 钉序: q1(已在推理) → close requested → q2(已排队未进
+        # backend)必须拒绝 → reset 等 q1 收尾后返回。closing 状态必须在 reset
+        # 开始等 infer 锁**之前**就对排队者可见, 不依赖 RLock 公平性。
+        import threading
+        import time
+
+        from agent_tools.function_tools.screen import model_manager as mm
+
+        entered1 = threading.Event()
+        release1 = threading.Event()
+        paused2 = threading.Event()
+        resume2 = threading.Event()
+        backend_calls: list = []
+
+        class _Backend:
+            def query(self, image, prompt):
+                backend_calls.append(prompt)
+                entered1.set()
+                release1.wait(timeout=10)
+                return SimpleNamespace(text="ok")
+
+        def gated_prompt(self, question, reasoning=False):
+            if question == "q2":
+                paused2.set()
+                resume2.wait(timeout=10)
+            return question
+
+        with patch.object(mm, "load_moondream_backend", return_value=_Backend()), \
+                patch.object(mm.MoondreamModelManager, "_validate_config", lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_assert_cuda_available",
+                             lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_prepare_image",
+                             lambda self, image: image), \
+                patch.object(mm.MoondreamModelManager, "_build_prompt", gated_prompt):
+            manager = mm.MoondreamModelManager(_screen_cfg(True))
+            manager.load()
+            outcomes: dict = {}
+
+            def _query(tag):
+                try:
+                    outcomes[tag] = manager.query(object(), tag)
+                except Exception as exc:  # noqa: BLE001
+                    outcomes[tag] = exc
+
+            q1 = threading.Thread(target=_query, args=("q1",))
+            q1.start()
+            self.assertTrue(entered1.wait(timeout=10))     # ① q1 已在推理
+            q2 = threading.Thread(target=_query, args=("q2",))
+            q2.start()
+            self.assertTrue(paused2.wait(timeout=10))      # ② q2 已排队(load 之后)
+            closer = threading.Thread(target=lambda: manager.reset(close=True))
+            closer.start()                                  # ③ close requested
+            deadline = time.time() + 2
+            visible = False
+            while time.time() < deadline:
+                if manager.get_status_details().get("closed"):
+                    visible = True
+                    break
+                time.sleep(0.02)
+            self.assertTrue(visible, "closing 必须在 reset 等锁期间就可见")
+            self.assertTrue(closer.is_alive())              # reset 仍在等 q1
+            resume2.set()                                   # q2 去抢 infer 锁
+            release1.set()                                  # q1 收尾
+            q1.join(10)
+            q2.join(10)
+            closer.join(10)
+            self.assertEqual(outcomes["q1"], "ok")          # q1 完整结束
+            self.assertIsInstance(outcomes["q2"], Exception)  # ④ q2 被拒绝
+            self.assertEqual(backend_calls, ["q1"])         # 旧 backend 只见过 q1
+            self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)
+
+    def test_reset_close_is_bounded_when_inference_hangs(self):
+        # 第八轮 review P2: Q1 backend 永不返回 -> reset(close=True) 无限等
+        # infer 锁, enabled->disabled 重装配挂死。等待必须有界并如实告警。
+        import threading
+
+        from agent_tools.function_tools.screen import model_manager as mm
+
+        entered = threading.Event()
+        hang_forever = threading.Event()  # 故意永不 set
+
+        class _HungBackend:
+            def query(self, image, prompt):
+                entered.set()
+                hang_forever.wait(timeout=60)
+                return SimpleNamespace(text="late")
+
+        import dataclasses
+
+        cfg = dataclasses.replace(_screen_cfg(True), infer_timeout_sec=0.2)  # 缩短有界等待
+        with patch.object(mm, "load_moondream_backend", return_value=_HungBackend()), \
+                patch.object(mm.MoondreamModelManager, "_validate_config", lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_assert_cuda_available",
+                             lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_prepare_image",
+                             lambda self, image: image):
+            manager = mm.MoondreamModelManager(cfg)
+            manager.load()
+            hung = threading.Thread(
+                target=lambda: self._swallow(lambda: manager.query(object(), "q")),
+                daemon=True)
+            hung.start()
+            self.assertTrue(entered.wait(timeout=10))
+            import time as time_mod
+
+            started = time_mod.time()
+            manager.reset(close=True)  # 不得无限阻塞
+            elapsed = time_mod.time() - started
+            self.assertLess(elapsed, 10, f"reset blocked {elapsed:.1f}s on hung inference")
+            self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)
+            hang_forever.set()
+
+    @staticmethod
+    def _swallow(fn):
+        try:
+            fn()
+        except Exception:
+            pass
+
+
+    def test_slow_load_cannot_revive_a_closed_manager(self):
+        # 第九轮 P1: load 持锁超过 reset 超时 -> reset 返回 closed/unloaded ->
+        # load 完成后不得把 backend 写回(模型/显存复活)。
+        import dataclasses
+        import threading
+
+        from agent_tools.function_tools.screen import model_manager as mm
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_backend(config):
+            entered.set()
+            release.wait(timeout=30)
+            return object()
+
+        cfg = dataclasses.replace(_screen_cfg(True), infer_timeout_sec=0.2)
+        with patch.object(mm, "load_moondream_backend", side_effect=slow_backend), \
+                patch.object(mm.MoondreamModelManager, "_validate_config", lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_assert_cuda_available",
+                             lambda self: None):
+            manager = mm.MoondreamModelManager(cfg)
+            outcomes: list = []
+
+            def _load():
+                try:
+                    manager.load()
+                    outcomes.append("loaded")
+                except Exception as exc:  # noqa: BLE001
+                    outcomes.append(type(exc).__name__)
+
+            loader = threading.Thread(target=_load)
+            loader.start()
+            self.assertTrue(entered.wait(timeout=10))
+            manager.reset(close=True)  # 有界超时后强制清态返回
+            release.set()
+            loader.join(10)
+            self.assertFalse(loader.is_alive(), "loader 未结束(死锁?)")  # 防假绿
+            self.assertEqual(outcomes, ["ScreenToolError"])  # 明确 CLEARED 丢弃
+            self.assertFalse(manager.is_ready(), "closed manager 被慢 load 复活")
+            self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)
+
+    def test_infinite_infer_timeout_does_not_crash_reset(self):
+        # 第九轮 P2: inf/1e308 直接传 RLock.acquire 会 OverflowError。
+        import dataclasses
+
+        from agent_tools.function_tools.screen import model_manager as mm
+
+        cfg = dataclasses.replace(_screen_cfg(True), infer_timeout_sec=float("inf"))
+        manager = mm.MoondreamModelManager(cfg)
+        manager.reset(close=True)  # 不得抛 OverflowError
+        self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)
 
     def test_preload_async_on_a_retired_manager_fails_cleanly(self):
         # 第四轮 review P3: 已关闭的旧 manager 调 preload_async 不得再创建

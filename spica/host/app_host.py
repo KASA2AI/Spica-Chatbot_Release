@@ -814,8 +814,12 @@ class AppHost:
             logger.info(
                 "TTS disabled by config (tts.enabled=false) -> text_only adapter, GPT-SoVITS not assembled"
             )
-            provider = "text_only"
-            tts_config = {**tts_config, "provider": "text_only"}
+            # DIRECT construction, deliberately NOT via the registry: a plugin
+            # could re-register "text_only", and the disabled switch's no-model
+            # guarantee must not be overridable by any registry state.
+            from agent_tools.tts.adapters import TextOnlyTTSAdapter
+
+            return "text_only", None, TextOnlyTTSAdapter()
         tool = GPTSoVITSTool() if provider in CURRENT_GPTSOVITS_PROVIDERS else None
         adapter = self.registry.resolve_tts(provider, config=tts_config, service=tool)
         return provider, tool, adapter

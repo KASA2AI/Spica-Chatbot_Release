@@ -637,12 +637,15 @@ class MoondreamClearRaceTest(unittest.TestCase):
             manager = mm.MoondreamModelManager(cfg)
             outcomes: list = []
 
+            errors_code: list = []
+
             def _load():
                 try:
                     manager.load()
                     outcomes.append("loaded")
                 except Exception as exc:  # noqa: BLE001
                     outcomes.append(type(exc).__name__)
+                    errors_code.append(getattr(exc, "code", None))
 
             loader = threading.Thread(target=_load)
             loader.start()
@@ -652,6 +655,7 @@ class MoondreamClearRaceTest(unittest.TestCase):
             loader.join(10)
             self.assertFalse(loader.is_alive(), "loader 未结束(死锁?)")  # 防假绿
             self.assertEqual(outcomes, ["ScreenToolError"])  # 明确 CLEARED 丢弃
+            self.assertEqual(errors_code[0], "SCREEN_MOONDREAM_CLEARED")  # 钉 code
             self.assertFalse(manager.is_ready(), "closed manager 被慢 load 复活")
             self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)
 
@@ -665,6 +669,29 @@ class MoondreamClearRaceTest(unittest.TestCase):
         manager = mm.MoondreamModelManager(cfg)
         manager.reset(close=True)  # 不得抛 OverflowError
         self.assertEqual(manager.get_status(), mm.STATUS_UNLOADED)
+
+
+    def test_stale_generation_inference_failure_does_not_overwrite_new_state(self):
+        # 第十一轮 P2-4: 旧代推理迟到失败不得把新代 ready 改成 error。
+        from agent_tools.function_tools.screen import model_manager as mm
+
+        manager = mm.MoondreamModelManager(_screen_cfg(True))
+        good_backend = object()
+        with patch.object(mm.MoondreamModelManager, "_validate_config", lambda self: None), \
+                patch.object(mm.MoondreamModelManager, "_assert_cuda_available",
+                             lambda self: None), \
+                patch.object(mm, "load_moondream_backend", return_value=good_backend):
+            manager.load()
+            self.assertTrue(manager.is_ready())
+            stale_error = ScreenToolError("SCREEN_MOONDREAM_INFERENCE_FAILED", "old")
+            manager._mark_error(stale_error, stage="inference",
+                                expected_generation=manager._generation - 1,
+                                expected_backend=good_backend)
+            self.assertEqual(manager.get_status(), mm.STATUS_READY)  # 未被覆盖
+            manager._mark_error(stale_error, stage="inference",
+                                expected_generation=manager._generation,
+                                expected_backend=object())  # 非当前 backend
+            self.assertEqual(manager.get_status(), mm.STATUS_READY)
 
     def test_preload_async_on_a_retired_manager_fails_cleanly(self):
         # 第四轮 review P3: 已关闭的旧 manager 调 preload_async 不得再创建

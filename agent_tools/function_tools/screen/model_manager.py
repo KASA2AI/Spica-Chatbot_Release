@@ -174,6 +174,8 @@ class MoondreamModelManager:
         """Run a single local screen query on a PIL image."""
 
         backend = self.load()._require_backend()
+        with self._state_lock:
+            query_generation = self._generation
         prepared = self._prepare_image(image)
         prompt = self._build_prompt(question, reasoning)
 
@@ -190,14 +192,18 @@ class MoondreamModelManager:
             try:
                 return backend.query(prepared, prompt).text
             except ScreenToolError as exc:
-                self._mark_error(exc, stage="inference")
+                self._mark_error(exc, stage="inference",
+                                 expected_generation=query_generation,
+                                 expected_backend=backend)
                 raise
             except Exception as exc:
                 wrapped = ScreenToolError(
                     "SCREEN_MOONDREAM_INFERENCE_FAILED",
                     f"Moondream 推理失败：{type(exc).__name__}: {exc}",
                 )
-                self._mark_error(wrapped, stage="inference", original=exc)
+                self._mark_error(wrapped, stage="inference", original=exc,
+                                 expected_generation=query_generation,
+                                 expected_backend=backend)
                 raise wrapped from exc
 
     def reset(self, *, close: bool = False) -> None:
@@ -253,7 +259,8 @@ class MoondreamModelManager:
         if not (got_load and got_infer):
             _LOGGER.warning(
                 "Moondream reset: 等待进行中的 load/推理超时(%.1fs)——已强制清态; "
-                "挂死线程无法回收, closed=%s 已挡住后续使用", wait_s, self._closed,
+                "挂死线程无法回收; 后续使用由 closed 标志(close=True 时)与 "
+                "generation 代号共同拦截", wait_s,
             )
 
     def _require_backend(self) -> MoondreamBackend:
@@ -333,9 +340,20 @@ class MoondreamModelManager:
         self._error_message = None
         self._loading_started_at = _utc_now()
 
-    def _mark_error(self, exc: BaseException, *, stage: str, original: BaseException | None = None) -> None:
+    def _mark_error(self, exc: BaseException, *, stage: str,
+                    original: BaseException | None = None,
+                    expected_generation: int | None = None,
+                    expected_backend: Any = None) -> None:
         error = original or exc
         with self._state_lock:
+            if expected_generation is not None and self._generation != expected_generation:
+                # 旧代迟到失败不得覆盖新代状态(第十一轮 P2-4)
+                _LOGGER.info("Moondream %s: 旧代(%s!=%s)迟到错误已忽略",
+                             stage, expected_generation, self._generation)
+                return
+            if expected_backend is not None and self._backend is not expected_backend:
+                _LOGGER.info("Moondream %s: 非当前 backend 的迟到错误已忽略", stage)
+                return
             if not self._closed:
                 # a retired manager's state stays UNLOADED -- a late failure
                 # from a pre-close code path must not rewrite it to error.

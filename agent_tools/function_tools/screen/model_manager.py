@@ -58,6 +58,10 @@ class MoondreamModelManager:
         self._state_lock = RLock()
         self._load_lock = RLock()
         self._infer_lock = RLock()
+        # retired flag (2026-07 review): a manager cleared via
+        # clear_moondream_manager must never re-acquire the model -- an
+        # in-flight load could otherwise repopulate _backend after reset.
+        self._closed = False
 
     @property
     def config(self) -> ScreenPipelineConfig:
@@ -67,6 +71,16 @@ class MoondreamModelManager:
         """Start model loading in the background without taking a screenshot."""
 
         with self._state_lock:
+            if self._closed:
+                # retired manager: refuse up-front instead of creating an
+                # executor / flipping status to loading before the future fails.
+                failed: Future[Any] = Future()
+                failed.set_exception(ScreenToolError(
+                    "SCREEN_MOONDREAM_CLEARED",
+                    "Moondream manager 已被清除（screen.enabled=false 重装配）——"
+                    "需经 get_moondream_manager 重新获取。",
+                ))
+                return failed
             if self._backend is not None and self._status == STATUS_READY:
                 future: Future[Any] = Future()
                 future.set_result(self)
@@ -84,6 +98,12 @@ class MoondreamModelManager:
 
         with self._load_lock:
             with self._state_lock:
+                if self._closed:
+                    raise ScreenToolError(
+                        "SCREEN_MOONDREAM_CLEARED",
+                        "Moondream manager 已被清除（screen.enabled=false 重装配）——"
+                        "需经 get_moondream_manager 重新获取。",
+                    )
                 if self._backend is not None and self._status == STATUS_READY:
                     return self
                 self._mark_loading_locked()
@@ -159,15 +179,24 @@ class MoondreamModelManager:
                 self._mark_error(wrapped, stage="inference", original=exc)
                 raise wrapped from exc
 
-    def reset(self) -> None:
-        with self._state_lock:
-            self._backend = None
-            self._status = STATUS_UNLOADED
-            self._error_type = None
-            self._error_message = None
-            self._loaded_at = None
-            self._loading_started_at = None
-            self._preload_future = None
+    def reset(self, *, close: bool = False) -> None:
+        """Unload the backend. Takes ``_load_lock`` FIRST so an in-flight
+        ``load()`` finishes and its result is then discarded here -- without
+        that ordering the old load repopulates ``_backend`` after the reset
+        (2026-07 review race). ``close=True`` (clear_moondream_manager)
+        additionally retires this instance: any later ``load()`` on a stale
+        reference raises instead of silently re-acquiring the model/VRAM."""
+        with self._load_lock:
+            with self._state_lock:
+                self._backend = None
+                self._status = STATUS_UNLOADED
+                self._error_type = None
+                self._error_message = None
+                self._loaded_at = None
+                self._loading_started_at = None
+                self._preload_future = None
+                if close:
+                    self._closed = True
 
     def _require_backend(self) -> MoondreamBackend:
         with self._state_lock:
@@ -298,7 +327,10 @@ def clear_moondream_manager() -> None:
     global _MANAGER, _SIGNATURE
     with _MANAGER_LOCK:
         if _MANAGER is not None:
-            _MANAGER.reset()
+            # close=True: waits out an in-flight load (load lock), discards its
+            # backend and retires the instance -- stale references can never
+            # bring the model (and its VRAM) back.
+            _MANAGER.reset(close=True)
         _MANAGER = None
         _SIGNATURE = None
 

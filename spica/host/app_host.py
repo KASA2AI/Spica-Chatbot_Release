@@ -76,7 +76,7 @@ from spica.core.song_events import SongRequestEvent
 from spica.galgame.models import CompanionBeat, utc_now_iso
 from agent_tools.function_tools.screen.config import resolve_effective_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
-from agent_tools.function_tools.song.config import resolve_effective_song_config
+from agent_tools.function_tools.song.config import resolve_effective_song_config, song_enabled
 from agent_tools.function_tools.song.models import SongRequest
 from agent_tools.function_tools.song.netease import search_best_song
 from spica.adapters.visual import build_spica_visual
@@ -217,7 +217,11 @@ class AppHost:
         self.registry.register_tool(
             watch_tool.schema(),
             watch_tool.run,
-            available=lambda: self._companion_watch_context() is not None,
+            # screen.enabled joins the companion-state supply gate: with screen
+            # vision off the tool is never offered (run() also hard-refuses
+            # before capturing, since available is supply-side only).
+            available=lambda: bool(self.screen_config.enabled)
+            and self._companion_watch_context() is not None,
             intent_gated=False,
         )
         # Phase 9 step 2: write-back. note_game_observation stores a
@@ -245,6 +249,10 @@ class AppHost:
         self.registry.register_tool(
             sing_tool.schema(),
             sing_tool.run,
+            # song master switch: disabled -> not offered to the LLM at all.
+            # Supply-side only -- the closure below re-checks, because tools.run
+            # never re-evaluates ``available`` on a forced call.
+            available=lambda: song_enabled(self.song_config),
             intent_gated=True,
             effect="act",
         )
@@ -297,14 +305,8 @@ class AppHost:
                 if self.character_package.tts_config_path
                 else load_tts_config()
             )
-            self.tts_provider = str(
-                tts_config.get("provider")
-                or tts_config.get("tts_provider")
-                or "gptsovits_current"
-            )
-            self.tts_tool = GPTSoVITSTool() if self.tts_provider in CURRENT_GPTSOVITS_PROVIDERS else None
-            self.tts_adapter = self.registry.resolve_tts(
-                self.tts_provider, config=tts_config, service=self.tts_tool
+            self.tts_provider, self.tts_tool, self.tts_adapter = (
+                self._resolve_tts_assembly(tts_config)
             )
             self.services = build_agent_services(
                 self.config,
@@ -326,13 +328,7 @@ class AppHost:
             # non-default provider (moondream_hf) is built + installed once here.
             # screen_config is the SAME resolved instance inspect_screen / watch
             # query through, so the install decision matches what the manager sees.
-            moondream_provider = build_moondream_provider(self.screen_config.provider)
-            if moondream_provider is not None:
-                from agent_tools.function_tools.screen.backends.moondream_runtime import (
-                    set_active_moondream_provider,
-                )
-
-                set_active_moondream_provider(moondream_provider)
+            self._install_moondream_seam()
             # Resolve and inject the LLM / memory adapters by configured name.
             self.services.llm_adapter = self.registry.resolve_llm(
                 self.config.llm.provider, client=self.services.llm_client,
@@ -654,6 +650,12 @@ class AppHost:
         Qt signal -> SongController starts the SongWorker), and return -- by the
         time the followup streams, the song is already preparing in parallel.
         ``self._song_search`` is the injection seam (tests swap in a fake)."""
+        if not song_enabled(self.song_config):
+            # Hard gate IN the authority-holding closure (铁律 #9): ``available``
+            # only filters schema supply and tools.run never re-checks it, so a
+            # forced/hallucinated call must die HERE -- zero network search,
+            # zero SongRequestEvent.
+            raise ScreenToolError("SONG_DISABLED", "唱歌功能当前已在配置中关闭(song.enabled=false)。")
         request = SongRequest(query=query, title=None, artist=None, user_text=query)
         try:
             # P0b 2b: limit comes from the resolved song config (the pipeline
@@ -796,6 +798,62 @@ class AppHost:
             emit=self.companion_sink,
         )
 
+    def _resolve_tts_assembly(self, tts_config: dict[str, Any]) -> tuple[str, Any | None, Any]:
+        """TTS assembly gate (extracted as a test seam): resolves (provider,
+        tool, adapter) from the character package's tts config + the tts.enabled
+        switch. tts.enabled=false swaps in the no-model text_only adapter --
+        NEVER a None adapter: qt_overlay skips the whole startup warmup worker
+        (and the dangling-session recovery chained on its finished/failed)
+        when tts_adapter is None."""
+        provider = str(
+            tts_config.get("provider")
+            or tts_config.get("tts_provider")
+            or "gptsovits_current"
+        )
+        if not self.config.tts.enabled:
+            logger.info(
+                "TTS disabled by config (tts.enabled=false) -> text_only adapter, GPT-SoVITS not assembled"
+            )
+            provider = "text_only"
+            tts_config = {**tts_config, "provider": "text_only"}
+        tool = GPTSoVITSTool() if provider in CURRENT_GPTSOVITS_PROVIDERS else None
+        adapter = self.registry.resolve_tts(provider, config=tts_config, service=tool)
+        return provider, tool, adapter
+
+    def _install_moondream_seam(self) -> None:
+        """Moondream seam gate (extracted as a test seam). Enabled: build the
+        configured provider (moondream_hf; the default moondream_local factory
+        returns None = legacy path) and install it. Disabled: never install --
+        the weights must have no load path (tools are already unsupplied and
+        hard-refuse before capture) -- AND clear process-level leftovers (seam
+        + manager singleton) so a SAME-PROCESS re-initialize after flipping the
+        switch releases an already-loaded model instead of keeping its VRAM."""
+        if self.screen_config.enabled:
+            moondream_provider = build_moondream_provider(self.screen_config.provider)
+            from agent_tools.function_tools.screen.backends.moondream_runtime import (
+                set_active_moondream_provider,
+            )
+
+            # ALWAYS install the decision -- None means the legacy
+            # moondream_local path, and it must OVERWRITE a stale hf seam on a
+            # same-process provider switch (hf -> local), or local configs keep
+            # routing to the old provider and fail on the mismatch.
+            set_active_moondream_provider(moondream_provider)
+            return
+        logger.info("screen disabled (screen.enabled=false) -> moondream provider not installed")
+        try:
+            from agent_tools.function_tools.screen.backends.moondream_runtime import (
+                set_active_moondream_provider,
+            )
+            from agent_tools.function_tools.screen.model_manager import (
+                clear_moondream_manager,
+            )
+
+            set_active_moondream_provider(None)
+            clear_moondream_manager()
+        except Exception:  # noqa: BLE001 -- best-effort cleanup, never blocks startup
+            logger.debug("moondream process-level cleanup skipped", exc_info=True)
+
     def warmup(self, on_progress: Callable[[str, str], None]) -> None:
         """Run startup warmup (Phase 6E), reporting progress as
         ``on_progress(stage, message)`` where stage is
@@ -805,7 +863,17 @@ class AppHost:
         The UI runs this on a background thread and maps stages to its loading UI;
         keeping this method preserves that call site (``host.warmup(...)``).
         """
-        run_warmup(self.conversation_surface, self.tts_adapter, on_progress, stt_adapter=self.stt_adapter)
+        run_warmup(
+            self.conversation_surface,
+            self.tts_adapter,
+            on_progress,
+            stt_adapter=self.stt_adapter,
+            # config is None on a bare (pre-initialize) host -- keep the
+            # historical warm-by-default there (test_warmup.py exercises it).
+            stt_warmup_on_startup=(
+                bool(self.config.stt.warmup_on_startup) if self.config is not None else True
+            ),
+        )
 
     @property
     def management_surface(self) -> Any:

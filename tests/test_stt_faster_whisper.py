@@ -100,6 +100,41 @@ class FasterWhisperAdapterTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 _adapter().transcribe(b"\x00\x00")
 
+    def test_warmup_and_transcribe_never_decode_concurrently(self):
+        # 2026-07 review P1: warmup (warmup-worker thread) now REALLY decodes,
+        # while the mic is already live -- without _infer_lock a first utterance
+        # decodes concurrently on the same CTranslate2 model (reproduced at
+        # max_concurrent=2 with a fake model). The lock must cover the
+        # transcribe() call AND the full lazy-generator drain.
+        import threading
+        import time
+
+        adapter = _adapter()
+        state = {"active": 0, "max": 0}
+        gate = threading.Lock()
+
+        def _lazy_segments():
+            with gate:
+                state["active"] += 1
+                state["max"] = max(state["max"], state["active"])
+            time.sleep(0.05)  # hold the decode window open across threads
+            yield _seg("x")
+            with gate:
+                state["active"] -= 1
+
+        adapter._model = SimpleNamespace(
+            transcribe=lambda *a, **k: (_lazy_segments(), SimpleNamespace())
+        )
+        pcm = np.zeros(1600, dtype=np.int16).tobytes()
+        threads = [threading.Thread(target=adapter.warmup)] + [
+            threading.Thread(target=adapter.transcribe, args=(pcm,)) for _ in range(3)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(state["max"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

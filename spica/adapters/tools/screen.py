@@ -64,6 +64,15 @@ class InspectScreenTool:
             # P0b 3 (D-3c): the bare-construction fallback follows the carrier
             # switch too, so every path tracks the same effective chain.
             config = self._config or resolve_effective_screen_config()
+            # getattr: the real ScreenPipelineConfig always carries ``enabled``;
+            # the fallback only spares duck-typed bare/demo configs (test fakes).
+            if not getattr(config, "enabled", True):
+                # Hard gate BEFORE any capture (same defensive re-validation
+                # discipline as the N0 intent check above): supply filtering via
+                # ``available`` is not an execution gate -- a forced call must
+                # take zero screenshots. analyzer.py keeps the same check as the
+                # last line of defence.
+                raise ScreenToolError("SCREEN_DISABLED", "本地 screen pipeline 已禁用。")
             started = perf_counter()
             capture = capture_full_screen()  # local capture, never uploaded (N0)
             capture_ms = round((perf_counter() - started) * 1000.0, 3)

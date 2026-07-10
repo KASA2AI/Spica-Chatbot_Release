@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent_tools.function_tools.song.config import ensure_song_dirs, load_song_config
+from agent_tools.function_tools.song.config import ensure_song_dirs, load_song_config, song_enabled
 from agent_tools.function_tools.song.mixer import mix_vocal_with_instrumental, trim_audio_file
 from agent_tools.function_tools.song.models import CancellationToken, SongJobCancelled, SongJobResult, SongRequest
 from agent_tools.function_tools.song.netease import download_audio, extension_from_url, get_audio_url, search_best_song
@@ -69,8 +69,8 @@ class SongPipeline:
         cancellation: CancellationToken,
         progress: Callable[[str, dict[str, Any]], None] | None,
     ) -> _SongLightStageResult:
-        if not bool(self.config.get("enabled", True)):
-            raise RuntimeError("唱歌功能已在 song_config.json 中关闭。")
+        if not song_enabled(self.config):
+            raise RuntimeError("唱歌功能已在配置中关闭(song.enabled)。")
         cancellation.throw_if_cancelled()
 
         search_config = self.config.get("search", {})

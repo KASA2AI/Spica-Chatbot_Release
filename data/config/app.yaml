@@ -65,8 +65,13 @@
 #       max_per_window: 6        # 默认 6
 #       cooldown_seconds: 45     # 默认 45
 
+# tts:                           # TTS 装配开关 (yaml-only 无 env -- 铁律 #4)。语音/角色数据仍在 tts.yaml (角色数据文件, D1)
+#   enabled: true                # false = 不装配 GPT-SoVITS(启动零 TTS 显存),换无模型纯文本 adapter:字幕照常流式、无语音;
+#                                # 启动 warmup 链/galgame 崩溃恢复生命周期保留(TextOnlyTTSAdapter,绝不是 None)
+
 # stt:                           # 本地语音转文字 (Plan B):faster-whisper 取代 Google STT。yaml-only 无 env (铁律 #4)
-#   backend: faster_whisper      # faster_whisper(默认本地)| google(旧回退,无超时会卡,仅显式选用)
+#   backend: faster_whisper      # ★这就是 STT 开关: faster_whisper=本地模型 | google=不驻留本地模型(省 2-3GB 显存),
+#                                #   语音输入走线上 Google Web Speech(旧回退,无超时可能卡)。拼错值启动即报错(Literal)
 #   model: large-v3-turbo        # repo 名走 HF 缓存,或填本地目录路径(完全离线)
 #   device: cuda                 # cuda | cpu
 #   compute_type: float16        # float16(GPU)| int8(CPU)
@@ -77,7 +82,8 @@
 #   download_root: null          # null=HF 默认缓存;可指向预下载目录
 
 # screen:                        # legacy carrier: config/screen_vision_config.json
-#   enabled: true                # env SPICA_SCREEN_ENABLED
+#   enabled: true                # env SPICA_SCREEN_ENABLED (env > yaml!)。★Moondream/看屏开关: false=inspect_screen/
+#                                #   watch_game_screen 不供给 LLM + 截图前硬拒 + moondream seam 不装(模型永不加载)
 #   provider: moondream_local    # env SPICA_SCREEN_PROVIDER
 #   model_id: vikhyatk/moondream2  # env SPICA_SCREEN_MODEL_ID
 #   revision: "2025-06-21"       # env SPICA_SCREEN_REVISION
@@ -131,7 +137,7 @@
 
 # --- migrated by migrate_config_p0b ---
 screen:
-  enabled: true
+  enabled: true   # ★Moondream/看屏开关(见上方模板注释)。此前被 xiaosan.env 的 SPICA_SCREEN_ENABLED 覆盖,该遗留行已删,现在此处即单一旋钮
   provider: moondream_hf
   model_id: vikhyatk/moondream2
   revision: '2025-06-21'
@@ -150,7 +156,7 @@ ocr:
   provider: rapidocr_ort
   fallback_provider: rapidocr
 song:
-  enabled: true
+  enabled: true   # ★点歌总开关: false=sing_song 不供给 LLM+host 闭包硬拒(零搜索零事件)。只认布尔/true/false 字符串
   generated_root: static/generated_song
   applio_root: artifacts/rvc_slim/base
   search:
@@ -224,7 +230,7 @@ galgame:
       cooldown_seconds: 20                 # 45→20(方案A):一吐之后冷却短点,扎堆炸点少漏(judge 仍按 worth≥6 把关)
   play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
 stt:                                     # 本地语音转文字(Plan B):faster-whisper 取代 Google STT(无网络/不卡死)。yaml-only 无 env(铁律 #4)
-  backend: faster_whisper                # faster_whisper(默认,本地)| google(旧回退,仍无超时会卡,仅显式选用)
+  backend: faster_whisper                # ★STT 开关: faster_whisper=本地 | google=不驻留本地模型(省显存),语音输入走线上(可能卡)。拼错启动即报错
   model: spica_data/models/faster-whisper-large-v3-turbo  # 本地预下目录(完全离线);也可填 "large-v3-turbo" 走 HF 缓存
   device: cuda
   compute_type: float16                  # 显存约 2-3GB 常驻;CPU 可改 int8

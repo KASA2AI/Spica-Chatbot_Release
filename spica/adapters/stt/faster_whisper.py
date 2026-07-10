@@ -11,11 +11,12 @@ Residency (the load-bearing guarantee):
   - ``_ensure_model`` is a double-checked-locked lazy load -> exactly one
     ``WhisperModel(...)`` construction for the process lifetime.
 
-Concurrency: ``_lock`` guards only the one-time load. ``transcribe`` itself is NOT
-locked -- the architecture runs a SINGLE ``SpeechWorker`` at a time (one mic, one
-recording), so transcribe is never called concurrently. Do NOT introduce parallel
-transcribe without adding a lock (CTranslate2 concurrent calls are not assumed safe
-here).
+Concurrency: ``_lock`` guards the one-time load; ``_infer_lock`` serializes every
+inference (the ``model.transcribe`` call PLUS the full lazy-generator drain).
+The single-SpeechWorker architecture already keeps utterances serial, but startup
+``warmup()`` runs on the warmup-worker thread while the mic is ALREADY live -- a
+first utterance can otherwise decode concurrently with the warmup decode on the
+same CTranslate2 model, which is not assumed safe here.
 
 INVARIANT (CLAUDE.md #1): Qt-free.
 """
@@ -58,6 +59,10 @@ class FasterWhisperAdapter:
         self._download_root = download_root
         self._model: Any = None
         self._lock = threading.Lock()
+        # Serializes INFERENCE (transcribe call + full generator drain): startup
+        # warmup and a live first utterance run on different threads against the
+        # same CTranslate2 model (see module docstring).
+        self._infer_lock = threading.Lock()
 
     def _ensure_model(self) -> Any:
         """Load the WhisperModel exactly once (double-checked lock). Subsequent
@@ -103,7 +108,17 @@ class FasterWhisperAdapter:
         try:
             model = self._ensure_model()
             # 1s of silence -> compiles/warms the decode path without needing audio.
-            model.transcribe(np.zeros(16000, dtype=np.float32), language=self._language)
+            # transcribe() is LAZY (segments is a generator; encode/decode only run
+            # while iterating) -- the drain below is what actually executes the
+            # decode path. Without it this "warmup" only loaded the weights.
+            # _infer_lock: the mic is already live during startup warmup, so a
+            # first utterance must not decode concurrently with this.
+            with self._infer_lock:
+                segments, _info = model.transcribe(
+                    np.zeros(16000, dtype=np.float32), language=self._language
+                )
+                for _segment in segments:
+                    pass
             duration_ms = now_ms() - start
             log_timing("stt_warmup", duration_ms, model=self._model_name)
             logger.info("faster-whisper warmup ok in %.0fms", duration_ms)
@@ -120,13 +135,17 @@ class FasterWhisperAdapter:
         # 16-bit signed PCM -> float32 in [-1, 1). ReSpeaker channel 0 is already
         # 16 kHz mono, so no resampling (whisper wants 16 kHz too).
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-        segments, _info = model.transcribe(
-            audio,
-            language=self._language,
-            beam_size=self._beam_size,
-            vad_filter=self._vad_filter,
-        )
-        text = "".join(segment.text for segment in segments).strip()
+        # _infer_lock covers the transcribe call AND the join (the generator is
+        # lazy -- decoding happens while iterating), so warmup/utterance decodes
+        # never overlap on the shared CTranslate2 model.
+        with self._infer_lock:
+            segments, _info = model.transcribe(
+                audio,
+                language=self._language,
+                beam_size=self._beam_size,
+                vad_filter=self._vad_filter,
+            )
+            text = "".join(segment.text for segment in segments).strip()
         log_timing(
             "stt_transcribe", now_ms() - start,
             chars=len(text), audio_ms=round(len(audio) / sample_rate * 1000),

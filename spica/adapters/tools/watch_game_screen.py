@@ -177,6 +177,12 @@ class WatchGameScreenTool:
         try:
             # P0b 3 (D-3c): fallback follows the carrier switch (see screen.py).
             config = self._config or resolve_effective_screen_config()
+            # getattr: the real ScreenPipelineConfig always carries ``enabled``;
+            # the fallback only spares duck-typed bare/demo configs (test fakes).
+            if not getattr(config, "enabled", True):
+                # Same pre-capture hard gate as inspect_screen: screen disabled
+                # must mean zero window captures even on a forced call.
+                raise ScreenToolError("SCREEN_DISABLED", "本地 screen pipeline 已禁用。")
             started = perf_counter()
             image, window_metadata = capture_window_image(locator, capture, window_id)
             capture_ms = round((perf_counter() - started) * 1000.0, 3)

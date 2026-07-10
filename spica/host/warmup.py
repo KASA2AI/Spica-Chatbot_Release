@@ -14,13 +14,24 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
-def _warmup_stt(stt_adapter: Any, on_progress: Callable[[str, str], None]) -> None:
+def _warmup_stt(
+    stt_adapter: Any,
+    on_progress: Callable[[str, str], None],
+    *,
+    warmup_on_startup: bool = True,
+) -> None:
     """Plan B: warm the local STT model alongside TTS so the first utterance has no
     load/compile lag. Best-effort -- a failure is reported but never blocks startup
     (voice simply loads on first use, or stays unavailable with a clear log). Only
     runs when an adapter exists (backend == faster_whisper) and warmup_on_startup."""
     warmup = getattr(stt_adapter, "warmup", None)
     if stt_adapter is None or warmup is None:
+        return
+    if not warmup_on_startup:
+        # stt.warmup_on_startup=false -> lazy load on the first utterance. (The
+        # flag existed in SttConfig from day one but was never consumed here --
+        # the docstring promised the gate while the code ignored it.)
+        on_progress("ready", "语音识别启动预热已关闭（首次说话时加载）。")
         return
     on_progress("initializing", "正在预热本地语音识别(faster-whisper)模型...")
     result = warmup()
@@ -79,6 +90,7 @@ def run_warmup(
     tts_adapter: Any,
     on_progress: Callable[[str, str], None],
     stt_adapter: Any = None,
+    stt_warmup_on_startup: bool = True,
 ) -> None:
     """Run startup warmup, reporting progress as ``on_progress(stage, message)``
     where stage is ``"initializing" | "ready" | "error"``.
@@ -89,4 +101,4 @@ def run_warmup(
     thread and maps stages to its loading UI.
     """
     _warmup_tts(surface, tts_adapter, on_progress)
-    _warmup_stt(stt_adapter, on_progress)
+    _warmup_stt(stt_adapter, on_progress, warmup_on_startup=stt_warmup_on_startup)

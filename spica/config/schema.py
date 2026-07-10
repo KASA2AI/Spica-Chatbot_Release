@@ -281,6 +281,18 @@ class PluginEntryConfig(BaseModel):
     enabled: bool = True
 
 
+class TtsConfig(BaseModel):
+    """App-level TTS assembly switch. yaml-only (铁律 #4: no env names -- nothing
+    added to env_roster). Voice/character data stays in tts.yaml (a character
+    data file, D1) -- this section only decides WHETHER the heavy engine is
+    assembled. enabled=False swaps in the no-model text-only adapter (subtitles
+    keep streaming, zero VRAM); it must NOT null out tts_adapter, because the
+    startup warmup worker (and the dangling-session recovery chained on it) is
+    skipped entirely when tts_adapter is None (ui/qt_overlay._start_startup_warmup)."""
+
+    enabled: bool = True
+
+
 class SttConfig(BaseModel):
     """Speech-to-text (Plan B): local faster-whisper replaces network Google STT.
     yaml-only (铁律 #4: no env names -- nothing added to env_roster). All fields
@@ -288,8 +300,11 @@ class SttConfig(BaseModel):
 
     # "faster_whisper" -> local whisper (default; no network, cannot hang).
     # "google" -> legacy recognize_google fallback (STILL timeout-less / can hang;
-    # kept only as an explicit opt-out, never auto-selected).
-    backend: str = "faster_whisper"
+    # kept only as an explicit opt-out, never auto-selected). THIS is the STT
+    # switch: backend=google means "no local model resident" (VRAM freed), voice
+    # input degrades to the online recognizer. Literal so a typo fails loud at
+    # load instead of silently falling back to google (mirrors mic_backend).
+    backend: Literal["faster_whisper", "google"] = "faster_whisper"
     # W3 (A5): which microphone RECORDER feeds the voice loop. "auto" folds by
     # effective platform (linux -> respeaker hardware-VAD path, windows -> generic
     # PyAudio + webrtcvad software VAD); explicit values override (W3b: ReSpeaker
@@ -418,6 +433,7 @@ class AppConfig(BaseModel):
     character: CharacterConfig = Field(default_factory=CharacterConfig)
     stream: StreamConfig = Field(default_factory=StreamConfig)
     galgame: GalgameConfig = Field(default_factory=GalgameConfig)
+    tts: TtsConfig = Field(default_factory=TtsConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
     screen: ScreenConfig = Field(default_factory=ScreenConfig)
     ocr: OcrConfig = Field(default_factory=OcrConfig)

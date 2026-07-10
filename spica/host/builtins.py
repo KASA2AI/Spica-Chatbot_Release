@@ -22,6 +22,18 @@ from spica.runtime.stages import _compact_screen_tool_output
 from agent_tools.tts import CURRENT_GPTSOVITS_PROVIDERS
 
 
+def register_tts_providers(registry: CapabilityRegistry) -> None:
+    """The TTS slice of the builtin catalogue, reusable on its own: "text_only"
+    is the tts.enabled=false assembly (no model, ok results with no audio);
+    "dummy" stays the test/demo placeholder. scripts/self_check.py's TTS worker
+    registers ONLY this slice so an unrelated builtin's construction failure
+    (screen tools etc.) can never read as a TTS failure."""
+    for provider in (*CURRENT_GPTSOVITS_PROVIDERS, "dummy", "text_only"):
+        registry.register_tts(
+            provider, lambda config=None, service=None: build_tts(config, service)
+        )
+
+
 def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) -> None:
     """Register the built-in capability adapters by name (Phase 5).
 
@@ -35,10 +47,7 @@ def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) 
             client, reasoning_effort=reasoning_effort
         ),
     )
-    for provider in (*CURRENT_GPTSOVITS_PROVIDERS, "dummy"):
-        registry.register_tts(
-            provider, lambda config=None, service=None: build_tts(config, service)
-        )
+    register_tts_providers(registry)
     registry.register_visual("spica_diff", build_spica_visual)
     registry.register_memory(
         "sqlite", lambda store=None, recent=None: SqliteMemoryAdapter(store, recent)
@@ -53,5 +62,11 @@ def register_builtin_adapters(registry: CapabilityRegistry, screen_config=None) 
     # tool's config=None fallback stays for bare/demo construction only.
     screen_tool = InspectScreenTool(LocalMoondreamScreenAnalysis(), config=screen_config)
     registry.register_tool(
-        screen_tool.schema(), screen_tool.run, compact_output=_compact_screen_tool_output
+        screen_tool.schema(),
+        screen_tool.run,
+        compact_output=_compact_screen_tool_output,
+        # screen.enabled=false -> not offered to the LLM at all (supply side);
+        # the tool's run() re-checks BEFORE capturing (execution side). None
+        # config (bare/demo construction) keeps the historical always-offered.
+        available=None if screen_config is None else (lambda: bool(screen_config.enabled)),
     )

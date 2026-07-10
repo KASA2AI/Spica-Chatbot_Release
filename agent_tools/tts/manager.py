@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_tools.config_io import read_config_file
-from agent_tools.tts.adapters import CurrentGPTSoVITSAdapter, DummyTTSAdapter
+from agent_tools.tts.adapters import CurrentGPTSoVITSAdapter, DummyTTSAdapter, TextOnlyTTSAdapter
 from agent_tools.tts.base import TTSAdapter
 
 
@@ -34,5 +34,9 @@ def build_tts_adapter(config: dict[str, Any] | None = None, service: Any | None 
         if audio_path:
             audio_path = str(Path(audio_path).expanduser())
         return DummyTTSAdapter(audio_path=audio_path, audio_url=config.get("audio_url"))
+
+    if provider == "text_only":
+        # tts.enabled=false assembly: ok results with no audio, zero VRAM.
+        return TextOnlyTTSAdapter()
 
     raise ValueError(f"Unsupported TTS provider: {provider}")

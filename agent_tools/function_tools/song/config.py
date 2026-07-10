@@ -129,6 +129,26 @@ def resolve_effective_song_config(
     )
 
 
+def song_enabled(config: dict[str, Any] | None) -> bool:
+    """Strict read of the song master switch (the untyped dict's ``enabled``).
+    Only real booleans and the exact strings "true"/"false" (case-insensitive,
+    for hand-edited carriers) count; anything else is a config mistake and reads
+    as DISABLED with a warning -- never silently enabled (bool("false") is True).
+    Single source for all three gates: tool supply (available predicate),
+    host-closure hard refusal (_request_song) and the pipeline's last-line check."""
+    raw = (config or {}).get("enabled", True)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    logger.warning("song.enabled 配置值非法(%r)——按关闭处理(只接受布尔或 'true'/'false' 字符串)", raw)
+    return False
+
+
 def ensure_song_dirs(config: dict[str, Any]) -> dict[str, Path]:
     root = Path(str(config["generated_root"]))
     cache = root / "cache"

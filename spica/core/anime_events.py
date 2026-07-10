@@ -7,8 +7,10 @@ is emitted by the host's watch_anime closure when a NEW episode resolves -- the 
 ``AnimeReadyEvent`` is emitted by that worker when the download finishes (defined
 now, USED in Phase 4 -- the production flow never emits it yet).
 
-Fields are all primitives and carry NO secrets/cookie (the locator is a public
-magnet / bvid:part). Qt-free (CLAUDE.md #1).
+Fields are all primitives and carry NO secrets/cookie. The locator is a public
+magnet / bvid:part; a Mikan request may additionally carry a small, verified
+``.torrent`` as base64 so the UI worker never needs an arbitrary source URL.
+Qt-free (CLAUDE.md #1).
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ class AnimeRequestEvent(RuntimeEvent):
     series_title: str = ""
     size_bytes: int | None = None
     created_at: str = ""
+    torrent_payload_b64: str | None = None
 
     def _data(self) -> dict[str, Any]:
         return {
@@ -48,6 +51,7 @@ class AnimeRequestEvent(RuntimeEvent):
             "series_title": self.series_title,
             "size_bytes": self.size_bytes,
             "created_at": self.created_at,
+            "torrent_payload_b64": self.torrent_payload_b64,
         }
 
 
@@ -99,6 +103,9 @@ register_event(
         series_title=str(d.get("series_title") or ""),
         size_bytes=_opt_int(d.get("size_bytes")),
         created_at=str(d.get("created_at") or ""),
+        torrent_payload_b64=(
+            str(d["torrent_payload_b64"])
+            if d.get("torrent_payload_b64") is not None else None),
     ),
 )
 

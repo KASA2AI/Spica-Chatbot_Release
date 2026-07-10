@@ -6,6 +6,9 @@ Implements ``TorrentClientPort`` (whitelisted action surface, CLAUDE.md #9):
   paths, and any non-magnet, so qbt never fetches an arbitrary URL. It STARTS the
   download (``paused=false`` -- the port has no resume, review #1). ``save_dir``
   is pinned at construction and is never a call argument.
+- ``add_torrent_bytes`` accepts ONLY an in-memory, size-capped bencoded payload,
+  re-validates its exact v1 infohash and direct tracker boundary, and uploads it
+  as multipart data. No caller-controlled URL or local path reaches qbt.
 - ``status`` / ``cancel`` operate ONLY within category ``spica-anime`` -- they
   never touch torrents the user added by hand (P2-20).
 
@@ -21,10 +24,16 @@ from pathlib import Path
 from typing import Any
 
 from spica.anime.models import DownloadStatus
+from spica.anime.torrent_metadata import (
+    TorrentMetadataError,
+    inspect_torrent,
+    validate_public_trackers,
+)
 from spica.ports.torrent_client import TorrentClientError
 
 _CATEGORY = "spica-anime"
 _BTIH_XT_RE = re.compile(r"^urn:btih:([0-9a-fA-F]{40})$")
+_BTIH_HEX_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 # qbt states that mean "download finished" (seeding / paused-after-complete).
 _DONE_STATES = frozenset({
     "uploading", "pausedUP", "stalledUP", "forcedUP", "queuedUP", "checkingUP",
@@ -92,6 +101,47 @@ class QBittorrentClient:
                     return btih            # already ours + running -> reuse
             raise TorrentClientError("ADD_FAILED", f"qbt rejected add: {body!r}")
         return btih                        # lowercase 40-hex task_id
+
+    def add_torrent_bytes(
+        self,
+        payload: bytes,
+        *,
+        expected_infohash: str,
+        subfolder: str | None = None,
+    ) -> str:
+        expected = str(expected_infohash or "").lower()
+        if _BTIH_HEX_RE.fullmatch(expected) is None:
+            raise TorrentClientError("BAD_TORRENT", "invalid expected infohash")
+        try:
+            metadata = inspect_torrent(payload)
+            validate_public_trackers(metadata.trackers)
+        except TorrentMetadataError as exc:
+            raise TorrentClientError("BAD_TORRENT", str(exc)) from exc
+        if metadata.infohash != expected:
+            raise TorrentClientError(
+                "HASH_MISMATCH",
+                f"torrent infohash {metadata.infohash} != {expected}",
+            )
+        resp = self._post(
+            "torrents/add",
+            data={
+                "category": self._category,
+                "savepath": self._savepath_for(subfolder),
+                "paused": "false",
+            },
+            files={
+                "torrents": (
+                    f"{expected}.torrent", payload, "application/x-bittorrent")
+            },
+        )
+        body = (getattr(resp, "text", "") or "").strip()
+        if body != "Ok.":
+            for task in self._category_tasks():
+                if str(task.get("hash", "")).lower() == expected:
+                    return expected
+            raise TorrentClientError(
+                "ADD_FAILED", f"qbt rejected torrent payload: {body!r}")
+        return expected
 
     def _savepath_for(self, subfolder: str | None) -> str:
         """The pinned save_dir, optionally with a per-anime ``subfolder`` under it.
@@ -182,6 +232,8 @@ def _to_status(t: dict) -> DownloadStatus:
         mapped = "completed"
     elif "error" in state.lower() or state == "missingFiles":
         mapped = "error"
+    elif state == "metaDL":
+        mapped = "metadata"
     elif "stalled" in state.lower():
         mapped = "stalled"
     else:

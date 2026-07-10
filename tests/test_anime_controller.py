@@ -123,11 +123,12 @@ class _TerminateResistantProcess:
         self.stdout.close()
 
 
-def _request_event(rid="REQ1", key="无职转生|s3|e1"):
+def _request_event(rid="REQ1", key="无职转生|s3|e1", *, payload=None):
     return AnimeRequestEvent(
         request_id=rid, query="无职转生第三季第一集", title="无职转生 第三季",
         episode_key=key, source="mikan",
-        locator="magnet:?xt=urn:btih:" + "a" * 40)
+        locator="magnet:?xt=urn:btih:" + "a" * 40,
+        torrent_payload_b64=payload)
 
 
 def _ready(rid="REQ1", key="无职转生|s3|e1", *, save_path="/dl/ep1.mkv",
@@ -213,6 +214,14 @@ def test_request_event_starts_worker_and_sets_in_flight(qapp):
     assert any("下载中" in s for s in h.status)
 
 
+def test_request_event_passes_torrent_payload_to_worker(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(
+        _request_event(payload="dGVzdC10b3JyZW50"))
+
+    assert h.workers[0].kw["torrent_payload_b64"] == "dGVzdC10b3JyZW50"
+
+
 def test_second_request_while_active_is_dropped(qapp):
     h = Harness()
     h.controller.handle_anime_request_event(_request_event("REQ1"))
@@ -228,6 +237,16 @@ def test_progress_updates_in_flight_state(qapp):
     state = h.controller.in_flight_state()
     assert state["progress"] == pytest.approx(0.42)
     assert any("42%" in s for s in h.status)
+
+
+def test_metadata_progress_has_explicit_status(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+
+    h.workers[0].progress.emit("REQ1", 0.0, "metadata")
+
+    assert "正在获取种子元数据" in h.status[-1]
+    assert "0%" not in h.status[-1]
 
 
 def test_task_started_forwards_to_host_pending(qapp):

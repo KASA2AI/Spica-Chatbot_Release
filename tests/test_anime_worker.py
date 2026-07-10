@@ -6,6 +6,7 @@ popen/clock/sleep) -- no thread is started, no network, no subprocess.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
@@ -28,6 +29,13 @@ import ui.workers.anime_worker as anime_worker_module  # noqa: E402
 from ui.workers.anime_worker import AnimeDownloadWorker  # noqa: E402
 
 MAGNET = "magnet:?xt=urn:btih:" + "a" * 40
+TORRENT_HASH = "14299d250e3e00abb954b9a6020f5546fce5ba8f"
+TORRENT_PAYLOAD = (
+    b"d8:announce32:https://tracker.example/announce"
+    b"13:announce-listll32:https://tracker.example/announcee"
+    b"l35:udp://tracker.example:6969/announceee"
+    b"4:infod6:lengthi4e4:name7:ep1.mkvee"
+)
 
 
 @pytest.fixture(scope="module")
@@ -49,6 +57,8 @@ class FakeTorrent:
     def __init__(self, statuses):
         self.statuses = list(statuses)   # DownloadStatus | TorrentClientError
         self.added: list[str] = []
+        self.payloads: list[bytes] = []
+        self.expected_hashes: list[str] = []
         self.subfolders: list[str | None] = []
         self.cancelled: list[str] = []
 
@@ -56,6 +66,15 @@ class FakeTorrent:
         self.added.append(magnet)
         self.subfolders.append(subfolder)
         return "a" * 40
+
+    def add_torrent_bytes(
+        self, payload: bytes, *, expected_infohash: str,
+        subfolder: str | None = None,
+    ) -> str:
+        self.payloads.append(payload)
+        self.expected_hashes.append(expected_infohash)
+        self.subfolders.append(subfolder)
+        return expected_infohash
 
     def status(self, task_id: str) -> DownloadStatus:
         item = self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
@@ -267,6 +286,37 @@ def test_magnet_add_poll_complete(qapp, tmp_path):
     assert event.error is None
     assert event.save_path == str(tmp_path / "ep1.mkv")
     assert event.elapsed_seconds is not None and event.elapsed_seconds > 0
+
+
+def test_magnet_reports_metadata_phase_before_download(qapp, tmp_path):
+    ft = FakeTorrent([
+        DownloadStatus(task_id="a" * 40, state="metadata", progress=0.0),
+        _completed(str(tmp_path / "ep1.mkv")),
+    ])
+    worker = _worker(tmp_path, torrent=ft)
+    phases = []
+    worker.progress.connect(lambda rid, progress, phase: phases.append(phase))
+
+    event = worker.execute()
+
+    assert phases == ["metadata", "downloading"]
+    assert event.error is None
+
+
+def test_torrent_payload_add_poll_complete(qapp, tmp_path):
+    ft = FakeTorrent([_downloading(0.3),
+                      _completed(str(tmp_path / "ep1.mkv"))])
+    locator = "magnet:?xt=urn:btih:" + TORRENT_HASH
+    w = _worker(
+        tmp_path, locator=locator, torrent=ft,
+        torrent_payload_b64=base64.b64encode(TORRENT_PAYLOAD).decode("ascii"))
+
+    event = w.execute()
+
+    assert ft.payloads == [TORRENT_PAYLOAD]
+    assert ft.expected_hashes == [TORRENT_HASH]
+    assert ft.subfolders == ["无职转生"]
+    assert event.error is None
 
 
 def test_magnet_transient_error_reconnects_not_fails(qapp, tmp_path):

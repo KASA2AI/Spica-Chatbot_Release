@@ -1,6 +1,6 @@
 """Torrent client capability port (Phase 1) -- whitelisted action surface (#9).
 
-The ONLY three actions, deliberately narrow (P0-3 / P2-20):
+The ONLY four actions, deliberately narrow (P0-3 / P2-20):
 - ``add_magnet(magnet, subfolder=None)`` -- magnet URIs ONLY; the adapter MUST
                               reject anything that is not ``magnet:?xt=urn:btih:...``
                               (an http(s) torrent URL would make qBittorrent fetch
@@ -11,6 +11,10 @@ The ONLY three actions, deliberately narrow (P0-3 / P2-20):
                               pinned save_dir and re-validates real-path containment
                               (rejects any traversal), so writes still never escape
                               download_dir -- no arbitrary caller path reaches qbt.
+- ``add_torrent_bytes(payload, expected_infohash, subfolder=None)`` -- verified
+                              in-memory bencode ONLY; no URL or filesystem path.
+                              The adapter must independently validate the exact
+                              infohash and direct tracker boundary before upload.
 - ``status(task_id)``      -- category-scoped read.
 - ``cancel(task_id)``      -- category-scoped delete.
 
@@ -38,6 +42,21 @@ class TorrentClientPort(Protocol):
         TorrentClientError('BAD_MAGNET') if ``magnet`` is not a magnet URI, or
         ('UNSAFE_PATH') if ``subfolder`` (joined under the pinned save_dir) would
         escape it. ``subfolder`` groups the download under ``save_dir/<subfolder>``."""
+        ...
+
+    def add_torrent_bytes(
+        self,
+        payload: bytes,
+        *,
+        expected_infohash: str,
+        subfolder: str | None = None,
+    ) -> str:
+        """Start a verified in-memory ``.torrent`` payload.
+
+        The implementation must reject malformed bytes or an infohash mismatch;
+        callers cannot supply a URL or filesystem path.  Returns the v1 infohash
+        as the opaque task id.
+        """
         ...
 
     def status(self, task_id: str) -> DownloadStatus:

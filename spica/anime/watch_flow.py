@@ -192,6 +192,7 @@ def run_watch_request(
         episode_key=res.episode_key, source=res.source, locator=res.locator,
         display_title=res.display_title, series_title=ref.title_query,  # ANIME NAME -> cache subfolder
         size_bytes=res.size_bytes, created_at=now(),
+        torrent_payload_b64=res.torrent_payload_b64,
     )
     emit(event)                                    # hand the download to the UI worker
     return {

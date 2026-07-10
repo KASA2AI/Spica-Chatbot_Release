@@ -131,7 +131,8 @@ def test_flow_not_ready_raises():
 def _resource():
     return AnimeResource(episode_key="无职转生|s3|e1", source="mikan",
                          locator="magnet:?xt=urn:btih:" + "a" * 40,
-                         display_title="无职转生 S3E1", size_bytes=700)
+                         display_title="无职转生 S3E1", size_bytes=700,
+                         torrent_payload_b64="dGVzdC10b3JyZW50")
 
 
 def test_flow_matched_emits_and_acks(monkeypatch):
@@ -142,6 +143,7 @@ def test_flow_matched_emits_and_acks(monkeypatch):
     assert len(emitted) == 1
     assert emitted[0].episode_key == "无职转生|s3|e1"
     assert emitted[0].request_id == "REQ"
+    assert emitted[0].torrent_payload_b64 == "dGVzdC10b3JyZW50"
     assert out["status"] == "downloading"
     assert out["episode_key"] == "无职转生|s3|e1"
 

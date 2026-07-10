@@ -366,7 +366,12 @@ _LOLI_TITLE = ("[LoliHouse] 无职转生 3期 / Mushoku Tensei S3 - 01 "
 # the old cross-source test never exercised -- this is the F2 repro.
 _SKY_TITLE = ("[Skymoon-Raws] 无职转生，到了异世界就拿出真本事 第3季 / "
               "Mushoku Tensei 3rd Season - 01 [ViuTV][WEB-DL][CHT][1080p][AVC AAC]")
-_IH = "fe2aafd45d8b9e077b22968a8c65b91d4a25cadf"
+_IH = "14299d250e3e00abb954b9a6020f5546fce5ba8f"
+_TORRENT_PAYLOAD = (
+    b"d8:announce32:https://tracker.example/announce13:announce-list"
+    b"ll32:https://tracker.example/announceel35:udp://tracker.example:6969/announce"
+    b"ee4:infod6:lengthi4e4:name7:ep1.mkvee"
+)
 
 
 def _mikan_source(item_title):
@@ -385,6 +390,9 @@ def _mikan_source(item_title):
     class _Sess:
         def get(self, url, timeout=None, **kw):
             import types
+            if url.endswith(".torrent"):
+                return types.SimpleNamespace(
+                    content=_TORRENT_PAYLOAD, status_code=200)
             return types.SimpleNamespace(text=rss, status_code=200)
 
     return MikanRssSource(["https://mikanani.me"], session=_Sess())

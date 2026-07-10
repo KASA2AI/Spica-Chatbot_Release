@@ -12,6 +12,18 @@ from spica.ports.torrent_client import TorrentClientError
 _HEX = "fe2aafd45d8b9e077b22968a8c65b91d4a25cadf"
 _MAGNET = f"magnet:?xt=urn:btih:{_HEX}&dn=whatever&tr=udp://x"
 _BASE32 = "MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U"          # 32-char base32 btih
+_TORRENT_HASH = "14299d250e3e00abb954b9a6020f5546fce5ba8f"
+_TORRENT_PAYLOAD = (
+    b"d8:announce32:https://tracker.example/announce"
+    b"13:announce-listll32:https://tracker.example/announcee"
+    b"l35:udp://tracker.example:6969/announceee"
+    b"4:infod6:lengthi4e4:name7:ep1.mkvee"
+)
+_WEBSEED_PAYLOAD = (
+    b"d8:announce32:https://tracker.example/announce"
+    b"8:url-list24:http://127.0.0.1/private"
+    b"4:infod6:lengthi4e4:name7:ep1.mkvee"
+)
 
 
 class FakeResp:
@@ -32,6 +44,7 @@ class FakeSession:
         self.headers: dict[str, str] = {}
         self.calls: list[tuple[str, dict | None]] = []
         self.posts: list[tuple[str, dict | None]] = []
+        self.file_uploads: list[dict | None] = []
         self._info = info_tasks or []
         self._require_login = require_login
         self._login_text = login_text
@@ -47,6 +60,7 @@ class FakeSession:
     def post(self, url, data=None, timeout=None, **kw):
         self.calls.append((url, data))
         self.posts.append((url, data))
+        self.file_uploads.append(kw.get("files"))
         if "auth/login" in url:
             self._authed = self._login_status < 300 and self._login_text != "Fails."
             return FakeResp(self._login_status, text=self._login_text)
@@ -85,6 +99,53 @@ def test_add_magnet_never_paused_true(tmp_path):
     sess = FakeSession()
     _client(tmp_path, sess).add_magnet(_MAGNET)
     assert sess.add_data()["paused"] != "true"
+
+
+def test_add_torrent_bytes_uploads_verified_payload_and_starts(tmp_path):
+    sess = FakeSession()
+    task = _client(tmp_path, sess).add_torrent_bytes(
+        _TORRENT_PAYLOAD, expected_infohash=_TORRENT_HASH)
+
+    assert task == _TORRENT_HASH
+    data = sess.add_data()
+    assert data["category"] == "spica-anime"
+    assert data["paused"] == "false"
+    assert data["savepath"] == str(tmp_path.resolve())
+    upload = next(files for files in sess.file_uploads if files is not None)
+    assert upload["torrents"][1] == _TORRENT_PAYLOAD
+
+
+def test_add_torrent_bytes_rejects_hash_mismatch_before_qbt(tmp_path):
+    sess = FakeSession()
+
+    with pytest.raises(TorrentClientError) as exc:
+        _client(tmp_path, sess).add_torrent_bytes(
+            _TORRENT_PAYLOAD, expected_infohash="0" * 40)
+
+    assert exc.value.code == "HASH_MISMATCH"
+    assert sess.add_data() is None
+
+
+def test_add_torrent_bytes_rejects_malformed_payload_before_qbt(tmp_path):
+    sess = FakeSession()
+
+    with pytest.raises(TorrentClientError) as exc:
+        _client(tmp_path, sess).add_torrent_bytes(
+            b"not bencode", expected_infohash=_TORRENT_HASH)
+
+    assert exc.value.code == "BAD_TORRENT"
+    assert sess.add_data() is None
+
+
+def test_add_torrent_bytes_rejects_webseed_before_qbt(tmp_path):
+    sess = FakeSession()
+
+    with pytest.raises(TorrentClientError) as exc:
+        _client(tmp_path, sess).add_torrent_bytes(
+            _WEBSEED_PAYLOAD, expected_infohash=_TORRENT_HASH)
+
+    assert exc.value.code == "BAD_TORRENT"
+    assert sess.add_data() is None
 
 
 @pytest.mark.parametrize("bad", [
@@ -153,6 +214,29 @@ def test_add_magnet_duplicate_not_in_category_raises(tmp_path):
     assert ei.value.code == "ADD_FAILED"
 
 
+def test_add_torrent_bytes_duplicate_reuses_task_in_category(tmp_path):
+    sess = _FailsAddSession(info_tasks=[
+        {"hash": _TORRENT_HASH, "state": "metaDL", "progress": 0.0}])
+
+    task = _client(tmp_path, sess).add_torrent_bytes(
+        _TORRENT_PAYLOAD, expected_infohash=_TORRENT_HASH)
+
+    assert task == _TORRENT_HASH
+    info_call = next(p for u, p in sess.calls if "torrents/info" in u)
+    assert info_call == {"category": "spica-anime"}
+
+
+def test_add_torrent_bytes_duplicate_outside_category_raises(tmp_path):
+    sess = _FailsAddSession(info_tasks=[
+        {"hash": "0" * 40, "state": "downloading", "progress": 0.1}])
+
+    with pytest.raises(TorrentClientError) as exc:
+        _client(tmp_path, sess).add_torrent_bytes(
+            _TORRENT_PAYLOAD, expected_infohash=_TORRENT_HASH)
+
+    assert exc.value.code == "ADD_FAILED"
+
+
 def test_extract_btih_helper():
     assert _extract_btih_40hex(_MAGNET) == _HEX
     assert _extract_btih_40hex(f"magnet:?xt=urn:btih:{_BASE32}") is None
@@ -180,6 +264,16 @@ def test_status_reads_only_our_category(tmp_path):
     # info was queried with our category filter
     info_call = next(p for u, p in sess.calls if "torrents/info" in u)
     assert info_call == {"category": "spica-anime"}
+
+
+def test_status_preserves_metadata_fetching_state(tmp_path):
+    sess = FakeSession(info_tasks=[
+        {"hash": _HEX, "state": "metaDL", "progress": 0.0}])
+
+    status = _client(tmp_path, sess).status(_HEX)
+
+    assert status.state == "metadata"
+    assert status.progress == 0.0
 
 
 def test_status_completed_mapping(tmp_path):

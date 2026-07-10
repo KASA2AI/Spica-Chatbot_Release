@@ -136,6 +136,13 @@ class AnimeCandidate:
     parsed: SourceTitle
     size_bytes: int | None = None
     display_title: str = ""
+    # Optional adapter-owned URL used only by ``materialize`` for the one chosen
+    # candidate.  It is never handed to the download worker.
+    materialize_url: str = ""
+    # Origin of the RSS response that supplied ``materialize_url``. Mikan uses
+    # it to require the selected torrent to be same-origin, even when multiple
+    # configured mirrors are otherwise trusted.
+    materialize_origin: str = ""
 
     @property
     def is_magnet(self) -> bool:
@@ -153,6 +160,9 @@ class AnimeResource:
     locator: str
     display_title: str = ""
     size_bytes: int | None = None
+    # Base64 is a primitive so a small, verified .torrent can cross RuntimeEvent
+    # boundaries without exposing an arbitrary URL or filesystem path to qbt.
+    torrent_payload_b64: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,7 +170,7 @@ class DownloadStatus:
     """A torrent/download task's live state, as the port reports it."""
 
     task_id: str
-    state: str                      # "downloading" | "completed" | "stalled" | "error"
+    state: str                      # "metadata" | "downloading" | "completed" | "stalled" | "error"
     progress: float = 0.0           # 0.0..1.0
     save_path: str | None = None    # final file once completed
     error: str | None = None

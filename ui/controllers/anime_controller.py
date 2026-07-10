@@ -127,6 +127,7 @@ class AnimeController(QObject):
             title=title,
             series_title=getattr(event, "series_title", ""),  # anime name -> subfolder
             locator=event.locator,
+            torrent_payload_b64=getattr(event, "torrent_payload_b64", None),
             torrent=self._torrent_provider(),
             download_dir=self._download_dir,
             poll_seconds=float(getattr(cfg, "qbittorrent_poll_seconds", 5.0)),
@@ -163,10 +164,12 @@ class AnimeController(QObject):
 
     def _on_worker_progress(self, request_id: str, progress: float,
                             phase: str) -> None:
-        del phase
         current = self._in_flight or {}
         title = str(current.get("title") or self._title_for(request_id))
         self._set_in_flight(progress, title)
+        if phase == "metadata":
+            self._set_status(f"⬇ 正在获取种子元数据：{title}")
+            return
         if request_id in self._degraded_requests:
             self._set_status(
                 f"当前连接持续较慢，继续下载 {int(progress * 100)}%：{title}")

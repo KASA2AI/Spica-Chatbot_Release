@@ -7,7 +7,9 @@ UI-internal Qt signal too -- it never crosses the host->UI RuntimeEvent boundary
 (P2-19).
 
 Two download lanes, dispatched by locator:
-- ``magnet:?xt=urn:btih:..`` -> qbt ``add_magnet`` + status polling. qbt is an
+- ``magnet:?xt=urn:btih:..`` -> qbt status polling after either a verified
+  in-memory ``.torrent`` upload (new Mikan requests) or ``add_magnet`` (legacy
+  events/pending tasks). qbt is an
   EXTERNAL resident service: cancel / app exit stops OUR POLLING only, never the
   service or the task (P1-9). A transient connection error means reconnect and
   keep polling, never a failure verdict (P1-10).
@@ -39,6 +41,7 @@ the heuristic as a hard failure.
 
 from __future__ import annotations
 
+import base64
 import json
 import queue
 import re
@@ -46,6 +49,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -61,6 +65,7 @@ from spica.ports.media_player import MEDIA_EXTENSIONS
 from spica.ports.torrent_client import TorrentClientError
 
 _BVID_PART_RE = re.compile(r"^(BV[0-9A-Za-z]{10}):(\d{1,4})$")
+_BTIH_RE = re.compile(r"^urn:btih:([0-9a-fA-F]{40})$")
 _YTDLP_PROGRESS_TEMPLATE = (
     'download:SPICA:{"format_id":%(info.format_id|null)j,'
     '"progress":%(progress)j}'
@@ -195,6 +200,7 @@ class AnimeDownloadWorker(QThread):
         torrent: Any,
         download_dir: str,
         series_title: str = "",
+        torrent_payload_b64: str | None = None,
         poll_seconds: float = 5.0,
         stall_timeout_minutes: float = 30.0,
         ytdlp_format: str = "bv*[height<=1080]+ba/b[height<=1080]",
@@ -212,6 +218,7 @@ class AnimeDownloadWorker(QThread):
         self.episode_key = episode_key
         self.title = title
         self.locator = locator
+        self.torrent_payload_b64 = torrent_payload_b64
         self.resume_task_id = resume_task_id
         self._torrent = torrent
         # base = the containment root (media_player / _validated_output check
@@ -380,9 +387,26 @@ class AnimeDownloadWorker(QThread):
         if self.resume_task_id:
             return self._poll_qbt(self.resume_task_id, started=None)
         loc = self.locator or ""
+        if self.torrent_payload_b64 is not None:
+            try:
+                payload = base64.b64decode(
+                    self.torrent_payload_b64, validate=True)
+            except (ValueError, TypeError) as exc:
+                return self._ready_event(error=f"BAD_TORRENT_PAYLOAD: {exc}")
+            expected_infohash = self._magnet_infohash(loc)
+            if expected_infohash is None:
+                return self._ready_event(error=f"BAD_LOCATOR: {loc[:80]!r}")
+            started = self._clock()
+            task_id = self._torrent.add_torrent_bytes(
+                payload, expected_infohash=expected_infohash,
+                subfolder=self._subdir)
+            self.task_started.emit(self.request_id, task_id)
+            return self._poll_qbt(task_id, started=started)
         if loc.startswith("magnet:?"):
             started = self._clock()
-            task_id = self._torrent.add_magnet(loc, subfolder=self._subdir)   # magnet-only port (P0-3), grouped by anime
+            # Legacy events remain resumable even though new Mikan requests
+            # carry verified torrent bytes with their original tracker tiers.
+            task_id = self._torrent.add_magnet(loc, subfolder=self._subdir)
             self.task_started.emit(self.request_id, task_id)
             return self._poll_qbt(task_id, started=started)
         m = _BVID_PART_RE.match(loc)
@@ -390,6 +414,17 @@ class AnimeDownloadWorker(QThread):
             return self._run_ytdlp(m.group(1), int(m.group(2)))
         # never execute an unrecognized locator (whitelist, 铁律 #9)
         return self._ready_event(error=f"BAD_LOCATOR: {loc[:80]!r}")
+
+    @staticmethod
+    def _magnet_infohash(locator: str) -> str | None:
+        if not locator.startswith("magnet:?"):
+            return None
+        for xt in urllib.parse.parse_qs(
+                urllib.parse.urlsplit(locator).query).get("xt", []):
+            match = _BTIH_RE.fullmatch(xt)
+            if match is not None:
+                return match.group(1).lower()
+        return None
 
     # -- qbt lane ---------------------------------------------------------------
 
@@ -434,7 +469,8 @@ class AnimeDownloadWorker(QThread):
                 last_progress = st.progress
                 last_change = self._clock()
                 stall_reported = False
-            self.progress.emit(self.request_id, float(st.progress), "downloading")
+            phase = "metadata" if st.state == "metadata" else "downloading"
+            self.progress.emit(self.request_id, float(st.progress), phase)
             if st.is_done:
                 elapsed = (self._clock() - started) if started is not None else None
                 return self._ready_event(save_path=st.save_path,

@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+import base64
 import urllib.parse
 
 import pytest
 
 from spica.adapters.anime_source.mikan import MikanRssSource
+from spica.anime.torrent_metadata import MAX_TORRENT_BYTES
 from spica.ports.anime_source import AnimeSourceError
 
 _IH1 = "fe2aafd45d8b9e077b22968a8c65b91d4a25cadf"
 _IH_BATCH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_PAYLOAD_IH = "14299d250e3e00abb954b9a6020f5546fce5ba8f"
+_TORRENT_PAYLOAD = (
+    b"d8:announce32:https://tracker.example/announce"
+    b"13:announce-listll32:https://tracker.example/announcee"
+    b"l35:udp://tracker.example:6969/announceee"
+    b"4:infod6:lengthi4e4:name7:ep1.mkvee"
+)
+_LOCAL_TRACKER_PAYLOAD = (
+    b"d8:announce30:http://127.0.0.1:8080/announce"
+    b"4:infod6:lengthi4e4:name7:ep1.mkvee"
+)
+_WEBSEED_PAYLOAD = (
+    b"d8:announce32:https://tracker.example/announce"
+    b"8:url-list24:http://127.0.0.1/private"
+    b"4:infod6:lengthi4e4:name7:ep1.mkvee"
+)
 
 RSS = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0"><channel><title>Mikan - 无职转生</title>
@@ -33,8 +51,10 @@ BAD_XML = "<html><body>502 Bad Gateway<br></body></html>"
 
 
 class FakeResp:
-    def __init__(self, text="", status_code=200):
-        self.text = text
+    def __init__(self, text="", status_code=200, *, content=None):
+        self.text = text if isinstance(text, str) else ""
+        self.content = (content if content is not None else
+                        str(text).encode("utf-8"))
         self.status_code = status_code
 
 
@@ -42,15 +62,19 @@ class FakeSession:
     def __init__(self, routes):
         self.routes = routes          # substr -> (text, status) | Exception
         self.calls: list[str] = []
+        self.request_kwargs: list[dict] = []
 
     def get(self, url, timeout=None, **kw):
         self.calls.append(url)
+        self.request_kwargs.append(dict(kw))
         for substr, val in self.routes.items():
             if substr in url:
                 if isinstance(val, Exception):
                     raise val
-                text, status = val
-                return FakeResp(text, status)
+                body, status = val
+                if isinstance(body, bytes):
+                    return FakeResp(status_code=status, content=body)
+                return FakeResp(body, status)
         raise AssertionError(f"unrouted URL: {url}")
 
 
@@ -183,14 +207,136 @@ def test_no_deadline_keeps_own_timeout():
     assert sess.timeouts == [15]                 # unchanged without a deadline
 
 
-def test_materialize_no_side_effect():
-    src, sess = _src({"RSS/Search": (RSS, 200)})
+def test_materialize_returns_torrent_payload_for_selected_candidate():
+    payload_rss = RSS.replace(_IH1, _PAYLOAD_IH)
+    src, sess = _src({
+        "RSS/Search": (payload_rss, 200),
+        f"/{_PAYLOAD_IH}.torrent": (_TORRENT_PAYLOAD, 200),
+    })
     cand = src.search("无职转生")[0]
-    n_calls = len(sess.calls)
     res = src.materialize(cand)
-    assert res.locator == cand.locator          # pure repackage
+
+    assert res.locator == cand.locator
     assert res.source == "mikan"
-    assert len(sess.calls) == n_calls           # no extra HTTP
+    assert res.torrent_payload_b64 == base64.b64encode(
+        _TORRENT_PAYLOAD).decode("ascii")
+    assert sess.request_kwargs[-1]["allow_redirects"] is False
+    assert sess.request_kwargs[-1]["stream"] is True
+
+
+def test_materialize_rejects_oversized_response_before_buffering_body():
+    payload_rss = RSS.replace(_IH1, _PAYLOAD_IH)
+
+    class OversizedResponse:
+        status_code = 200
+        headers = {"Content-Length": str(MAX_TORRENT_BYTES + 1)}
+
+        def __init__(self):
+            self.closed = False
+
+        @property
+        def content(self):
+            raise AssertionError("oversized response must not be buffered")
+
+        def iter_content(self, chunk_size):
+            raise AssertionError("Content-Length should reject before iteration")
+
+        def close(self):
+            self.closed = True
+
+    oversized = OversizedResponse()
+
+    class Session:
+        def get(self, url, timeout=None, **kw):
+            if "RSS/Search" in url:
+                return FakeResp(payload_rss, 200)
+            assert kw["allow_redirects"] is False
+            assert kw["stream"] is True
+            return oversized
+
+    src = MikanRssSource(["https://mikanani.me"], session=Session())
+    cand = src.search("无职转生")[0]
+
+    with pytest.raises(AnimeSourceError) as exc:
+        src.materialize(cand)
+
+    assert exc.value.code == "BAD_TORRENT"
+    assert oversized.closed is True
+
+
+def test_materialize_rejects_torrent_whose_infohash_does_not_match_candidate():
+    src, _ = _src({
+        "RSS/Search": (RSS, 200),
+        f"/{_IH1}.torrent": (_TORRENT_PAYLOAD, 200),
+    })
+    cand = src.search("无职转生")[0]
+
+    with pytest.raises(AnimeSourceError) as exc:
+        src.materialize(cand)
+
+    assert exc.value.code == "HASH_MISMATCH"
+
+
+def test_materialize_never_fetches_cross_origin_torrent_url_from_rss():
+    payload_rss = RSS.replace(_IH1, _PAYLOAD_IH).replace(
+        "https://mikanani.me/Download", "https://evil.example/Download")
+    src, sess = _src({
+        "RSS/Search": (payload_rss, 200),
+        "evil.example": (_TORRENT_PAYLOAD, 200),
+    })
+    cand = src.search("无职转生")[0]
+
+    with pytest.raises(AnimeSourceError) as exc:
+        src.materialize(cand)
+
+    assert exc.value.code == "UNSAFE_TORRENT_URL"
+    assert not any("evil.example" in url for url in sess.calls)
+
+
+def test_materialize_rejects_other_configured_origin_than_rss_source():
+    payload_rss = RSS.replace(_IH1, _PAYLOAD_IH)
+    src, sess = _src(
+        {
+            "mirror.example": (payload_rss, 200),
+            f"/{_PAYLOAD_IH}.torrent": (_TORRENT_PAYLOAD, 200),
+        },
+        base_urls=("https://mirror.example", "https://mikanani.me"),
+    )
+    cand = src.search("无职转生")[0]
+
+    with pytest.raises(AnimeSourceError) as exc:
+        src.materialize(cand)
+
+    assert exc.value.code == "UNSAFE_TORRENT_URL"
+    assert not any(url.endswith(".torrent") for url in sess.calls)
+
+
+def test_materialize_rejects_tracker_targeting_local_network():
+    payload_rss = RSS.replace(_IH1, _PAYLOAD_IH)
+    src, _ = _src({
+        "RSS/Search": (payload_rss, 200),
+        f"/{_PAYLOAD_IH}.torrent": (_LOCAL_TRACKER_PAYLOAD, 200),
+    })
+    cand = src.search("无职转生")[0]
+
+    with pytest.raises(AnimeSourceError) as exc:
+        src.materialize(cand)
+
+    assert exc.value.code == "UNSAFE_TRACKER"
+
+
+def test_materialize_rejects_torrent_with_webseed_network_source():
+    payload_rss = RSS.replace(_IH1, _PAYLOAD_IH)
+    src, _ = _src({
+        "RSS/Search": (payload_rss, 200),
+        f"/{_PAYLOAD_IH}.torrent": (_WEBSEED_PAYLOAD, 200),
+    })
+    cand = src.search("无职转生")[0]
+
+    with pytest.raises(AnimeSourceError) as exc:
+        src.materialize(cand)
+
+    assert exc.value.code == "BAD_TORRENT"
 
 
 # -- search-quality §2.3: 0-candidate fallback to the longest CJK run ----------

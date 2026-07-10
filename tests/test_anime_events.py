@@ -11,7 +11,8 @@ def test_anime_request_round_trip():
         request_id="r1", query="无职转生", title="无职转生 S3E1",
         episode_key="无职转生|s3|e1", source="mikan",
         locator="magnet:?xt=urn:btih:" + "a" * 40, display_title="无职转生 S3E1",
-        size_bytes=700, created_at="2026-07-06T00:00:00")
+        size_bytes=700, created_at="2026-07-06T00:00:00",
+        torrent_payload_b64="dGVzdC10b3JyZW50")
     assert ev.to_legacy_dict()["event"] == "anime_request"
     assert event_from_legacy(ev.to_legacy_dict()) == ev
 

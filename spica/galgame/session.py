@@ -484,12 +484,54 @@ class GalgameCompanionSession:
         self._apply_summary(result, snapshot)
 
     def _apply_summary(self, result: Any, snapshot: list[StoryLine]) -> None:
+        # AR-C1 §4.3: the fold covers the WHOLE durable-apply span -- projection
+        # read, value builds, atomic command. Any failure restores the in-memory
+        # invariants (flag BEFORE any emit, so a sink exception can never re-open
+        # the stuck-flag window) and leaves this attempt durably zero.
         with self._lock:
-            summary_id = self._persist_summary(result, snapshot)
-            self._apply_progress_and_relations(result)
-            self._advance_unsummarized(snapshot)  # only THIS batch leaves the buffer
+            stage = "progress read"
+            try:
+                progress_base = self._mem.get_progress_state(self._game_id or "", self._playthrough_id)
+                stage = "summary build"
+                summary = self._build_summary(result, snapshot)
+                stage = "progress build"
+                progress = self._merge_progress(
+                    progress_base
+                    or GameProgressState(game_id=self._game_id or "", playthrough_id=self._playthrough_id),
+                    result,
+                )
+                stage = "relations build"
+                relations = self._build_relations(result)
+                stage = "atomic command"
+                summary_id = self._mem.apply_summary_projection(summary, progress, relations)
+            except Exception as exc:  # noqa: BLE001 -- durable-apply failure folds + retries
+                self._summary_in_flight = False  # in-memory invariant FIRST, before any emit
+                logger.warning(
+                    "galgame summary projection %s failed (session_id=%s): %s",
+                    stage, self._session_id, exc, exc_info=True,
+                )
+                self._emit_persist_failure(stage, exc, target_state=_S.BACKGROUND_SUMMARIZING.value)
+                self.on_summary_finished(None)  # existing failure fold: -> PLAYING + Done(None)
+                return
+            self._advance_unsummarized(snapshot)  # only after COMMIT: only THIS batch leaves
             self._summary_in_flight = False
             self.on_summary_finished(summary_id)  # background_summarizing -> playing + emit done
+
+    def _emit_persist_failure(self, stage: str, exc: Exception, *, target_state: str) -> None:
+        # Best-effort: a sink exception must not truncate the failure fold.
+        # catch-and-swallow only catches Exception -- KeyboardInterrupt/SystemExit
+        # still propagate (AR-C1 v1.4 discipline).
+        try:
+            self._emit(
+                GalgameErrorEvent(
+                    message=f"summary projection {stage} failed: {exc}",
+                    code="SUMMARY_PERSIST_FAILED",
+                    session_id=self._session_id or "",
+                    target_state=target_state,
+                )
+            )
+        except Exception as sink_exc:  # noqa: BLE001
+            logger.warning("galgame error-event sink failed: %s", sink_exc, exc_info=True)
 
     def _fail_summary(self) -> None:
         with self._lock:
@@ -498,43 +540,34 @@ class GalgameCompanionSession:
             # fold into the next attempt (§13.7). summary_id=None is the failure signal.
             self.on_summary_finished(None)
 
-    def _persist_summary(self, result: Any, snapshot: list[StoryLine]) -> str:
+    # AR-C1 §4.3: pure value builders -- no writes. The session materializes the
+    # full projection, then hands it to the adapter's ONE-transaction command.
+    def _build_summary(self, result: Any, snapshot: list[StoryLine]) -> StorySummary:
         now = utc_now_iso()
-        summary_id = _new_id()
-        self._mem.add_summary(
-            StorySummary(
-                summary_id=summary_id,
-                game_id=self._game_id or "",
-                playthrough_id=self._playthrough_id,
-                session_id=self._session_id or "",
-                source_line_ids=[line.line_id for line in snapshot],
-                summary_zh=result.summary_zh,
-                key_original_lines=result.key_lines,
-                characters=result.characters,
-                major_events=result.major_events,
-                unresolved_threads=result.unresolved_threads,
-                route_guess=result.route_guess,
-                created_at=now,
-                updated_at=now,
-                source="auto_summary",
-            )
+        return StorySummary(
+            summary_id=_new_id(),
+            game_id=self._game_id or "",
+            playthrough_id=self._playthrough_id,
+            session_id=self._session_id or "",
+            source_line_ids=[line.line_id for line in snapshot],
+            summary_zh=result.summary_zh,
+            key_original_lines=result.key_lines,
+            characters=result.characters,
+            major_events=result.major_events,
+            unresolved_threads=result.unresolved_threads,
+            route_guess=result.route_guess,
+            created_at=now,
+            updated_at=now,
+            source="auto_summary",
         )
-        return summary_id
 
-    def _advance_unsummarized(self, snapshot: list[StoryLine]) -> None:
-        snap_ids = {line.line_id for line in snapshot}
-        self._unsummarized_lines = [line for line in self._unsummarized_lines if line.line_id not in snap_ids]
-
-    def _apply_progress_and_relations(self, result: Any) -> None:
-        progress = self._mem.get_progress_state(self._game_id or "", self._playthrough_id) or GameProgressState(
-            game_id=self._game_id or "", playthrough_id=self._playthrough_id
-        )
-        self._mem.upsert_progress_state(self._merge_progress(progress, result))
+    def _build_relations(self, result: Any) -> list[CharacterRelation]:
+        relations: list[CharacterRelation] = []
         for relation in result.relations:
             a, b = relation.get("character_a", ""), relation.get("character_b", "")
             if not a or not b:
                 continue
-            self._mem.upsert_character_relation(
+            relations.append(
                 CharacterRelation(
                     relation_id=f"rel::{a}::{b}",  # stable -> re-summary upserts the same relation
                     game_id=self._game_id or "",
@@ -548,6 +581,11 @@ class GalgameCompanionSession:
                     source="auto_summary",
                 )
             )
+        return relations
+
+    def _advance_unsummarized(self, snapshot: list[StoryLine]) -> None:
+        snap_ids = {line.line_id for line in snapshot}
+        self._unsummarized_lines = [line for line in self._unsummarized_lines if line.line_id not in snap_ids]
 
     def _merge_progress(self, progress: GameProgressState, result: Any) -> GameProgressState:
         import dataclasses as _dc

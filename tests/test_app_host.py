@@ -240,5 +240,70 @@ class RecoverHistoryTest(unittest.TestCase):
             self.assertIn("最近剧情：雪鹰在天台向主人公告白", rows[0]["content"])
 
 
+class RecoverInterruptedHistoryTest(unittest.TestCase):
+    """AR-C1 §9.1-5 characterization (D2a=A2): an INTERRUPTED recovery (LLM failed,
+    lines kept) still counts in the recovered return value and the Host still writes
+    its play-history card. Existing tests only cover the success card; this pins the
+    interrupted branch -- recovery/host production code is untouched this phase."""
+
+    def test_interrupted_recovery_still_writes_history_card(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+
+        from memory.store import SQLiteMemoryStore
+        from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
+        from spica.config.schema import AppConfig
+        from spica.galgame.models import (
+            PlaySession,
+            StoryLine,
+            StoryLineStatus,
+            StorySummary,
+            utc_now_iso,
+        )
+
+        class _FailLLM:
+            def complete(self, prompt, *, model):
+                raise RuntimeError("llm down")
+
+        with TemporaryDirectory() as tmp:
+            game_memory = GameMemorySqliteAdapter(Path(tmp) / "g.sqlite3")
+            # an EARLIER successful play left a summary -> the history card is
+            # composable even though this recovery pass fails.
+            game_memory.add_summary(StorySummary(
+                summary_id="OLD", game_id="limelight", session_id="S0",
+                source_line_ids=["L0"], summary_zh="老剧情。",
+                created_at=utc_now_iso(), updated_at=utc_now_iso(),
+            ))
+            # crash residue: dangling session with one unsummarized committed line
+            game_memory.add_play_session(PlaySession(
+                session_id="S1", game_id="limelight", started_at=utc_now_iso(), state="active",
+            ))
+            game_memory.add_story_line(StoryLine(
+                line_id="L1", session_id="S1", game_id="limelight",
+                text="雪鹰：好きです。", timestamp=utc_now_iso(),
+                status=StoryLineStatus.COMMITTED,
+            ))
+            host = AppHost()
+            host.config = AppConfig()
+            host.services = SimpleNamespace(
+                llm_adapter=_FailLLM(),
+                game_memory_adapter=game_memory,
+                memory_store=SQLiteMemoryStore(Path(tmp) / "memory.sqlite3"),
+            )
+            recovered = host.recover_dangling_companion_sessions()
+            self.assertEqual(recovered, ["S1"])  # interrupted still counted
+            self.assertEqual(game_memory.get_play_session("S1").state, "interrupted")
+            # the batch stays unsummarized (recoverable later)...
+            self.assertEqual(
+                [l.line_id for l in game_memory.unsummarized_committed_story_lines("limelight")],
+                ["L1"],
+            )
+            # ...and the Host still wrote the card (best-effort, D2a=A2 current shape)
+            rows = host.services.memory_store.list_memories("spica::default")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["memory_key"], "galgame_history:limelight")
+
+
 if __name__ == "__main__":
     unittest.main()

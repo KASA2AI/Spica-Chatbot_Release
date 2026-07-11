@@ -35,6 +35,7 @@ import os
 import sqlite3
 import time
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -287,6 +288,27 @@ _V2_RELATIONS_DDL = """
         PRIMARY KEY (game_id, playthrough_id, relation_id)
     )
 """
+
+# Shared projection DML (AR-C1 §4.2): the single methods (add_summary /
+# upsert_progress_state / upsert_character_relation) and the atomic
+# apply_summary_projection command execute these SAME constants -- row semantics
+# structurally cannot drift between the two write paths.
+_SUMMARY_INSERT_DML = (
+    "INSERT OR REPLACE INTO story_summaries "
+    "(summary_id, game_id, playthrough_id, created_at, data) VALUES (?, ?, ?, ?, ?)"
+)
+_PROGRESS_UPSERT_DML = (
+    "INSERT OR REPLACE INTO progress_states "
+    "(game_id, playthrough_id, last_played_at, data) VALUES (?, ?, ?, ?)"
+)
+_RELATION_UPSERT_DML = (
+    # AR-C0: scoped conflict update -- same scope rewrites its own row, other
+    # scopes are never touched (INSERT OR REPLACE deleted cross-scope rows).
+    "INSERT INTO character_relations "
+    "(relation_id, game_id, playthrough_id, updated_at, data) VALUES (?, ?, ?, ?, ?) "
+    "ON CONFLICT (game_id, playthrough_id, relation_id) "
+    "DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data"
+)
 
 _SQLITE_DDL_WHITESPACE = " \t\n\f\r"
 _CANONICAL_DDL_KEYWORDS = frozenset({
@@ -847,6 +869,14 @@ class GameMemorySqliteAdapter:
         # point for the §9 rollback matrix (#16).
         return conn.execute(sql)
 
+    @staticmethod
+    def _exec_p(conn: sqlite3.Connection, sql: str, params: Sequence[Any] = ()) -> sqlite3.Cursor:
+        # Parameterized twin of _exec: the single execution seam for the AR-C1
+        # projection transaction -- the fault-injection point for its §9.3
+        # matrix, COMMIT included. _exec itself is AR-C0 territory (migration
+        # matrix) and stays untouched.
+        return conn.execute(sql, params)
+
     # -- pre-migration backup: two-phase tmp -> verify -> publish (§5.1) -------
     def _create_pre_migration_backup(self, migration_conn: sqlite3.Connection,
                                      source_version: int) -> Path:
@@ -1022,6 +1052,30 @@ class GameMemorySqliteAdapter:
     @staticmethod
     def _dump(model: Any) -> str:
         return json.dumps(model.to_dict(), ensure_ascii=False)
+
+    # Projection row builders (AR-C1): the single methods and the atomic command
+    # bind the SAME parameter tuples to the shared DML constants -- one place to
+    # change a row shape, zero drift between the two write paths.
+    def _summary_row(self, summary: StorySummary) -> tuple[Any, ...]:
+        return (
+            summary.summary_id,
+            summary.game_id,
+            summary.playthrough_id,
+            summary.created_at,
+            self._dump(summary),
+        )
+
+    def _progress_row(self, state: GameProgressState) -> tuple[Any, ...]:
+        return (state.game_id, state.playthrough_id, state.last_played_at, self._dump(state))
+
+    def _relation_row(self, relation: CharacterRelation) -> tuple[Any, ...]:
+        return (
+            relation.relation_id,
+            relation.game_id,
+            relation.playthrough_id,
+            relation.updated_at,
+            self._dump(relation),
+        )
 
     # -- game profile ---------------------------------------------------------
     def upsert_game_profile(self, profile: GameProfile) -> None:
@@ -1199,17 +1253,7 @@ class GameMemorySqliteAdapter:
     # -- summaries ------------------------------------------------------------
     def add_summary(self, summary: StorySummary) -> str:
         with self._connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO story_summaries "
-                "(summary_id, game_id, playthrough_id, created_at, data) VALUES (?, ?, ?, ?, ?)",
-                (
-                    summary.summary_id,
-                    summary.game_id,
-                    summary.playthrough_id,
-                    summary.created_at,
-                    self._dump(summary),
-                ),
-            )
+            conn.execute(_SUMMARY_INSERT_DML, self._summary_row(summary))
         return summary.summary_id
 
     def recent_summaries(
@@ -1227,11 +1271,7 @@ class GameMemorySqliteAdapter:
     # -- progress state -------------------------------------------------------
     def upsert_progress_state(self, state: GameProgressState) -> None:
         with self._connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO progress_states "
-                "(game_id, playthrough_id, last_played_at, data) VALUES (?, ?, ?, ?)",
-                (state.game_id, state.playthrough_id, state.last_played_at, self._dump(state)),
-            )
+            conn.execute(_PROGRESS_UPSERT_DML, self._progress_row(state))
 
     def get_progress_state(
         self, game_id: str, playthrough_id: str = "default"
@@ -1245,22 +1285,9 @@ class GameMemorySqliteAdapter:
 
     # -- character relations --------------------------------------------------
     def upsert_character_relation(self, relation: CharacterRelation) -> str:
-        # AR-C0: scoped conflict update -- same scope rewrites its own row, other
-        # scopes are never touched (INSERT OR REPLACE deleted cross-scope rows).
+        # Scoped ON CONFLICT semantics live on _RELATION_UPSERT_DML (AR-C0).
         with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO character_relations "
-                "(relation_id, game_id, playthrough_id, updated_at, data) VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT (game_id, playthrough_id, relation_id) "
-                "DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data",
-                (
-                    relation.relation_id,
-                    relation.game_id,
-                    relation.playthrough_id,
-                    relation.updated_at,
-                    self._dump(relation),
-                ),
-            )
+            conn.execute(_RELATION_UPSERT_DML, self._relation_row(relation))
         return relation.relation_id
 
     def character_relations(
@@ -1273,6 +1300,46 @@ class GameMemorySqliteAdapter:
                 (game_id, playthrough_id),
             ).fetchall()
         return [CharacterRelation.from_dict(json.loads(row["data"])) for row in rows]
+
+    # -- atomic summary projection (AR-C1) -------------------------------------
+    def apply_summary_projection(
+        self,
+        summary: StorySummary,
+        progress: GameProgressState,
+        relations: Sequence[CharacterRelation],
+    ) -> str:
+        """One transaction, all-or-nothing (see GameMemoryPort docstring).
+
+        Values are fully materialized by the caller; the transaction runs no
+        reads, no LLM calls, no events -- lock time is three DML statements.
+        BEGIN IMMEDIATE takes the write lock up front (no mid-transaction busy
+        upgrade); _migrate_to_v2 is the in-repo precedent for this shape. The
+        connection is created on the calling thread (sqlite3 default
+        check_same_thread).
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.isolation_level = None  # manual transaction control
+        try:
+            self._exec_p(conn, "PRAGMA busy_timeout=5000")
+            self._exec_p(conn, "BEGIN IMMEDIATE")
+            self._exec_p(conn, _SUMMARY_INSERT_DML, self._summary_row(summary))
+            self._exec_p(conn, _PROGRESS_UPSERT_DML, self._progress_row(progress))
+            for relation in relations:
+                self._exec_p(conn, _RELATION_UPSERT_DML, self._relation_row(relation))
+            self._exec_p(conn, "COMMIT")
+        except BaseException:
+            # catch-and-RERAISE keeps BaseException (a KeyboardInterrupt inside
+            # the transaction must still roll back before propagating) -- unlike
+            # the session-side catch-and-swallow points, which only catch
+            # Exception (AR-C1 v1.4 discipline).
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass  # no open transaction -- keep the primary exception
+            raise
+        finally:
+            conn.close()
+        return summary.summary_id
 
     # -- choice events --------------------------------------------------------
     def add_choice_event(self, choice: ChoiceEvent) -> str:

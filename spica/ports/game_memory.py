@@ -16,6 +16,7 @@ Qt-free (CLAUDE.md #1).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from spica.galgame.models import (
@@ -117,6 +118,22 @@ class GameMemoryPort(Protocol):
     def character_relations(
         self, game_id: str, playthrough_id: str = "default"
     ) -> list[CharacterRelation]: ...
+
+    # -- atomic summary projection (AR-C1) -------------------------------------
+    def apply_summary_projection(
+        self,
+        summary: StorySummary,
+        progress: GameProgressState,
+        relations: Sequence[CharacterRelation],
+    ) -> str:
+        """Atomically persist one summary projection: StorySummary insert +
+        GameProgressState upsert + 0..N CharacterRelation upserts in ONE
+        transaction (all-or-nothing). Values are fully materialized by the
+        caller; no connection/transaction object crosses this port. Row
+        semantics are identical to add_summary / upsert_progress_state /
+        upsert_character_relation. Raises on any failure with NOTHING durable
+        from this attempt. Returns summary.summary_id."""
+        ...
 
     # -- choice events --------------------------------------------------------
     def add_choice_event(self, choice: ChoiceEvent) -> str: ...

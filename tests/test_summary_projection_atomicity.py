@@ -1003,5 +1003,74 @@ class FinalFoldExpansionTest(_FinalMatrixBase):
                 self.assertEqual(play_session.state, "active")  # dangling kept
                 self.assertIsNone(play_session.ended_at)
 
+
+class SuccessOrderAndStructureTest(_SessionMatrixBase):
+    """§9.4-20/21 (success event order per path) + #25 (no duplicate apply) +
+    #28 (single production write path, old apply sequence gone)."""
+
+    class _RecordingMemory:
+        """Delegating port fake recording projection-write method calls."""
+
+        def __init__(self, real):
+            self._real = real
+            self.write_calls = []
+
+        def __getattr__(self, name):
+            attr = getattr(self._real, name)
+            if name in ("add_summary", "upsert_progress_state",
+                        "upsert_character_relation", "apply_summary_projection"):
+                def _recorded(*args, _name=name, _attr=attr, **kwargs):
+                    self.write_calls.append(_name)
+                    return _attr(*args, **kwargs)
+                return _recorded
+            return attr
+
+    def test_20_background_success_order_status_then_done(self):
+        session = self._session(trigger=2)
+        self._feed(session, "AA", "AA", "BB", "BB")
+        kinds = self.sink.kinds()
+        start = kinds.index("galgame_summary_started")
+        self.assertEqual(
+            kinds[start:start + 3],
+            ["galgame_summary_started", "galgame_status_changed", "galgame_summary_done"],
+        )
+        done = self.sink.of("galgame_summary_done")[-1]
+        self.assertIsNotNone(done.summary_id)
+        status = [e for e in self.sink.of("galgame_status_changed") if e.state == "playing"][-1]
+        self.assertEqual(status.previous, "background_summarizing")
+
+    def test_21_final_success_order_done_then_ending(self):
+        session = self._session(trigger=100000)
+        self._feed(session, "AA", "AA", "BB", "BB")
+        session.end()
+        kinds = self.sink.kinds()
+        done_at = kinds.index("galgame_summary_done")
+        self.assertEqual(kinds[done_at], "galgame_summary_done")
+        self.assertEqual(kinds[done_at + 1], "galgame_status_changed")
+        self.assertIsNotNone(self.sink.of("galgame_summary_done")[0].summary_id)
+        after = [e for e in self.sink.events[done_at + 1:] if e.kind == "galgame_status_changed"]
+        self.assertEqual(after[0].state, "ending")
+
+    def test_25_28_projection_writes_only_via_atomic_command(self):
+        # #28: background AND final projection writes go ONLY through
+        # apply_summary_projection; #25: exactly once per successful batch.
+        recording = self._RecordingMemory(self.mem)
+        session = self._session(memory=recording, trigger=3)
+        # commit AA (2 chars < 3, no trigger); commit BB -> 4 chars -> background
+        # batch [AA, BB]; CC stays pending until end() commits it -> final batch [CC]
+        self._feed(session, "AA", "AA", "BB", "BB", "CC", "CC")
+        session.end()
+        self.assertTrue(recording.write_calls)
+        self.assertEqual(set(recording.write_calls), {"apply_summary_projection"})
+        self.assertEqual(len(recording.write_calls), 2)  # once per batch, no dupes
+        summaries = self.mem.recent_summaries(GAME)
+        self.assertEqual(len(summaries), 2)
+
+    def test_28_old_apply_sequence_removed_from_session(self):
+        # the multi-commit helpers must be GONE -- no old/new dual write path.
+        self.assertFalse(hasattr(GalgameCompanionSession, "_persist_summary"))
+        self.assertFalse(hasattr(GalgameCompanionSession, "_apply_progress_and_relations"))
+
+
 if __name__ == "__main__":
     unittest.main()

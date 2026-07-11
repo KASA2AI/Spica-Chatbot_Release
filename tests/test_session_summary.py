@@ -187,21 +187,30 @@ class EndSummaryFailureDanglingTest(SessionSummaryBase):
 
 
 class RouteAuthorityTest(SessionSummaryBase):
+    """§13.5 load-bearing wall, re-verified THROUGH the AR-C1 atomic write chain
+    (§9.4-24): the LLM proposal flows read -> _merge_progress ->
+    apply_summary_projection, the production path."""
+
+    def _proposing_session(self, route_guess):
+        proposal = _StubSummarizer(result=SummaryResult(summary_zh="S", route_guess=route_guess))
+        return self._session(jobs=InlineJobRunner(), summarizer=proposal, trigger=2)
+
     def test_player_declaration_not_overwritten_by_llm_proposal(self):
-        s = self._session(jobs=InlineJobRunner(), summarizer=_StubSummarizer(), trigger=100000)
+        s = self._proposing_session({"name": "B线", "confidence": 0.9, "evidence": ["x"]})
         s.declare_route("A线")  # player authority (§13.5)
         route = self.mem.get_progress_state("ABC").route
         self.assertTrue(route["confirmed"])
         self.assertEqual(route["name"], "A线")
         # an LLM proposal of a DIFFERENT route must NOT overwrite the confirmed one
-        s._apply_progress_and_relations(SummaryResult(route_guess={"name": "B线", "confidence": 0.9, "evidence": ["x"]}))
+        self._feed(s, "AA", "AA", "BB", "BB")  # trigger -> summary via the new chain
+        self.assertEqual(len(self.mem.recent_summaries("ABC")), 1)  # projection landed
         route = self.mem.get_progress_state("ABC").route
         self.assertTrue(route["confirmed"])
         self.assertEqual(route["name"], "A线")  # still the player's route
 
     def test_llm_route_is_a_guess_when_player_has_not_declared(self):
-        s = self._session(jobs=InlineJobRunner(), summarizer=_StubSummarizer(), trigger=100000)
-        s._apply_progress_and_relations(SummaryResult(route_guess={"name": "B线", "confidence": 0.5, "evidence": []}))
+        s = self._proposing_session({"name": "B线", "confidence": 0.5, "evidence": []})
+        self._feed(s, "AA", "AA", "BB", "BB")
         route = self.mem.get_progress_state("ABC").route
         self.assertFalse(route["confirmed"])
         self.assertEqual(route["name"], "B线")

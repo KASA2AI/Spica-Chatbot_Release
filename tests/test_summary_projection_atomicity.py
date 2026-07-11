@@ -626,5 +626,382 @@ class BackgroundFoldExpansionTest(_SessionMatrixBase):
             lambda e: e.kind == "galgame_summary_done" and e.summary_id is not None
         )
 
+
+class _FinalMatrixBase(_SessionMatrixBase):
+    """final path: no auto-trigger; feed then end()."""
+
+    def _final_session(self, **kwargs):
+        kwargs.setdefault("trigger", 100000)
+        return self._session(**kwargs)
+
+    def _start_and_feed(self, **kwargs):
+        session = self._final_session(**kwargs)
+        self._feed(session, "AA", "AA", "BB", "BB")  # AA committed; BB pending
+        return session
+
+
+class FinalProjectionMatrixTest(_FinalMatrixBase):
+    """§9.2-9/10/11 (EXP-2/EXP-3 reversal) + §9.3 #12-16 final side + #17c
+    (recovery lane) + final failure event order (D1=A shape)."""
+
+    def setUp(self):
+        super().setUp()
+        self.prior_progress = _progress(last_played_at="2026-01-01T00:00:00+00:00")
+        self.mem.upsert_progress_state(self.prior_progress)
+        self.mem.upsert_character_relation(_relation(summary="既有关系"))
+
+    def _assert_final_failure_shape(self, session, sid):
+        # durable: nothing from this attempt
+        self.assertEqual(self.mem.recent_summaries(GAME), [])
+        self.assertEqual(self.mem.get_progress_state(GAME), self.prior_progress)
+        relations = self.mem.character_relations(GAME)
+        self.assertEqual([r.relation_summary for r in relations], ["既有关系"])
+        # lines stay unsummarized (reverse-lookup NOT poisoned)
+        ids = self._committed_ids()
+        self.assertEqual(
+            {l.line_id for l in self.mem.unsummarized_committed_story_lines(GAME)},
+            {ids["AA"], ids["BB"]},
+        )
+        # PlaySession NOT stamped ended -- dangling/recovery shape
+        play_session = self.mem.get_play_session(sid)
+        self.assertEqual(play_session.state, "active")
+        self.assertIsNone(play_session.ended_at)
+        self.assertIn(sid, [d.session_id for d in self.mem.dangling_play_sessions()])
+        # FSM lands GAME_LAUNCHED, session cleared (D1=A closeout)
+        self.assertEqual(session.state, GalgameState.GAME_LAUNCHED)
+        self.assertIsNone(session.session_id)
+        # failure observable with the pinned fields
+        errors = self.sink.of("galgame_error")
+        self.assertEqual([e.code for e in errors], ["SUMMARY_PERSIST_FAILED"])
+        self.assertEqual(errors[0].session_id, sid)
+        self.assertEqual(errors[0].target_state, "summarizing")
+        # §4.4 failure event order: error -> Done(None) -> ENDING -> GAME_LAUNCHED
+        kinds = self.sink.kinds()
+        self.assertEqual(
+            kinds[-4:],
+            ["galgame_error", "galgame_summary_done",
+             "galgame_status_changed", "galgame_status_changed"],
+        )
+        self.assertIsNone(self.sink.of("galgame_summary_done")[-1].summary_id)
+        status_tail = [e.state for e in self.sink.of("galgame_status_changed")[-2:]]
+        self.assertEqual(status_tail, ["ending", "game_launched"])
+
+    def _run_final_injected(self, marker, *, nth=1):
+        self._last_injector = self._inject(marker, nth=nth)
+        session = self._start_and_feed()
+        sid = session.session_id
+        session.end()  # must NOT raise (D1=A: persist failure folds, no propagation)
+        self._assert_final_failure_shape(session, sid)
+        return session, sid
+
+    def test_12_final_summary_insert_failure(self):
+        self._run_final_injected("INSERT OR REPLACE INTO story_summaries")
+
+    def test_9_13_final_progress_upsert_failure(self):
+        # §9.2-9: EXP-2 reversal -- the exact injection point of the original repro.
+        self._run_final_injected("INSERT OR REPLACE INTO progress_states")
+
+    def test_14_final_relation_1_failure(self):
+        self._run_final_injected("INSERT INTO character_relations", nth=1)
+
+    def test_11_15_final_relation_n_failure(self):
+        # §9.2-11: EXP-3 reversal -- relation 1 must NOT survive relation 2's failure.
+        self._run_final_injected("INSERT INTO character_relations", nth=2)
+
+    def test_16_final_commit_failure(self):
+        self._run_final_injected("COMMIT")
+
+    def test_10_17c_next_startup_recovery_resummarizes_the_batch(self):
+        # §9.2-10 (+#17c recovery lane): after a final persist failure, the next
+        # startup's recovery RE-SUMMARIZES the batch -- EXP-2's poisoned zero-retry
+        # recovery is gone. (#37 pins the accepted summary-only residual.)
+        _session_obj, sid = self._run_final_injected("INSERT OR REPLACE INTO progress_states")
+        self._last_injector.armed = False  # store healed for the next startup
+        working = _StubSummarizer()
+        recovered = recover_dangling_sessions(self.mem, working)
+        self.assertEqual(recovered, [sid])
+        ids = self._committed_ids()
+        self.assertEqual(len(working.calls), 1)  # summarize called exactly once
+        self.assertEqual(set(working.calls[0]), {ids["AA"], ids["BB"]})
+        summaries = self.mem.recent_summaries(GAME)
+        self.assertEqual(len(summaries), 1)  # exactly one summary
+        self.assertEqual(set(summaries[0].source_line_ids), {ids["AA"], ids["BB"]})
+        self.assertEqual(self.mem.get_play_session(sid).state, "ended")
+
+
+class FinalFoldExpansionTest(_FinalMatrixBase):
+    """#34/#35 final side + #36 final (LLM-failure and persist-failure classes) +
+    #18b/c/d post-commit sink points + #38a-e transition_tolerating_sink pins."""
+
+    def _assert_final_fold_shape(self, session, sid, *, expected_stage):
+        self.assertEqual(self.mem.recent_summaries(GAME), [])
+        play_session = self.mem.get_play_session(sid)
+        self.assertEqual(play_session.state, "active")
+        self.assertIsNone(play_session.ended_at)
+        self.assertEqual(session.state, GalgameState.GAME_LAUNCHED)
+        self.assertIsNone(session.session_id)
+        errors = self.sink.of("galgame_error")
+        self.assertEqual([e.code for e in errors], ["SUMMARY_PERSIST_FAILED"])
+        self.assertIn(expected_stage, errors[0].message)
+
+    def test_34_second_progress_read_failure_folds_final(self):
+        armed = _ArmedReadMemory(self.mem, fail_call=2)
+        session = self._start_and_feed(memory=armed)
+        sid = session.session_id
+        session.end()
+        self.assertIsNone(self.mem.get_progress_state(GAME))  # trivially zero
+        self._assert_final_fold_shape(session, sid, expected_stage="progress read")
+
+    def test_34_first_progress_read_failure_stays_on_llm_lane_final(self):
+        # 对照钉: the first get_progress_state is the summarize() argument inside
+        # the LLM try -> END_SUMMARY_FAILED lane, no SUMMARY_PERSIST_FAILED.
+        armed = _ArmedReadMemory(self.mem, fail_call=1)
+        session = self._start_and_feed(memory=armed)
+        sid = session.session_id
+        session.end()
+        errors = self.sink.of("galgame_error")
+        self.assertEqual([e.code for e in errors], ["END_SUMMARY_FAILED"])
+        self.assertEqual(self.mem.get_play_session(sid).state, "active")  # dangling
+        self.assertEqual(session.state, GalgameState.GAME_LAUNCHED)
+
+    def _run_final_build_failure(self, result, expected_stage):
+        session = self._start_and_feed(summarizer=_StubSummarizer(result))
+        sid = session.session_id
+        session.end()
+        self._assert_final_fold_shape(session, sid, expected_stage=expected_stage)
+
+    def test_35_final_summary_build_failure(self):
+        self._run_final_build_failure(_NoSummaryZh(), "summary build")
+
+    def test_35_final_progress_build_failure(self):
+        self._run_final_build_failure(
+            _BadChapterGuess(summary_zh="S", route_guess={"name": "X"}), "progress build"
+        )
+
+    def test_35_final_relations_build_failure(self):
+        self._run_final_build_failure(_BadRelations(summary_zh="S"), "relations build")
+
+    def _armed_sink(self, arm_code):
+        """Sink that raises on the error event with ``arm_code`` and EVERY emit
+        after it (#36: armed from the failure fold onward, prelude untouched)."""
+        state = {"armed": False}
+
+        def _observe(event):
+            if event.kind == "galgame_error" and event.code == arm_code:
+                state["armed"] = True
+
+        return _RecordingSink(
+            raise_when=lambda e: state["armed"], on_event=_observe
+        ), state
+
+    def _assert_uninterruptible_closeout(self, session, sid):
+        # durable zero residue, dangling kept, FSM closed out, session cleared
+        self.assertEqual(self.mem.recent_summaries(GAME), [])
+        play_session = self.mem.get_play_session(sid)
+        self.assertEqual(play_session.state, "active")
+        self.assertIsNone(play_session.ended_at)
+        ids = self._committed_ids()
+        self.assertEqual(
+            {l.line_id for l in self.mem.unsummarized_committed_story_lines(GAME)},
+            {ids["AA"], ids["BB"]},
+        )
+        self.assertEqual(session.state, GalgameState.GAME_LAUNCHED)
+        self.assertIsNone(session.session_id)
+
+    def test_36_final_persist_failure_closeout_survives_armed_sink(self):
+        sink, _state = self._armed_sink("SUMMARY_PERSIST_FAILED")
+        self._inject("INSERT OR REPLACE INTO progress_states")
+        session = self._start_and_feed(sink=sink)
+        sid = session.session_id
+        session.end()  # sink raises on error/Done/ENDING/GAME_LAUNCHED -- closeout survives
+        self._assert_uninterruptible_closeout(session, sid)
+
+    def test_36_final_llm_failure_closeout_survives_armed_sink(self):
+        # v1.2 High: END_SUMMARY_FAILED emit is best-effort now -- a raising sink
+        # no longer truncates end() (old behavior: FSM stuck SUMMARIZING).
+        sink, _state = self._armed_sink("END_SUMMARY_FAILED")
+        session = self._start_and_feed(sink=sink, summarizer=_FailSummarizer())
+        sid = session.session_id
+        session.end()
+        self._assert_uninterruptible_closeout(session, sid)
+
+    # -- #18b/c/d: post-commit sink boundary, one test per emit point ----------
+
+    def _run_post_commit(self, raise_when):
+        sink = _RecordingSink(raise_when=raise_when)
+        session = self._start_and_feed(sink=sink)
+        sid = session.session_id
+        with self.assertRaises(RuntimeError):
+            session.end()  # existing sink contract: post-commit sink exceptions propagate
+        # common invariants: durable success + buffer advanced + no failure lane
+        self.assertEqual(sink.of("galgame_error"), [])
+        self.assertEqual(len(self.mem.recent_summaries(GAME)), 1)
+        self.assertEqual(self.mem.unsummarized_committed_story_lines(GAME), [])
+        return session, sid
+
+    def test_18b_done_sink_failure_leaves_summarizing_and_recovery_zero_retry(self):
+        session, sid = self._run_post_commit(
+            lambda e: e.kind == "galgame_summary_done" and e.summary_id is not None
+        )
+        self.assertEqual(session.state, GalgameState.SUMMARIZING)
+        self.assertEqual(session.session_id, sid)  # cleanup skipped
+        play_session = self.mem.get_play_session(sid)
+        self.assertEqual(play_session.state, "active")  # dangling -> recovery
+        self.assertIsNone(play_session.ended_at)
+        # recovery: lines already covered -> zero re-summarize, straight to ended
+        working = _StubSummarizer()
+        self.assertEqual(recover_dangling_sessions(self.mem, working), [sid])
+        self.assertEqual(working.calls, [])
+        self.assertEqual(self.mem.get_play_session(sid).state, "ended")
+        self.assertEqual(len(self.mem.recent_summaries(GAME)), 1)
+
+    def test_18c_ending_status_sink_failure_leaves_ending(self):
+        session, sid = self._run_post_commit(
+            lambda e: e.kind == "galgame_status_changed" and e.state == "ending"
+        )
+        self.assertEqual(session.state, GalgameState.ENDING)
+        self.assertEqual(session.session_id, sid)
+        play_session = self.mem.get_play_session(sid)
+        self.assertEqual(play_session.state, "active")
+        self.assertIsNone(play_session.ended_at)
+
+    def test_18d_game_launched_status_sink_failure_after_finalize(self):
+        # armed after end()'s summary-started -- bind_game()'s own game_launched
+        # status at setup must not trip the sink
+        seen = {"started": False}
+
+        def _pred(event):
+            if event.kind == "galgame_summary_started":
+                seen["started"] = True
+                return False
+            return (
+                seen["started"]
+                and event.kind == "galgame_status_changed"
+                and event.state == "game_launched"
+            )
+
+        session, sid = self._run_post_commit(_pred)
+        self.assertEqual(session.state, GalgameState.GAME_LAUNCHED)
+        self.assertEqual(session.session_id, sid)  # cleanup skipped
+        play_session = self.mem.get_play_session(sid)
+        self.assertEqual(play_session.state, "ended")  # finalize COMPLETED
+        self.assertIsNotNone(play_session.ended_at)
+        self.assertEqual(self.mem.dangling_play_sessions(), [])  # NOT in recovery
+
+    # -- #38: transition_tolerating_sink boundary pins (failure lane) ----------
+
+    def _failure_lane_session(self, sink=None):
+        self._inject("INSERT OR REPLACE INTO progress_states")
+        session = self._start_and_feed(sink=sink)
+        return session, session.session_id
+
+    @staticmethod
+    def _failure_lane_status_predicate():
+        """True for the failure-lane ENDING/GAME_LAUNCHED status emits only: armed
+        by the failure-lane Done(None) -- setup's bind_game() also emits a
+        game_launched status and must not trip the sink."""
+        seen = {"failed": False}
+
+        def _pred(event):
+            if event.kind == "galgame_summary_done" and event.summary_id is None:
+                seen["failed"] = True
+                return False
+            return (
+                seen["failed"]
+                and event.kind == "galgame_status_changed"
+                and event.state in ("ending", "game_launched")
+            )
+
+        return _pred
+
+    def test_38a_failure_lane_status_sink_plain_exception_is_swallowed(self):
+        sink = _RecordingSink(raise_when=self._failure_lane_status_predicate())
+        session, sid = self._failure_lane_session(sink)
+        session.end()  # closeout continues through both raising transitions
+        self.assertEqual(session.state, GalgameState.GAME_LAUNCHED)
+        self.assertIsNone(session.session_id)
+        self.assertEqual(self.mem.get_play_session(sid).state, "active")
+
+    def test_38b_failure_lane_status_sink_galgamestateerror_is_swallowed(self):
+        # a sink raising GalgameStateError must NOT masquerade as an FSM error:
+        # mutation-completed is the ONLY criterion, the type does not participate.
+        pred = self._failure_lane_status_predicate()
+        sink = _RecordingSink()
+
+        def _raise_state_error(event):
+            if pred(event):
+                raise GalgameStateError("sink pretending to be an FSM error")
+
+        sink.on_event = _raise_state_error
+        session, sid = self._failure_lane_session(sink)
+        session.end()
+        self.assertEqual(session.state, GalgameState.GAME_LAUNCHED)
+        self.assertIsNone(session.session_id)
+
+    def test_38c_illegal_transition_still_raises_and_interrupts_closeout(self):
+        # mutation NEVER happened (validation rejects) -> the real GalgameStateError
+        # must propagate; the closeout is interrupted, session NOT cleared.
+        sink = _RecordingSink()
+
+        def _sabotage(event):
+            # after the failure-lane Done(None), force an illegal source state
+            if event.kind == "galgame_summary_done" and event.summary_id is None:
+                session_holder["s"]._state = GalgameState.IDLE
+        sink.on_event = _sabotage
+        session_holder = {}
+        session, sid = self._failure_lane_session(sink)
+        session_holder["s"] = session
+        with self.assertRaises(GalgameStateError):
+            session.end()
+        self.assertIsNotNone(session.session_id)  # closeout interrupted, not faked
+
+    def test_38d_pre_mutation_programming_error_still_raises(self):
+        # a KeyError out of the VALIDATION segment (before mutation) must propagate
+        # -- not be swallowed and followed by session cleanup.
+        from spica.galgame import session as session_module
+        sink = _RecordingSink()
+        patcher = mock.patch.dict(session_module.ALLOWED_TRANSITIONS)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        def _sabotage(event):
+            if event.kind == "galgame_summary_done" and event.summary_id is None:
+                del session_module.ALLOWED_TRANSITIONS[GalgameState.SUMMARIZING]
+        sink.on_event = _sabotage
+        session, sid = self._failure_lane_session(sink)
+        with self.assertRaises(KeyError):
+            session.end()
+        self.assertIsNotNone(session.session_id)
+
+    def test_38e_keyboardinterrupt_from_sink_propagates_everywhere(self):
+        # v1.4: process-control exceptions are NEVER swallowed -- not by the
+        # tolerated transitions, not by the best-effort error/Done(None) emits.
+        # Durable invariants must still hold (zero residue + dangling kept).
+        cases = [
+            ("galgame_error",
+             lambda e: e.kind == "galgame_error" and e.code == "SUMMARY_PERSIST_FAILED"),
+            ("done_none",
+             lambda e: e.kind == "galgame_summary_done" and e.summary_id is None),
+            ("ending_status",
+             lambda e: e.kind == "galgame_status_changed" and e.state == "ending"),
+        ]
+        for name, predicate in cases:
+            with self.subTest(point=name):
+                self.mem = GameMemorySqliteAdapter(Path(self._tmp.name) / f"ki_{name}.sqlite3")
+
+                def _interrupt(event, _predicate=predicate):
+                    if _predicate(event):
+                        raise KeyboardInterrupt
+
+                sink = _RecordingSink(on_event=_interrupt)
+                session, sid = self._failure_lane_session(sink)
+                with self.assertRaises(KeyboardInterrupt):
+                    session.end()
+                self.assertIsNotNone(session.session_id)  # closeout interrupted
+                self.assertEqual(self.mem.recent_summaries(GAME), [])  # zero residue
+                play_session = self.mem.get_play_session(sid)
+                self.assertEqual(play_session.state, "active")  # dangling kept
+                self.assertIsNone(play_session.ended_at)
+
 if __name__ == "__main__":
     unittest.main()

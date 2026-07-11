@@ -16,10 +16,10 @@ from spica.galgame.companion_controller import (
     GalgameCompanionError,
     guess_game_id_from_title,
 )
-from spica.galgame.models import GameProfile, OCRProfile, OCRRegion, utc_now_iso
+from spica.galgame.models import GameProfile, OCRProfile, OCRRegion, StorySummary, utc_now_iso
 from spica.galgame.ocr_loop import OcrStreamRunner
 from spica.galgame.session import GalgameState
-from spica.galgame.summarizer import SummaryResult
+from spica.galgame.summarizer import SummaryError, SummaryResult
 from spica.ports.ocr import OcrResult
 from spica.ports.screen_capture import CaptureImage
 from spica.ports.window_locator import WindowGeometry, WindowSafetyResult
@@ -222,6 +222,109 @@ class RecordHistoryCallbackTest(ControllerTestBase):
         controller = self._controller_with_recorder(lambda game_id, card: records.append((game_id, card)))
         controller.stop()  # never started
         self.assertEqual(records, [])
+
+
+class _AlwaysFailSummarizer:
+    def summarize(self, lines, *, recent_summaries=None, progress=None):
+        raise SummaryError("llm boom")
+
+
+class EndFailureCardTest(ControllerTestBase):
+    """AR-C1 #33 (D1=A): ``end()`` keeps its best-effort ``-> None`` contract --
+    an LLM failure AND a projection persist failure both leave stop() writing the
+    play-history card (the card just misses the last batch); the success family
+    (normal / empty snapshot / no summarizer) is unchanged."""
+
+    def _controller_with(self, recorder, summarizer):
+        return GalgameCompanionController(
+            self.mem, _Capture(), _Locator(), _InertOcr(),
+            summarizer=summarizer, emit=self.sink,
+            record_history=recorder,
+            summary_trigger_chars=100000, interval_seconds=60.0,
+        )
+
+    def _seed_card_material(self, game_id="g1"):
+        # an earlier successful play left a summary -> the card is composable even
+        # when THIS session's final summary/projection fails
+        now = utc_now_iso()
+        self.mem.add_summary(StorySummary(
+            summary_id="OLD", game_id=game_id, session_id="S0",
+            source_line_ids=["L0"], summary_zh="老剧情。",
+            created_at=now, updated_at=now,
+        ))
+
+    def _start_feed_stop(self, controller):
+        controller.start("0x1", game_id="g1", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
+        for text in ["L1", "L1", "L2", "L2"]:
+            controller.session.on_ocr_result(text)
+        session_id = controller.session.session_id
+        controller.stop()  # must NOT raise (D1=A)
+        return session_id
+
+    def test_33a_llm_failure_still_writes_card(self):
+        self._seed_card_material()
+        records = []
+        controller = self._controller_with(
+            lambda game_id, card: records.append((game_id, card)), _AlwaysFailSummarizer()
+        )
+        session_id = self._start_feed_stop(controller)
+        self.assertEqual([g for g, _ in records], ["g1"])  # card WAS written
+        self.assertEqual(self.mem.get_play_session(session_id).state, "active")  # dangling
+
+    def test_33a_persist_failure_still_writes_card(self):
+        self._seed_card_material()
+        records = []
+        controller = self._controller_with(
+            lambda game_id, card: records.append((game_id, card)), _StubSummarizer()
+        )
+        real_exec_p = GameMemorySqliteAdapter._exec_p
+
+        def _fail_projection(conn, sql, params=()):
+            if "INSERT OR REPLACE INTO progress_states" in sql:
+                raise RuntimeError("injected persist failure")
+            return real_exec_p(conn, sql, params)
+
+        with patch.object(GameMemorySqliteAdapter, "_exec_p", staticmethod(_fail_projection)):
+            session_id = self._start_feed_stop(controller)
+        self.assertEqual([g for g, _ in records], ["g1"])  # card WAS written
+        # this batch's projection did not land; session left dangling for recovery
+        self.assertEqual(self.mem.get_play_session(session_id).state, "active")
+        self.assertEqual(len(self.mem.recent_summaries("g1")), 1)  # only the OLD one
+
+    def test_33c_success_family_writes_card(self):
+        # three success cases: normal final summary / empty snapshot / no summarizer
+        with self.subTest(case="normal"):
+            records = []
+            controller = self._controller_with(
+                lambda game_id, card: records.append(game_id), _StubSummarizer()
+            )
+            session_id = self._start_feed_stop(controller)
+            self.assertEqual(records, ["g1"])
+            self.assertEqual(self.mem.get_play_session(session_id).state, "ended")
+        with self.subTest(case="empty snapshot"):
+            self._seed_card_material("g2")
+            records = []
+            controller = self._controller_with(
+                lambda game_id, card: records.append(game_id), _StubSummarizer()
+            )
+            controller.start("0x1", game_id="g2", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
+            session_id = controller.session.session_id
+            controller.stop()  # nothing fed -> empty snapshot -> still a clean end
+            self.assertEqual(records, ["g2"])
+            self.assertEqual(self.mem.get_play_session(session_id).state, "ended")
+        with self.subTest(case="no summarizer"):
+            self._seed_card_material("g3")
+            records = []
+            controller = self._controller_with(
+                lambda game_id, card: records.append(game_id), None
+            )
+            controller.start("0x1", game_id="g3", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
+            for text in ["L1", "L1", "L2", "L2"]:
+                controller.session.on_ocr_result(text)
+            session_id = controller.session.session_id
+            controller.stop()
+            self.assertEqual(records, ["g3"])
+            self.assertEqual(self.mem.get_play_session(session_id).state, "ended")
 
 
 class ProfileRatiosTest(ControllerTestBase):

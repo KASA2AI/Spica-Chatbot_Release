@@ -224,6 +224,28 @@ class GalgameCompanionSession:
         self._project_playsession(target)  # best-effort durable projection (self-heals)
         self._emit(GalgameStatusChangedEvent(state=target.value, previous=previous.value, message=message))
 
+    def _transition_tolerating_sink(self, target: GalgameState) -> None:
+        # AR-C1 §4.4, FAILURE LANE ONLY: the end() failure closeout must not be
+        # truncated by a raising event sink. The criterion is "did the mutation
+        # complete in THIS call", not the exception type: _transition validates
+        # BEFORE mutating, so an exception with the state already flipped can
+        # only come from after the flip (the projection self-swallows) -- i.e.
+        # the sink emit. A pre-mutation exception (illegal transition, lookup
+        # error) is a real FSM/programming error and propagates. Process-control
+        # BaseExceptions (KeyboardInterrupt/SystemExit/...) always propagate --
+        # only sink faults are tolerated, never exit/cancellation.
+        before = self._state
+        try:
+            self._transition(target)
+        except Exception as exc:  # noqa: BLE001 -- see mutation criterion above
+            if self._state is target and before is not target:
+                logger.warning(
+                    "galgame failure-lane sink failed during %s transition: %s",
+                    target.value, exc, exc_info=True,
+                )
+            else:
+                raise
+
     def _project_playsession(self, target: GalgameState) -> None:
         mapped = _PLAYSESSION_STATE.get(target)
         if mapped is None or self._session_id is None:
@@ -659,17 +681,52 @@ class GalgameCompanionSession:
                 )
             except Exception as exc:  # noqa: BLE001 -- best-effort; lines stay unsummarized
                 logger.warning("galgame end summary failed (session_id=%s): %s", session_id, exc, exc_info=True)
-                self._emit(
-                    GalgameErrorEvent(
-                        message=f"end summary failed: {exc}", code="END_SUMMARY_FAILED",
-                        session_id=session_id, target_state=_S.SUMMARIZING.value,
+                # Best-effort (AR-C1 v1.2): a raising sink must not truncate the
+                # end() closeout (it used to wedge the FSM at SUMMARIZING).
+                try:
+                    self._emit(
+                        GalgameErrorEvent(
+                            message=f"end summary failed: {exc}", code="END_SUMMARY_FAILED",
+                            session_id=session_id, target_state=_S.SUMMARIZING.value,
+                        )
                     )
-                )
+                except Exception as sink_exc:  # noqa: BLE001
+                    logger.warning("galgame error-event sink failed: %s", sink_exc, exc_info=True)
 
         with self._lock:
             summary_id: str | None = None
-            # An end-summary FAILURE (we HAD lines to summarize but the LLM returned
-            # nothing) must NOT finalize the PlaySession: finalizing stamps
+            persist_failed = False
+            if result is not None:
+                # AR-C1 §4.4: fold covers the WHOLE durable-apply span (projection
+                # read -> value builds -> atomic command). Failure persists NOTHING
+                # (all-or-nothing command; advance only runs on success), so there
+                # is no half-summarized batch -> recovery's retry is idempotent.
+                stage = "progress read"
+                try:
+                    progress_base = self._mem.get_progress_state(game_id, playthrough_id)
+                    stage = "summary build"
+                    summary = self._build_summary(result, snapshot)
+                    stage = "progress build"
+                    progress = self._merge_progress(
+                        progress_base or GameProgressState(game_id=game_id, playthrough_id=playthrough_id),
+                        result,
+                    )
+                    stage = "relations build"
+                    relations = self._build_relations(result)
+                    stage = "atomic command"
+                    summary_id = self._mem.apply_summary_projection(summary, progress, relations)
+                except Exception as exc:  # noqa: BLE001 -- D1=A: fold, never propagate
+                    persist_failed = True
+                    summary_id = None
+                    logger.warning(
+                        "galgame end summary projection %s failed (session_id=%s): %s",
+                        stage, session_id, exc, exc_info=True,
+                    )
+                    self._emit_persist_failure(stage, exc, target_state=_S.SUMMARIZING.value)
+                else:
+                    self._advance_unsummarized(snapshot)
+            # An end-summary FAILURE (LLM returned nothing, or the projection did
+            # not land) must NOT finalize the PlaySession: finalizing stamps
             # state=ended + ended_at, which makes it invisible to
             # dangling_play_sessions (scans active/paused + ended_at IS NULL) -> the
             # batch is orphaned FOREVER (the 06-23 47becb69 bug). Skipping finalize
@@ -678,17 +735,17 @@ class GalgameCompanionSession:
             # retries the summary. Gated tightly so NORMAL ends are byte-identical:
             #   - empty snapshot (everything already background-summarized) -> finalize
             #   - no summarizer wired (tests) -> finalize
-            # only "had residue AND the summary failed" diverges. Failure persists
-            # NOTHING (the if-result block holds persist + advance together), so there
-            # is no half-summarized batch -> recovery's retry is idempotent.
-            summary_failed = self._summarizer is not None and bool(snapshot) and result is None
-            if result is not None:
-                summary_id = self._persist_summary(result, snapshot)
-                self._apply_progress_and_relations(result)
-                self._advance_unsummarized(snapshot)
-            self._emit(GalgameSummaryDoneEvent(summary_id=summary_id))
-            self._transition(_S.ENDING)  # summarizing -> ending
+            # only "had residue AND the summary failed" diverges.
+            summary_failed = self._summarizer is not None and bool(snapshot) and (result is None or persist_failed)
             if summary_failed:
+                # Failure lane (AR-C1 v1.2): sink-tolerant -- the closeout must
+                # reach GAME_LAUNCHED even if the sink raises at every emit.
+                # Same Done->ENDING order as the success lane (651-652 pin).
+                try:
+                    self._emit(GalgameSummaryDoneEvent(summary_id=None))
+                except Exception as sink_exc:  # noqa: BLE001
+                    logger.warning("galgame summary-done sink failed: %s", sink_exc, exc_info=True)
+                self._transition_tolerating_sink(_S.ENDING)  # summarizing -> ending
                 # Leave it dangling for retry -- withhold ONLY the durable "ended"
                 # stamp. The FSM still lands in game_launched below (a new game can
                 # start); the DB row stays active/NULL for next-startup recovery.
@@ -697,9 +754,14 @@ class GalgameCompanionSession:
                     "next-startup recovery retry (%d lines unsummarized)",
                     session_id, len(snapshot),
                 )
+                self._transition_tolerating_sink(_S.GAME_LAUNCHED)
             else:
+                # Success lane: byte-identical emit order AND propagation semantics
+                # (#18: post-commit sink exceptions still propagate -- not a rollback).
+                self._emit(GalgameSummaryDoneEvent(summary_id=summary_id))
+                self._transition(_S.ENDING)  # summarizing -> ending
                 self._finalize_play_session()  # mark PlaySession ended (+ ended_at)
-            self._transition(_S.GAME_LAUNCHED)  # ending -> game_launched (window still open)
+                self._transition(_S.GAME_LAUNCHED)  # ending -> game_launched (window still open)
             self._session_id = None
             self._play_session = None
 

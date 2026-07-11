@@ -70,12 +70,21 @@ def test_anime_ready_terminal_result_and_cause_round_trip_as_values():
 
 
 def test_anime_cancel_request_round_trip():
-    ev = AnimeCancelRequestEvent(request_id="r1", title="幼女战记 第二季")
+    ev = AnimeCancelRequestEvent(request_id="r1")
     assert ev.to_legacy_dict() == {
         "event": "anime_cancel_request",
-        "data": {"request_id": "r1", "title": "幼女战记 第二季"},
+        "data": {"request_id": "r1"},
     }
     assert event_from_legacy(ev.to_legacy_dict()) == ev
+
+
+def test_legacy_anime_cancel_title_is_ignored():
+    event = event_from_legacy({
+        "event": "anime_cancel_request",
+        "data": {"request_id": "r1", "title": "旧版标题"},
+    })
+
+    assert event == AnimeCancelRequestEvent(request_id="r1")
 
 
 def test_events_carry_no_secrets():

@@ -229,7 +229,7 @@ def build_request_anime_cancel(host: Any) -> Callable[[str], dict[str, Any]]:
                 "ANIME_UI_NOT_READY", "动漫下载界面还没准备好，暂时无法停止。")
         try:
             sink(AnimeCancelRequestEvent(
-                request_id=active["request_id"], title=active["title"]))
+                request_id=active["request_id"]))
         except Exception as exc:  # noqa: BLE001 -- act failures use ToolError envelopes
             _LOG.warning("anime cancel request submit failed: %s", exc)
             raise ScreenToolError(

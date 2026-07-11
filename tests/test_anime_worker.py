@@ -872,6 +872,108 @@ def test_manual_cancel_qthread_still_emits_terminal_ready(qapp, tmp_path):
     assert ft.cancelled == ["a" * 40]
 
 
+@pytest.mark.parametrize("with_torrent_payload", [False, True])
+def test_manual_during_uncertain_qbt_add_error_is_never_normal_failure(
+        qapp, tmp_path, with_torrent_payload):
+    add_started = threading.Event()
+    release_add = threading.Event()
+
+    class UncertainAddTorrent(FakeTorrent):
+        def _raise_uncertain(self):
+            add_started.set()
+            assert release_add.wait(2), "test did not release qBT add"
+            raise TorrentClientError(
+                "UNREACHABLE", "submission result is unknown")
+
+        def add_magnet(
+            self, magnet: str, *, subfolder: str | None = None,
+        ) -> str:
+            del magnet, subfolder
+            return self._raise_uncertain()
+
+        def add_torrent_bytes(
+            self, payload: bytes, *, expected_infohash: str,
+            subfolder: str | None = None,
+        ) -> str:
+            del payload, expected_infohash, subfolder
+            return self._raise_uncertain()
+
+        def cancel(self, task_id: str) -> TorrentCancelOutcome:
+            self.cancelled.append(task_id)
+            raise TorrentClientError(
+                "UNREACHABLE", "cannot disambiguate submission")
+
+    expected_hash = TORRENT_HASH if with_torrent_payload else "a" * 40
+    locator = "magnet:?xt=urn:btih:" + expected_hash
+    torrent = UncertainAddTorrent([_downloading(0.0)])
+    worker = _worker(
+        tmp_path,
+        locator=locator,
+        torrent=torrent,
+        torrent_payload_b64=(
+            base64.b64encode(TORRENT_PAYLOAD).decode("ascii")
+            if with_torrent_payload else None),
+    )
+    events = []
+    worker.ready.connect(events.append)
+
+    worker.start()
+    assert add_started.wait(1)
+    assert worker.request_download_cancel() is True
+    release_add.set()
+    assert worker.wait(1000)
+    qapp.processEvents()
+
+    assert len(events) == 1
+    assert events[0].terminal_result is DownloadTerminalResult.UNCONFIRMED
+    assert events[0].terminal_cause is DownloadTerminalCause.MANUAL
+    assert "后台任务可能仍在" in events[0].error
+    assert torrent.cancelled == [expected_hash]
+
+
+def test_manual_accepted_while_add_error_is_classified_is_not_lost(
+        qapp, tmp_path):
+    formatting_started = threading.Event()
+    release_formatting = threading.Event()
+
+    class BlockingMessageError(TorrentClientError):
+        def __str__(self):
+            formatting_started.set()
+            assert release_formatting.wait(2), "test did not release error text"
+            return super().__str__()
+
+    class UncertainAddTorrent(FakeTorrent):
+        def add_magnet(
+            self, magnet: str, *, subfolder: str | None = None,
+        ) -> str:
+            del magnet, subfolder
+            raise BlockingMessageError(
+                "UNREACHABLE", "submission result is unknown")
+
+        def cancel(self, task_id: str) -> TorrentCancelOutcome:
+            self.cancelled.append(task_id)
+            raise TorrentClientError(
+                "UNREACHABLE", "cannot disambiguate submission")
+
+    torrent = UncertainAddTorrent([_downloading(0.0)])
+    worker = _worker(tmp_path, torrent=torrent)
+    events = []
+    worker.ready.connect(events.append)
+
+    worker.start()
+    assert formatting_started.wait(1)
+    assert worker.request_download_cancel() is True
+    release_formatting.set()
+    assert worker.wait(1000)
+    qapp.processEvents()
+
+    assert len(events) == 1
+    assert events[0].terminal_result is DownloadTerminalResult.UNCONFIRMED
+    assert events[0].terminal_cause is DownloadTerminalCause.MANUAL
+    assert "后台任务可能仍在" in events[0].error
+    assert torrent.cancelled == ["a" * 40]
+
+
 def test_resume_mode_polls_existing_task_elapsed_none(qapp, tmp_path):
     # restart reconcile (P1-9): unknown age -> elapsed None (=> confirmation only)
     ft = FakeTorrent([_completed(str(tmp_path / "ep1.mkv"))])

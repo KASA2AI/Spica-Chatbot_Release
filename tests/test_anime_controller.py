@@ -23,6 +23,7 @@ from spica.anime.models import (  # noqa: E402
     DownloadTerminalResult,
 )
 from spica.ports.media_player import MediaPlayerError  # noqa: E402
+import ui.controllers.anime_controller as anime_controller_module  # noqa: E402
 from ui.controllers.anime_controller import AnimeController  # noqa: E402
 from ui.workers.anime_worker import AnimeDownloadWorker  # noqa: E402
 
@@ -687,6 +688,42 @@ def test_cancel_after_finished_before_queued_ready_still_suppresses(qapp):
     assert h.spoken == []
     assert h.controller.in_flight_state() is None
     assert h.cancel_states[-1] == (False, False)
+
+
+@pytest.mark.parametrize("signal_order", ["ready_finished", "finished_ready"])
+def test_worker_signal_order_never_poison_reused_identity_or_single_flight(
+        qapp, monkeypatch, signal_order):
+    # Deterministically model CPython reusing A's object id for B.
+    monkeypatch.setattr(
+        anime_controller_module, "id", lambda _worker: 4242, raising=False)
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event("A"))
+    worker_a = h.workers[0]
+    ready_a = _ready(
+        "A",
+        error="已停止下载",
+        save_path=None,
+        terminal_result=DownloadTerminalResult.CANCELLED,
+        terminal_cause=DownloadTerminalCause.MANUAL,
+    )
+
+    if signal_order == "ready_finished":
+        worker_a.ready.emit(ready_a)
+        worker_a.finish()
+    else:
+        worker_a.finish()
+        worker_a.ready.emit(ready_a)
+
+    assert h.controller._terminal_worker_ids == set()
+    h.controller.handle_anime_request_event(_request_event("B"))
+    worker_b = h.workers[1]
+    h.controller.handle_anime_request_event(_request_event("C"))
+
+    assert len(h.workers) == 2
+    assert h.dropped[-1] == "C"
+    assert h.controller.in_flight_state()["request_id"] == "B"
+    assert h.controller.cancel_current_download("B") is True
+    assert worker_b.download_cancel_requests == 1
 
 
 # -- completion idle scheduling ---------------------------------------------------

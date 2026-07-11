@@ -243,6 +243,9 @@ class AnimeController(QObject):
     def _start_worker(self, worker: Any, *, reconciled: bool) -> None:
         if reconciled:
             self._reconciled_ids.add(worker.request_id)
+        # A finished wrapper may have been released and its Python id reused.
+        # A newly-started worker can never inherit an old terminal tombstone.
+        self._terminal_worker_ids.discard(id(worker))
         worker.progress.connect(self._on_worker_progress)
         worker.task_started.connect(self._on_worker_task_started)
         worker.reconnecting.connect(self._on_worker_reconnecting)
@@ -304,7 +307,11 @@ class AnimeController(QObject):
             logger.debug("duplicate anime ready ignored: %s", event.request_id)
             return
         self._handled_ready_ids.add(event.request_id)
-        self._terminal_worker_ids.add(id(worker))
+        # ready normally precedes finished and temporarily releases the active
+        # guard. If finished already removed this wrapper, do not resurrect an
+        # id-based tombstone that can survive forever and poison id reuse.
+        if worker in self._workers:
+            self._terminal_worker_ids.add(id(worker))
         manual_cancel_requested = (
             event.request_id in self._cancelling_request_ids)
         self._cancelling_request_ids.discard(event.request_id)

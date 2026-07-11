@@ -43,6 +43,7 @@ class DownloadTerminalOwner(str, Enum):
     STALL_CANCEL = "stall_cancel"
     SHUTDOWN_PRESERVE = "shutdown_preserve"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class DownloadTerminalResult(str, Enum):

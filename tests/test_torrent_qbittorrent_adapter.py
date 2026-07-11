@@ -468,6 +468,45 @@ def test_cancel_dispatches_version_specific_freeze_only(
     assert not any(f"torrents/{forbidden}" in url for url in mutation_paths)
 
 
+def test_cancel_rechecks_version_before_each_destructive_attempt(tmp_path):
+    second_hash = "0" * 40
+
+    class DaemonUpgradeSession(_ScriptedCancelSession):
+        def __init__(self):
+            super().__init__([
+                [{"hash": _HEX, "state": "downloading", "progress": 0.4}],
+                [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}],
+                [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}],
+                [{
+                    "hash": second_hash,
+                    "state": "downloading",
+                    "progress": 0.2,
+                }],
+            ], property_statuses=[404])
+            self._versions = ["v5.2.3", "v6.0.0"]
+
+        def get(self, url, params=None, timeout=None, **kw):
+            if "app/version" in url:
+                self.calls.append((url, params))
+                assert self._versions, "unexpected extra app/version read"
+                return FakeResp(200, text=self._versions.pop(0))
+            return super().get(url, params=params, timeout=timeout, **kw)
+
+    session = DaemonUpgradeSession()
+    client = _client(tmp_path, session, sleep=lambda _seconds: None)
+
+    first = client.cancel(_HEX)
+    posts_after_first = list(session.posts)
+    with pytest.raises(TorrentClientError) as caught:
+        client.cancel(second_hash)
+
+    assert first.result is TorrentCancelResult.CANCELLED
+    assert caught.value.code == "UNSUPPORTED_VERSION"
+    assert session.posts == posts_after_first
+    assert sum(
+        "app/version" in url for url, _ in session.calls) == 2
+
+
 @pytest.mark.parametrize("version", ["", "not-a-version", "v4.0.5", "v4.7.0", "v6.0.0"])
 def test_cancel_unknown_version_is_zero_mutation(tmp_path, version):
     session = _ScriptedCancelSession([

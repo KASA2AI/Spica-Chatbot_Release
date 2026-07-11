@@ -88,7 +88,6 @@ class QBittorrentClient:
         self._timeout = timeout
         self._sleep = sleep
         self._authed = False
-        self._cancel_protocol: tuple[str, str] | None = None
 
     # -- port ----------------------------------------------------------------
 
@@ -327,8 +326,6 @@ class QBittorrentClient:
         return TorrentCancelOutcome(TorrentCancelResult.MISSING)
 
     def _resolve_cancel_protocol(self) -> tuple[str, str]:
-        if self._cancel_protocol is not None:
-            return self._cancel_protocol
         response = self._get("app/version")
         version = (getattr(response, "text", "") or "").strip()
         match = re.fullmatch(r"v?(\d+)\.(\d+)(?:\.\d+.*)?", version)
@@ -343,7 +340,6 @@ class QBittorrentClient:
         else:
             raise TorrentClientError(
                 "UNSUPPORTED_VERSION", f"unsupported qBittorrent version: {version}")
-        self._cancel_protocol = protocol
         return protocol
 
     def _login(self) -> None:

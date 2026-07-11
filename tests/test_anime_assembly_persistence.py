@@ -380,8 +380,7 @@ def test_cancel_tool_submits_trusted_active_request_even_when_anime_disabled(tmp
     assert handler() == {
         "status": "submitted", "request_id": "REQ1", "title": "幼女战记 第二季",
     }
-    assert h.sunk == [AnimeCancelRequestEvent(
-        request_id="REQ1", title="幼女战记 第二季")]
+    assert h.sunk == [AnimeCancelRequestEvent(request_id="REQ1")]
     assert h.registry.tool_effect("cancel_anime_download") == "act"
     assert h.registry.tool_chainable("cancel_anime_download") is False
     assert h.registry.tool_intent_gated("cancel_anime_download") is False
@@ -469,7 +468,7 @@ def test_cancel_offer_is_one_shot_and_duplicate_is_stale(tmp_path):
         handler()
 
     assert caught.value.code == "ANIME_CANCEL_REQUEST_STALE"
-    assert h.sunk == [AnimeCancelRequestEvent(request_id="A", title="第一集")]
+    assert h.sunk == [AnimeCancelRequestEvent(request_id="A")]
 
 
 def test_cancel_sink_failure_is_a_tool_error_not_a_false_ack(tmp_path):
@@ -549,7 +548,7 @@ def test_declined_offer_is_cleared_before_next_capability_generation(tmp_path):
     state.update(request_id="B", title="第二集")
     h.registry.tool_schemas()
     assert handler()["request_id"] == "B"
-    assert h.sunk == [AnimeCancelRequestEvent(request_id="B", title="第二集")]
+    assert h.sunk == [AnimeCancelRequestEvent(request_id="B")]
 
 
 def test_cancel_request_id_is_compared_as_an_opaque_token(tmp_path):
@@ -566,8 +565,7 @@ def test_cancel_request_id_is_compared_as_an_opaque_token(tmp_path):
     assert handler is not None
 
     assert handler()["request_id"] == opaque_id
-    assert h.sunk == [AnimeCancelRequestEvent(
-        request_id=opaque_id, title="第一集")]
+    assert h.sunk == [AnimeCancelRequestEvent(request_id=opaque_id)]
 
 
 # -- A2: empty source lists must not crash startup (P2-6) ----------------------

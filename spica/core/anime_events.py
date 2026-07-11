@@ -62,10 +62,9 @@ class AnimeCancelRequestEvent(RuntimeEvent):
 
     kind: ClassVar[str] = "anime_cancel_request"
     request_id: str
-    title: str = ""
 
     def _data(self) -> dict[str, Any]:
-        return {"request_id": self.request_id, "title": self.title}
+        return {"request_id": self.request_id}
 
 
 @dataclass(frozen=True)
@@ -170,6 +169,5 @@ register_event(
     "anime_cancel_request",
     lambda d: AnimeCancelRequestEvent(
         request_id=str(d.get("request_id") or ""),
-        title=str(d.get("title") or ""),
     ),
 )

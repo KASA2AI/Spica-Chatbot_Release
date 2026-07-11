@@ -470,16 +470,28 @@ class AnimeDownloadWorker(QThread):
             if expected_infohash is None:
                 return self._ready_event(error=f"BAD_LOCATOR: {loc[:80]!r}")
             started = self._clock()
-            task_id = self._torrent.add_torrent_bytes(
-                payload, expected_infohash=expected_infohash,
-                subfolder=self._subdir)
+            try:
+                task_id = self._torrent.add_torrent_bytes(
+                    payload, expected_infohash=expected_infohash,
+                    subfolder=self._subdir)
+            except Exception as exc:  # noqa: BLE001 -- acknowledgement may be lost
+                return self._terminal_after_qbt_add_error(
+                    expected_infohash, started=started, error=exc)
             self.task_started.emit(self.request_id, task_id)
             return self._poll_qbt(task_id, started=started)
         if loc.startswith("magnet:?"):
+            expected_infohash = self._magnet_infohash(loc)
+            if expected_infohash is None:
+                return self._ready_event(error=f"BAD_LOCATOR: {loc[:80]!r}")
             started = self._clock()
             # Legacy events remain resumable even though new Mikan requests
             # carry verified torrent bytes with their original tracker tiers.
-            task_id = self._torrent.add_magnet(loc, subfolder=self._subdir)
+            try:
+                task_id = self._torrent.add_magnet(
+                    loc, subfolder=self._subdir)
+            except Exception as exc:  # noqa: BLE001 -- acknowledgement may be lost
+                return self._terminal_after_qbt_add_error(
+                    expected_infohash, started=started, error=exc)
             self.task_started.emit(self.request_id, task_id)
             return self._poll_qbt(task_id, started=started)
         m = _BVID_PART_RE.match(loc)
@@ -498,6 +510,30 @@ class AnimeDownloadWorker(QThread):
             if match is not None:
                 return match.group(1).lower()
         return None
+
+    def _terminal_after_qbt_add_error(
+        self,
+        expected_task_id: str,
+        *,
+        started: float,
+        error: Exception,
+    ) -> AnimeReadyEvent:
+        """Preserve an accepted terminal decision when add acknowledgement is
+        uncertain.  The known infohash is the only safe disambiguation key."""
+        # Formatting may itself overlap a GUI cancel.  Claim FAILED only after
+        # it, under the same state lock used by manual/shutdown CAS, so either
+        # the accepted intent wins or a later intent is cleanly rejected.
+        detail = str(error)
+        with self._state_lock:
+            owner = self._terminal_owner
+            if owner is DownloadTerminalOwner.RUNNING:
+                self._terminal_owner = DownloadTerminalOwner.FAILED
+        if owner is DownloadTerminalOwner.SHUTDOWN_PRESERVE:
+            return self._shutdown_preserved_event()
+        if owner is DownloadTerminalOwner.MANUAL_CANCEL:
+            return self._resolve_qbt_manual_cancel(
+                expected_task_id, started=started)
+        return self._ready_event(error=detail)
 
     # -- qbt lane ---------------------------------------------------------------
 

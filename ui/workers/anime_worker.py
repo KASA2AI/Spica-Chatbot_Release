@@ -443,7 +443,16 @@ class AnimeDownloadWorker(QThread):
         try:
             event = self.execute()
         except Exception as exc:  # noqa: BLE001 -- a worker must never crash the UI
-            event = self._ready_event(error=str(exc))
+            # Even an unexpected exception must compete on the same terminal
+            # owner as every classified failure.  A valid locator/resume hash
+            # is also the safe disambiguation key if manual stop already won.
+            event = self._finalize_failure(
+                exc,
+                qbt_task_id=(
+                    self.resume_task_id
+                    or self._magnet_infohash(self.locator or "")
+                ),
+            )
         if (event is not None
                 and event.terminal_result is not DownloadTerminalResult.PRESERVED
                 and not self._shutdown_requested()):
@@ -465,10 +474,12 @@ class AnimeDownloadWorker(QThread):
                 payload = base64.b64decode(
                     self.torrent_payload_b64, validate=True)
             except (ValueError, TypeError) as exc:
-                return self._ready_event(error=f"BAD_TORRENT_PAYLOAD: {exc}")
+                return self._finalize_failure(
+                    f"BAD_TORRENT_PAYLOAD: {exc}")
             expected_infohash = self._magnet_infohash(loc)
             if expected_infohash is None:
-                return self._ready_event(error=f"BAD_LOCATOR: {loc[:80]!r}")
+                return self._finalize_failure(
+                    f"BAD_LOCATOR: {loc[:80]!r}")
             started = self._clock()
             try:
                 task_id = self._torrent.add_torrent_bytes(
@@ -482,7 +493,8 @@ class AnimeDownloadWorker(QThread):
         if loc.startswith("magnet:?"):
             expected_infohash = self._magnet_infohash(loc)
             if expected_infohash is None:
-                return self._ready_event(error=f"BAD_LOCATOR: {loc[:80]!r}")
+                return self._finalize_failure(
+                    f"BAD_LOCATOR: {loc[:80]!r}")
             started = self._clock()
             # Legacy events remain resumable even though new Mikan requests
             # carry verified torrent bytes with their original tracker tiers.
@@ -498,7 +510,7 @@ class AnimeDownloadWorker(QThread):
         if m is not None:
             return self._run_ytdlp(m.group(1), int(m.group(2)))
         # never execute an unrecognized locator (whitelist, 铁律 #9)
-        return self._ready_event(error=f"BAD_LOCATOR: {loc[:80]!r}")
+        return self._finalize_failure(f"BAD_LOCATOR: {loc[:80]!r}")
 
     @staticmethod
     def _magnet_infohash(locator: str) -> str | None:
@@ -520,9 +532,23 @@ class AnimeDownloadWorker(QThread):
     ) -> AnimeReadyEvent:
         """Preserve an accepted terminal decision when add acknowledgement is
         uncertain.  The known infohash is the only safe disambiguation key."""
-        # Formatting may itself overlap a GUI cancel.  Claim FAILED only after
-        # it, under the same state lock used by manual/shutdown CAS, so either
-        # the accepted intent wins or a later intent is cleanly rejected.
+        return self._finalize_failure(
+            error, qbt_task_id=expected_task_id, started=started)
+
+    def _finalize_failure(
+        self,
+        error: object,
+        *,
+        qbt_task_id: str | None = None,
+        started: float | None = None,
+    ) -> AnimeReadyEvent:
+        """Linearize every failure against manual stop and shutdown.
+
+        Error formatting deliberately happens before the CAS: a manual request
+        accepted while an external exception is being classified must retain
+        ownership.  Once FAILED wins the same lock, later manual requests are
+        rejected instead of being accepted after a failure event was decided.
+        """
         detail = str(error)
         with self._state_lock:
             owner = self._terminal_owner
@@ -531,9 +557,15 @@ class AnimeDownloadWorker(QThread):
         if owner is DownloadTerminalOwner.SHUTDOWN_PRESERVE:
             return self._shutdown_preserved_event()
         if owner is DownloadTerminalOwner.MANUAL_CANCEL:
-            return self._resolve_qbt_manual_cancel(
-                expected_task_id, started=started)
-        return self._ready_event(error=detail)
+            if qbt_task_id is not None:
+                return self._resolve_qbt_manual_cancel(
+                    qbt_task_id, started=started)
+            return self._manual_cancelled_without_qbt()
+        return self._ready_event(
+            error=detail,
+            terminal_result=DownloadTerminalResult.FAILED,
+            terminal_cause=DownloadTerminalCause.NORMAL,
+        )
 
     # -- qbt lane ---------------------------------------------------------------
 
@@ -616,9 +648,12 @@ class AnimeDownloadWorker(QThread):
                 if self._download_cancel_pending():
                     return self._cancel_manual_qbt(task_id)
                 if e.code == "AUTH_FAILED":       # credentials: never self-heals (F2)
-                    return self._ready_event(
-                        error="qbittorrent 登录失败（AUTH_FAILED）："
-                              "请检查 Web UI 用户名/密码配置")
+                    return self._finalize_failure(
+                        "qbittorrent 登录失败（AUTH_FAILED）："
+                        "请检查 Web UI 用户名/密码配置",
+                        qbt_task_id=task_id,
+                        started=started,
+                    )
                 if e.code in _TRANSIENT_QBT:      # reconnect until hard cutoff
                     if self._stall_cutoff_reached(
                             self._clock() - last_change):
@@ -645,13 +680,19 @@ class AnimeDownloadWorker(QThread):
                 if e.code == "API_ERROR":         # bounded retry, then fail (F2)
                     api_error_streak += 1
                     if api_error_streak >= _MAX_API_ERROR_STREAK:
-                        return self._ready_event(
-                            error=f"qbittorrent 接口连续出错（API_ERROR×"
-                                  f"{api_error_streak}）：{e}")
+                        return self._finalize_failure(
+                            f"qbittorrent 接口连续出错（API_ERROR×"
+                            f"{api_error_streak}）：{e}",
+                            qbt_task_id=task_id,
+                            started=started,
+                        )
                     self._interruptible_sleep(self._poll_seconds)
                     continue
-                return self._ready_event(
-                    error=f"下载任务丢失（qbittorrent: {e.code}）")
+                return self._finalize_failure(
+                    f"下载任务丢失（qbittorrent: {e.code}）",
+                    qbt_task_id=task_id,
+                    started=started,
+                )
             if self._shutdown_requested():
                 return self._shutdown_preserved_event()
             if self._download_cancel_pending():
@@ -682,8 +723,11 @@ class AnimeDownloadWorker(QThread):
                 last_change = self._clock()
                 self._emit_qbt_progress(resolution)
             if st.state == "error":
-                return self._ready_event(
-                    error=f"下载出错：{st.error or 'qbittorrent errored'}")
+                return self._finalize_failure(
+                    f"下载出错：{st.error or 'qbittorrent errored'}",
+                    qbt_task_id=task_id,
+                    started=started,
+                )
             self._interruptible_sleep(self._poll_seconds)
 
     def _resolve_qbt_stall_timeout(
@@ -941,7 +985,7 @@ class AnimeDownloadWorker(QThread):
             if self._shutdown_requested():
                 return self._shutdown_preserved_event()
             if attempt.lifecycle_error is not None:
-                return self._ready_event(error=attempt.lifecycle_error)
+                return self._finalize_failure(attempt.lifecycle_error)
             if attempt.low_speed:
                 reconnects += 1
                 self.reconnecting.emit(
@@ -961,12 +1005,11 @@ class AnimeDownloadWorker(QThread):
                         "network")
                     self._interruptible_sleep(_YTDLP_RECONNECT_DELAY_SECONDS)
                     continue
-                return self._ready_event(
-                    error=failure.message)
+                return self._finalize_failure(failure.message)
             checked = self._validated_output(attempt.final_path)
             if checked is None:
-                return self._ready_event(
-                    error="yt-dlp 结束但没有产出可信的输出文件路径")
+                return self._finalize_failure(
+                    "yt-dlp 结束但没有产出可信的输出文件路径")
             elapsed = self._clock() - overall_started
             self.progress.emit(self.request_id, 1.0, "downloading")
             owner = self._claim_completed()
@@ -1249,9 +1292,10 @@ class AnimeDownloadWorker(QThread):
                      terminal_result: DownloadTerminalResult | None = None,
                      terminal_cause: DownloadTerminalCause = (
                          DownloadTerminalCause.NORMAL)) -> AnimeReadyEvent:
-        result = terminal_result or (
-            DownloadTerminalResult.FAILED
-            if error is not None else DownloadTerminalResult.COMPLETED)
+        if error is not None and terminal_result is None:
+            raise AssertionError(
+                "failure events must pass through _finalize_failure")
+        result = terminal_result or DownloadTerminalResult.COMPLETED
         return AnimeReadyEvent(
             request_id=self.request_id, episode_key=self.episode_key,
             save_path=save_path, elapsed_seconds=elapsed_seconds, error=error,

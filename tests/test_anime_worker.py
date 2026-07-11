@@ -358,6 +358,23 @@ def test_torrent_payload_add_poll_complete(qapp, tmp_path):
     assert event.error is None
 
 
+def test_bad_torrent_payload_failure_claims_before_late_manual(qapp, tmp_path):
+    torrent = FakeTorrent([_downloading(0.0)])
+    worker = _worker(
+        tmp_path,
+        torrent=torrent,
+        torrent_payload_b64="not-valid-base64!",
+    )
+
+    event = worker.execute()
+
+    assert event.error is not None and "BAD_TORRENT_PAYLOAD" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert worker.request_download_cancel() is False
+    assert torrent.payloads == []
+
+
 def test_magnet_transient_error_reconnects_not_fails(qapp, tmp_path):
     # P1-10: a connection blip means keep polling, never a failure verdict
     ft = FakeTorrent([TorrentClientError("UNREACHABLE", "down"),
@@ -370,15 +387,65 @@ def test_magnet_transient_error_reconnects_not_fails(qapp, tmp_path):
 
 def test_magnet_task_not_found_is_terminal(qapp, tmp_path):
     ft = FakeTorrent([TorrentClientError("TASK_NOT_FOUND", "gone")])
-    event = _worker(tmp_path, torrent=ft).execute()
+    worker = _worker(tmp_path, torrent=ft)
+
+    event = worker.execute()
+
     assert event.error is not None and "TASK_NOT_FOUND" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert worker.request_download_cancel() is False
 
 
 def test_magnet_error_state_reports(qapp, tmp_path):
     ft = FakeTorrent([DownloadStatus(task_id="a" * 40, state="error",
                                      progress=0.1, error="missingFiles")])
-    event = _worker(tmp_path, torrent=ft).execute()
+    worker = _worker(tmp_path, torrent=ft)
+
+    event = worker.execute()
+
     assert event.error is not None and "missingFiles" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert worker.request_download_cancel() is False
+
+
+def test_manual_during_task_not_found_failure_uses_typed_qbt_cancel(
+        qapp, tmp_path):
+    classification_started = threading.Event()
+    release_classification = threading.Event()
+
+    class BlockingTaskNotFound(TorrentClientError):
+        def __init__(self):
+            self._classification_blocked = False
+            super().__init__("TASK_NOT_FOUND", "gone")
+
+        @property
+        def code(self):
+            if not self._classification_blocked:
+                self._classification_blocked = True
+                classification_started.set()
+                assert release_classification.wait(2), (
+                    "test did not release TASK_NOT_FOUND classification")
+            return self._code
+
+        @code.setter
+        def code(self, value):
+            self._code = value
+
+    torrent = FakeTorrent([BlockingTaskNotFound()])
+    worker = _worker(tmp_path, torrent=torrent)
+    thread, box = _execute_in_thread(worker)
+    assert classification_started.wait(1)
+
+    assert worker.request_download_cancel() is True
+    release_classification.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert torrent.cancelled == ["a" * 40]
+    assert box["event"].terminal_result is DownloadTerminalResult.CANCELLED
+    assert box["event"].terminal_cause is DownloadTerminalCause.MANUAL
 
 
 def test_magnet_stall_timeout_cancels_once_and_is_terminal(qapp, tmp_path):
@@ -658,6 +725,63 @@ def test_manual_claim_during_status_error_is_not_lost(qapp, tmp_path):
     assert torrent.cancelled == ["a" * 40]
     assert box["event"].terminal_result is DownloadTerminalResult.CANCELLED
     assert box["event"].terminal_cause is DownloadTerminalCause.MANUAL
+
+
+def test_manual_claim_from_progress_callback_wins_over_qbt_error(
+        qapp, tmp_path):
+    torrent = FakeTorrent([
+        DownloadStatus(
+            task_id="a" * 40,
+            state="error",
+            progress=0.2,
+            error="missingFiles",
+        ),
+        _downloading(0.2),
+    ])
+    worker = _worker(tmp_path, torrent=torrent)
+    accepted = []
+    worker.progress.connect(
+        lambda _request_id, _progress, _phase: accepted.append(
+            worker.request_download_cancel()))
+
+    event = worker.execute()
+
+    assert accepted == [True]
+    assert torrent.cancelled == ["a" * 40]
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+
+
+def test_shutdown_during_qbt_error_formatting_preserves_task(qapp, tmp_path):
+    formatting_started = threading.Event()
+    release_formatting = threading.Event()
+
+    class BlockingErrorText:
+        def __str__(self):
+            formatting_started.set()
+            assert release_formatting.wait(2), "test did not release error text"
+            return "missingFiles"
+
+    torrent = FakeTorrent([
+        DownloadStatus(
+            task_id="a" * 40,
+            state="error",
+            progress=0.2,
+            error=BlockingErrorText(),  # type: ignore[arg-type]
+        ),
+    ])
+    worker = _worker(tmp_path, torrent=torrent)
+    thread, box = _execute_in_thread(worker)
+    assert formatting_started.wait(1)
+
+    worker.cancel()
+    release_formatting.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert torrent.cancelled == []
+    assert box["event"].terminal_result is DownloadTerminalResult.PRESERVED
+    assert box["event"].terminal_cause is DownloadTerminalCause.SHUTDOWN
 
 
 def test_manual_owner_is_not_overwritten_by_later_shutdown(qapp, tmp_path):
@@ -974,6 +1098,73 @@ def test_manual_accepted_while_add_error_is_classified_is_not_lost(
     assert torrent.cancelled == ["a" * 40]
 
 
+def test_manual_during_catchall_error_formatting_preserves_ytdlp_part(
+        qapp, tmp_path):
+    formatting_started = threading.Event()
+    release_formatting = threading.Event()
+    part = tmp_path / "episode.mp4.part"
+    part.write_bytes(b"partial")
+
+    class BlockingFormatError(RuntimeError):
+        def __str__(self):
+            formatting_started.set()
+            assert release_formatting.wait(2), "test did not release error text"
+            return super().__str__()
+
+    def popen(argv, **kwargs):
+        del argv, kwargs
+        raise BlockingFormatError("yt-dlp spawn failed")
+
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=popen,
+    )
+    events = []
+    worker.ready.connect(events.append)
+
+    worker.start()
+    assert formatting_started.wait(1)
+    assert worker.request_download_cancel() is True
+    release_formatting.set()
+    assert worker.wait(1000)
+    qapp.processEvents()
+
+    assert len(events) == 1
+    assert events[0].terminal_result is DownloadTerminalResult.CANCELLED
+    assert events[0].terminal_cause is DownloadTerminalCause.MANUAL
+    assert "临时文件已保留" in events[0].error
+    assert part.read_bytes() == b"partial"
+
+
+def test_catchall_failure_claims_before_ready_is_published(qapp, tmp_path):
+    def popen(argv, **kwargs):
+        del argv, kwargs
+        raise RuntimeError("yt-dlp spawn failed")
+
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=popen,
+    )
+    events = []
+    late_manual = []
+
+    def on_ready(event):
+        events.append(event)
+        late_manual.append(worker.request_download_cancel())
+
+    worker.ready.connect(on_ready)
+    worker.start()
+    assert worker.wait(1000)
+    qapp.processEvents()
+
+    assert len(events) == 1
+    assert events[0].terminal_result is DownloadTerminalResult.FAILED
+    assert events[0].terminal_cause is DownloadTerminalCause.NORMAL
+    assert late_manual == [False]
+
+
 def test_resume_mode_polls_existing_task_elapsed_none(qapp, tmp_path):
     # restart reconcile (P1-9): unknown age -> elapsed None (=> confirmation only)
     ft = FakeTorrent([_completed(str(tmp_path / "ep1.mkv"))])
@@ -1194,6 +1385,9 @@ def test_magnet_auth_failed_is_terminal(qapp, tmp_path):
     event = w.execute()
     assert event is not None, "AUTH_FAILED looped forever instead of failing"
     assert event.error is not None and "AUTH_FAILED" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert w.request_download_cancel() is False
 
 
 def test_magnet_api_error_bounded_retry(qapp, tmp_path):
@@ -1203,6 +1397,36 @@ def test_magnet_api_error_bounded_retry(qapp, tmp_path):
     event = w.execute()
     assert event is not None, "API_ERROR looped forever instead of failing"
     assert event.error is not None and "API_ERROR" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert w.request_download_cancel() is False
+
+
+def test_manual_during_api_error_exhaustion_uses_typed_qbt_cancel(
+        qapp, tmp_path):
+    formatting_started = threading.Event()
+    release_formatting = threading.Event()
+
+    class BlockingApiError(TorrentClientError):
+        def __str__(self):
+            formatting_started.set()
+            assert release_formatting.wait(2), (
+                "test did not release API_ERROR formatting")
+            return super().__str__()
+
+    torrent = FakeTorrent([BlockingApiError("API_ERROR", "HTTP 500")])
+    worker = _worker(tmp_path, torrent=torrent)
+    thread, box = _execute_in_thread(worker)
+    assert formatting_started.wait(1)
+
+    assert worker.request_download_cancel() is True
+    release_formatting.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert torrent.cancelled == ["a" * 40]
+    assert box["event"].terminal_result is DownloadTerminalResult.CANCELLED
+    assert box["event"].terminal_cause is DownloadTerminalCause.MANUAL
 
 
 def test_magnet_api_error_recovery_below_limit_still_succeeds(qapp, tmp_path):
@@ -1277,6 +1501,16 @@ def test_bad_locator_never_executes(qapp, tmp_path, bad):
     assert event.error is not None and "BAD_LOCATOR" in event.error
     assert spawned == []
     assert ft.added == []
+
+
+def test_bad_locator_failure_claims_before_late_manual(qapp, tmp_path):
+    worker = _worker(tmp_path, locator="not-a-download-locator")
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert worker.request_download_cancel() is False
 
 
 # -- yt-dlp argv safety -----------------------------------------------------------
@@ -2012,6 +2246,9 @@ def test_ytdlp_kill_timeout_returns_lifecycle_error(
     assert proc.wait_calls >= 3
     assert proc.poll() is not None
     assert worker._proc is None
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert worker.request_download_cancel() is False
 
 
 def test_ytdlp_cancel_from_reconnect_signal_prevents_next_spawn(qapp, tmp_path):
@@ -2254,6 +2491,8 @@ def test_ytdlp_output_outside_download_dir_rejected(qapp, tmp_path):
                 popen=lambda argv, **kw: FakeProc([str(outside)]))
     event = w.execute()
     assert event.error is not None and "可信" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert w.request_download_cancel() is False
 
 
 def test_ytdlp_output_bad_extension_rejected(qapp, tmp_path):
@@ -2263,6 +2502,8 @@ def test_ytdlp_output_bad_extension_rejected(qapp, tmp_path):
                 popen=lambda argv, **kw: FakeProc([str(bad)]))
     event = w.execute()
     assert event.error is not None and "可信" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert w.request_download_cancel() is False
 
 
 def test_ytdlp_nonzero_exit_classified(qapp, tmp_path):
@@ -2271,6 +2512,45 @@ def test_ytdlp_nonzero_exit_classified(qapp, tmp_path):
                     ["ERROR: This video requires login cookies"], rc=1))
     event = w.execute()
     assert event.error is not None and "登录" in event.error
+    assert event.terminal_result is DownloadTerminalResult.FAILED
+    assert event.terminal_cause is DownloadTerminalCause.NORMAL
+    assert w.request_download_cancel() is False
+
+
+def test_manual_during_ytdlp_failure_classification_preserves_part(
+        qapp, tmp_path, monkeypatch):
+    classification_started = threading.Event()
+    release_classification = threading.Event()
+    original_analyze = anime_worker_module._analyze_ytdlp_failure
+    part = tmp_path / "episode.mp4.part"
+    part.write_bytes(b"partial")
+
+    def blocking_analyze(text):
+        classification_started.set()
+        assert release_classification.wait(2), (
+            "test did not release yt-dlp failure classification")
+        return original_analyze(text)
+
+    monkeypatch.setattr(
+        anime_worker_module, "_analyze_ytdlp_failure", blocking_analyze)
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kwargs: FakeProc(
+            ["ERROR: This video requires login cookies"], rc=1),
+    )
+    thread, box = _execute_in_thread(worker)
+    assert classification_started.wait(1)
+
+    assert worker.request_download_cancel() is True
+    release_classification.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert box["event"].terminal_result is DownloadTerminalResult.CANCELLED
+    assert box["event"].terminal_cause is DownloadTerminalCause.MANUAL
+    assert "临时文件已保留" in box["event"].error
+    assert part.read_bytes() == b"partial"
 
 
 def test_ytdlp_cancel_terminates_and_keeps_part(qapp, tmp_path):

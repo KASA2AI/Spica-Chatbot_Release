@@ -7,7 +7,7 @@ import os
 import pytest
 
 from spica.adapters.torrent.qbittorrent import QBittorrentClient, _extract_btih_40hex
-from spica.ports.torrent_client import TorrentClientError
+from spica.ports.torrent_client import TorrentCancelResult, TorrentClientError
 
 _HEX = "fe2aafd45d8b9e077b22968a8c65b91d4a25cadf"
 _MAGNET = f"magnet:?xt=urn:btih:{_HEX}&dn=whatever&tr=udp://x"
@@ -40,7 +40,7 @@ class FakeResp:
 
 class FakeSession:
     def __init__(self, info_tasks=None, require_login=False, login_text="Ok.",
-                 login_status=200):
+                 login_status=200, app_version="v5.2.3", mutation_status=200):
         self.headers: dict[str, str] = {}
         self.calls: list[tuple[str, dict | None]] = []
         self.posts: list[tuple[str, dict | None]] = []
@@ -49,10 +49,14 @@ class FakeSession:
         self._require_login = require_login
         self._login_text = login_text
         self._login_status = login_status
+        self._app_version = app_version
+        self._mutation_status = mutation_status
         self._authed = False
 
     def get(self, url, params=None, timeout=None, **kw):
         self.calls.append((url, params))
+        if "app/version" in url:
+            return FakeResp(200, text=self._app_version)
         if "torrents/info" in url:
             return FakeResp(200, json_data=self._info)
         return FakeResp(404)
@@ -66,7 +70,17 @@ class FakeSession:
             return FakeResp(self._login_status, text=self._login_text)
         if self._require_login and not self._authed:
             return FakeResp(403)
-        return FakeResp(200, text="Ok.")
+        if "torrents/pause" in url:
+            for task in self._info:
+                if float(task.get("progress", 0.0) or 0.0) < 1.0:
+                    task["state"] = "pausedDL"
+        elif "torrents/stop" in url:
+            for task in self._info:
+                if float(task.get("progress", 0.0) or 0.0) < 1.0:
+                    task["state"] = "stoppedDL"
+        elif "torrents/delete" in url:
+            self._info = []
+        return FakeResp(self._mutation_status, text="Ok.")
 
     def add_data(self):
         for url, data in self.posts:
@@ -276,6 +290,38 @@ def test_status_preserves_metadata_fetching_state(tmp_path):
     assert status.progress == 0.0
 
 
+def test_status_exposes_qbt_last_activity_unix_epoch_seconds(tmp_path):
+    sess = FakeSession(info_tasks=[
+        {"hash": _HEX, "state": "stalledDL", "progress": 0.25,
+         "last_activity": 1_721_234_567}])
+
+    status = _client(tmp_path, sess).status(_HEX)
+
+    assert status.last_activity_at == 1_721_234_567.0
+
+
+@pytest.mark.parametrize(
+    "last_activity",
+    [
+        0,
+        -1,
+        "not-an-epoch",
+        None,
+        float("nan"),
+        float("inf"),
+        10 ** 400,
+    ],
+)
+def test_status_ignores_invalid_qbt_last_activity(tmp_path, last_activity):
+    sess = FakeSession(info_tasks=[
+        {"hash": _HEX, "state": "stalledDL", "progress": 0.25,
+         "last_activity": last_activity}])
+
+    status = _client(tmp_path, sess).status(_HEX)
+
+    assert status.last_activity_at is None
+
+
 def test_status_completed_mapping(tmp_path):
     sess = FakeSession(info_tasks=[
         {"hash": _HEX, "state": "pausedUP", "progress": 1.0,
@@ -288,7 +334,8 @@ def test_status_completed_mapping(tmp_path):
 def test_cancel_only_deletes_in_category(tmp_path):
     sess = FakeSession(info_tasks=[{"hash": _HEX, "state": "downloading",
                                     "progress": 0.1}])
-    _client(tmp_path, sess).cancel(_HEX)
+    outcome = _client(tmp_path, sess).cancel(_HEX)
+    assert outcome.result is TorrentCancelResult.CANCELLED
     assert sess.deletes() == [{"hashes": _HEX, "deleteFiles": "true"}]
 
 
@@ -297,10 +344,416 @@ def test_cancel_refuses_task_outside_category(tmp_path):
     sess = FakeSession(info_tasks=[{"hash": _HEX, "state": "downloading",
                                     "progress": 0.1}])
     other = "0" * 40
-    with pytest.raises(TorrentClientError) as ei:
-        _client(tmp_path, sess).cancel(other)
-    assert ei.value.code == "NOT_IN_CATEGORY"
+    outcome = _client(tmp_path, sess).cancel(other)
+    assert outcome.result is TorrentCancelResult.MISSING
     assert sess.deletes() == []                    # nothing deleted
+
+
+def test_cancel_freeze_recheck_completed_never_deletes_data(tmp_path):
+    class CompletesWhileStoppingSession(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.snapshots = [
+                [{"hash": _HEX, "state": "downloading", "progress": 0.99}],
+                [{
+                    "hash": _HEX,
+                    "state": "stoppedUP",
+                    "progress": 1.0,
+                    "content_path": "/dl/ep.mkv",
+                }],
+            ]
+
+        def get(self, url, params=None, timeout=None, **kw):
+            self.calls.append((url, params))
+            if "app/version" in url:
+                return FakeResp(200, text="v5.2.3")
+            if "torrents/info" in url:
+                snapshot = self.snapshots.pop(0)
+                return FakeResp(200, json_data=snapshot)
+            return FakeResp(404)
+
+    session = CompletesWhileStoppingSession()
+
+    outcome = _client(tmp_path, session).cancel(_HEX)
+
+    assert outcome.result.value == "already_completed"
+    assert outcome.save_path == "/dl/ep.mkv"
+    assert any("torrents/stop" in url for url, _ in session.posts)
+    assert session.deletes() == []
+
+
+def test_cancel_final_pre_delete_read_completed_never_deletes_data(tmp_path):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.99}]
+    frozen = [{"hash": _HEX, "state": "stoppedDL", "progress": 0.99}]
+    completed = [{
+        "hash": _HEX,
+        "state": "stoppedUP",
+        "progress": 1.0,
+        "content_path": "/dl/ep.mkv",
+    }]
+    session = _ScriptedCancelSession([down, frozen, completed])
+
+    outcome = _client(
+        tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.ALREADY_COMPLETED
+    assert outcome.save_path == "/dl/ep.mkv"
+    assert session.deletes() == []
+
+
+class _ScriptedCancelSession(FakeSession):
+    """Exact qBT snapshots for freeze/re-read/delete confirmation tests."""
+
+    def __init__(
+        self,
+        snapshots,
+        *,
+        app_version="v5.2.3",
+        mutation_status=200,
+        property_statuses=None,
+    ):
+        super().__init__(
+            app_version=app_version, mutation_status=mutation_status)
+        self.snapshots = list(snapshots)
+        self.property_statuses = list(property_statuses or [404])
+
+    def get(self, url, params=None, timeout=None, **kw):
+        self.calls.append((url, params))
+        if "app/version" in url:
+            return FakeResp(200, text=self._app_version)
+        if "torrents/properties" in url:
+            status = (
+                self.property_statuses.pop(0)
+                if len(self.property_statuses) > 1
+                else self.property_statuses[0]
+            )
+            return FakeResp(status, json_data={} if status == 200 else None)
+        if "torrents/info" in url:
+            snapshot = self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
+            return FakeResp(200, json_data=snapshot)
+        return FakeResp(404)
+
+    def post(self, url, data=None, timeout=None, **kw):
+        self.calls.append((url, data))
+        self.posts.append((url, data))
+        self.file_uploads.append(kw.get("files"))
+        return FakeResp(self._mutation_status, text="")
+
+
+@pytest.mark.parametrize(
+    ("version", "freeze_endpoint", "frozen_state"),
+    [
+        ("v4.1.0", "pause", "pausedDL"),
+        ("v4.6.7", "pause", "pausedDL"),
+        ("v5.0.0", "stop", "stoppedDL"),
+        ("v5.2.3", "stop", "stoppedDL"),
+    ],
+)
+def test_cancel_dispatches_version_specific_freeze_only(
+        tmp_path, version, freeze_endpoint, frozen_state):
+    frozen = [{"hash": _HEX, "state": frozen_state, "progress": 0.4}]
+    session = _ScriptedCancelSession([
+        [{"hash": _HEX, "state": "downloading", "progress": 0.4}],
+        frozen,
+        frozen,
+        [],
+    ], app_version=version)
+
+    outcome = _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.CANCELLED
+    mutation_paths = [url for url, _ in session.posts]
+    assert any(f"torrents/{freeze_endpoint}" in url for url in mutation_paths)
+    forbidden = "stop" if freeze_endpoint == "pause" else "pause"
+    assert not any(f"torrents/{forbidden}" in url for url in mutation_paths)
+
+
+@pytest.mark.parametrize("version", ["", "not-a-version", "v4.0.5", "v4.7.0", "v6.0.0"])
+def test_cancel_unknown_version_is_zero_mutation(tmp_path, version):
+    session = _ScriptedCancelSession([
+        [{"hash": _HEX, "state": "downloading", "progress": 0.4}],
+    ], app_version=version)
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "UNSUPPORTED_VERSION"
+    assert session.posts == []
+
+
+def test_cancel_polls_until_v5_reports_stopped_dl(tmp_path):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    checking = [{"hash": _HEX, "state": "checkingDL", "progress": 0.4}]
+    frozen = [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}]
+    session = _ScriptedCancelSession([down, down, checking, frozen, frozen, []])
+
+    outcome = _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.CANCELLED
+    info_calls = [params for url, params in session.calls if "torrents/info" in url]
+    assert len(info_calls) == 5
+    # v4.1 compatibility: never assume the optional hashes filter exists.
+    assert info_calls == [{"category": "spica-anime"}] * 5
+    properties_call = next(
+        params for url, params in session.calls
+        if "torrents/properties" in url)
+    assert properties_call == {"hash": _HEX}
+
+
+def test_cancel_v4_1_reads_category_then_matches_hash_locally(tmp_path):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    frozen = [{"hash": _HEX, "state": "pausedDL", "progress": 0.4}]
+    session = _ScriptedCancelSession(
+        [down, frozen, frozen], app_version="v4.1.0")
+
+    outcome = _client(
+        tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.CANCELLED
+    info_calls = [
+        params for url, params in session.calls if "torrents/info" in url]
+    assert info_calls
+    assert all(params == {"category": "spica-anime"} for params in info_calls)
+
+
+def test_cancel_mutations_target_only_exact_owned_hash(tmp_path):
+    other_hash = "0" * 40
+    down = [
+        {"hash": _HEX, "state": "downloading", "progress": 0.4},
+        {"hash": other_hash, "state": "downloading", "progress": 0.2},
+    ]
+    frozen = [
+        {"hash": _HEX, "state": "stoppedDL", "progress": 0.4},
+        {"hash": other_hash, "state": "downloading", "progress": 0.2},
+    ]
+    session = _ScriptedCancelSession([down, frozen, frozen])
+
+    outcome = _client(
+        tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.CANCELLED
+    freeze_data = next(
+        data for url, data in session.posts if "torrents/stop" in url)
+    delete_data = next(
+        data for url, data in session.posts if "torrents/delete" in url)
+    assert freeze_data == {"hashes": _HEX}
+    assert delete_data["hashes"] == _HEX
+    assert other_hash not in (freeze_data["hashes"], delete_data["hashes"])
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["uploading", "pausedUP", "stoppedUP", "queuedUP", "checkingUP", "forcedUP"],
+)
+def test_cancel_all_up_family_states_preserve_completed_files(tmp_path, state):
+    session = _ScriptedCancelSession([[{
+        "hash": _HEX, "state": state, "progress": 0.8,
+        "content_path": "/dl/ep.mkv",
+    }]])
+
+    outcome = _client(tmp_path, session).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.ALREADY_COMPLETED
+    assert outcome.save_path == "/dl/ep.mkv"
+    assert session.posts == []
+
+
+def test_cancel_deletes_stable_incomplete_error_only_after_freeze(tmp_path):
+    error = [{"hash": _HEX, "state": "error", "progress": 0.4}]
+    session = _ScriptedCancelSession([error, error, error, error, []])
+
+    outcome = _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.CANCELLED
+    assert len(session.deletes()) == 1
+
+
+@pytest.mark.parametrize("state", ["checkingDL", "moving", "unknown"])
+def test_cancel_ambiguous_post_freeze_states_fail_closed(tmp_path, state):
+    initial = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    ambiguous = [{"hash": _HEX, "state": state, "progress": 0.4}]
+    session = _ScriptedCancelSession([initial] + [ambiguous] * 6)
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_NOT_FROZEN"
+    assert session.deletes() == []
+
+
+def test_cancel_unstable_error_fails_closed_without_delete(tmp_path):
+    snapshots = [[{
+        "hash": _HEX,
+        "state": "error",
+        "progress": progress,
+    }] for progress in (0.1, 0.2, 0.1, 0.2, 0.1, 0.2)]
+    session = _ScriptedCancelSession(snapshots)
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_NOT_FROZEN"
+    assert session.deletes() == []
+
+
+def test_cancel_nonconsecutive_error_signature_never_authorizes_delete(tmp_path):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    error = [{"hash": _HEX, "state": "error", "progress": 0.4}]
+    frozen = [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}]
+    session = _ScriptedCancelSession([down, error, frozen, error])
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_NOT_FROZEN"
+    assert session.deletes() == []
+
+
+@pytest.mark.parametrize(
+    "raw_progress",
+    ["__missing__", None, "garbage", float("nan"), float("inf"), -1, 10 ** 400],
+    ids=["missing", "none", "text", "nan", "inf", "negative", "overflow"],
+)
+def test_cancel_invalid_progress_never_authorizes_delete(
+        tmp_path, raw_progress):
+    task = {"hash": _HEX, "state": "stoppedDL"}
+    if raw_progress != "__missing__":
+        task["progress"] = raw_progress
+    snapshot = [task]
+    session = _ScriptedCancelSession([snapshot] * 7)
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_NOT_FROZEN"
+    assert session.deletes() == []
+
+
+def test_cancel_recategorized_task_is_not_confirmed_disappeared(tmp_path):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    frozen = [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}]
+    session = _ScriptedCancelSession(
+        [down, frozen, frozen, []],
+        property_statuses=[200] * 5,
+    )
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_UNCONFIRMED"
+    assert len(session.deletes()) == 1
+
+
+@pytest.mark.parametrize(
+    "snapshots",
+    [
+        [
+            [{"hash": _HEX, "state": "downloading", "progress": 0.4}],
+            [],
+        ],
+        [
+            [{"hash": _HEX, "state": "downloading", "progress": 0.4}],
+            [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}],
+            [],
+        ],
+    ],
+    ids=["during-freeze", "before-delete"],
+)
+def test_cancel_owner_lost_from_category_fails_closed_when_hash_still_exists(
+        tmp_path, snapshots):
+    session = _ScriptedCancelSession(
+        snapshots,
+        property_statuses=[200],
+    )
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_OWNER_LOST"
+    assert session.deletes() == []
+
+
+def test_cancel_initial_category_miss_checks_global_exact_hash(tmp_path):
+    session = _ScriptedCancelSession(
+        [[]],
+        property_statuses=[200],
+    )
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_OWNER_LOST"
+    assert session.posts == []
+    properties_call = next(
+        params for url, params in session.calls
+        if "torrents/properties" in url)
+    assert properties_call == {"hash": _HEX}
+
+
+def test_cancel_initial_category_and_global_miss_returns_missing(tmp_path):
+    session = _ScriptedCancelSession(
+        [[]],
+        property_statuses=[404],
+    )
+
+    outcome = _client(
+        tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.MISSING
+    assert session.posts == []
+    assert any("torrents/properties" in url for url, _ in session.calls)
+
+
+def test_cancel_owned_task_truly_removed_during_freeze_returns_missing(tmp_path):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    session = _ScriptedCancelSession(
+        [down, []],
+        property_statuses=[404],
+    )
+
+    outcome = _client(
+        tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.MISSING
+    assert session.deletes() == []
+
+
+@pytest.mark.parametrize("mutation_status", [200, 204])
+def test_cancel_requires_post_delete_disappearance_not_http_ack(
+        tmp_path, mutation_status):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    frozen = [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}]
+    session = _ScriptedCancelSession(
+        [down] + [frozen] * 8,
+        mutation_status=mutation_status,
+        property_statuses=[200] * 5,
+    )
+
+    with pytest.raises(TorrentClientError) as caught:
+        _client(tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert caught.value.code == "CANCEL_UNCONFIRMED"
+    assert len(session.deletes()) == 1
+
+
+def test_cancel_accepts_204_only_after_eventual_exact_hash_disappearance(
+        tmp_path):
+    down = [{"hash": _HEX, "state": "downloading", "progress": 0.4}]
+    frozen = [{"hash": _HEX, "state": "stoppedDL", "progress": 0.4}]
+    session = _ScriptedCancelSession(
+        [down, frozen, frozen],
+        mutation_status=204,
+        property_statuses=[200, 200, 404],
+    )
+
+    outcome = _client(
+        tmp_path, session, sleep=lambda _seconds: None).cancel(_HEX)
+
+    assert outcome.result is TorrentCancelResult.CANCELLED
+    property_calls = [
+        params for url, params in session.calls
+        if "torrents/properties" in url]
+    assert property_calls == [{"hash": _HEX}] * 3
 
 
 # -- auth --------------------------------------------------------------------

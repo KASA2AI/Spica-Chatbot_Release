@@ -150,8 +150,9 @@ class AppHost:
         # returns ANIME_NOT_READY). Kept OFF the companion tee so anime events
         # never reach the reaction engine.
         self._anime_sink: Any = None
-        # F8 busy seam: live in-flight download state ({"progress","title"} or
-        # None), supplied by the UI controller via attach_anime_sink (Phase 4).
+        # F8 busy/cancel seam: live in-flight download state
+        # ({"request_id","progress","title"} or None), supplied by the UI
+        # controller via attach_anime_sink (Phase 4).
         self._anime_in_flight: Any = lambda: None
         # P5 reaction engine (built in initialize() when reaction_mode != off;
         # the arbiter handoff is UI-attached -- same shape as song's

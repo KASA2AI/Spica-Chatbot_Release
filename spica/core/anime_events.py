@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+from spica.anime.models import DownloadTerminalCause, DownloadTerminalResult
 from spica.core.events import RuntimeEvent, register_event
 
 
@@ -56,6 +57,18 @@ class AnimeRequestEvent(RuntimeEvent):
 
 
 @dataclass(frozen=True)
+class AnimeCancelRequestEvent(RuntimeEvent):
+    """Ask the UI-side controller to stop one specific active download."""
+
+    kind: ClassVar[str] = "anime_cancel_request"
+    request_id: str
+    title: str = ""
+
+    def _data(self) -> dict[str, Any]:
+        return {"request_id": self.request_id, "title": self.title}
+
+
+@dataclass(frozen=True)
 class AnimeReadyEvent(RuntimeEvent):
     """Phase 4: the download worker reports a finished (or failed) episode."""
 
@@ -65,6 +78,18 @@ class AnimeReadyEvent(RuntimeEvent):
     save_path: str | None = None
     elapsed_seconds: float | None = None
     error: str | None = None
+    terminal_result: DownloadTerminalResult | None = None
+    terminal_cause: DownloadTerminalCause = DownloadTerminalCause.NORMAL
+
+    def __post_init__(self) -> None:
+        if self.terminal_result is None:
+            object.__setattr__(
+                self,
+                "terminal_result",
+                (DownloadTerminalResult.FAILED
+                 if self.error is not None
+                 else DownloadTerminalResult.COMPLETED),
+            )
 
     def _data(self) -> dict[str, Any]:
         return {
@@ -73,6 +98,8 @@ class AnimeReadyEvent(RuntimeEvent):
             "save_path": self.save_path,
             "elapsed_seconds": self.elapsed_seconds,
             "error": self.error,
+            "terminal_result": self.terminal_result.value,
+            "terminal_cause": self.terminal_cause.value,
         }
 
 
@@ -88,6 +115,20 @@ def _opt_float(v: Any) -> float | None:
         return float(v) if v is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _terminal_result(v: Any) -> DownloadTerminalResult:
+    try:
+        return DownloadTerminalResult(str(v))
+    except ValueError:
+        return DownloadTerminalResult.FAILED
+
+
+def _terminal_cause(v: Any) -> DownloadTerminalCause:
+    try:
+        return DownloadTerminalCause(str(v))
+    except ValueError:
+        return DownloadTerminalCause.NORMAL
 
 
 register_event(
@@ -117,5 +158,18 @@ register_event(
         save_path=(str(d["save_path"]) if d.get("save_path") is not None else None),
         elapsed_seconds=_opt_float(d.get("elapsed_seconds")),
         error=(str(d["error"]) if d.get("error") is not None else None),
+        terminal_result=(
+            _terminal_result(d["terminal_result"])
+            if "terminal_result" in d else None),
+        terminal_cause=_terminal_cause(
+            d.get("terminal_cause", DownloadTerminalCause.NORMAL.value)),
+    ),
+)
+
+register_event(
+    "anime_cancel_request",
+    lambda d: AnimeCancelRequestEvent(
+        request_id=str(d.get("request_id") or ""),
+        title=str(d.get("title") or ""),
     ),
 )

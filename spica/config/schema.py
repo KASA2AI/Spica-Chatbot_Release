@@ -424,7 +424,11 @@ class AnimeConfig(BaseModel):
     auto_play_threshold_seconds: float = Field(
         default=50.0, ge=0.0, allow_inf_nan=False)
     qbittorrent_poll_seconds: float = 5.0        # worker 轮询间隔
-    stall_timeout_minutes: float = 30.0          # 无进度判卡 (本轮只播报询问)
+    stall_timeout_minutes: float = Field(
+        default=10.0,
+        ge=1.0,
+        allow_inf_nan=False,
+    )
     ytdlp_format: str = "bv*[height<=1080]+ba/b[height<=1080]"
     ytdlp_min_rate_kib_per_second: float = 512.0  # 0 disables low-speed reconnect
     cookies_file: str = "data/cookies.txt"       # yt-dlp --cookies; 文件可缺省(匿名降清晰度)

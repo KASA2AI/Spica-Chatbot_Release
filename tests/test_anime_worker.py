@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,8 +24,17 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from spica.anime.models import DownloadStatus  # noqa: E402
-from spica.ports.torrent_client import TorrentClientError  # noqa: E402
+from spica.adapters.torrent.qbittorrent import QBittorrentClient  # noqa: E402
+from spica.anime.models import (  # noqa: E402
+    DownloadStatus,
+    DownloadTerminalCause,
+    DownloadTerminalResult,
+)
+from spica.ports.torrent_client import (  # noqa: E402
+    TorrentCancelOutcome,
+    TorrentCancelResult,
+    TorrentClientError,
+)
 import ui.workers.anime_worker as anime_worker_module  # noqa: E402
 from ui.workers.anime_worker import AnimeDownloadWorker  # noqa: E402
 
@@ -43,14 +53,30 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _clock(step: float = 10.0):
-    state = {"t": 0.0}
+class ManualClock:
+    """Deterministic clock: reads are pure; only sleep/advance moves time."""
 
-    def tick() -> float:
-        state["t"] += step
-        return state["t"]
+    def __init__(self, initial: float = 0.0):
+        self._value = float(initial)
+        self._lock = threading.Lock()
 
-    return tick
+    def now(self) -> float:
+        with self._lock:
+            return self._value
+
+    def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+
+    def advance(self, seconds: float) -> None:
+        with self._lock:
+            self._value += float(seconds)
+
+
+def _timed_lines(clock: ManualClock, lines, *, step: float = 10.0):
+    """Advance explicit source time before each emitted process-output line."""
+    for line in lines:
+        clock.advance(step)
+        yield line
 
 
 class FakeTorrent:
@@ -82,8 +108,9 @@ class FakeTorrent:
             raise item
         return item
 
-    def cancel(self, task_id: str) -> None:
+    def cancel(self, task_id: str) -> TorrentCancelOutcome:
         self.cancelled.append(task_id)
+        return TorrentCancelOutcome(TorrentCancelResult.CANCELLED)
 
 
 class FakeProc:
@@ -118,7 +145,7 @@ class BlockingStdout:
     """Queue-backed pipe whose iterator records the sole reading thread."""
 
     def __init__(self, lines=(), *, finish=False, first_read_gate=None,
-                 close_unblocks=True):
+                 close_unblocks=True, before_line=None):
         self._items = queue.Queue()
         for line in lines:
             self._items.put(f"{line}\n")
@@ -126,6 +153,7 @@ class BlockingStdout:
         self._first_read_gate = first_read_gate
         self._first_read = True
         self._close_unblocks = close_unblocks
+        self._before_line = before_line
         self._on_eof = None
         self.read_started = threading.Event()
         self.line_read = threading.Event()
@@ -152,6 +180,8 @@ class BlockingStdout:
             if self._on_eof is not None:
                 self._on_eof()
             raise StopIteration
+        if self._before_line is not None:
+            self._before_line()
         self.line_read.set()
         return item
 
@@ -227,15 +257,24 @@ class ControlledProc:
 
 
 def _worker(tmp_path, *, locator=MAGNET, torrent=None, popen=None,
-            resume_task_id=None, cookies_file="", stall_timeout_minutes=30.0,
+            resume_task_id=None, cookies_file="", stall_timeout_minutes=10.0,
+            resume_created_at=None, wall_clock=None, clock=None,
+            sleep=None, poll_seconds=1.0,
             title="无职转生 第三季", series_title="无职转生", **kw):
+    if clock is None:
+        manual_clock = ManualClock()
+        clock = manual_clock.now
+        if sleep is None:
+            sleep = manual_clock.sleep
     return AnimeDownloadWorker(
         request_id="REQ", episode_key="无职转生|s3|e1", title=title,
         series_title=series_title,
         locator=locator, torrent=torrent, download_dir=str(tmp_path),
-        poll_seconds=1.0, stall_timeout_minutes=stall_timeout_minutes,
+        poll_seconds=poll_seconds, stall_timeout_minutes=stall_timeout_minutes,
         cookies_file=cookies_file, resume_task_id=resume_task_id,
-        popen=popen, clock=_clock(), sleep=lambda s: None, **kw)
+        resume_created_at=resume_created_at,
+        popen=popen, clock=clock,
+        wall_clock=wall_clock, sleep=sleep or (lambda s: None), **kw)
 
 
 def _worker_with_popen_only(tmp_path, popen):
@@ -342,14 +381,339 @@ def test_magnet_error_state_reports(qapp, tmp_path):
     assert event.error is not None and "missingFiles" in event.error
 
 
-def test_magnet_stall_signal_fires_once(qapp, tmp_path):
-    same = [_downloading(0.5)] * 10 + [_completed(str(tmp_path / "e.mkv"))]
-    w = _worker(tmp_path, torrent=FakeTorrent(same), stall_timeout_minutes=1.0)
-    stalls = []
-    w.stalled.connect(lambda rid, m: stalls.append(m))
+def test_magnet_stall_timeout_cancels_once_and_is_terminal(qapp, tmp_path):
+    ft = FakeTorrent(
+        [_downloading(0.5)] * 10 + [_completed(str(tmp_path / "e.mkv"))])
+    w = _worker(
+        tmp_path, torrent=ft, stall_timeout_minutes=1.0, poll_seconds=10.0)
+
     event = w.execute()
+
+    assert event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert "移除任务并请求删除未完成数据" in event.error
+    assert ft.cancelled == ["a" * 40]
+
+
+def test_stall_timeout_does_not_fire_at_599_point_9_seconds(qapp, tmp_path):
+    clock = ManualClock()
+    torrent = FakeTorrent([
+        _downloading(0.5),
+        _downloading(0.5),
+        _completed(str(tmp_path / "ep.mkv")),
+    ])
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=10.0,
+        poll_seconds=599.9, clock=clock.now, sleep=clock.sleep)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.COMPLETED
+    assert torrent.cancelled == []
+
+
+def test_stall_timeout_fires_at_exactly_600_seconds(qapp, tmp_path):
+    clock = ManualClock()
+    torrent = FakeTorrent([_downloading(0.5)])
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=10.0,
+        poll_seconds=600.0, clock=clock.now, sleep=clock.sleep)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert torrent.cancelled == ["a" * 40]
+
+
+def test_stall_cutoff_error_state_enters_scoped_cancel(qapp, tmp_path):
+    clock = ManualClock()
+    error = DownloadStatus(
+        task_id="a" * 40,
+        state="error",
+        progress=0.5,
+        error="missingFiles",
+    )
+    torrent = FakeTorrent([_downloading(0.5), error, error])
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=10.0,
+        poll_seconds=600.0, clock=clock.now, sleep=clock.sleep)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert torrent.cancelled == ["a" * 40]
+
+
+def test_first_observed_progress_is_baseline_at_hard_cutoff(qapp, tmp_path):
+    clock = ManualClock()
+    half = _downloading(0.5)
+    torrent = FakeTorrent([
+        TorrentClientError("UNREACHABLE", "down"),
+        half,
+        half,
+        _completed(str(tmp_path / "ep.mkv")),
+    ])
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=10.0,
+        poll_seconds=600.0, clock=clock.now, sleep=clock.sleep)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert torrent.cancelled == ["a" * 40]
+
+
+def test_real_progress_on_cutoff_final_read_resets_timer(qapp, tmp_path):
+    clock = ManualClock()
+    torrent = FakeTorrent([
+        _downloading(0.5),
+        _downloading(0.5),
+        _downloading(0.6),
+        _completed(str(tmp_path / "ep.mkv")),
+    ])
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=10.0,
+        poll_seconds=600.0, clock=clock.now, sleep=clock.sleep)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.COMPLETED
+    assert torrent.cancelled == []
+
+
+def test_magnet_stall_timeout_cancel_failure_still_returns_terminal(
+        qapp, tmp_path):
+    class CancelFailsTorrent(FakeTorrent):
+        def cancel(self, task_id: str) -> TorrentCancelOutcome:
+            self.cancelled.append(task_id)
+            raise TorrentClientError("UNREACHABLE", "qbt down")
+
+    ft = CancelFailsTorrent([_downloading(0.5)] * 20)
+    w = _worker(
+        tmp_path, torrent=ft, stall_timeout_minutes=1.0, poll_seconds=10.0)
+
+    event = w.execute()
+
+    assert event is not None
+    assert event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.UNCONFIRMED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert "后台任务可能仍在" in event.error
+    assert ft.cancelled == ["a" * 40]
+
+
+def test_stall_cancel_none_outcome_is_unconfirmed(qapp, tmp_path):
+    class InvalidLegacyTorrent(FakeTorrent):
+        def cancel(self, task_id: str) -> None:
+            self.cancelled.append(task_id)
+            return None
+
+    torrent = InvalidLegacyTorrent([_downloading(0.5)])
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=1.0,
+        poll_seconds=60.0)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.UNCONFIRMED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert "后台任务可能仍在" in event.error
+
+
+def test_stall_final_task_not_found_is_disambiguated_by_cancel_port(
+        qapp, tmp_path):
+    class OwnerLostTorrent(FakeTorrent):
+        def cancel(self, task_id: str) -> TorrentCancelOutcome:
+            self.cancelled.append(task_id)
+            raise TorrentClientError("CANCEL_OWNER_LOST", "recategorized")
+
+    clock = ManualClock()
+    torrent = OwnerLostTorrent([
+        _downloading(0.5),
+        _downloading(0.5),
+        TorrentClientError("TASK_NOT_FOUND", "category miss"),
+    ])
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=10.0,
+        poll_seconds=600.0, clock=clock.now, sleep=clock.sleep)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.UNCONFIRMED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert torrent.cancelled == ["a" * 40]
+
+
+def test_magnet_stall_final_recheck_completed_wins(qapp, tmp_path):
+    ft = FakeTorrent(
+        [_downloading(0.5)] * 6 + [_completed(str(tmp_path / "e.mkv"))])
+    w = _worker(tmp_path, torrent=ft, stall_timeout_minutes=1.0)
+
+    event = w.execute()
+
     assert event.error is None
-    assert len(stalls) == 1                            # once per dry spell
+    assert event.save_path == str(tmp_path / "e.mkv")
+    assert ft.cancelled == []
+
+
+class _BlockingCutoffTorrent(FakeTorrent):
+    """Block only the cutoff's final status read, not normal polling."""
+
+    def __init__(self, clock, final_status):
+        super().__init__([_downloading(0.5)])
+        self._clock = clock
+        self._final_status = final_status
+        self._cutoff_poll_seen = False
+        self.final_read_started = threading.Event()
+        self.release_final_read = threading.Event()
+
+    def status(self, task_id: str) -> DownloadStatus:
+        del task_id
+        if self._clock.now() < 60.0:
+            return _downloading(0.5)
+        if not self._cutoff_poll_seen:
+            self._cutoff_poll_seen = True
+            return _downloading(0.5)
+        self.final_read_started.set()
+        assert self.release_final_read.wait(2), "test did not release final qBT read"
+        return self._final_status
+
+
+def _execute_in_thread(worker):
+    box = {}
+
+    def execute():
+        box["event"] = worker.execute()
+
+    thread = threading.Thread(target=execute)
+    thread.start()
+    return thread, box
+
+
+def test_shutdown_claimed_during_stall_final_read_preserves_qbt(qapp, tmp_path):
+    clock = ManualClock()
+    torrent = _BlockingCutoffTorrent(clock, _downloading(0.5))
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=1.0,
+        clock=clock.now, sleep=clock.sleep)
+    thread, box = _execute_in_thread(worker)
+    assert torrent.final_read_started.wait(2)
+
+    worker.cancel()
+    torrent.release_final_read.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert torrent.cancelled == []
+    assert box["event"].terminal_result is DownloadTerminalResult.PRESERVED
+    assert box["event"].terminal_cause is DownloadTerminalCause.SHUTDOWN
+
+
+def test_manual_claimed_during_stall_final_read_wins_over_timeout(qapp, tmp_path):
+    clock = ManualClock()
+    torrent = _BlockingCutoffTorrent(clock, _downloading(0.5))
+    worker = _worker(
+        tmp_path, torrent=torrent, stall_timeout_minutes=1.0,
+        clock=clock.now, sleep=clock.sleep)
+    thread, box = _execute_in_thread(worker)
+    assert torrent.final_read_started.wait(2)
+
+    assert worker.request_download_cancel() is True
+    torrent.release_final_read.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert torrent.cancelled == ["a" * 40]
+    assert box["event"].terminal_result is DownloadTerminalResult.CANCELLED
+    assert box["event"].terminal_cause is DownloadTerminalCause.MANUAL
+
+
+def test_manual_claim_during_status_error_is_not_lost(qapp, tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingErrorTorrent(FakeTorrent):
+        def status(self, task_id: str) -> DownloadStatus:
+            del task_id
+            entered.set()
+            assert release.wait(2)
+            return DownloadStatus(
+                task_id="a" * 40, state="error", progress=0.2,
+                error="missingFiles")
+
+    torrent = BlockingErrorTorrent([_downloading(0.2)])
+    worker = _worker(tmp_path, torrent=torrent)
+    thread, box = _execute_in_thread(worker)
+    assert entered.wait(2)
+
+    assert worker.request_download_cancel() is True
+    release.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert torrent.cancelled == ["a" * 40]
+    assert box["event"].terminal_result is DownloadTerminalResult.CANCELLED
+    assert box["event"].terminal_cause is DownloadTerminalCause.MANUAL
+
+
+def test_manual_owner_is_not_overwritten_by_later_shutdown(qapp, tmp_path):
+    torrent = FakeTorrent([_downloading(0.2), _downloading(0.2)])
+    worker = _worker(
+        tmp_path, locator="", torrent=torrent, resume_task_id="a" * 40)
+
+    assert worker.request_download_cancel() is True
+    worker.cancel()
+    event = worker.execute()
+
+    assert torrent.cancelled == ["a" * 40]
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+
+
+def test_shutdown_owner_rejects_later_manual_and_never_mutates_qbt(
+        qapp, tmp_path):
+    torrent = FakeTorrent([_downloading(0.2)])
+    worker = _worker(
+        tmp_path, locator="", torrent=torrent, resume_task_id="a" * 40)
+
+    worker.cancel()
+    assert worker.request_download_cancel() is False
+    event = worker.execute()
+
+    assert torrent.cancelled == []
+    assert event.terminal_result is DownloadTerminalResult.PRESERVED
+    assert event.terminal_cause is DownloadTerminalCause.SHUTDOWN
+
+
+def test_magnet_progress_resets_stall_timeout(qapp, tmp_path):
+    ft = FakeTorrent(
+        [_downloading(0.1)] * 5
+        + [_downloading(0.2)] * 5
+        + [_completed(str(tmp_path / "e.mkv"))])
+    w = _worker(tmp_path, torrent=ft, stall_timeout_minutes=1.0)
+
+    event = w.execute()
+
+    assert event.error is None
+    assert ft.cancelled == []
+
+
+def test_magnet_progress_after_rollback_resets_stall_timeout(qapp, tmp_path):
+    ft = FakeTorrent(
+        [_downloading(0.5)] * 4
+        + [_downloading(0.1), _downloading(0.2), _downloading(0.2)]
+        + [_completed(str(tmp_path / "e.mkv"))])
+    w = _worker(tmp_path, torrent=ft, stall_timeout_minutes=1.0)
+
+    event = w.execute()
+
+    assert event.error is None
+    assert event.save_path == str(tmp_path / "e.mkv")
+    assert ft.cancelled == []
 
 
 def test_magnet_cancel_stops_polling_only(qapp, tmp_path):
@@ -357,8 +721,155 @@ def test_magnet_cancel_stops_polling_only(qapp, tmp_path):
     ft = FakeTorrent([_downloading(0.2)])
     w = _worker(tmp_path, torrent=ft)
     w.cancel()
-    assert w.execute() is None                         # nothing emitted
+    event = w.execute()
+    assert event.terminal_result is DownloadTerminalResult.PRESERVED
+    assert event.terminal_cause is DownloadTerminalCause.SHUTDOWN
     assert ft.cancelled == []                          # task untouched
+
+
+def test_manual_cancel_qbt_is_terminal_and_deletes_partial_data(
+        qapp, tmp_path):
+    ft = FakeTorrent([_downloading(0.2), _downloading(0.2)])
+    w = _worker(tmp_path, torrent=ft)
+    calls = []
+
+    def request_during_poll(_seconds):
+        calls.append(w.request_download_cancel())
+
+    w._sleep = request_during_poll
+
+    event = w.execute()
+
+    assert calls == [True]
+    assert event is not None and event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+    assert "删除未完成数据" in event.error
+    assert ft.cancelled == ["a" * 40]
+    assert w.request_download_cancel() is False        # idempotent
+
+
+def test_manual_cancel_qbt_final_completion_wins(qapp, tmp_path):
+    ft = FakeTorrent([
+        _downloading(0.2),
+        _completed(str(tmp_path / "ep1.mkv")),
+    ])
+    w = _worker(tmp_path, torrent=ft)
+    w._sleep = lambda _seconds: w.request_download_cancel()
+
+    event = w.execute()
+
+    assert event.error is None
+    assert event.save_path == str(tmp_path / "ep1.mkv")
+    assert ft.cancelled == []
+
+
+def test_manual_cancel_uses_adapter_latest_completed_outcome(qapp, tmp_path):
+    task_hash = "a" * 40
+    incomplete = [{
+        "hash": task_hash, "state": "downloading", "progress": 0.99,
+    }]
+    completed = [{
+        "hash": task_hash, "state": "stoppedUP", "progress": 1.0,
+        "content_path": str(tmp_path / "ep1.mkv"),
+    }]
+
+    class CompletionRaceSession:
+        def __init__(self):
+            # worker status, worker manual final status, adapter initial read,
+            # then adapter's first post-stop read observes completion.
+            self.snapshots = [incomplete, incomplete, incomplete, completed]
+            self.posts = []
+
+        def get(self, url, params=None, timeout=None, **kwargs):
+            del timeout, kwargs
+            if "app/version" in url:
+                return SimpleNamespace(status_code=200, text="v5.2.3")
+            if "torrents/info" in url:
+                snapshot = self.snapshots.pop(0)
+                return SimpleNamespace(
+                    status_code=200, text="", json=lambda: snapshot)
+            raise AssertionError((url, params))
+
+        def post(self, url, data=None, timeout=None, **kwargs):
+            del timeout, kwargs
+            self.posts.append((url, data))
+            return SimpleNamespace(status_code=204, text="")
+
+    session = CompletionRaceSession()
+    client = QBittorrentClient(
+        "http://127.0.0.1:8080", str(tmp_path), session=session,
+        sleep=lambda _seconds: None)
+    worker = _worker(
+        tmp_path, locator="", torrent=client, resume_task_id=task_hash)
+    worker._sleep = lambda _seconds: worker.request_download_cancel()
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.COMPLETED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+    assert event.save_path == str(tmp_path / "ep1.mkv")
+    assert not any("torrents/delete" in url for url, _ in session.posts)
+
+
+def test_manual_cancel_qbt_failure_is_terminal_but_unconfirmed(
+        qapp, tmp_path):
+    class CancelFailsTorrent(FakeTorrent):
+        def cancel(self, task_id: str) -> TorrentCancelOutcome:
+            self.cancelled.append(task_id)
+            raise TorrentClientError("UNREACHABLE", "qbt down")
+
+    ft = CancelFailsTorrent([_downloading(0.2), _downloading(0.2)])
+    w = _worker(tmp_path, torrent=ft)
+    w._sleep = lambda _seconds: w.request_download_cancel()
+
+    event = w.execute()
+
+    assert event is not None and event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.UNCONFIRMED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+    assert "后台任务可能仍在" in event.error
+    assert ft.cancelled == ["a" * 40]
+
+
+def test_manual_final_task_not_found_is_disambiguated_by_cancel_port(
+        qapp, tmp_path):
+    class OwnerLostTorrent(FakeTorrent):
+        def cancel(self, task_id: str) -> TorrentCancelOutcome:
+            self.cancelled.append(task_id)
+            raise TorrentClientError("CANCEL_OWNER_LOST", "recategorized")
+
+    torrent = OwnerLostTorrent([
+        _downloading(0.2),
+        TorrentClientError("TASK_NOT_FOUND", "category miss"),
+    ])
+    worker = _worker(tmp_path, torrent=torrent)
+    worker._sleep = lambda _seconds: worker.request_download_cancel()
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.UNCONFIRMED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+    assert torrent.cancelled == ["a" * 40]
+
+
+def test_manual_cancel_qthread_still_emits_terminal_ready(qapp, tmp_path):
+    ft = FakeTorrent([_downloading(0.2)])
+    worker = _worker(
+        tmp_path, locator="", torrent=ft, resume_task_id="a" * 40)
+    events = []
+    worker.ready.connect(events.append)
+
+    assert worker.request_download_cancel() is True
+    worker.start()
+    assert worker.wait(1000)
+    qapp.processEvents()
+
+    assert len(events) == 1
+    assert events[0].error is not None
+    assert events[0].terminal_result is DownloadTerminalResult.CANCELLED
+    assert events[0].terminal_cause is DownloadTerminalCause.MANUAL
+    assert ft.cancelled == ["a" * 40]
 
 
 def test_resume_mode_polls_existing_task_elapsed_none(qapp, tmp_path):
@@ -369,6 +880,192 @@ def test_resume_mode_polls_existing_task_elapsed_none(qapp, tmp_path):
     assert ft.added == []                              # never re-adds
     assert event.error is None
     assert event.elapsed_seconds is None
+
+
+def test_resume_mode_stall_timeout_cancels_existing_task(qapp, tmp_path):
+    ft = FakeTorrent([_downloading(0.5)] * 10)
+    w = _worker(
+        tmp_path,
+        locator="",
+        torrent=ft,
+        resume_task_id="b" * 40,
+        stall_timeout_minutes=1.0,
+    )
+
+    event = w.execute()
+
+    assert event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert ft.cancelled == ["b" * 40]
+
+
+def test_resume_mode_inherits_qbt_last_activity_and_cancels_immediately(
+        qapp, tmp_path):
+    stale = DownloadStatus(
+        task_id="b" * 40, state="downloading", progress=0.5,
+        last_activity_at=100.0)
+    ft = FakeTorrent([stale, stale])
+    w = _worker(
+        tmp_path, locator="", torrent=ft, resume_task_id="b" * 40,
+        resume_created_at="1970-01-01T00:01:00+00:00",
+        stall_timeout_minutes=1.0, clock=lambda: 500.0,
+        wall_clock=lambda: 1000.0)
+
+    event = w.execute()
+
+    assert event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert ft.cancelled == ["b" * 40]
+
+
+def test_resume_mode_completed_first_sample_wins_over_old_activity(
+        qapp, tmp_path):
+    completed = DownloadStatus(
+        task_id="b" * 40, state="completed", progress=1.0,
+        save_path=str(tmp_path / "ep1.mkv"), last_activity_at=100.0)
+    ft = FakeTorrent([completed])
+    w = _worker(
+        tmp_path, locator="", torrent=ft, resume_task_id="b" * 40,
+        resume_created_at="1970-01-01T00:01:00+00:00",
+        stall_timeout_minutes=1.0, clock=lambda: 500.0,
+        wall_clock=lambda: 1000.0)
+
+    event = w.execute()
+
+    assert event.error is None
+    assert event.save_path == str(tmp_path / "ep1.mkv")
+    assert ft.cancelled == []
+
+
+def test_resume_mode_prefers_newer_qbt_activity_over_old_pending_time(
+        qapp, tmp_path):
+    active = DownloadStatus(
+        task_id="b" * 40, state="downloading", progress=0.5,
+        last_activity_at=990.0)
+    ft = FakeTorrent([active, _completed(str(tmp_path / "ep1.mkv"))])
+    w = _worker(
+        tmp_path, locator="", torrent=ft, resume_task_id="b" * 40,
+        resume_created_at="1970-01-01T00:01:00+00:00",
+        stall_timeout_minutes=1.0, clock=lambda: 500.0,
+        wall_clock=lambda: 1000.0)
+
+    event = w.execute()
+
+    assert event.error is None
+    assert ft.cancelled == []
+
+
+def test_resume_valid_old_qbt_activity_overrides_newer_pending_time(
+        qapp, tmp_path):
+    stale = DownloadStatus(
+        task_id="b" * 40, state="downloading", progress=0.5,
+        last_activity_at=100.0)
+    torrent = FakeTorrent([
+        stale,
+        stale,
+        _completed(str(tmp_path / "ep1.mkv")),
+    ])
+    worker = _worker(
+        tmp_path, locator="", torrent=torrent, resume_task_id="b" * 40,
+        # Pending is newer, but a valid qBT activity timestamp is authoritative.
+        resume_created_at="1970-01-01T00:15:00+00:00",
+        stall_timeout_minutes=10.0, clock=lambda: 500.0,
+        wall_clock=lambda: 1000.0)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert torrent.cancelled == ["b" * 40]
+
+
+def test_resume_transient_final_recheck_keeps_nine_minute_inactivity(
+        qapp, tmp_path):
+    clock = ManualClock()
+    recovered = DownloadStatus(
+        task_id="b" * 40, state="downloading", progress=0.5,
+        last_activity_at=460.0)
+
+    class RecordsCancelTime(FakeTorrent):
+        def __init__(self):
+            super().__init__([
+                TorrentClientError("UNREACHABLE", "down"),
+                TorrentClientError("UNREACHABLE", "down"),
+                recovered,
+                recovered,
+                recovered,
+            ])
+            self.cancel_times = []
+
+        def cancel(self, task_id: str) -> TorrentCancelOutcome:
+            self.cancel_times.append(clock.now())
+            return super().cancel(task_id)
+
+    torrent = RecordsCancelTime()
+    worker = _worker(
+        tmp_path, locator="", torrent=torrent, resume_task_id="b" * 40,
+        resume_created_at="1970-01-01T00:07:40+00:00",
+        stall_timeout_minutes=10.0, poll_seconds=60.0,
+        clock=clock.now, sleep=clock.sleep, wall_clock=lambda: 1000.0)
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert torrent.cancel_times == [pytest.approx(120.0)]
+
+
+@pytest.mark.parametrize(
+    ("bad_activity", "pending_created_at"),
+    [
+        (2000.0, "1970-01-01T00:01:40+00:00"),
+        (1_721_234_567_000, "1970-01-01T00:01:40+00:00"),
+        (float("nan"), "1970-01-01T00:16:30+00:00"),
+        (float("inf"), "1970-01-01T00:16:30+00:00"),
+        (10 ** 400, "1970-01-01T00:16:30+00:00"),
+    ],
+)
+def test_resume_bad_or_future_qbt_activity_never_deletes_immediately(
+        qapp, tmp_path, bad_activity, pending_created_at):
+    clock = ManualClock()
+    uncertain = DownloadStatus(
+        task_id="b" * 40, state="downloading", progress=0.5,
+        last_activity_at=bad_activity)
+    torrent = FakeTorrent([uncertain])
+    worker = _worker(
+        tmp_path, locator="", torrent=torrent, resume_task_id="b" * 40,
+        # Future/millisecond evidence is fail-safe even with an ancient pending
+        # timestamp; malformed evidence uses the recent pending fallback.
+        resume_created_at=pending_created_at,
+        stall_timeout_minutes=10.0, poll_seconds=1.0,
+        clock=clock.now, wall_clock=lambda: 1000.0,
+        sleep=lambda _seconds: worker.cancel(),
+    )
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.PRESERVED
+    assert event.terminal_cause is DownloadTerminalCause.SHUTDOWN
+    assert torrent.cancelled == []
+
+
+def test_resume_mode_falls_back_to_pending_created_at_when_qbt_unreachable(
+        qapp, tmp_path):
+    stale = _downloading(0.0)
+    ft = FakeTorrent([TorrentClientError("UNREACHABLE", "down"), stale])
+    w = _worker(
+        tmp_path, locator="", torrent=ft, resume_task_id="b" * 40,
+        resume_created_at="1970-01-01T00:01:00+00:00",
+        stall_timeout_minutes=1.0, clock=lambda: 500.0,
+        wall_clock=lambda: 1000.0)
+
+    event = w.execute()
+
+    assert event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert ft.cancelled == ["b" * 40]
 
 
 # -- F2: auth/API failures must terminate, only UNREACHABLE stays transient -------
@@ -416,44 +1113,27 @@ def test_magnet_api_error_recovery_below_limit_still_succeeds(qapp, tmp_path):
     assert event.save_path == str(tmp_path / "ep1.mkv")
 
 
-def test_magnet_unreachable_stays_long_transient(qapp, tmp_path):
-    # a LONG unreachable spell (service restarting) must never fail the task
-    ft = FakeTorrent([TorrentClientError("UNREACHABLE", "down")] * 40
+def test_magnet_unreachable_below_timeout_still_recovers(qapp, tmp_path):
+    # A short qBT outage remains transient and may recover before the cutoff.
+    ft = FakeTorrent([TorrentClientError("UNREACHABLE", "down")] * 3
                      + [_completed(str(tmp_path / "ep1.mkv"))])
     event = _worker(tmp_path, torrent=ft).execute()
     assert event.error is None
 
 
-def test_magnet_unreachable_beyond_stall_emits_stall_once_then_recovers(
+def test_magnet_unreachable_beyond_stall_timeout_ends_locally(
         qapp, tmp_path):
-    # P2-2: a qbt outage longer than stall_timeout must surface a SINGLE stall
-    # (no permanent silent 0% busy), keep reconnecting, and still complete on
-    # recovery -- never a failure verdict.
     ft = FakeTorrent([TorrentClientError("UNREACHABLE", "down")] * 10
                      + [_completed(str(tmp_path / "ep1.mkv"))])
-    w = _worker(tmp_path, torrent=ft, stall_timeout_minutes=1.0)
-    stalls = []
-    w.stalled.connect(lambda rid, m: stalls.append(m))
-    event = w.execute()
-    assert len(stalls) == 1                         # once per dry spell, not spam
-    assert event.error is None                      # reconnect, never fail (P1-10)
-    assert event.save_path == str(tmp_path / "ep1.mkv")
+    w = _worker(
+        tmp_path, torrent=ft, stall_timeout_minutes=1.0, poll_seconds=10.0)
 
-
-def test_magnet_unreachable_stall_resets_after_progress(qapp, tmp_path):
-    # once progress moves again the stall latch resets, so a SECOND dry spell can
-    # re-notify -- an outage, recovery, then a fresh stall fires a second stall.
-    ft = FakeTorrent(
-        [TorrentClientError("UNREACHABLE", "down")] * 10   # spell 1 -> stall
-        + [_downloading(0.5)]                              # progress -> reset
-        + [TorrentClientError("UNREACHABLE", "down")] * 10  # spell 2 -> stall
-        + [_completed(str(tmp_path / "ep1.mkv"))])
-    w = _worker(tmp_path, torrent=ft, stall_timeout_minutes=1.0)
-    stalls = []
-    w.stalled.connect(lambda rid, m: stalls.append(m))
     event = w.execute()
-    assert len(stalls) == 2                          # reset let the 2nd fire
-    assert event.error is None
+
+    assert event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.STALL
+    assert ft.cancelled == ["a" * 40]
 
 
 # -- F3: the qbt poll sleep must be interruptible ----------------------------------
@@ -469,7 +1149,9 @@ def test_qbt_poll_sleep_is_sliced_and_interruptible(qapp, tmp_path):
             w.cancel()                             # cancel lands MID-sleep
 
     w._sleep = s
-    assert w.execute() is None                     # prompt exit, nothing emitted
+    event = w.execute()
+    assert event.terminal_result is DownloadTerminalResult.PRESERVED
+    assert event.terminal_cause is DownloadTerminalCause.SHUTDOWN
     assert all(sec <= 0.1 for sec in slices), f"unsliced sleep: {slices}"
     assert len(slices) <= 10                       # exits within the same period
     assert ft.cancelled == []                      # still never cancels the task
@@ -627,15 +1309,16 @@ def test_ytdlp_utf8_output_survives_non_utf8_child_stdio(qapp, tmp_path):
 
 
 def test_ytdlp_low_speed_reconnects_then_second_attempt_succeeds(qapp, tmp_path):
+    clock = ManualClock()
     out = tmp_path / "episode.mp4"
     out.write_bytes(b"finished-media")
     part = tmp_path / "episode.f100026.mp4.part"
     part.write_bytes(b"partial-media")
-    first = FakeProc([
+    first = FakeProc(_timed_lines(clock, [
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         _ytdlp_progress(downloaded=256 * 1024 * 20),
-    ], rc=1)
+    ]), rc=1)
     second = FakeProc([
         _ytdlp_progress(downloaded=10 * 1024 * 1024),
         str(out),
@@ -649,12 +1332,13 @@ def test_ytdlp_low_speed_reconnects_then_second_attempt_succeeds(qapp, tmp_path)
 
     event = _worker(
         tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep,
     ).execute()
 
     assert event.error is None
     assert event.save_path == str(out.resolve())
     assert event.elapsed_seconds is not None
-    assert event.elapsed_seconds >= 50  # starts before attempt 1, not attempt 2
+    assert event.elapsed_seconds >= 20  # starts before attempt 1, not attempt 2
     assert len(spawned) == 2
     assert spawned[0][0] == spawned[1][0]
     assert first.terminated == 1
@@ -799,13 +1483,14 @@ def test_ytdlp_unknown_failure_returns_generic_error_without_retry(
 
 
 def test_ytdlp_low_speed_and_network_share_two_reconnects(qapp, tmp_path):
+    clock = ManualClock()
     procs = [
         FakeProc(["ERROR: [download] Read timed out."], rc=1),
-        FakeProc([
+        FakeProc(_timed_lines(clock, [
             _ytdlp_progress(downloaded=0),
             _ytdlp_progress(downloaded=256 * 1024 * 10),
             _ytdlp_progress(downloaded=256 * 1024 * 20),
-        ], rc=1),
+        ]), rc=1),
         FakeProc(["ERROR: HTTP Error 503: Service Unavailable"], rc=1),
     ]
     spawned = []
@@ -816,6 +1501,7 @@ def test_ytdlp_low_speed_and_network_share_two_reconnects(qapp, tmp_path):
 
     worker = _worker(
         tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep,
     )
     reconnects = []
     worker.reconnecting.connect(
@@ -830,6 +1516,7 @@ def test_ytdlp_low_speed_and_network_share_two_reconnects(qapp, tmp_path):
 
 
 def test_ytdlp_third_low_speed_attempt_continues_degraded(qapp, tmp_path):
+    clock = ManualClock()
     out = tmp_path / "episode.mp4"
     out.write_bytes(b"finished-media")
 
@@ -844,9 +1531,9 @@ def test_ytdlp_third_low_speed_attempt_continues_degraded(qapp, tmp_path):
         return lines
 
     procs = [
-        FakeProc(slow_lines(), rc=1),
-        FakeProc(slow_lines(), rc=1),
-        FakeProc(slow_lines(final_path=out)),
+        FakeProc(_timed_lines(clock, slow_lines()), rc=1),
+        FakeProc(_timed_lines(clock, slow_lines()), rc=1),
+        FakeProc(_timed_lines(clock, slow_lines(final_path=out))),
     ]
     spawned = []
 
@@ -856,6 +1543,7 @@ def test_ytdlp_third_low_speed_attempt_continues_degraded(qapp, tmp_path):
 
     worker = _worker(
         tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep,
     )
     degraded = []
     worker.degraded.connect(degraded.append)
@@ -909,15 +1597,16 @@ def test_ytdlp_bad_progress_json_does_not_restart(qapp, tmp_path):
 ])
 def test_ytdlp_corrupt_progress_resets_the_low_speed_window(
         qapp, tmp_path, bad_line):
+    clock = ManualClock()
     out = tmp_path / "episode.mp4"
     out.write_bytes(b"finished-media")
-    first = FakeProc([
+    first = FakeProc(_timed_lines(clock, [
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         bad_line,
         _ytdlp_progress(downloaded=256 * 1024 * 20),
         str(out),
-    ])
+    ]))
     procs = [first, FakeProc([str(out)])]
     spawned = []
 
@@ -927,6 +1616,7 @@ def test_ytdlp_corrupt_progress_resets_the_low_speed_window(
 
     worker = _worker(
         tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep,
     )
     reconnects = []
     worker.reconnecting.connect(
@@ -942,15 +1632,16 @@ def test_ytdlp_corrupt_progress_resets_the_low_speed_window(
 
 
 def test_ytdlp_regular_log_keeps_the_low_speed_window(qapp, tmp_path):
+    clock = ManualClock()
     out = tmp_path / "episode.mp4"
     out.write_bytes(b"finished-media")
-    first = FakeProc([
+    first = FakeProc(_timed_lines(clock, [
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         "[download] Destination: episode.f100026.mp4.part",
         _ytdlp_progress(downloaded=256 * 1024 * 20),
         str(out),
-    ], rc=1)
+    ]), rc=1)
     procs = [first, FakeProc([str(out)])]
     spawned = []
 
@@ -960,6 +1651,7 @@ def test_ytdlp_regular_log_keeps_the_low_speed_window(qapp, tmp_path):
 
     worker = _worker(
         tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep,
     )
     reconnects = []
     worker.reconnecting.connect(
@@ -976,15 +1668,16 @@ def test_ytdlp_regular_log_keeps_the_low_speed_window(qapp, tmp_path):
 @pytest.mark.parametrize("unknown_or_zero_total", [None, 0])
 def test_ytdlp_unknown_or_zero_total_keeps_the_low_speed_window(
         qapp, tmp_path, unknown_or_zero_total):
+    clock = ManualClock()
     out = tmp_path / "episode.mp4"
     out.write_bytes(b"finished-media")
-    first = FakeProc([
+    first = FakeProc(_timed_lines(clock, [
         _ytdlp_progress(downloaded=0, total=unknown_or_zero_total),
         _ytdlp_progress(
             downloaded=256 * 1024 * 10, total=unknown_or_zero_total),
         _ytdlp_progress(
             downloaded=256 * 1024 * 20, total=unknown_or_zero_total),
-    ], rc=1)
+    ]), rc=1)
     procs = [first, FakeProc([str(out)])]
     spawned = []
 
@@ -994,6 +1687,7 @@ def test_ytdlp_unknown_or_zero_total_keeps_the_low_speed_window(
 
     event = _worker(
         tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep,
     ).execute()
 
     assert event.error is None
@@ -1027,14 +1721,15 @@ def test_ytdlp_bad_progress_shape_is_ignored(qapp, tmp_path, bad_payload):
 
 def test_ytdlp_does_not_restart_completed_attempt_for_queued_slow_samples(
         qapp, tmp_path):
+    clock = ManualClock()
     out = tmp_path / "episode.mp4"
     out.write_bytes(b"finished-media")
-    proc = FakeProc([
+    proc = FakeProc(_timed_lines(clock, [
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         _ytdlp_progress(downloaded=256 * 1024 * 20),
         str(out),
-    ])
+    ]))
     proc._done = True
     spawned = []
 
@@ -1044,6 +1739,7 @@ def test_ytdlp_does_not_restart_completed_attempt_for_queued_slow_samples(
 
     event = _worker(
         tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep,
     ).execute()
 
     assert event.error is None
@@ -1106,16 +1802,19 @@ def test_ytdlp_terminate_timeout_escalates_to_kill(
         anime_worker_module, "_PROCESS_TERMINATE_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr(
         anime_worker_module, "_PROCESS_KILL_TIMEOUT_SECONDS", 0.05)
+    clock = ManualClock()
     stdout = BlockingStdout([
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         _ytdlp_progress(downloaded=256 * 1024 * 20),
-    ])
+    ], before_line=lambda: clock.advance(10.0))
     proc = ControlledProc(stdout, rc=1, terminate_exits=False)
     worker = _worker(
         tmp_path,
         locator="BV1234567890:1",
         popen=lambda argv, **kw: proc,
+        clock=clock.now,
+        sleep=clock.sleep,
     )
 
     result = worker._run_ytdlp_attempt(
@@ -1133,11 +1832,12 @@ def test_ytdlp_reader_cleanup_is_bounded_when_close_does_not_unblock(
         qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(anime_worker_module, "_READER_JOIN_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(anime_worker_module, "_YTDLP_READER_POLL_SECONDS", 0.01)
+    clock = ManualClock()
     stdout = BlockingStdout([
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         _ytdlp_progress(downloaded=256 * 1024 * 20),
-    ], close_unblocks=False)
+    ], close_unblocks=False, before_line=lambda: clock.advance(10.0))
     proc = ControlledProc(
         stdout,
         rc=1,
@@ -1148,6 +1848,8 @@ def test_ytdlp_reader_cleanup_is_bounded_when_close_does_not_unblock(
         tmp_path,
         locator="BV1234567890:1",
         popen=lambda argv, **kw: proc,
+        clock=clock.now,
+        sleep=clock.sleep,
     )
     result = {}
     thread = threading.Thread(
@@ -1177,11 +1879,12 @@ def test_ytdlp_kill_timeout_returns_lifecycle_error(
     monkeypatch.setattr(
         anime_worker_module, "_PROCESS_KILL_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr(anime_worker_module, "_READER_JOIN_TIMEOUT_SECONDS", 0.02)
+    clock = ManualClock()
     stdout = BlockingStdout([
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         _ytdlp_progress(downloaded=256 * 1024 * 20),
-    ])
+    ], before_line=lambda: clock.advance(10.0))
     proc = ControlledProc(
         stdout,
         rc=1,
@@ -1195,6 +1898,8 @@ def test_ytdlp_kill_timeout_returns_lifecycle_error(
         tmp_path,
         locator="BV1234567890:1",
         popen=lambda argv, **kw: proc,
+        clock=clock.now,
+        sleep=clock.sleep,
     )
     event = worker.execute()
 
@@ -1208,11 +1913,12 @@ def test_ytdlp_kill_timeout_returns_lifecycle_error(
 
 
 def test_ytdlp_cancel_from_reconnect_signal_prevents_next_spawn(qapp, tmp_path):
-    first = FakeProc([
+    clock = ManualClock()
+    first = FakeProc(_timed_lines(clock, [
         _ytdlp_progress(downloaded=0),
         _ytdlp_progress(downloaded=256 * 1024 * 10),
         _ytdlp_progress(downloaded=256 * 1024 * 20),
-    ], rc=1)
+    ], step=10.0), rc=1)
     spawned = []
 
     def popen(argv, **kw):
@@ -1223,11 +1929,15 @@ def test_ytdlp_cancel_from_reconnect_signal_prevents_next_spawn(qapp, tmp_path):
         tmp_path,
         locator="BV1234567890:1",
         popen=popen,
+        clock=clock.now,
+        sleep=clock.sleep,
     )
     worker.reconnecting.connect(
         lambda rid, used, maximum, reason: worker.cancel())
 
-    assert worker.execute() is None
+    event = worker.execute()
+    assert event.terminal_result is DownloadTerminalResult.PRESERVED
+    assert event.terminal_cause is DownloadTerminalCause.SHUTDOWN
     assert len(spawned) == 1
 
 
@@ -1371,15 +2081,19 @@ def test_ytdlp_success_parses_progress_and_validates_path(qapp, tmp_path):
     out.write_bytes(b"x" * 16)
     spawned = {}
 
+    clock = ManualClock()
+
     def popen(argv, **kw):
         spawned["argv"] = argv
         spawned["kw"] = kw
-        return FakeProc([
+        return FakeProc(_timed_lines(clock, [
             _ytdlp_progress(downloaded=423, total=1000),
             str(out),
-        ])
+        ], step=1.0))
 
-    w = _worker(tmp_path, locator="BV1234567890:1", popen=popen)
+    w = _worker(
+        tmp_path, locator="BV1234567890:1", popen=popen,
+        clock=clock.now, sleep=clock.sleep)
     prog = []
     w.progress.connect(lambda rid, p, ph: prog.append(round(p, 3)))
     event = w.execute()
@@ -1388,6 +2102,45 @@ def test_ytdlp_success_parses_progress_and_validates_path(qapp, tmp_path):
     assert event.save_path == str(out.resolve())
     assert event.elapsed_seconds is not None and event.elapsed_seconds > 0
     assert prog[0] == 0.423 and prog[-1] == 1.0
+
+
+def test_ytdlp_shutdown_claimed_at_completion_preserves_terminal_owner(
+        qapp, tmp_path):
+    out = tmp_path / "episode.mkv"
+    out.write_bytes(b"x")
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kw: FakeProc([str(out)]),
+    )
+    worker.progress.connect(
+        lambda _rid, progress, _phase: (
+            worker.cancel() if progress == 1.0 else None))
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.PRESERVED
+    assert event.terminal_cause is DownloadTerminalCause.SHUTDOWN
+
+
+def test_ytdlp_manual_claimed_at_completion_keeps_file_without_normal_cause(
+        qapp, tmp_path):
+    out = tmp_path / "episode.mkv"
+    out.write_bytes(b"x")
+    worker = _worker(
+        tmp_path,
+        locator="BV1234567890:1",
+        popen=lambda argv, **kw: FakeProc([str(out)]),
+    )
+    worker.progress.connect(
+        lambda _rid, progress, _phase: (
+            worker.request_download_cancel() if progress == 1.0 else None))
+
+    event = worker.execute()
+
+    assert event.terminal_result is DownloadTerminalResult.COMPLETED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+    assert event.save_path == str(out.resolve())
 
 
 def test_ytdlp_output_outside_download_dir_rejected(qapp, tmp_path):
@@ -1436,9 +2189,42 @@ def test_ytdlp_cancel_terminates_and_keeps_part(qapp, tmp_path):
         return p
 
     w._popen = popen
-    assert w.execute() is None              # cancelled -> nothing emitted
+    event = w.execute()
+    assert event.terminal_result is DownloadTerminalResult.PRESERVED
+    assert event.terminal_cause is DownloadTerminalCause.SHUTDOWN
     assert procs[0].terminated == 1         # subprocess terminated...
     assert part.exists()                    # ...and the .part survives
+
+
+def test_ytdlp_manual_cancel_emits_terminal_result_and_keeps_part(
+        qapp, tmp_path):
+    target = tmp_path / "无职转生"
+    target.mkdir()
+    part = target / "episode.mp4.part"
+    part.write_bytes(b"partial")
+    stdout = BlockingStdout()
+    proc = ControlledProc(stdout, rc=1)
+    worker = _worker(
+        tmp_path, locator="BV1234567890:1",
+        popen=lambda argv, **kw: proc)
+    result = {}
+    thread = threading.Thread(
+        target=lambda: result.setdefault("event", worker.execute()))
+
+    thread.start()
+    assert stdout.read_started.wait(1)
+    assert worker.request_download_cancel() is True
+    thread.join(2)
+
+    assert not thread.is_alive()
+    event = result["event"]
+    assert event is not None and event.error is not None
+    assert event.terminal_result is DownloadTerminalResult.CANCELLED
+    assert event.terminal_cause is DownloadTerminalCause.MANUAL
+    assert "临时文件已保留" in event.error
+    assert proc.terminated >= 1
+    assert proc.poll() is not None
+    assert part.read_bytes() == b"partial"
 
 
 # -- boundary: the worker holds no write authority ---------------------------------

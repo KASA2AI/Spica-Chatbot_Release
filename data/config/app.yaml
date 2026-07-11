@@ -129,7 +129,7 @@
 #   qbittorrent_username: admin  # password 是 secret (QBITTORRENT_PASSWORD)
 #   auto_play_threshold_seconds: 50    # D5: <=50秒空闲后自动播;>50秒由Spica确认。忙/陪玩只延后
 #   qbittorrent_poll_seconds: 5        # 下载 worker 轮询间隔
-#   stall_timeout_minutes: 30          # 无进度判卡 -> 系统 turn 询问(不自动删/换源)
+#   stall_timeout_minutes: 10          # 连续无进度后结束 qBT 任务并删除未完成数据
 #   ytdlp_format: "bv*[height<=1080]+ba/b[height<=1080]"
 #   ytdlp_min_rate_kib_per_second: 512  # 连续 15 秒低于此值时重连;0=关闭
 #   cookies_file: data/cookies.txt     # yt-dlp cookies 文件(可缺省=匿名);相对路径按仓库根
@@ -243,5 +243,6 @@ stt:                                     # 本地语音转文字(Plan B):faster-
 anime:                                   # spica 看番:Phase 4 端到端验收通过,已启用。完整键见上方注释模板
   enabled: true
   player_command: vlc
+  stall_timeout_minutes: 10             # 连续无有效进度；进度增长会重新计时
 character:
   dialog_display_language: zh

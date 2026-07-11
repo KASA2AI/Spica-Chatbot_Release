@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 
 # Filesystem-reserved characters (Windows superset of POSIX) that must never
@@ -32,6 +33,35 @@ _WIN_RESERVED = frozenset({
 # Byte budget (not char count) -- one path component is usually capped at 255
 # bytes, and CJK is 3 bytes/char, so a 120-CHAR title would be 360 bytes.
 _DIRNAME_MAX_BYTES = 200
+
+
+class DownloadTerminalOwner(str, Enum):
+    """The single worker-side owner of a terminal decision."""
+
+    RUNNING = "running"
+    MANUAL_CANCEL = "manual_cancel"
+    STALL_CANCEL = "stall_cancel"
+    SHUTDOWN_PRESERVE = "shutdown_preserve"
+    COMPLETED = "completed"
+
+
+class DownloadTerminalResult(str, Enum):
+    """Observable terminal outcome, deliberately separate from ownership."""
+
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    UNCONFIRMED = "unconfirmed"
+    FAILED = "failed"
+    PRESERVED = "preserved"
+
+
+class DownloadTerminalCause(str, Enum):
+    """Why the terminal outcome was reached."""
+
+    NORMAL = "normal"
+    MANUAL = "manual"
+    STALL = "stall"
+    SHUTDOWN = "shutdown"
 
 
 def _truncate_utf8(text: str, max_bytes: int) -> str:
@@ -174,6 +204,10 @@ class DownloadStatus:
     progress: float = 0.0           # 0.0..1.0
     save_path: str | None = None    # final file once completed
     error: str | None = None
+    # qBittorrent's Unix epoch for the task's last real activity.  Optional so
+    # other TorrentClientPort adapters do not have to manufacture wall-clock
+    # data they cannot observe.
+    last_activity_at: float | None = None
 
     @property
     def is_done(self) -> bool:

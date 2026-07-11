@@ -16,7 +16,11 @@ The ONLY four actions, deliberately narrow (P0-3 / P2-20):
                               The adapter must independently validate the exact
                               infohash and direct tracker boundary before upload.
 - ``status(task_id)``      -- category-scoped read.
-- ``cancel(task_id)``      -- category-scoped delete.
+- ``cancel(task_id)``      -- category-scoped ownership/freeze checks, then
+                              exact-hash removal with a typed outcome.  A
+                              ``CANCELLED`` result means qBT no longer exposes
+                              that task; it is not an atomic/CAS guarantee that
+                              on-disk unlinking has completed.
 
 All operations are constrained to the adapter's category (``spica-anime``); the
 adapter must never touch torrents the user added by hand (P2-20). Qt-free (#1).
@@ -24,6 +28,8 @@ adapter must never touch torrents the user added by hand (P2-20). Qt-free (#1).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol, runtime_checkable
 
 from spica.anime.models import DownloadStatus
@@ -33,6 +39,24 @@ class TorrentClientError(Exception):
     def __init__(self, code: str, message: str = "") -> None:
         super().__init__(message or code)
         self.code = code
+
+
+class TorrentCancelResult(str, Enum):
+    """Completion-safe result of the narrow destructive action surface.
+
+    ``CANCELLED`` proves exact-hash disappearance from qBT after its delete
+    acknowledgement, not synchronous deletion of every file on disk.
+    """
+
+    CANCELLED = "cancelled"
+    ALREADY_COMPLETED = "already_completed"
+    MISSING = "missing"
+
+
+@dataclass(frozen=True)
+class TorrentCancelOutcome:
+    result: TorrentCancelResult
+    save_path: str | None = None
 
 
 @runtime_checkable
@@ -63,6 +87,11 @@ class TorrentClientPort(Protocol):
         """Report the task's live state (category-scoped)."""
         ...
 
-    def cancel(self, task_id: str) -> None:
-        """Remove the task and its data (category-scoped)."""
+    def cancel(self, task_id: str) -> TorrentCancelOutcome:
+        """Freeze, re-check and conditionally remove one category-owned task.
+
+        Completion must win every pre-delete read. Implementations fail closed
+        when freeze/removal cannot be confirmed and must not claim transactional
+        or compare-and-swap semantics.
+        """
         ...

@@ -40,7 +40,7 @@ def test_phase4_worker_knobs_defaults():
     a = AnimeConfig()
     assert a.auto_play_threshold_seconds == 50.0
     assert a.qbittorrent_poll_seconds == 5.0
-    assert a.stall_timeout_minutes == 30.0
+    assert a.stall_timeout_minutes == 10.0
     assert a.ytdlp_format == "bv*[height<=1080]+ba/b[height<=1080]"
     assert a.ytdlp_min_rate_kib_per_second == 512.0
     assert a.cookies_file == "data/cookies.txt"
@@ -49,6 +49,19 @@ def test_phase4_worker_knobs_defaults():
 
 def test_resolved_anime_auto_play_threshold_is_50_seconds():
     assert ConfigManager().load().anime.auto_play_threshold_seconds == 50.0
+
+
+def test_resolved_anime_stall_timeout_is_10_minutes():
+    assert ConfigManager().load().anime.stall_timeout_minutes == 10.0
+
+
+@pytest.mark.parametrize(
+    "minutes",
+    [0.0, -1.0, float("nan"), float("inf"), float("-inf")],
+)
+def test_invalid_stall_timeout_is_rejected(minutes):
+    with pytest.raises(ValueError):
+        AnimeConfig(stall_timeout_minutes=minutes)
 
 
 @pytest.mark.parametrize("threshold", [-1.0, float("nan"), float("inf")])

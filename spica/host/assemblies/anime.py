@@ -50,10 +50,11 @@ from spica.adapters.anime_source.bilibili_space import BilibiliSpaceSource
 from spica.adapters.anime_source.mikan import MikanRssSource
 from spica.adapters.media_player.system_default import SystemDefaultPlayer
 from spica.adapters.torrent.qbittorrent import QBittorrentClient
+from spica.adapters.tools.cancel_anime_download import CancelAnimeDownloadTool
 from spica.adapters.tools.watch_anime import WatchAnimeTool
 from spica.anime.library import AnimeLibrary, LibraryEntry
 from spica.anime.watch_flow import WatchAnimeError, run_watch_request
-from spica.core.anime_events import AnimeRequestEvent
+from spica.core.anime_events import AnimeCancelRequestEvent, AnimeRequestEvent
 from spica.ports.anime_source import AnimeSourcePort
 from spica.ports.media_player import MEDIA_EXTENSIONS
 
@@ -166,6 +167,78 @@ def _available(host: Any) -> bool:
     if cfg is None or not getattr(cfg, "enabled", False):
         return False
     return getattr(host, "_anime_sink", None) is not None
+
+
+def _active_anime_request(host: Any) -> "dict[str, str] | None":
+    """Read a defensive snapshot of the UI-owned in-flight identity."""
+    reader = getattr(host, "_anime_in_flight", None)
+    if not callable(reader):
+        return None
+    try:
+        state = reader()
+    except Exception:  # noqa: BLE001 -- a broken state seam hides the tool
+        return None
+    if not isinstance(state, dict):
+        return None
+    request_id = state.get("request_id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        return None
+    title = state.get("title")
+    return {
+        # IDs are opaque identity tokens.  Whitespace is only an emptiness
+        # check above; never normalize the value used for binding/comparison.
+        "request_id": request_id,
+        "title": str(title).strip() if title is not None else "",
+    }
+
+
+def _cancel_available(
+    host: Any,
+    tool: CancelAnimeDownloadTool,
+) -> bool:
+    """Stopping remains available for an active job even after anime is disabled."""
+    # Availability may be queried repeatedly on a long-lived producer thread.
+    # Clear first so a declined/abandoned prior turn cannot authorize this one.
+    tool.clear_offer()
+    if not callable(getattr(host, "_anime_sink", None)):
+        return False
+    active = _active_anime_request(host)
+    if active is None:
+        return False
+    tool.bind_offer(active["request_id"])
+    return True
+
+
+def build_request_anime_cancel(host: Any) -> Callable[[str], dict[str, Any]]:
+    """Build the Host-owned, identity-bound cancel submission action."""
+
+    def _request_cancel(expected_request_id: str) -> dict[str, Any]:
+        # The opaque identity came from THIS turn's offer.  Re-read only to
+        # compare; execution must never rebind the request to the current job.
+        expected = expected_request_id
+        active = _active_anime_request(host)
+        if (not expected or active is None
+                or active["request_id"] != expected):
+            raise ScreenToolError(
+                "ANIME_CANCEL_REQUEST_STALE",
+                "下载任务已经变化，这次停止请求不会作用到新的任务。",
+            )
+        sink = getattr(host, "_anime_sink", None)
+        if not callable(sink):
+            raise ScreenToolError(
+                "ANIME_UI_NOT_READY", "动漫下载界面还没准备好，暂时无法停止。")
+        try:
+            sink(AnimeCancelRequestEvent(
+                request_id=active["request_id"], title=active["title"]))
+        except Exception as exc:  # noqa: BLE001 -- act failures use ToolError envelopes
+            _LOG.warning("anime cancel request submit failed: %s", exc)
+            raise ScreenToolError(
+                "ANIME_CANCEL_SUBMIT_FAILED", "停止请求没有提交成功，请再试一次。") from exc
+        # This only acknowledges hand-off.  The UI worker reports the terminal
+        # result later, so do not claim that deletion has already completed.
+        return {"status": "submitted", **active}
+
+    return _request_cancel
 
 
 def _build_sources(cfg: Any, secrets: Any) -> list[AnimeSourcePort]:
@@ -394,5 +467,13 @@ def install(
         tool.schema(), tool.run,
         available=lambda: _available(host),
         intent_gated=False,          # state supply -- no router wordlist (review)
+        effect="act",
+    )
+    cancel_tool = CancelAnimeDownloadTool(build_request_anime_cancel(host))
+    host.registry.register_tool(
+        cancel_tool.schema(), cancel_tool.run,
+        available=lambda: _cancel_available(host, cancel_tool),
+        intent_gated=False,
+        chainable=False,
         effect="act",
     )

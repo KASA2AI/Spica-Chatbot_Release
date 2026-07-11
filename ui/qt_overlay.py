@@ -8,7 +8,14 @@ from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
-from PySide6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QMessageBox, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsDropShadowEffect,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
 
 from spica.config.secrets import load_secrets
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
@@ -135,6 +142,9 @@ class OverlayWindow(QWidget):
         # anime sink OFF the companion tee) + download controller + status chip.
         self.anime_bridge: CompanionEventBridge | None = None
         self.anime_controller: AnimeController | None = None
+        # Mouse press and click can straddle queued ready/new-request events.
+        # Keep the identity visible at press until that matching click consumes it.
+        self._anime_cancel_pressed_request_id: str | None = None
 
         self.character_label = QLabel(self)
         self.character_label.setObjectName("character")
@@ -267,6 +277,24 @@ class OverlayWindow(QWidget):
         )
         self.anime_status_label.hide()
 
+        self.anime_cancel_button = QPushButton("停止下载", self)
+        self.anime_cancel_button.setObjectName("animeCancelButton")
+        self.anime_cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.anime_cancel_button.setStyleSheet(
+            "QPushButton#animeCancelButton { background-color: rgba(73, 42, 45, 190);"
+            " border: 1px solid rgba(255, 255, 255, 44); border-radius: 10px;"
+            " color: #FFECEF; font-size: 12px; padding: 3px 9px; }"
+            "QPushButton#animeCancelButton:hover {"
+            " background-color: rgba(105, 49, 55, 210); }"
+            "QPushButton#animeCancelButton:disabled {"
+            " color: rgba(255, 236, 239, 145); }"
+        )
+        self.anime_cancel_button.pressed.connect(
+            self._on_anime_cancel_pressed)
+        self.anime_cancel_button.clicked.connect(
+            self._on_anime_cancel_clicked)
+        self.anime_cancel_button.hide()
+
         self.resize_handle = CornerResizeHandle(self)
 
         self._apply_ui_scale()
@@ -379,6 +407,7 @@ class OverlayWindow(QWidget):
         self.anime_controller = AnimeController(
             self,
             set_anime_status=self._set_anime_status,
+            set_anime_cancel_state=self._set_anime_cancel_state,
             request_proactive_turn=self.proactive_arbiter.try_speak,
             play_file=host.anime_play_file,
             register_download=host.anime_register_download,
@@ -413,14 +442,41 @@ class OverlayWindow(QWidget):
         self.anime_status_label.setVisible(bool(text))
         self._layout_overlay()
 
+    def _set_anime_cancel_state(
+        self,
+        active: bool,
+        cancelling: bool,
+    ) -> None:
+        self.anime_cancel_button.setText(
+            "停止中…" if cancelling else "停止下载")
+        self.anime_cancel_button.setEnabled(bool(active and not cancelling))
+        self.anime_cancel_button.setVisible(bool(active))
+        self._layout_overlay()
+
+    def _on_anime_cancel_pressed(self) -> None:
+        controller = self.anime_controller
+        state = controller.in_flight_state() if controller is not None else None
+        self._anime_cancel_pressed_request_id = str(
+            (state or {}).get("request_id") or "")
+
+    def _on_anime_cancel_clicked(self) -> None:
+        expected_request_id = self._anime_cancel_pressed_request_id or ""
+        self._anime_cancel_pressed_request_id = None
+        if self.anime_controller is not None:
+            self.anime_controller.cancel_current_download(expected_request_id)
+
     def _on_anime_runtime_event(self, event: Any) -> None:
         """Bridge dispatch (Phase 4): the host watch_anime closure emitted an
         AnimeRequestEvent; start the download worker on the UI thread. The
         worker's completion payload (AnimeReadyEvent) stays INSIDE the UI --
         worker Qt signal -> controller -- and never rides this bridge (P2-19)."""
-        if getattr(event, "kind", "") != "anime_request" or self.anime_controller is None:
+        if self.anime_controller is None:
             return
-        self.anime_controller.handle_anime_request_event(event)
+        kind = getattr(event, "kind", "")
+        if kind == "anime_request":
+            self.anime_controller.handle_anime_request_event(event)
+        elif kind == "anime_cancel_request":
+            self.anime_controller.handle_anime_cancel_event(event)
 
     def _on_companion_requested(self) -> None:
         if self.galgame_controller is None:
@@ -654,6 +710,15 @@ class OverlayWindow(QWidget):
             self.song_status_label.setGeometry(song_x, top_margin, song_width, controls_height)
             self.song_status_label.raise_()
             chip_right_edge = song_x - scaled_px(8, scale)
+        if self.anime_cancel_button.isVisible():
+            cancel_hint = self.anime_cancel_button.sizeHint()
+            cancel_width = max(
+                scaled_px(76, scale), cancel_hint.width())
+            cancel_x = max(0, chip_right_edge - cancel_width)
+            self.anime_cancel_button.setGeometry(
+                cancel_x, top_margin, cancel_width, controls_height)
+            self.anime_cancel_button.raise_()
+            chip_right_edge = cancel_x - scaled_px(6, scale)
         if self.anime_status_label.isVisible():
             anime_hint = self.anime_status_label.sizeHint()
             anime_width = min(anime_hint.width(), max(120, int(width * 0.4)))
@@ -1365,6 +1430,7 @@ class OverlayWindow(QWidget):
             (self.window_controls, 2),
             (self.companion_status_label, 1),  # setMask clips RENDERING too -- must be in
             (self.anime_status_label, 1),
+            (self.anime_cancel_button, 1),
             (self.settings_panel, 1),
             (self.resize_handle, 2),
         ):

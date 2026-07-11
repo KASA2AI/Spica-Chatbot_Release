@@ -18,6 +18,10 @@ from PySide6.QtCore import QObject, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from spica.core.anime_events import AnimeReadyEvent, AnimeRequestEvent  # noqa: E402
+from spica.anime.models import (  # noqa: E402
+    DownloadTerminalCause,
+    DownloadTerminalResult,
+)
 from spica.ports.media_player import MediaPlayerError  # noqa: E402
 from ui.controllers.anime_controller import AnimeController  # noqa: E402
 from ui.workers.anime_worker import AnimeDownloadWorker  # noqa: E402
@@ -31,7 +35,6 @@ def qapp():
 class FakeWorker(QObject):
     progress = Signal(str, float, str)
     ready = Signal(object)
-    stalled = Signal(str, float)
     reconnecting = Signal(str, int, int, str)
     degraded = Signal(str)
     task_started = Signal(str, str)
@@ -44,6 +47,7 @@ class FakeWorker(QObject):
         self.title = kw.get("title", "")
         self.started = 0
         self.cancelled = 0
+        self.download_cancel_requests = 0
         self._running = False
 
     def start(self):
@@ -57,6 +61,10 @@ class FakeWorker(QObject):
         self.cancelled += 1
         self._running = False
 
+    def request_download_cancel(self):
+        self.download_cancel_requests += 1
+        return self.download_cancel_requests == 1
+
     def force_kill(self):
         pass
 
@@ -67,6 +75,10 @@ class FakeWorker(QObject):
     def finish(self):
         self._running = False
         self.finished.emit()
+
+    def stop_before_queued_ready_delivery(self):
+        """Model QThread exit before its queued ready reaches the GUI thread."""
+        self._running = False
 
 
 class _FakeTimeoutSignal:
@@ -171,9 +183,17 @@ def _request_event(rid="REQ1", key="无职转生|s3|e1", *, payload=None):
 
 
 def _ready(rid="REQ1", key="无职转生|s3|e1", *, save_path="/dl/ep1.mkv",
-           elapsed=10.0, error=None):
+           elapsed=10.0, error=None,
+           terminal_result=None,
+           terminal_cause=DownloadTerminalCause.NORMAL):
+    if terminal_result is None:
+        terminal_result = (
+            DownloadTerminalResult.FAILED
+            if error is not None else DownloadTerminalResult.COMPLETED)
     return AnimeReadyEvent(request_id=rid, episode_key=key, save_path=save_path,
-                           elapsed_seconds=elapsed, error=error)
+                           elapsed_seconds=elapsed, error=error,
+                           terminal_result=terminal_result,
+                           terminal_cause=terminal_cause)
 
 
 class Harness:
@@ -191,6 +211,7 @@ class Harness:
         self.workers: list[FakeWorker] = []
         self.busy = False
         self.galgame = False
+        self.cancel_states: list[tuple[bool, bool]] = []
 
         def try_speak(req):
             self.spoken.append(req)
@@ -215,6 +236,9 @@ class Harness:
 
         kwargs = dict(
             set_anime_status=self.status.append,
+            set_anime_cancel_state=(
+                lambda active, cancelling:
+                self.cancel_states.append((active, cancelling))),
             request_proactive_turn=try_speak,
             play_file=play_file,
             register_download=register,
@@ -227,7 +251,7 @@ class Harness:
             galgame_active=lambda: self.galgame,
             anime_config=lambda: SimpleNamespace(
                 auto_play_threshold_seconds=50.0, qbittorrent_poll_seconds=5.0,
-                stall_timeout_minutes=30.0, ytdlp_format="fmt",
+                stall_timeout_minutes=10.0, ytdlp_format="fmt",
                 source_timeout_seconds=23.0,
                 ytdlp_min_rate_kib_per_second=321.0),
             torrent_provider=lambda: "TORRENT",
@@ -252,8 +276,11 @@ def test_request_event_starts_worker_and_sets_in_flight(qapp):
     assert w.kw["cookies_file"] == "/repo/data/cookies.txt"
     assert w.kw["source_timeout_seconds"] == 23.0
     assert w.kw["ytdlp_min_rate_kib_per_second"] == 321.0
-    assert h.controller.in_flight_state() == {"progress": 0.0,
-                                              "title": "无职转生 第三季"}
+    assert w.kw["stall_timeout_minutes"] == 10.0
+    assert h.controller.in_flight_state() == {
+        "request_id": "REQ1", "progress": 0.0,
+        "title": "无职转生 第三季"}
+    assert h.cancel_states[-1] == (True, False)
     assert any("下载中" in s for s in h.status)
 
 
@@ -495,6 +522,173 @@ def test_ready_registration_rejection_announces_not_plays(qapp):
     assert "没通过" in req.directive
 
 
+# -- explicit user cancellation -------------------------------------------------
+
+def test_cancel_current_download_matches_request_and_is_idempotent(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    worker = h.workers[0]
+
+    assert h.controller.cancel_current_download("REQ1") is True
+    assert h.controller.cancel_current_download("REQ1") is False
+
+    assert worker.download_cancel_requests == 1
+    assert h.controller.in_flight_state()["request_id"] == "REQ1"
+    assert h.cancel_states[-1] == (True, True)
+    assert "正在停止" in h.status[-1]
+
+
+def test_cancel_current_download_rejects_stale_request_id(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event("NEW"))
+
+    assert h.controller.cancel_current_download("OLD") is False
+
+    assert h.workers[0].download_cancel_requests == 0
+    assert h.controller.in_flight_state()["request_id"] == "NEW"
+
+
+def test_manual_cancel_ready_drops_pending_releases_busy_without_double_speech(
+        qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    assert h.controller.cancel_current_download("REQ1") is True
+
+    h.workers[0].ready.emit(_ready(
+        error="已停止下载并让 qBittorrent 删除未完成数据",
+        save_path=None,
+        terminal_result=DownloadTerminalResult.CANCELLED,
+        terminal_cause=DownloadTerminalCause.MANUAL,
+    ))
+
+    assert h.dropped == ["REQ1"]
+    assert h.controller.in_flight_state() is None
+    assert h.cancel_states[-1] == (False, False)
+    assert h.spoken == []
+    assert "已停止下载" in h.status[-1]
+
+
+def test_manual_cancel_result_is_typed_and_needs_no_error_prefix(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    assert h.controller.cancel_current_download("REQ1") is True
+
+    h.workers[0].ready.emit(AnimeReadyEvent(
+        request_id="REQ1",
+        episode_key="无职转生|s3|e1",
+        terminal_result=DownloadTerminalResult.CANCELLED,
+        terminal_cause=DownloadTerminalCause.MANUAL,
+        error="用户要求停止，未完成数据已删除",
+    ))
+
+    assert h.dropped == ["REQ1"]
+    assert h.controller.in_flight_state() is None
+    assert h.spoken == []
+    assert "已停止下载" in h.status[-1]
+
+
+def test_manual_cancel_terminal_ready_allows_next_request_before_finished(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event("OLD"))
+    old = h.workers[0]
+    h.controller.cancel_current_download("OLD")
+    old.ready.emit(_ready(
+        "OLD", error="已停止下载", save_path=None,
+        terminal_result=DownloadTerminalResult.CANCELLED,
+        terminal_cause=DownloadTerminalCause.MANUAL))
+
+    assert old.isRunning()  # ready -> finished queued gap
+    h.controller.handle_anime_request_event(_request_event("NEW"))
+
+    assert len(h.workers) == 2
+    assert h.workers[1].request_id == "NEW"
+    assert h.controller.in_flight_state()["request_id"] == "NEW"
+    assert h.dropped == ["OLD"]
+
+
+def test_manual_cancel_unconfirmed_warns_and_releases_busy(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    h.controller.cancel_current_download("REQ1")
+
+    h.workers[0].ready.emit(_ready(
+        error="已停止本地等待，但 qBittorrent 未确认取消，后台任务可能仍在",
+        save_path=None,
+        terminal_result=DownloadTerminalResult.UNCONFIRMED,
+        terminal_cause=DownloadTerminalCause.MANUAL,
+    ))
+
+    assert h.dropped == ["REQ1"]
+    assert h.controller.in_flight_state() is None
+    assert "未确认取消" in h.status[-1]
+    [req] = h.spoken
+    assert "后台任务可能仍在" in req.directive
+
+
+def test_manual_cancel_race_that_finds_completion_never_auto_plays(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    h.controller.cancel_current_download("REQ1")
+
+    h.workers[0].ready.emit(_ready(
+        elapsed=10.0,
+        terminal_result=DownloadTerminalResult.COMPLETED,
+        terminal_cause=DownloadTerminalCause.MANUAL,
+    ))
+
+    assert h.registered == [
+        ("REQ1", "无职转生|s3|e1", "/dl/ep1.mkv"),
+    ]
+    assert h.played == []
+    assert h.marked == []
+    assert h.spoken == []
+    assert "停止时已经下好了" in h.status[-1]
+
+
+def test_manual_cancel_in_ready_queue_gap_suppresses_play_and_confirmation(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    worker = h.workers[0]
+    worker.stop_before_queued_ready_delivery()
+
+    assert h.controller.cancel_current_download("REQ1") is True
+    assert worker.download_cancel_requests == 0
+    assert h.controller.in_flight_state()["request_id"] == "REQ1"
+
+    worker.ready.emit(_ready(elapsed=10.0))
+
+    assert h.registered == [
+        ("REQ1", "无职转生|s3|e1", "/dl/ep1.mkv"),
+    ]
+    assert h.played == []
+    assert h.marked == []
+    assert h.spoken == []
+    assert h.controller.in_flight_state() is None
+    assert h.cancel_states[-1] == (False, False)
+    assert "文件已保留" in h.status[-1]
+
+
+def test_cancel_after_finished_before_queued_ready_still_suppresses(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+    worker = h.workers[0]
+    # QThread.finished can reach the GUI before its already-queued ready signal.
+    worker.finish()
+
+    assert h.controller.cancel_current_download("REQ1") is True
+    assert worker.download_cancel_requests == 0
+    worker.ready.emit(_ready(elapsed=10.0))
+
+    assert h.registered == [
+        ("REQ1", "无职转生|s3|e1", "/dl/ep1.mkv"),
+    ]
+    assert h.played == []
+    assert h.marked == []
+    assert h.spoken == []
+    assert h.controller.in_flight_state() is None
+    assert h.cancel_states[-1] == (False, False)
+
+
 # -- completion idle scheduling ---------------------------------------------------
 
 def _confirmation_waiting_after_arbiter_race(h, timer):
@@ -551,16 +745,66 @@ def test_user_activity_delays_but_does_not_drop_required_confirmation(qapp):
     assert not timer.isActive()
 
 
-# -- stall (v1: informational ask only) ---------------------------------------------
+# -- qBT stall timeout is terminal --------------------------------------------------
 
-def test_stall_announces_once_and_flags_chip(qapp):
+def test_stall_timeout_drops_pending_releases_busy_and_announces_once(qapp):
     h = Harness()
     h.controller.handle_anime_request_event(_request_event())
-    h.workers[0].stalled.emit("REQ1", 30.0)
+
+    h.workers[0].ready.emit(_ready(
+        error="连续 10 分钟没有进度，已停止下载并删除未完成数据",
+        save_path=None,
+        terminal_result=DownloadTerminalResult.CANCELLED,
+        terminal_cause=DownloadTerminalCause.STALL,
+    ))
+
+    assert h.dropped == ["REQ1"]
+    assert h.controller.in_flight_state() is None
     [req] = h.spoken
-    assert "没有进度" in req.directive
-    assert any("卡住" in s for s in h.status)
-    assert h.controller._retries == {}              # no retry queue for stalls
+    assert "10 分钟没有进度" in req.directive
+    assert "已停止" in req.directive
+    assert "超时" in h.status[-1]
+    assert "已停止" in h.status[-1]
+
+
+def test_stall_timeout_ready_worker_no_longer_drops_next_request(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event("REQ1"))
+    first = h.workers[0]
+    assert first.isRunning()
+
+    first.ready.emit(_ready(
+        error="连续 10 分钟没有进度，已停止下载并删除未完成数据",
+        save_path=None,
+        terminal_result=DownloadTerminalResult.CANCELLED,
+        terminal_cause=DownloadTerminalCause.STALL,
+    ))
+    # The QThread can still report running in the ready -> finished signal gap.
+    assert first.isRunning()
+    h.controller.handle_anime_request_event(_request_event("REQ2"))
+
+    assert len(h.workers) == 2
+    assert h.workers[1].request_id == "REQ2"
+    assert h.dropped == ["REQ1"]
+    assert h.controller.in_flight_state() is not None
+
+
+def test_stall_timeout_cancel_unconfirmed_warns_but_releases_busy(qapp):
+    h = Harness()
+    h.controller.handle_anime_request_event(_request_event())
+
+    h.workers[0].ready.emit(_ready(
+        error="连续 10 分钟没有进度，已停止等待，但 qBittorrent 未确认取消，后台任务可能仍在",
+        save_path=None,
+        terminal_result=DownloadTerminalResult.UNCONFIRMED,
+        terminal_cause=DownloadTerminalCause.STALL,
+    ))
+
+    assert h.dropped == ["REQ1"]
+    assert h.controller.in_flight_state() is None
+    assert "未确认取消" in h.status[-1]
+    [req] = h.spoken
+    assert "后台任务可能仍在" in req.directive
 
 
 @pytest.mark.parametrize("reason,wording", [
@@ -613,7 +857,8 @@ def test_reconcile_registers_and_announces_never_plays(qapp):
     h.pending = [
         {"request_id": "OLD1", "episode_key": "无职转生|s3|e1",
          "title": "无职转生 第三季", "season": 3, "episode": 1,
-         "task_id": "b" * 40},
+         "task_id": "b" * 40,
+         "created_at": "2026-07-11T00:01:02+00:00"},
         {"request_id": "OLD2", "episode_key": "别的番|s1|e2",
          "title": "别的番", "season": 1, "episode": 2, "task_id": None},
     ]
@@ -621,6 +866,7 @@ def test_reconcile_registers_and_announces_never_plays(qapp):
     assert h.dropped == ["OLD2"]                   # yt-dlp leftover: forget it
     [w] = h.workers                                # one resume worker
     assert w.kw["resume_task_id"] == "b" * 40
+    assert w.kw["resume_created_at"] == "2026-07-11T00:01:02+00:00"
     assert w.started == 1
     # the resumed task completes -- unknown age: register + announce, NO play
     w.ready.emit(_ready("OLD1", save_path="/dl/ep1.mkv", elapsed=None))

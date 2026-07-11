@@ -5,7 +5,7 @@ Sits between the host->UI bridge and the download worker:
 - consumes ``AnimeRequestEvent`` (host watch_anime closure -> anime bridge ->
   qt_overlay dispatch) and starts an ``AnimeDownloadWorker``. v1 is
   single-flight: while any worker is active the F8 ``in_flight_state`` seam
-  reports ``{"progress","title"}`` (read by the host closure on the ChatWorker
+  reports ``{"request_id","progress","title"}`` (read by host closures on the ChatWorker
   thread -- the dict is swapped whole under the GIL, never mutated in place)
   and a second request event is dropped defensively (the host busy gate is the
   first line; this covers the emit/attach race).
@@ -30,8 +30,12 @@ Sits between the host->UI bridge and the download worker:
   -> policy guarantees confirmation, never auto-play). Records without a task_id
   (an interrupted yt-dlp run) are dropped with a warning -- the ``.part`` file
   remains and a re-request resumes it.
-- stall (v1 scope): a single informational system-turn ask + status chip. No
-  auto-cancel, no auto source-switch -- full stall handling is Phase 5.
+- qbt stall timeout: the worker performs the category-scoped cancellation and
+  reports one terminal error. The controller drops persisted pending state and
+  releases single-flight; it never auto-switches source.
+- explicit stop requests from the RuntimeEvent bridge and UI button converge on
+  ``cancel_current_download``; request identity guards stale events, and the
+  worker performs qBT deletion on its own thread.
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ from spica.anime.playback_policy import (
     REQUIRE_CONFIRMATION,
     decide_playback,
 )
+from spica.anime.models import DownloadTerminalCause, DownloadTerminalResult
 from spica.core.proactive import ProactiveTurnRequest
 from spica.ports.media_player import MediaPlayerError
 from ui.workers.anime_worker import AnimeDownloadWorker
@@ -88,6 +93,7 @@ class AnimeController(QObject):
         cookies_file: str = "",
         worker_factory: Callable[..., Any] | None = None,
         completion_timer: Any | None = None,
+        set_anime_cancel_state: Callable[[bool, bool], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._set_status = set_anime_status
@@ -106,11 +112,18 @@ class AnimeController(QObject):
         self._download_dir = download_dir
         self._cookies_file = cookies_file
         self._worker_factory = worker_factory or AnimeDownloadWorker
+        self._set_cancel_state = set_anime_cancel_state or (
+            lambda _active, _cancelling: None)
 
         self._shutting_down = False
         self._workers: list[Any] = []        # request worker + resume workers
+        # A worker that emitted ready has finished all qbt operations even if
+        # QThread.finished is still queued. Ignore it in the active-worker guard
+        # so a request in that narrow signal gap is not dropped.
+        self._terminal_worker_ids: set[int] = set()
         self._in_flight: dict | None = None  # swapped whole (GIL-atomic read)
         self._degraded_requests: set[str] = set()
+        self._cancelling_request_ids: set[str] = set()
         # F1: resumable pendings wait here; ONE resume worker runs at a time
         # (single flight -- two threads must never share the qbt client).
         self._reconcile_queue: list[dict] = []
@@ -129,7 +142,10 @@ class AnimeController(QObject):
         return self._in_flight
 
     def _has_active_worker(self) -> bool:
-        return any(w.isRunning() for w in self._workers)
+        return any(
+            id(w) not in self._terminal_worker_ids and w.isRunning()
+            for w in self._workers
+        )
 
     # -- AnimeRequestEvent (bridge dispatch, GUI thread) -------------------------
 
@@ -155,7 +171,7 @@ class AnimeController(QObject):
             torrent=self._torrent_provider(),
             download_dir=self._download_dir,
             poll_seconds=float(getattr(cfg, "qbittorrent_poll_seconds", 5.0)),
-            stall_timeout_minutes=float(getattr(cfg, "stall_timeout_minutes", 30.0)),
+            stall_timeout_minutes=float(getattr(cfg, "stall_timeout_minutes", 10.0)),
             ytdlp_format=str(getattr(
                 cfg, "ytdlp_format", "bv*[height<=1080]+ba/b[height<=1080]")),
             source_timeout_seconds=float(getattr(
@@ -166,15 +182,69 @@ class AnimeController(QObject):
             parent=self,
         )
         self._start_worker(worker, reconciled=False)
-        self._set_in_flight(0.0, title)
+        self._set_in_flight(event.request_id, 0.0, title)
         self._set_status(f"⬇ 下载中：{title}")
+
+    def handle_anime_cancel_event(self, event: Any) -> bool:
+        """RuntimeEvent bridge entry; a stale request id is a safe no-op."""
+        return self.cancel_current_download(
+            str(getattr(event, "request_id", "") or ""))
+
+    def cancel_current_download(
+        self,
+        expected_request_id: str,
+    ) -> bool:
+        """Ask the matching worker for a terminal user cancellation.
+
+        The GUI thread only sets the worker's flag. qBT status/delete calls are
+        made later inside that worker thread. Busy state intentionally remains
+        live until the terminal ready event arrives.
+        """
+        if self._shutting_down:
+            return False
+        current = self._in_flight or {}
+        request_id = str(current.get("request_id") or "")
+        if not request_id:
+            return False
+        expected = str(expected_request_id or "")
+        if not expected or expected != request_id:
+            logger.info(
+                "stale anime cancel ignored: expected=%s current=%s",
+                expected, request_id)
+            return False
+        if request_id in self._cancelling_request_ids:
+            return False
+
+        # This is the request-ID-bound suppress-play tombstone. Record it before
+        # even looking up the worker: QThread.finished may already have removed
+        # the worker while its earlier ready signal is still queued. Only the
+        # matching ready consumer clears this intent; finished never does.
+        self._cancelling_request_ids.add(request_id)
+        title = str(current.get("title") or self._title_for(request_id))
+        self._set_cancel_state(True, True)
+        self._set_status(f"⏳ 正在停止下载：{title}")
+        worker = next((
+            candidate for candidate in reversed(self._workers)
+            if getattr(candidate, "request_id", None) == request_id
+            and id(candidate) not in self._terminal_worker_ids
+        ), None)
+        if worker is None:
+            return True
+        if not worker.isRunning():
+            return True
+        try:
+            worker.request_download_cancel()
+        except Exception:  # noqa: BLE001 -- UI request must not crash the app
+            logger.exception("anime worker rejected cancel request")
+            # The user-visible suppress intent is still accepted. A later ready
+            # completion must be kept but never autoplayed/announced.
+        return True
 
     def _start_worker(self, worker: Any, *, reconciled: bool) -> None:
         if reconciled:
             self._reconciled_ids.add(worker.request_id)
         worker.progress.connect(self._on_worker_progress)
         worker.task_started.connect(self._on_worker_task_started)
-        worker.stalled.connect(self._on_worker_stalled)
         worker.reconnecting.connect(self._on_worker_reconnecting)
         worker.degraded.connect(self._on_worker_degraded)
         worker.ready.connect(
@@ -191,8 +261,10 @@ class AnimeController(QObject):
         if self._shutting_down:
             return
         current = self._in_flight or {}
+        if str(current.get("request_id") or "") != request_id:
+            return
         title = str(current.get("title") or self._title_for(request_id))
-        self._set_in_flight(progress, title)
+        self._set_in_flight(request_id, progress, title)
         if phase == "metadata":
             self._set_status(f"⬇ 正在获取种子元数据：{title}")
             return
@@ -207,19 +279,6 @@ class AnimeController(QObject):
             return
         # persist the qbt hash so a restart can reconcile this task (P1-9)
         self._note_task_id(request_id, task_id)
-
-    def _on_worker_stalled(self, request_id: str, minutes: float) -> None:
-        if self._shutting_down:
-            return
-        title = self._title_for(request_id)
-        self._set_status(f"⏸ 下载卡住了：{title}")
-        # single informational ask (v1): no retry queue, no auto-cancel/switch.
-        self._try_speak(ProactiveTurnRequest(
-            source="anime",
-            directive=(f"你帮麦下载的动漫《{title}》已经超过 {int(minutes)} 分钟"
-                       "没有进度，可能卡住了，跟麦说一声。"),
-            policy="drop_if_busy",
-        ))
 
     def _on_worker_reconnecting(self, request_id: str, used: int,
                                 maximum: int, reason: str) -> None:
@@ -245,13 +304,23 @@ class AnimeController(QObject):
             logger.debug("duplicate anime ready ignored: %s", event.request_id)
             return
         self._handled_ready_ids.add(event.request_id)
-        self._in_flight = None
+        self._terminal_worker_ids.add(id(worker))
+        manual_cancel_requested = (
+            event.request_id in self._cancelling_request_ids)
+        self._cancelling_request_ids.discard(event.request_id)
+        current = self._in_flight or {}
+        if str(current.get("request_id") or "") == event.request_id:
+            self._in_flight = None
+            self._set_cancel_state(False, False)
         self._degraded_requests.discard(event.request_id)
         reconciled = event.request_id in self._reconciled_ids
         self._reconciled_ids.discard(event.request_id)
         title = getattr(worker, "title", "") or "这一集"
 
-        if event.error:
+        terminal_result = DownloadTerminalResult(event.terminal_result)
+        terminal_cause = DownloadTerminalCause(event.terminal_cause)
+        if terminal_result is not DownloadTerminalResult.COMPLETED:
+            error_text = str(event.error or "")
             # F4: a terminal failure is no longer in flight -- erase the pending
             # record, or every restart would reconcile-and-refail it again.
             self._drop_pending(event.request_id)
@@ -260,6 +329,36 @@ class AnimeController(QObject):
                 logger.warning("reconcile: pending task %s vanished from qbt",
                                event.request_id)
                 self._set_status("")
+                return
+            if terminal_cause is DownloadTerminalCause.MANUAL:
+                detail = error_text or "停止结果未提供详情"
+                if terminal_result is DownloadTerminalResult.UNCONFIRMED:
+                    self._set_status(
+                        f"⚠ 已停止本地等待，qBittorrent 未确认取消：{title}")
+                    self._announce_with_retry(
+                        key=None,
+                        directive=(f"麦让你停止下载动漫《{title}》，但取消没有"
+                                   f"确认成功：{detail}。提醒麦后台任务可能仍在。"),
+                    )
+                else:
+                    self._set_status(f"⏹ 已停止下载：{title}")
+                return
+            if terminal_cause is DownloadTerminalCause.STALL:
+                detail = error_text or "下载连续无进度"
+                logger.warning("anime download timed out: %s", detail)
+                if terminal_result is DownloadTerminalResult.UNCONFIRMED:
+                    self._set_status(
+                        f"⚠ 下载超时，qBittorrent 未确认取消：{title}")
+                else:
+                    self._set_status(f"⏹ 下载超时，已停止：{title}")
+                self._announce_with_retry(
+                    key=None,
+                    directive=(f"你帮麦下载动漫《{title}》超时了：{detail}。"
+                               "跟麦说一声。"),
+                )
+                return
+            if terminal_result is DownloadTerminalResult.PRESERVED:
+                self._set_status(f"⏸ 已保留后台下载：{title}")
                 return
             logger.warning("anime download failed: %s", event.error)
             self._set_status(f"⚠ 下载失败：{title}")
@@ -282,6 +381,14 @@ class AnimeController(QObject):
                 key=None,
                 directive=(f"你帮麦下载的动漫《{title}》下载完了，但文件检查没通过"
                            f"（{exc}），先别播。跟麦说一声。"))
+            return
+
+        if (manual_cancel_requested
+                or terminal_cause is DownloadTerminalCause.MANUAL):
+            # A final status read found completion just before deletion. Keep
+            # the valid file but explicit stop intent always suppresses play.
+            self._set_status(
+                f"✅ 停止时已经下好了，文件已保留：{entry.title}")
             return
 
         if self._is_played(entry.episode_key):
@@ -366,6 +473,8 @@ class AnimeController(QObject):
             return
         self._degraded_requests.discard(
             str(getattr(worker, "request_id", "")))
+        worker_id = id(worker)
+        self._terminal_worker_ids.discard(worker_id)
         if worker in self._workers:
             self._workers.remove(worker)
         try:
@@ -481,20 +590,34 @@ class AnimeController(QObject):
             download_dir=self._download_dir,
             poll_seconds=float(getattr(cfg, "qbittorrent_poll_seconds", 5.0)),
             stall_timeout_minutes=float(
-                getattr(cfg, "stall_timeout_minutes", 30.0)),
+                getattr(cfg, "stall_timeout_minutes", 10.0)),
             cookies_file=self._cookies_file,
             resume_task_id=str(rec.get("task_id")),
+            resume_created_at=(
+                str(rec.get("created_at")) if rec.get("created_at") else None),
             parent=self,
         )
         self._start_worker(worker, reconciled=True)
-        self._set_in_flight(0.0, title)          # F8: busy from the first moment
+        self._set_in_flight(
+            str(rec.get("request_id") or ""), 0.0, title)
         self._set_status(f"⬇ 继续下载：{title}")
 
     # -- misc ---------------------------------------------------------------------
 
-    def _set_in_flight(self, progress: float, title: str) -> None:
+    def _set_in_flight(
+        self,
+        request_id: str,
+        progress: float,
+        title: str,
+    ) -> None:
         # swap the WHOLE dict: host reads it from the ChatWorker thread (F8)
-        self._in_flight = {"progress": float(progress), "title": title}
+        self._in_flight = {
+            "request_id": request_id,
+            "progress": float(progress),
+            "title": title,
+        }
+        self._set_cancel_state(
+            True, request_id in self._cancelling_request_ids)
 
     def shutdown(self, wait_ms: int = 1500) -> None:
         """P1-9 exit: stop retry timers; terminate yt-dlp keeping .part; stop
@@ -515,3 +638,7 @@ class AnimeController(QObject):
                 worker.force_kill()
                 worker.wait(max(1000, int(wait_ms)))
         self._workers.clear()
+        self._terminal_worker_ids.clear()
+        self._cancelling_request_ids.clear()
+        self._in_flight = None
+        self._set_cancel_state(False, False)

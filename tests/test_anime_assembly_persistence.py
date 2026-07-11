@@ -21,6 +21,7 @@ from spica.anime.coordinator import CoordinatorResult, MATCHED
 from spica.anime.library import AnimeLibrary, LibraryEntry
 from spica.anime.models import AnimeResource
 from spica.config.schema import AnimeConfig
+from spica.core.anime_events import AnimeCancelRequestEvent
 from spica.host.assemblies import anime as anime_assembly
 from spica.host.assemblies.anime import (
     _REPO_ROOT,
@@ -361,6 +362,212 @@ def test_in_flight_seam_absent_attr_is_tolerated(tmp_path, monkeypatch):
     assert not hasattr(h, "_anime_in_flight")
     rid = _request_download(h, monkeypatch)        # resolves fine -> downloading
     assert rid
+
+
+# -- user-requested stop tool -------------------------------------------------
+
+def test_cancel_tool_submits_trusted_active_request_even_when_anime_disabled(tmp_path):
+    h = _host(tmp_path, enabled=False)
+    h._anime_in_flight = lambda: {
+        "request_id": "REQ1", "title": "幼女战记 第二季", "progress": 0.0,
+    }
+    _install(h)
+
+    names = {schema.get("name") for schema in h.registry.tool_schemas()}
+    assert "cancel_anime_download" in names
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+    assert handler() == {
+        "status": "submitted", "request_id": "REQ1", "title": "幼女战记 第二季",
+    }
+    assert h.sunk == [AnimeCancelRequestEvent(
+        request_id="REQ1", title="幼女战记 第二季")]
+    assert h.registry.tool_effect("cancel_anime_download") == "act"
+    assert h.registry.tool_chainable("cancel_anime_download") is False
+    assert h.registry.tool_intent_gated("cancel_anime_download") is False
+
+
+@pytest.mark.parametrize(
+    ("sink", "state"),
+    [
+        (None, {"request_id": "REQ1", "title": "幼女战记"}),
+        (lambda ev: None, None),
+        (lambda ev: None, {"request_id": "", "title": "幼女战记"}),
+    ],
+)
+def test_cancel_tool_is_only_supplied_with_sink_and_valid_active_request(
+        tmp_path, sink, state):
+    h = _host(tmp_path)
+    h._anime_sink = sink
+    h._anime_in_flight = lambda: state
+    _install(h)
+
+    names = {schema.get("name") for schema in h.registry.tool_schemas()}
+    assert "cancel_anime_download" not in names
+
+
+def test_forced_cancel_call_without_offer_fails_closed(tmp_path):
+    h = _host(tmp_path)
+    h._anime_in_flight = lambda: {"request_id": "REQ1", "title": "幼女战记"}
+    _install(h)
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+
+    with pytest.raises(ScreenToolError) as caught:
+        handler()
+
+    assert caught.value.code == "ANIME_CANCEL_REQUEST_STALE"
+    assert h.sunk == []
+
+
+def test_cancel_offer_a_then_missing_fails_stale_without_emit(tmp_path):
+    h = _host(tmp_path)
+    state = {"request_id": "A", "title": "第一集"}
+    h._anime_in_flight = lambda: dict(state) if state else None
+    _install(h)
+    assert "cancel_anime_download" in {
+        schema.get("name") for schema in h.registry.tool_schemas()
+    }
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+    state.clear()
+
+    with pytest.raises(ScreenToolError) as caught:
+        handler()
+
+    assert caught.value.code == "ANIME_CANCEL_REQUEST_STALE"
+    assert h.sunk == []
+
+
+def test_cancel_offer_a_then_active_b_never_redirects(tmp_path):
+    h = _host(tmp_path)
+    state = {"request_id": "A", "title": "第一集"}
+    h._anime_in_flight = lambda: dict(state)
+    _install(h)
+    h.registry.tool_schemas()
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+    state.update(request_id="B", title="第二集")
+
+    with pytest.raises(ScreenToolError) as caught:
+        handler()
+
+    assert caught.value.code == "ANIME_CANCEL_REQUEST_STALE"
+    assert h.sunk == []
+
+
+def test_cancel_offer_is_one_shot_and_duplicate_is_stale(tmp_path):
+    h = _host(tmp_path)
+    h._anime_in_flight = lambda: {"request_id": "A", "title": "第一集"}
+    _install(h)
+    h.registry.tool_schemas()
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+
+    assert handler()["request_id"] == "A"
+    with pytest.raises(ScreenToolError) as caught:
+        handler()
+
+    assert caught.value.code == "ANIME_CANCEL_REQUEST_STALE"
+    assert h.sunk == [AnimeCancelRequestEvent(request_id="A", title="第一集")]
+
+
+def test_cancel_sink_failure_is_a_tool_error_not_a_false_ack(tmp_path):
+    h = _host(tmp_path)
+    h._anime_in_flight = lambda: {"request_id": "REQ1", "title": "幼女战记"}
+
+    def broken_sink(event):
+        raise RuntimeError("UI bridge closed")
+
+    h._anime_sink = broken_sink
+    _install(h)
+    h.registry.tool_schemas()
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+
+    with pytest.raises(ScreenToolError) as caught:
+        handler()
+
+    assert caught.value.code == "ANIME_CANCEL_SUBMIT_FAILED"
+
+    # The failed hand-off consumed the offer.  Replacing the sink does not let
+    # a retry fall back to whatever task happens to be current now.
+    h._anime_sink = h.sunk.append
+    with pytest.raises(ScreenToolError) as retried:
+        handler()
+    assert retried.value.code == "ANIME_CANCEL_REQUEST_STALE"
+    assert h.sunk == []
+
+
+def test_cancel_sink_disappearing_after_offer_consumes_identity(tmp_path):
+    h = _host(tmp_path)
+    h._anime_in_flight = lambda: {
+        "request_id": "REQ1", "title": "幼女战记"}
+    _install(h)
+    h.registry.tool_schemas()
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+    h._anime_sink = None
+
+    with pytest.raises(ScreenToolError) as caught:
+        handler()
+
+    assert caught.value.code == "ANIME_UI_NOT_READY"
+    h._anime_sink = h.sunk.append
+    with pytest.raises(ScreenToolError) as retry:
+        handler()
+    assert retry.value.code == "ANIME_CANCEL_REQUEST_STALE"
+    assert h.sunk == []
+
+
+def test_declined_offer_is_cleared_before_next_capability_generation(tmp_path):
+    h = _host(tmp_path)
+    state = {"request_id": "A", "title": "第一集"}
+    h._anime_in_flight = lambda: dict(state) if state else None
+    _install(h)
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+
+    # Turn A offered the tool but the model declined it.
+    h.registry.tool_schemas()
+    # The next turn has no active task. Availability must clear A before it
+    # returns False; a forced call after this generation is stale.
+    state.clear()
+    assert "cancel_anime_download" not in {
+        schema.get("name") for schema in h.registry.tool_schemas()
+    }
+    # Restore the exact old live ID without another capability generation.  If
+    # the unavailable generation failed to clear TLS, this forced call would
+    # incorrectly consume the abandoned A offer and emit an event.
+    state.update(request_id="A", title="第一集")
+    with pytest.raises(ScreenToolError) as stale:
+        handler()
+    assert stale.value.code == "ANIME_CANCEL_REQUEST_STALE"
+    assert h.sunk == []
+
+    # A later genuine B offer binds B, never revives A.
+    state.update(request_id="B", title="第二集")
+    h.registry.tool_schemas()
+    assert handler()["request_id"] == "B"
+    assert h.sunk == [AnimeCancelRequestEvent(request_id="B", title="第二集")]
+
+
+def test_cancel_request_id_is_compared_as_an_opaque_token(tmp_path):
+    opaque_id = "  request-id-with-significant-space  "
+    h = _host(tmp_path)
+    h._anime_in_flight = lambda: {
+        "request_id": opaque_id,
+        "title": "第一集",
+    }
+    _install(h)
+
+    h.registry.tool_schemas()
+    handler = h.registry.tool_handler("cancel_anime_download")
+    assert handler is not None
+
+    assert handler()["request_id"] == opaque_id
+    assert h.sunk == [AnimeCancelRequestEvent(
+        request_id=opaque_id, title="第一集")]
 
 
 # -- A2: empty source lists must not crash startup (P2-6) ----------------------

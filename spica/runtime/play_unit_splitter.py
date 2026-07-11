@@ -20,14 +20,6 @@ from spica.conversation.text_normalizer import (
 
 _TERMINATORS = set("。！？!?")
 _CLOSERS = set("」』）)]”’\"'")
-# Quote-bracket spans whose INNER sentence terminators must not end a play unit
-# (zh bilingual mode). When Spica quotes a galgame line she wraps it in these, e.g.
-# 理理は【今日はいい天気ね。】と言った。⟦…⟧ -- the 。 inside 【】 is quoted content, not
-# a sentence boundary, so cutting there would split the Japanese run from its
-# trailing ⟦中文⟧ translation (subtitle desync). Depth-tracked alongside ⟦⟧ in
-# _take_complete_bilingual_sentences (spoken side -- NOT stripped for sizing).
-_QUOTE_OPENERS = set("【「『")
-_QUOTE_CLOSERS = set("】」』")
 # One ⟦中文⟧ translation span (unclosed tail included) -- bilingual mode only.
 _TRANSLATION_SPAN_RE = re.compile(
     f"{DIALOG_TRANSLATION_OPEN}[^{DIALOG_TRANSLATION_CLOSE}]*{DIALOG_TRANSLATION_CLOSE}?"
@@ -101,21 +93,21 @@ class PlayUnitSplitter:
         self.min_chars = max(1, int(min_chars))
         self.max_chars = max(self.min_chars, int(max_chars))
         # Bilingual display mode (character.dialog_display_language == "zh"):
-        # a ⟦中文⟧ translation follows each Japanese sentence. When True,
-        # terminators inside ⟦⟧ never cut, a ⟦⟧ right after a terminator stays
-        # attached to that sentence, and unit sizing counts the Japanese side
-        # only. When False (default) every path below is the original code.
+        # a complete Japanese-run⟦Chinese⟧ group is one segment. When True,
+        # punctuation does not release a unit before its translation channel is
+        # complete, and unit sizing counts the Japanese side only. When False
+        # (default), every path below is the original punctuation splitter.
         self.bilingual_brackets = bool(bilingual_brackets)
         self.buffer = ""
         self.current = ""
-        self.completed_sentence_count = 0
+        self.completed_segment_count = 0
 
     def feed(self, text: str) -> list[str]:
         self.buffer += text or ""
         units: list[str] = []
-        for sentence in self._take_complete_sentences():
-            self.completed_sentence_count += 1
-            for part in self._split_overlong(sentence):
+        for segment in self._take_complete_segments():
+            self.completed_segment_count += 1
+            for part in self._split_overlong(segment):
                 units.extend(self._consume_part(part, force=False))
         return units
 
@@ -131,9 +123,9 @@ class PlayUnitSplitter:
             self.current = ""
         return [unit for unit in units if unit]
 
-    def _take_complete_sentences(self) -> list[str]:
+    def _take_complete_segments(self) -> list[str]:
         if self.bilingual_brackets:
-            return self._take_complete_bilingual_sentences()
+            return self._take_complete_bilingual_groups()
         sentences: list[str] = []
         index = 0
         while index < len(self.buffer):
@@ -151,49 +143,27 @@ class PlayUnitSplitter:
             index = 0
         return sentences
 
-    def _take_complete_bilingual_sentences(self) -> list[str]:
-        # Bilingual variant: a terminator inside ⟦⟧ OR inside a quote bracket
-        # (【】「」『』 -- Spica quoting a galgame line) never ends a sentence, and a
-        # ⟦translation⟧ right after the terminator belongs to that sentence. A
-        # sentence at the exact buffer end is NOT emitted yet -- the next delta
-        # may open its ⟦⟧ (flush() releases the tail at end of stream).
-        sentences: list[str] = []
-        index = 0
-        depth = 0
-        while index < len(self.buffer):
-            char = self.buffer[index]
-            if char == DIALOG_TRANSLATION_OPEN or char in _QUOTE_OPENERS:
-                depth += 1
-                index += 1
-                continue
-            if char == DIALOG_TRANSLATION_CLOSE or char in _QUOTE_CLOSERS:
-                depth = max(0, depth - 1)
-                index += 1
-                continue
-            if depth > 0 or char not in _TERMINATORS:
-                index += 1
-                continue
-
-            end = index + 1
-            while end < len(self.buffer) and self.buffer[end] in _CLOSERS:
-                end += 1
-            probe = end
-            while probe < len(self.buffer) and self.buffer[probe].isspace():
-                probe += 1
-            if probe >= len(self.buffer):
-                break  # a ⟦translation⟧ may still follow -- wait for more stream
-            if self.buffer[probe] == DIALOG_TRANSLATION_OPEN:
-                close = self.buffer.find(DIALOG_TRANSLATION_CLOSE, probe + 1)
-                if close < 0:
-                    break  # translation still streaming -- wait
-                end = close + 1
-            sentence = self._clean_text(self.buffer[:end])
-            if sentence:
-                sentences.append(sentence)
+    def _take_complete_bilingual_groups(self) -> list[str]:
+        # The complete display unit is the model's ``Japanese run⟦Chinese⟧``
+        # group, not each punctuation-delimited Japanese sentence. Real outputs
+        # sometimes translate a question+answer pair with one ⟦⟧ block; cutting
+        # at the question mark would release a false "missing subtitle" unit.
+        # Wait for the complete translation channel, then release the whole run.
+        # A marker-less / unclosed tail stays buffered until flush().
+        groups: list[str] = []
+        while True:
+            open_at = self.buffer.find(DIALOG_TRANSLATION_OPEN)
+            if open_at < 0:
+                break
+            close_at = self.buffer.find(DIALOG_TRANSLATION_CLOSE, open_at + 1)
+            if close_at < 0:
+                break
+            end = close_at + 1
+            group = self._clean_text(self.buffer[:end])
+            if group:
+                groups.append(group)
             self.buffer = self.buffer[end:]
-            index = 0
-            depth = 0
-        return sentences
+        return groups
 
     def _visible_len(self, text: str) -> int:
         # Unit sizing counts the SPOKEN (Japanese) side only: ⟦中文⟧ spans are

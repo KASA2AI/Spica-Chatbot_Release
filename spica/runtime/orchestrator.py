@@ -34,10 +34,11 @@ from spica.runtime.stages import (
 from spica.conversation.reply_parser import EMOTION_LABELS, guess_emotion, normalize_emotion, parse_model_reply
 from spica.runtime.services import AgentServices
 from spica.conversation.text_normalizer import (
-    DIALOG_TRANSLATION_OPEN,
     build_bilingual_display,
     build_tts_text,
     normalize_square_brackets_for_speech,
+    spoken_channel_is_paired,
+    spoken_channel_or_fallback,
     split_dialog_translation,
 )
 from common.timing import now_ms
@@ -189,20 +190,15 @@ def _produce_stream_events(
             subtitle_text = ""
             if bilingual_dialog:
                 stripped = (display_text or "").strip()
-                spoken_text, pure_subtitle = split_dialog_translation(stripped)
-                if not spoken_text:
-                    # Degenerate all-⟦中文⟧ unit (the model broke the pair
-                    # format): the translation becomes the spoken+displayed side
-                    # so the unit still plays instead of being silently dropped.
-                    # subtitle_text stays "" -> display falls back to display_text.
-                    spoken_text = pure_subtitle
-                elif DIALOG_TRANSLATION_OPEN in stripped:
-                    # Bilingual display: show the ⟦中文⟧ translation for each
-                    # translated Japanese run, falling back to the Japanese for any
-                    # run the model left untranslated (see build_bilingual_display).
-                    # A unit with NO ⟦⟧ leaves subtitle_text "" and the display
-                    # falls back to the normalized Japanese below.
-                    subtitle_text = build_bilingual_display(stripped)
+                spoken_text, _ = split_dialog_translation(stripped)
+                subtitle_text = build_bilingual_display(stripped)
+                # A malformed Chinese/plain-text "spoken" side must not enter
+                # Japanese TTS or memory. A paired spoken side is structurally
+                # trusted so valid Han-only Japanese is not destroyed.
+                spoken_text = spoken_channel_or_fallback(
+                    spoken_text,
+                    paired_subtitle=spoken_channel_is_paired(stripped),
+                )
                 display_text = normalize_square_brackets_for_speech(spoken_text)
             else:
                 display_text = normalize_square_brackets_for_speech((display_text or "").strip())
@@ -360,9 +356,9 @@ def _produce_stream_events(
                 answer_delta = extractor.answer  # diverged: release everything withheld
             if not answer_delta:
                 return
-            previous_sentence_count = splitter.completed_sentence_count
+            previous_segment_count = splitter.completed_segment_count
             units = splitter.feed(answer_delta)
-            if splitter.completed_sentence_count > previous_sentence_count:
+            if splitter.completed_segment_count > previous_segment_count:
                 observer.mark_once("first_sentence_ms", relative_ms())
             for unit_text in units:
                 submit_unit(unit_text)
@@ -430,8 +426,15 @@ def _produce_stream_events(
         # memory and the done event stay pure Japanese.
         normalized_answer = normalize_square_brackets_for_speech(answer.parsed_reply["answer"])
         if bilingual_dialog:
-            spoken_answer, subtitle_answer = split_dialog_translation(normalized_answer)
-            answer.answer = spoken_answer or subtitle_answer or normalized_answer
+            spoken_answer, _ = split_dialog_translation(normalized_answer)
+            answer.answer = (
+                spoken_answer
+                if is_no_comment_answer(spoken_answer)
+                else spoken_channel_or_fallback(
+                    spoken_answer,
+                    paired_subtitle=spoken_channel_is_paired(normalized_answer),
+                )
+            )
         else:
             answer.answer = normalized_answer
         answer.parsed_reply["answer"] = answer.answer

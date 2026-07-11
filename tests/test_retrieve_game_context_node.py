@@ -17,6 +17,7 @@ from memory.store import SQLiteMemoryStore
 from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
 from spica.adapters.memory.sqlite import SqliteMemoryAdapter, scoped_conversation_id
 from spica.config.schema import AppConfig, CharacterConfig, GalgameConfig
+from spica.conversation.prompt_builder import BILINGUAL_OUTPUT_REMINDER, build_spica_prompt
 from spica.galgame.manual import ManualGameMemory
 from spica.galgame.models import (
     CharacterRelation,
@@ -178,6 +179,37 @@ class ActiveModeTest(unittest.TestCase):
             ctx = _ctx(req)
             retrieve_game_context_node(ctx, None, _deps(ctx, game_memory=gm))
             self.assertEqual(ctx.prompt.prompt_input, BASE_PROMPT)  # nothing appended
+
+    def test_zh_output_reminder_stays_last_after_active_context_injection(self):
+        with TemporaryDirectory() as tmp:
+            gm = GameMemorySqliteAdapter(Path(tmp) / "g.sqlite3")
+            _feed_all(gm)
+            request = TurnRequest(
+                user_input="刚才这段你怎么看？",
+                conversation_id="default",
+                interaction_mode="galgame",
+                game_context_request=GameContextRequest(mode="active", game_id="ABC"),
+            )
+            prompt = build_spica_prompt(
+                user_input=request.user_input,
+                recent_context=[],
+                long_term_memories=[],
+                character_profile="profile",
+                dialog_display_language="zh",
+            )
+            ctx = _ctx(request, prompt=prompt)
+            deps = _deps(ctx, game_memory=gm)
+            deps.config.character.dialog_display_language = "zh"
+
+            retrieve_game_context_node(ctx, None, deps)
+
+            final_prompt = ctx.prompt.prompt_input
+            self.assertIn("[CURRENT_GAME_BUFFER]", final_prompt)
+            self.assertLess(
+                final_prompt.index("[CURRENT_GAME_BUFFER]"),
+                final_prompt.rindex("[OUTPUT_FORMAT_REMINDER]"),
+            )
+            self.assertTrue(final_prompt.rstrip().endswith(BILINGUAL_OUTPUT_REMINDER))
 
 
 class ActiveSummariesInjectionTest(unittest.TestCase):

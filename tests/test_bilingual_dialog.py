@@ -7,8 +7,10 @@ LLM/TTS.
 """
 
 import json
+import random
 import tempfile
 import unittest
+import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +18,7 @@ from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
+from spica.adapters.memory.sqlite import scoped_conversation_id
 from spica.config.schema import AppConfig, CharacterConfig, StreamConfig
 from spica.conversation.prompt_builder import (
     BILINGUAL_DISPLAY_RULES,
@@ -27,6 +30,8 @@ from spica.conversation.prompt_builder import (
 )
 from spica.conversation.text_normalizer import (
     build_bilingual_display,
+    spoken_channel_is_paired,
+    spoken_channel_or_fallback,
     split_dialog_translation,
 )
 from spica.runtime.tool_round import build_tool_followup_prompt
@@ -162,6 +167,28 @@ class SplitDialogTranslationTests(unittest.TestCase):
 
 
 class BilingualPlayUnitSplitterTests(unittest.TestCase):
+    def test_grouped_translation_waits_for_complete_translation_channel(self):
+        cases = (
+            (
+                "パンはパンでも、食べられないパンは？フライパンよ。"
+                "⟦面包里有一种不能吃的面包，是哪种？是平底锅。⟧",
+                "面包里有一种不能吃的面包，是哪种？是平底锅。",
+            ),
+            (
+                "忘れたら、……私が困るのよ。⟦要是忘了，……我会很麻烦的。⟧",
+                "要是忘了，……我会很麻烦的。",
+            ),
+        )
+        for text, expected_display in cases:
+            with self.subTest(text=text):
+                splitter = PlayUnitSplitter(min_chars=1, max_chars=200, bilingual_brackets=True)
+                units = []
+                for char in text:  # worst-case streaming: one Unicode scalar per delta
+                    units.extend(splitter.feed(char))
+                units.extend(splitter.flush())
+                self.assertEqual(units, [text])
+                self.assertEqual(build_bilingual_display(units[0]), expected_display)
+
     def test_terminators_inside_brackets_do_not_cut(self):
         splitter = PlayUnitSplitter(min_chars=1, max_chars=96, bilingual_brackets=True)
         units = splitter.feed(BILINGUAL_ANSWER) + splitter.flush()
@@ -315,20 +342,44 @@ class BilingualStreamingTests(unittest.TestCase):
     def test_all_translation_unit_degrades_to_visible_playable_unit(self):
         # Hole-2 fallback: a unit that is ONLY ⟦中文⟧ (broken pair format) must
         # still produce a visible, playable unit -- never be silently dropped.
+        # The display may use the supplied Chinese subtitle, but the spoken /
+        # memory channel must remain Japanese.
         services, events = self._run("⟦只有中文没有日语。⟧", dialog_display_language="zh")
         text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
         done = [e for e in events if e["event"] == "done"][-1]["data"]
         self.assertEqual([d["display_text"] for d in text_events], ["只有中文没有日语。"])
-        self.assertEqual([call["text"] for call in services.tts_adapter.calls], ["只有中文没有日语。"])
-        self.assertEqual(done["answer"], "只有中文没有日语。")
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["すみません、もう一度話しかけてください。"],
+        )
+        self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
+        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
+        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
 
-    def test_zh_partial_compliance_never_drops_a_spoken_sentence(self):
-        # The real-world symptom: the model translated はい / ええ but DROPPED
-        # うん's ⟦⟧. The subtitle must show BOTH translations AND keep うん as
-        # Japanese (never a silent drop, never a whole-unit flip); TTS / done stay
-        # pure Japanese with no ⟦ and no Chinese leaking into the voice.
+    def test_all_translation_japanese_never_bypasses_zh_display_validation(self):
+        services, events = self._run("⟦おはよう。⟧", dialog_display_language="zh")
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+        done = [e for e in events if e["event"] == "done"][-1]["data"]
+
+        self.assertEqual(
+            [data["display_text"] for data in text_events],
+            ["（中文字幕暂时缺失。）"],
+        )
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["すみません、もう一度話しかけてください。"],
+        )
+        self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
+        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
+        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+
+    def test_zh_partial_compliance_never_leaks_japanese_into_subtitles(self):
+        # The model translated はい but DROPPED the final うん's ⟦⟧. zh is a
+        # Chinese-subtitle contract: the display must use a
+        # Chinese missing-subtitle notice instead of exposing the spoken Japanese.
+        # TTS / done still keep every Japanese sentence intact.
         services, events = self._run(
-            "はい。⟦好。⟧うん。ええ。⟦是的。⟧", dialog_display_language="zh", play_unit_min_chars=6
+            "はい。⟦好。⟧うん。", dialog_display_language="zh", play_unit_min_chars=6
         )
         text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
         done = [e for e in events if e["event"] == "done"][-1]["data"]
@@ -336,15 +387,143 @@ class BilingualStreamingTests(unittest.TestCase):
         self.assertNotIn("⟦", joined)
         self.assertNotIn("⟧", joined)
         self.assertIn("好", joined)            # translated sentence shows Chinese
-        self.assertIn("是的", joined)          # translated sentence shows Chinese
-        self.assertIn("うん", joined)          # untranslated sentence survives as JP
+        self.assertIn("中文字幕暂时缺失", joined)
+        self.assertNotIn("うん", joined)        # untranslated Japanese never reaches UI
         for call in services.tts_adapter.calls:
             self.assertNotIn("⟦", call["text"])
             self.assertNotIn("好", call["text"])
-            self.assertNotIn("是的", call["text"])
         self.assertNotIn("⟦", done["answer"])
         self.assertNotIn("好", done["answer"])
         self.assertIn("うん", done["answer"])  # memory keeps the pure-Japanese line
+
+    def test_zh_zero_compliance_uses_chinese_notice_and_keeps_japanese_voice(self):
+        services, events = self._run(
+            "翻訳を全部忘れた返事です。",
+            dialog_display_language="zh",
+            play_unit_min_chars=1,
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+        done = [e for e in events if e["event"] == "done"][-1]["data"]
+
+        self.assertEqual(
+            [data["display_text"] for data in text_events],
+            ["（中文字幕暂时缺失。）"],
+        )
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["翻訳を全部忘れた返事です。"],
+        )
+        self.assertEqual(done["answer"], "翻訳を全部忘れた返事です。")
+
+    def test_zh_unpaired_chinese_never_enters_spoken_or_memory_channels(self):
+        services, events = self._run(
+            "只有中文，没有日语。",
+            dialog_display_language="zh",
+            play_unit_min_chars=1,
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+        done = [e for e in events if e["event"] == "done"][-1]["data"]
+
+        self.assertEqual(
+            [data["display_text"] for data in text_events],
+            ["（中文字幕暂时缺失。）"],
+        )
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["すみません、もう一度話しかけてください。"],
+        )
+        self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
+        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
+        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+
+    def test_zh_translation_prefix_does_not_trust_unpaired_chinese_tail(self):
+        services, events = self._run(
+            "⟦中文字幕。⟧只有中文尾巴。",
+            dialog_display_language="zh",
+            play_unit_min_chars=6,
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+        done = [e for e in events if e["event"] == "done"][-1]["data"]
+
+        joined_display = "".join(data["display_text"] for data in text_events)
+        self.assertNotIn("日", joined_display)
+        self.assertIn("中文字幕", joined_display)
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["すみません、もう一度話しかけてください。"],
+        )
+        self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
+        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
+        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+
+    def test_zh_stray_close_does_not_forge_pair_for_chinese_tail(self):
+        services, events = self._run(
+            "⟦中文字幕。⟧只有中文尾巴。⟧",
+            dialog_display_language="zh",
+            play_unit_min_chars=6,
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+        done = [e for e in events if e["event"] == "done"][-1]["data"]
+
+        self.assertTrue(all("⟧" not in data["display_text"] for data in text_events))
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["すみません、もう一度話しかけてください。"],
+        )
+        self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
+        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
+        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+
+    def test_zh_paired_kanji_only_japanese_remains_in_spoken_and_memory_channels(self):
+        services, events = self._run(
+            "了解。⟦明白。⟧あとで行く。⟦之后去。⟧",
+            dialog_display_language="zh",
+            play_unit_min_chars=1,
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+        done = [e for e in events if e["event"] == "done"][-1]["data"]
+
+        self.assertEqual(
+            [data["display_text"] for data in text_events],
+            ["明白。", "之后去。"],
+        )
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["了解。", "あとで行く。"],
+        )
+        self.assertEqual(done["answer"], "了解。あとで行く。")
+        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
+        self.assertEqual(recent[-1]["assistant_text"], "了解。あとで行く。")
+
+    def test_zh_rejects_japanese_inside_the_translation_channel(self):
+        services, events = self._run(
+            "おはよう。⟦おはよう。⟧",
+            dialog_display_language="zh",
+            play_unit_min_chars=1,
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+
+        self.assertEqual(
+            [data["display_text"] for data in text_events],
+            ["（中文字幕暂时缺失。）"],
+        )
+        self.assertEqual(
+            [call["text"] for call in services.tts_adapter.calls],
+            ["おはよう。"],
+        )
+
+    def test_zh_rejects_supplementary_kana_inside_translation_channel(self):
+        _, events = self._run(
+            "古い仮名。⟦中文𛀀。⟧",
+            dialog_display_language="zh",
+            play_unit_min_chars=1,
+        )
+        text_events = [e["data"] for e in events if e["event"] == "unit_text_ready"]
+
+        self.assertEqual(
+            [data["display_text"] for data in text_events],
+            ["（中文字幕暂时缺失。）"],
+        )
 
 
 class BilingualTypedEventBoundaryTests(unittest.TestCase):
@@ -388,19 +567,27 @@ class DialogDisplayLanguageConfigTests(unittest.TestCase):
 
 
 class BuildBilingualDisplayTests(unittest.TestCase):
-    """Per-sentence display: ⟦中文⟧ where the model gave one, that sentence's
-    Japanese otherwise -- so no spoken sentence disappears from the subtitle."""
+    """Per-sentence zh display: trusted ⟦中文⟧ or a Chinese missing notice.
+
+    Spoken Japanese is never a display fallback.
+    """
 
     def test_all_sentences_translated_show_chinese(self):
         self.assertEqual(
             build_bilingual_display("日语1。⟦中文1。⟧日语2。⟦中文2。⟧"), "中文1。中文2。"
         )
 
-    def test_untranslated_tail_falls_back_to_that_sentence_japanese(self):
-        self.assertEqual(build_bilingual_display("日语1。⟦中文1。⟧日语2。"), "中文1。日语2。")
+    def test_untranslated_tail_uses_chinese_missing_notice(self):
+        self.assertEqual(
+            build_bilingual_display("日语1。⟦中文1。⟧日语2。"),
+            "中文1。（中文字幕暂时缺失。）",
+        )
 
-    def test_no_markers_returns_japanese_unchanged(self):
-        self.assertEqual(build_bilingual_display("日语1。日语2。"), "日语1。日语2。")
+    def test_no_markers_uses_chinese_missing_notice(self):
+        self.assertEqual(
+            build_bilingual_display("日语1。日语2。"),
+            "（中文字幕暂时缺失。）",
+        )
 
     def test_grouped_multi_sentence_translation_shows_pure_chinese(self):
         # The model groups several Japanese sentences under ONE ⟦中文⟧ (real prod
@@ -416,7 +603,8 @@ class BuildBilingualDisplayTests(unittest.TestCase):
     def test_grouped_then_untranslated_tail(self):
         # A translated run followed by a sentence the model left untranslated.
         self.assertEqual(
-            build_bilingual_display("あ。い。⟦啊。以。⟧う。"), "啊。以。う。"
+            build_bilingual_display("あ。い。⟦啊。以。⟧う。"),
+            "啊。以。（中文字幕暂时缺失。）",
         )
 
     def test_unclosed_translation_tail(self):
@@ -428,8 +616,81 @@ class BuildBilingualDisplayTests(unittest.TestCase):
     def test_comma_is_not_a_sentence_boundary(self):
         self.assertEqual(build_bilingual_display("おはよう、麦。⟦早上好，麦。⟧"), "早上好，麦。")
 
+    def test_generated_malformed_subtitles_never_emit_japanese_script(self):
+        rng = random.Random(20260711)
+        spoken = ["おはよう。", "どうする？", "古い仮名𛀀。", "ｶﾀｶﾅ。", "只有中文。"]
+        translations = [
+            "早上好。",
+            "怎么办？",
+            "",
+            "おはよう。",
+            "中文𛀀。",
+            "中文ｶﾅ。",
+            "中文〱。",  # VERTICAL KANA REPEAT MARK (outside kana letter blocks)
+        ]
+
+        for _ in range(1000):
+            left = rng.choice(spoken)
+            right = rng.choice(spoken)
+            translation = rng.choice(translations)
+            shape = rng.randrange(6)
+            if shape == 0:
+                source = left
+            elif shape == 1:
+                source = f"{left}⟦{translation}⟧"
+            elif shape == 2:
+                source = f"{left}⟦{translation}⟧{right}"
+            elif shape == 3:
+                source = f"⟦{translation}⟧"
+            elif shape == 4:
+                source = f"⟦{translation}⟧{right}"
+            else:
+                source = f"⟦{translation}⟧{right}⟧"
+
+            display = build_bilingual_display(source)
+            leaked = [
+                char
+                for char in display
+                if any(
+                    marker in unicodedata.name(char, "")
+                    for marker in ("HIRAGANA", "KATAKANA", "KANA")
+                )
+            ]
+            self.assertEqual(leaked, [], msg=f"source={source!r}, display={display!r}")
+
+            raw_spoken, _ = split_dialog_translation(source)
+            paired_spoken = spoken_channel_is_paired(source)
+            trusted_spoken = spoken_channel_or_fallback(
+                raw_spoken,
+                paired_subtitle=paired_spoken,
+            )
+            has_japanese_script = any(
+                any(
+                    marker in unicodedata.name(char, "")
+                    for marker in ("HIRAGANA", "KATAKANA", "KANA")
+                )
+                for char in trusted_spoken
+            )
+            if not paired_spoken:
+                self.assertTrue(
+                    has_japanese_script,
+                    msg=f"source={source!r}, spoken={trusted_spoken!r}",
+                )
+
 
 class BilingualPromptHardeningTests(unittest.TestCase):
+    def test_zh_prompt_forbids_japanese_inside_translation_channel(self):
+        prompt = build_spica_prompt(
+            user_input="こんにちは",
+            recent_context=[],
+            long_term_memories=[],
+            character_profile="profile",
+            dialog_display_language="zh",
+        )
+        self.assertIn("⟦⟧ 内只允许使用中文", prompt)
+        self.assertIn("不得保留日语假名或未翻译的日文原句", prompt)
+        self.assertTrue(prompt.rstrip().endswith(BILINGUAL_OUTPUT_REMINDER))
+
     def test_zh_json_example_shows_the_bilingual_shape(self):
         prompt = build_system_prompt("麦", dialog_display_language="zh")
         self.assertIn("日语台词。⟦中文翻译。⟧", prompt)          # the JSON answer example

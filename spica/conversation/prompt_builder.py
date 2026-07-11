@@ -50,7 +50,7 @@ SYSTEM_PROMPT_TEMPLATE = _PROMPT_RULES + "\n\n" + _PROMPT_FORMAT
 # dialog box shows the ⟦中文⟧ side, TTS/memory keep the Japanese side. Voice is
 # ALWAYS Japanese -- this rule changes what is displayed, never what is spoken.
 BILINGUAL_DISPLAY_RULES = """
-10. 双语字幕模式：answer 里每一句日语台词后面必须紧跟这句台词的中文翻译，中文翻译用 ⟦⟧ 括起来，例如："おはよう。⟦早上好。⟧今日は何する？⟦今天做什么？⟧"。⟦⟧ 里只放中文翻译，语气贴合台词，不加解释或注音；日语台词本身仍遵守上面所有规则。第 5 条的 500 字符上限只统计日语台词，不含 ⟦⟧ 内的中文。如果按指示回答 NO_COMMENT，则只输出 NO_COMMENT，不加 ⟦⟧ 翻译。
+10. 双语字幕模式：answer 里每一句日语台词后面必须紧跟这句台词的中文翻译，中文翻译用 ⟦⟧ 括起来，例如："おはよう。⟦早上好。⟧今日は何する？⟦今天做什么？⟧"。⟦⟧ 内只允许使用中文，不得保留日语假名或未翻译的日文原句；遇到专有名词也优先使用通行的中文译名。中文语气要贴合台词，不加解释或注音；日语台词本身仍遵守上面所有规则。第 5 条的 500 字符上限只统计日语台词，不含 ⟦⟧ 内的中文。如果按指示回答 NO_COMMENT，则只输出 NO_COMMENT，不加 ⟦⟧ 翻译。
 """.strip()
 
 # zh-mode JSON format block: identical to _PROMPT_FORMAT except the answer
@@ -72,7 +72,8 @@ _PROMPT_FORMAT_ZH = _PROMPT_FORMAT.replace(
 BILINGUAL_OUTPUT_REMINDER = (
     "[OUTPUT_FORMAT_REMINDER]\n"
     "answer 必须逐句采用「日语句子。⟦中文翻译。⟧」的形式：每一句日语后面都紧跟这句的"
-    "中文翻译，用 ⟦⟧ 括起来，从第一句到最后一句都不能漏。只有需要回答 NO_COMMENT 时"
+    "中文翻译，用 ⟦⟧ 括起来，从第一句到最后一句都不能漏。⟦⟧ 内只允许使用中文，"
+    "不得保留日语假名或未翻译的日文原句。只有需要回答 NO_COMMENT 时"
     "例外（只输出 NO_COMMENT，不加 ⟦⟧）。"
 )
 
@@ -80,6 +81,23 @@ BILINGUAL_OUTPUT_REMINDER = (
 def bilingual_output_reminder(dialog_display_language: str = "ja") -> str:
     """zh-mode trailing recency reminder block, or '' in ja mode (byte-identity)."""
     return BILINGUAL_OUTPUT_REMINDER if dialog_display_language == "zh" else ""
+
+
+def append_prompt_context_sections(
+    prompt_input: str,
+    sections: list[str],
+    *,
+    dialog_display_language: str = "ja",
+) -> str:
+    """Append contributed context while keeping zh's output contract last."""
+    base = str(prompt_input or "")
+    reminder = bilingual_output_reminder(dialog_display_language)
+    if reminder:
+        stripped = base.rstrip()
+        if stripped.endswith(reminder):
+            base = stripped[:-len(reminder)].rstrip()
+        return "\n\n".join([base, *sections, reminder])
+    return "\n\n".join([base, *sections])
 
 
 def build_system_prompt(

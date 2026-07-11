@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 
 BRACKET_SENTENCE_BOUNDARIES = set("。！？!?…")
@@ -11,6 +12,59 @@ BRACKET_PAUSE_MARKS = set("、，,；;：:")
 # The Japanese side stays the spoken/memory text; the ⟦⟧ side is display-only.
 DIALOG_TRANSLATION_OPEN = "⟦"
 DIALOG_TRANSLATION_CLOSE = "⟧"
+MISSING_CHINESE_SUBTITLE = "（中文字幕暂时缺失。）"
+MISSING_SPOKEN_DIALOG = "すみません、もう一度話しかけてください。"
+
+
+def contains_japanese_script(text: str) -> bool:
+    return any(
+        any(
+            marker in unicodedata.name(char, "")
+            for marker in ("HIRAGANA", "KATAKANA", "KANA")
+        )
+        for char in text
+    )
+
+
+def spoken_channel_is_paired(source: str) -> bool:
+    """Whether the last outside event is a matched ``spoken⟦subtitle⟧`` close."""
+    inside_translation = False
+    saw_translation = False
+    last_was_matched_close = False
+    for char in source:
+        if inside_translation:
+            if char == DIALOG_TRANSLATION_CLOSE:
+                inside_translation = False
+                last_was_matched_close = True
+            continue
+        if char == DIALOG_TRANSLATION_OPEN:
+            inside_translation = True
+            saw_translation = True
+            last_was_matched_close = False
+        elif not char.isspace():
+            # Spoken tail or a stray close after a valid subtitle group.
+            last_was_matched_close = False
+    return saw_translation and not inside_translation and last_was_matched_close
+
+
+def spoken_channel_or_fallback(text: str, *, paired_subtitle: bool = False) -> str:
+    """Return a structurally trusted spoken channel or the Japanese fallback.
+
+    A non-empty side from ``spoken⟦subtitle⟧`` is trusted because Han-only text
+    cannot be classified as Chinese vs Japanese from Unicode alone. Unpaired
+    text must contain Japanese script; otherwise it degrades conservatively.
+    """
+    spoken = text.strip()
+    if spoken and (paired_subtitle or contains_japanese_script(spoken)):
+        return spoken
+    return MISSING_SPOKEN_DIALOG
+
+
+def _display_subtitle_or_missing(text: str) -> str:
+    subtitle = text.strip()
+    if not subtitle or contains_japanese_script(subtitle):
+        return MISSING_CHINESE_SUBTITLE
+    return subtitle
 
 
 def split_dialog_translation(text: str) -> tuple[str, str]:
@@ -48,32 +102,29 @@ def build_bilingual_display(text: str) -> str:
     """Per-sentence display string for zh mode.
 
     Walk ``日语。⟦中文。⟧日语。⟦中文。⟧`` and, for each ``⟦中文⟧`` the model gave,
-    show that translation; where a Japanese sentence has NO following ``⟦⟧`` show
-    that sentence's Japanese instead. This keeps EVERY spoken sentence represented
-    in the subtitle -- unlike the old ``subtitle or spoken`` which, once a unit
-    held any translation, dropped the untranslated Japanese sentences entirely,
-    and once a unit held none, flipped the whole unit to Japanese. Text without
-    ``⟦`` returns the cleaned text unchanged (all-Japanese fallback).
+    show that translation; where a Japanese sentence has NO following ``⟦⟧``, show
+    a Chinese missing-subtitle notice instead of leaking the spoken Japanese into
+    the zh display channel.
     """
     source = text or ""
     if DIALOG_TRANSLATION_OPEN not in source:
-        return re.sub(r"\s+", " ", source).strip()
+        return MISSING_CHINESE_SUBTITLE if source.strip() else ""
     parts: list[str] = []
     index = 0
     while index < len(source):
         open_at = source.find(DIALOG_TRANSLATION_OPEN, index)
         if open_at < 0:
-            parts.append(source[index:])  # trailing Japanese, no translation
+            if source[index:].strip():
+                parts.append(MISSING_CHINESE_SUBTITLE)
             break
-        japanese = source[index:open_at]
         close_at = source.find(DIALOG_TRANSLATION_CLOSE, open_at + 1)
         translation = source[open_at + 1:] if close_at < 0 else source[open_at + 1:close_at]
         # The ⟦中文⟧ translates the ENTIRE preceding Japanese run: the model groups
         # several sentences under ONE translation (real output e.g.
         # "ふぅん……麦。こんな時間に珍しいわね。⟦哼……麦。这个时间来还真少见呢。⟧"), so show the
-        # Chinese and drop that whole run. Only an EMPTY ⟦⟧ (no translation given)
-        # falls back to showing the Japanese run.
-        parts.append(translation if translation.strip() else japanese)
+        # Chinese and drop that whole run. An EMPTY ⟦⟧ is an invalid subtitle,
+        # so surface the Chinese notice rather than the Japanese run.
+        parts.append(_display_subtitle_or_missing(translation))
         if close_at < 0:
             break
         index = close_at + 1

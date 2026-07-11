@@ -25,7 +25,11 @@ from functools import wraps
 from typing import Any, Callable
 
 from spica.conversation.character_loader import DEFAULT_CHARACTER_NAME, DEFAULT_INTERLOCUTOR_NAME
-from spica.conversation.prompt_builder import DEFAULT_CHARACTER_PROFILE, build_spica_prompt
+from spica.conversation.prompt_builder import (
+    DEFAULT_CHARACTER_PROFILE,
+    append_prompt_context_sections,
+    build_spica_prompt,
+)
 from spica.conversation.reply_parser import EMOTION_LABELS, normalize_emotion, parse_model_reply
 from spica.conversation.text_normalizer import normalize_square_brackets_for_speech
 from spica.conversation.time_context import build_local_time_context
@@ -364,7 +368,15 @@ def contribute_context_node(ctx: TurnContext, services: AgentServices, deps: Any
                 )
         if sections:
             base = str(ctx.prompt.prompt_input or "")
-            ctx.prompt = PromptBundle(prompt_input="\n\n".join([base] + sections))
+            ctx.prompt = PromptBundle(
+                prompt_input=append_prompt_context_sections(
+                    base,
+                    sections,
+                    dialog_display_language=str(
+                        deps.config.character.dialog_display_language or "ja"
+                    ),
+                )
+            )
     return ctx
 
 

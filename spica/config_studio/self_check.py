@@ -6,6 +6,7 @@ Callers provide a complete, explicit environment mapping to the job manager.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import re
@@ -19,7 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from spica.config.env_roster import (
     APP_ENV_MAP,
@@ -723,10 +724,23 @@ _DOUBLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
 _SINGLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
     r"'(?:/|[A-Za-z]:[\\/]|\\\\)[^'\r\n]*'"
 )
-_NETWORK_URL_SPAN_RE = re.compile(
+_URL_LIKE_SPAN_RE = re.compile(
     r"(?<![A-Za-z0-9+./\\-])"
-    r"(?i:https?)://"
-    r"[^\s<>\[\]{}\"']+"
+    r"(?i:[a-z][a-z0-9+.-]*)://"
+    r"[^\s<>{}\"']*"
+)
+_URL_SCHEME_PREFIX_RE = re.compile(r"(?i:[a-z][a-z0-9+.-]*)://")
+_URL_CLASSIFICATION_DECODE_ROUNDS = 2
+_FIELD_LABEL_ABSOLUTE_PATH_IN_URL_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])"
+    r"[A-Za-z_][A-Za-z0-9_.-]*[:=]"
+    r"(?:/+|[A-Za-z]:[\\/]|\\\\)"
+)
+_WINDOWS_DRIVE_ABSOLUTE_PATH_IN_URL_RE = re.compile(
+    r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]"
+)
+_DNS_LABEL_RE = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 )
 # POSIX permits punctuation and spaces in filenames, so an unquoted diagnostic
 # has no reliable lexical boundary after an absolute-path start.  Project the
@@ -767,27 +781,118 @@ def _project_non_url_external_paths(text: str) -> str:
 def _project_external_paths(text: str) -> str:
     projected: list[str] = []
     start = 0
-    for match in _NETWORK_URL_SPAN_RE.finditer(text):
-        if not _has_network_authority(match.group(0)):
-            continue
+    for match in _URL_LIKE_SPAN_RE.finditer(text):
         projected.append(_project_non_url_external_paths(text[start : match.start()]))
-        projected.append(match.group(0))
+        candidate = match.group(0)
+        projected.append(
+            candidate
+            if _is_valid_http_network_url(candidate)
+            else _EXTERNAL_PATH_MARKER
+        )
         start = match.end()
     projected.append(_project_non_url_external_paths(text[start:]))
     return "".join(projected)
 
 
-def _has_network_authority(candidate: str) -> bool:
+def _is_valid_http_network_url(candidate: str) -> bool:
+    if _contains_mixed_local_path_payload(candidate):
+        return False
     try:
         parsed = urlsplit(candidate)
-        _ = parsed.port
-        return (
-            bool(parsed.netloc)
-            and "\\" not in parsed.netloc
-            and bool(parsed.hostname)
-        )
+        parsed_port = parsed.port
     except ValueError:
         return False
+    authority = parsed.netloc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not authority
+        or "@" in authority
+        or "\\" in authority
+        or "%" in authority
+        or not parsed.hostname
+    ):
+        return False
+    if parsed_port is not None and not 1 <= parsed_port <= 65535:
+        return False
+    if authority.startswith("["):
+        return _is_valid_bracketed_ipv6_authority(
+            authority,
+            parsed.hostname,
+        )
+    if authority.count(":") > 1:
+        return False
+    if ":" in authority:
+        _host, port_text = authority.rsplit(":", 1)
+        if not port_text or not port_text.isascii() or not port_text.isdigit():
+            return False
+    return _is_valid_ipv4_or_dns_hostname(parsed.hostname)
+
+
+def _contains_mixed_local_path_payload(candidate: str) -> bool:
+    classification_copy = candidate
+    for decode_round in range(_URL_CLASSIFICATION_DECODE_ROUNDS + 1):
+        if _contains_raw_mixed_local_path_payload(classification_copy):
+            return True
+        decoded = unquote(classification_copy, errors="replace")
+        if decoded == classification_copy:
+            return False
+        if decode_round == _URL_CLASSIFICATION_DECODE_ROUNDS:
+            return True
+        classification_copy = decoded
+    return True
+
+
+def _contains_raw_mixed_local_path_payload(candidate: str) -> bool:
+    _scheme, separator, remainder = candidate.partition("://")
+    if not separator:
+        return True
+    return (
+        "\\" in remainder
+        or _URL_SCHEME_PREFIX_RE.search(remainder) is not None
+        or _FIELD_LABEL_ABSOLUTE_PATH_IN_URL_RE.search(remainder) is not None
+        or _WINDOWS_DRIVE_ABSOLUTE_PATH_IN_URL_RE.search(remainder) is not None
+    )
+
+
+def _is_valid_bracketed_ipv6_authority(
+    authority: str,
+    hostname: str,
+) -> bool:
+    if authority.count("[") != 1 or authority.count("]") != 1:
+        return False
+    closing_bracket = authority.find("]")
+    suffix = authority[closing_bracket + 1 :]
+    if suffix and (
+        not suffix.startswith(":")
+        or len(suffix) == 1
+        or not suffix[1:].isascii()
+        or not suffix[1:].isdigit()
+    ):
+        return False
+    try:
+        ipaddress.IPv6Address(hostname)
+    except ipaddress.AddressValueError:
+        return False
+    return True
+
+
+def _is_valid_ipv4_or_dns_hostname(hostname: str) -> bool:
+    try:
+        ipaddress.IPv4Address(hostname)
+    except ipaddress.AddressValueError:
+        pass
+    else:
+        return True
+    if all(character.isdigit() or character == "." for character in hostname):
+        return False
+    dns_name = hostname[:-1] if hostname.endswith(".") else hostname
+    return (
+        0 < len(dns_name) <= 253
+        and all(
+            _DNS_LABEL_RE.fullmatch(label) is not None
+            for label in dns_name.split(".")
+        )
+    )
 
 
 def _redact_text(

@@ -955,27 +955,67 @@ def test_job_projects_absolute_paths_immediately_after_field_label_colon(
         ),
         (
             "model_path:file:///home/alice/model.bin",
-            "model_path:file:<external-path>",
+            "model_path:<external-path>",
         ),
         (
             "model_path:FILE:///home/alice/model.bin",
-            "model_path:FILE:<external-path>",
+            "model_path:<external-path>",
         ),
         (
             "model_path:file://server/share/model.bin",
-            "model_path:file:<external-path>",
+            "model_path:<external-path>",
         ),
         (
             "model_path:https:///home/alice/model.bin",
-            "model_path:https:<external-path>",
+            "model_path:<external-path>",
         ),
         (
             "model_path:https://host:not-a-port/home/alice/model.bin",
-            "model_path:https:<external-path>",
+            "model_path:<external-path>",
         ),
         (
             r"model_path:https://\server\share\model.bin",
-            "model_path:https:<external-path>",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:http://C:/Users/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://host:/home/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://./home/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://-/home/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://%2Fhome/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://alice@example.com/home/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://example..com/home/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://bad_name/home/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://[::1]:/home/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:https://[127.0.0.1]/home/alice/model.bin",
+            "model_path:<external-path>",
         ),
     ],
 )
@@ -1003,6 +1043,90 @@ def test_job_rejects_local_or_authorityless_url_shaped_path_exemptions(
 
 
 @pytest.mark.parametrize(
+    "mixed_span",
+    [
+        "https://example.com/model,file:///home/alice/private.bin",
+        "https://example.com/model;model_path:/home/alice/private.bin",
+        "https://example.com/model;model_path=/home/alice/private.bin",
+        r"https://example.com/model,C:\Users\alice\private.bin",
+        "https://example.com/model,C:/Users/alice/private.bin",
+        r"https://example.com/model,\\server\share\private.bin",
+    ],
+)
+def test_job_projects_entire_network_url_span_with_embedded_local_path(
+    tmp_path: Path,
+    mixed_span: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {"message": f"owner reported {mixed_span}"},
+            "reason": f"owner reported {mixed_span}",
+        },
+        job_id="mixed_url_and_local_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == "owner reported <external-path>"
+    assert finished.results[0].detail == {
+        "message": "owner reported <external-path>"
+    }
+    assert "alice" not in repr(finished)
+    assert "private.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "encoded_span",
+    [
+        (
+            "https://example.com/model,"
+            "file%3A%2F%2F%2Fhome%2Falice%2Fprivate.bin"
+        ),
+        (
+            "https://example.com/model,"
+            "file%253A%252F%252F%252Fhome%252Falice%252Fprivate.bin"
+        ),
+        (
+            "https://example.com/model;"
+            "model_path%3D%2Fhome%2Falice%2Fprivate.bin"
+        ),
+        (
+            "https://example.com/model,"
+            "C%3A%5CUsers%5Calice%5Cprivate.bin"
+        ),
+        (
+            "https://example.com/model,"
+            "%5C%5Cserver%5Cshare%5Cprivate.bin"
+        ),
+    ],
+)
+def test_job_projects_encoded_local_paths_from_network_url_span(
+    tmp_path: Path,
+    encoded_span: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {"message": f"owner reported {encoded_span}"},
+            "reason": f"owner reported {encoded_span}",
+        },
+        job_id="encoded_local_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == "owner reported <external-path>"
+    assert finished.results[0].detail == {
+        "message": "owner reported <external-path>"
+    }
+    assert "alice" not in repr(finished)
+    assert "private.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
     "message",
     [
         "无 NVIDIA 驱动/GPU——所有 cuda 配置将失败",
@@ -1012,6 +1136,17 @@ def test_job_rejects_local_or_authorityless_url_shaped_path_exemptions(
         "https://huggingface.co/model/file.bin",
         "HTTPS://huggingface.co/model/file.bin",
         "source:https://huggingface.co/model/file.bin",
+        "https://[::1]/model/file.bin",
+        "http://127.0.0.1:8765/model/file.bin",
+        "https://[2001:db8::1]:443/model/file.bin",
+        "https://example.com:9443/model/file.bin",
+        "https://example.com/model,version",
+        "https://example.com/model;revision:1",
+        "https://example.com/models/My%20Model.bin",
+        "https://example.com/model%2Cversion%3Brevision%3A1",
+        "https://example.com/models/My%2520Model.bin",
+        "https://example.com/model,/home/remote-user/remote.bin",
+        "https://example.com/model,%2Fhome%2Falice%2Fremote.bin",
         r"C:models\model.bin",
         r"model_path:C:models\model.bin",
     ],

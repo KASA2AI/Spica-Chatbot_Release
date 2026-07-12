@@ -4661,6 +4661,16 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
     unc_path = r"\\private-server\private-share\models\voice.pth"
     posix_path = "/opt/private-owner/models/ocr.bin"
     network_url = "https://huggingface.co/model/file.bin"
+    ipv4_url = "http://127.0.0.1:8765/health/check"
+    ipv6_url = "https://[::1]:8443/health/check"
+    localhost_url = "http://localhost/health/check"
+    explicit_port_url = "https://example.com:9443/health/check"
+    punctuated_url = "https://example.com/model,version;revision:1"
+    encoded_network_url = "https://example.com/models/My%20Model.bin"
+    bare_url_path = "https://example.com/model,/home/remote-user/remote.bin"
+    encoded_bare_url_path = (
+        "https://example.com/model,%2Fhome%2Fremote-user%2Fremote.bin"
+    )
     drive_relative = r"C:models\relative-safe-id.bin"
     unsafe_url_shaped_paths = [
         "model_path:C://Users/synthetic-user/model.bin",
@@ -4669,11 +4679,62 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
         "model_path:FILE:///home/synthetic-user/model.bin",
         "model_path:file://private-server/private-share/model.bin",
         "model_path:https:///home/synthetic-user/model.bin",
+        "model_path:http://C:/Users/synthetic-user/model.bin",
+        "model_path:https://host:/home/synthetic-user/model.bin",
+        "model_path:https://./home/synthetic-user/model.bin",
+        "model_path:https://-/home/synthetic-user/model.bin",
+        "model_path:https://%2Fhome/synthetic-user/model.bin",
+        (
+            "model_path:https://example.com/model,"
+            "file:///home/synthetic-user/private.bin"
+        ),
+        (
+            "model_path:https://example.com/model;"
+            "model_path:/home/synthetic-user/private.bin"
+        ),
+        (
+            "model_path:https://example.com/model;"
+            "model_path=/home/synthetic-user/private.bin"
+        ),
+        r"model_path:https://example.com/model,C:\Users\synthetic-user\private.bin",
+        "model_path:https://example.com/model,C:/Users/synthetic-user/private.bin",
+        (
+            r"model_path:https://example.com/model,"
+            r"\\private-server\private-share\private.bin"
+        ),
+        (
+            "model_path:https://example.com/model,"
+            "file%3A%2F%2F%2Fhome%2Fsynthetic-user%2Fprivate.bin"
+        ),
+        (
+            "model_path:https://example.com/model,"
+            "file%253A%252F%252F%252Fhome%252Fsynthetic-user%252Fprivate.bin"
+        ),
+        (
+            "model_path:https://example.com/model;"
+            "model_path%3D%2Fhome%2Fsynthetic-user%2Fprivate.bin"
+        ),
+        (
+            "model_path:https://example.com/model,"
+            "C%3A%5CUsers%5Csynthetic-user%5Cprivate.bin"
+        ),
+        (
+            "model_path:https://example.com/model,"
+            "%5C%5Cprivate-server%5Cprivate-share%5Cprivate.bin"
+        ),
     ]
     result_detail = {
         "model_id": model_id,
         "message": ordinary_message,
         "network_url": network_url,
+        "ipv4_url": ipv4_url,
+        "ipv6_url": ipv6_url,
+        "localhost_url": localhost_url,
+        "explicit_port_url": explicit_port_url,
+        "punctuated_url": punctuated_url,
+        "encoded_network_url": encoded_network_url,
+        "bare_url_path": bare_url_path,
+        "encoded_bare_url_path": encoded_bare_url_path,
         "drive_relative": drive_relative,
         "nested": {
             "locations": [
@@ -4770,6 +4831,14 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
         "model_id": model_id,
         "message": ordinary_message,
         "network_url": network_url,
+        "ipv4_url": ipv4_url,
+        "ipv6_url": ipv6_url,
+        "localhost_url": localhost_url,
+        "explicit_port_url": explicit_port_url,
+        "punctuated_url": punctuated_url,
+        "encoded_network_url": encoded_network_url,
+        "bare_url_path": bare_url_path,
+        "encoded_bare_url_path": encoded_bare_url_path,
         "drive_relative": drive_relative,
         "nested": {
             "locations": [
@@ -4778,10 +4847,26 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
                 "model_path:<external-path>",
                 "model_path:<external-path>",
                 "model_path:<external-path>",
-                "model_path:file:<external-path>",
-                "model_path:FILE:<external-path>",
-                "model_path:file:<external-path>",
-                "model_path:https:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
             ]
         },
     }
@@ -4808,6 +4893,14 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
     assert model_id in rendered
     assert ordinary_message in rendered
     assert network_url in rendered
+    assert ipv4_url in rendered
+    assert ipv6_url in rendered
+    assert localhost_url in rendered
+    assert explicit_port_url in rendered
+    assert punctuated_url in rendered
+    assert encoded_network_url in rendered
+    assert bare_url_path in rendered
+    assert encoded_bare_url_path in rendered
 
 
 def test_real_self_check_collection_returns_active_plus_twenty_terminals(

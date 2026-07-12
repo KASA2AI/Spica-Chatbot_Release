@@ -746,6 +746,200 @@ def test_job_redacts_canonical_numeric_and_boolean_secret_data(
     }
 
 
+def _finished_fake_full_ocr_result(
+    *,
+    tmp_path: Path,
+    result: dict[str, object],
+    job_id: str,
+) -> SelfCheckJobSnapshot:
+    plan = SelfCheckPlanBuilder(script_path=tmp_path / "self_check.py").build(
+        mode=SelfCheckMode.FULL,
+        only=("ocr",),
+        consents=frozenset({SelfCheckConsent.FULL}),
+    )
+    payload = full_ocr_payload(results=[result])
+    manager = SelfCheckJobManager(
+        runner=FakeRunner(
+            FakeProcess(SelfCheckProcessOutcome(0, payload, "", True))
+        ),
+        id_factory=lambda: job_id,
+    )
+    started = manager.start(plan, synthetic_child_environment())
+    return wait_for_terminal(manager, started.job_id)
+
+
+def test_job_projects_embedded_posix_paths_before_retaining_snapshot(
+    tmp_path: Path,
+) -> None:
+    model_id = "Systran/faster-whisper-large-v3"
+    external_path = "/home/synthetic-user/models/private/model.bin"
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {},
+            "reason": f"model {model_id} failed at {external_path}; retry disabled",
+        },
+        job_id="external_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == (
+        f"model {model_id} failed at <external-path>"
+    )
+    assert external_path not in repr(finished)
+    assert "model.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "external_path",
+    [
+        "/home/private owner/models/private model.bin",
+        r"C:\Users\private owner\models\private model.bin",
+        r"\\private server\private share\private model.bin",
+    ],
+)
+def test_job_projects_quoted_paths_with_spaces_without_leaking_basename(
+    tmp_path: Path,
+    external_path: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {},
+            "reason": f'owner reported "{external_path}"; keep this message',
+        },
+        job_id="quoted_external_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == (
+        "owner reported <external-path>; keep this message"
+    )
+    assert "private model.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "external_path",
+    [
+        "/home/private owner/models/private model.bin",
+        r"C:\Users\private owner\models\private model.bin",
+        r"\\private server\private share\private model.bin",
+    ],
+)
+def test_job_projects_unquoted_path_suffixes_with_spaces(
+    tmp_path: Path,
+    external_path: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {},
+            "reason": f"model directory missing: {external_path}",
+        },
+        job_id="unquoted_external_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == "model directory missing: <external-path>"
+    assert "private model.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "external_path",
+    [
+        "//private-server/private-share/models/model.bin",
+        "///home/private/models/model.bin",
+        "////private-server/private-share/models/model.bin",
+        "/home/private/(secret-model).bin",
+        "/home/private/a;private/model.bin",
+    ],
+)
+def test_job_projects_complete_path_when_valid_filename_punctuation_is_present(
+    tmp_path: Path,
+    external_path: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {"model_path": external_path},
+            "reason": f"model directory missing: {external_path}",
+        },
+        job_id="punctuated_external_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == "model directory missing: <external-path>"
+    assert finished.results[0].detail == {"model_path": "<external-path>"}
+    assert "model.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "external_path",
+    [
+        "/home/private/a; private/model.bin",
+        "/home/private/a, private/model.bin",
+        "/home/private/a: private/model.bin",
+    ],
+)
+def test_job_projects_ambiguous_unquoted_path_suffixes_fail_closed(
+    tmp_path: Path,
+    external_path: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {"model_path": external_path},
+            "reason": f"model directory missing: {external_path}",
+        },
+        job_id="ambiguous_external_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == "model directory missing: <external-path>"
+    assert finished.results[0].detail == {"model_path": "<external-path>"}
+    assert "model.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "无 NVIDIA 驱动/GPU——所有 cuda 配置将失败",
+        "输出不可解码/为空",
+        "ordinary CPU / GPU diagnostic text",
+        "https://huggingface.co/model/file.bin",
+        r"C:models\model.bin",
+    ],
+)
+def test_job_preserves_non_path_diagnostic_text(
+    tmp_path: Path,
+    message: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {"message": message},
+            "reason": message,
+        },
+        job_id="non_path_diagnostic",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == message
+    assert finished.results[0].detail == {"message": message}
+
+
 def test_job_redacts_retired_legacy_secret_canaries(tmp_path: Path) -> None:
     assert LEGACY_SECRET_ENV_VARS == ("DEEPSEEK_API_KEY",)
     plan = SelfCheckPlanBuilder(script_path=tmp_path / "self_check.py").build(

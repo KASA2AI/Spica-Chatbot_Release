@@ -715,6 +715,49 @@ def _secret_variants(value: str) -> tuple[str, ...]:
     return tuple(sorted((item for item in variants if item), key=len, reverse=True))
 
 
+_EXTERNAL_PATH_MARKER = "<external-path>"
+_DOUBLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
+    r'"(?:/|[A-Za-z]:[\\/]|\\\\)[^"\r\n]*"'
+)
+_SINGLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
+    r"'(?:/|[A-Za-z]:[\\/]|\\\\)[^'\r\n]*'"
+)
+# POSIX permits punctuation and spaces in filenames, so an unquoted diagnostic
+# has no reliable lexical boundary after an absolute-path start.  Project the
+# rest of that line fail-closed; quoted paths retain their explicit boundary.
+_UNQUOTED_ABSOLUTE_PATH_TAIL = r"[^\r\n]*"
+_WINDOWS_DRIVE_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9._~+:/\\-])[A-Za-z]:[\\/]"
+    + _UNQUOTED_ABSOLUTE_PATH_TAIL
+)
+_WINDOWS_UNC_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9._~+:/\\-])\\\\"
+    r"(?!\\)[^\\\r\n\"']+\\(?!\\)"
+    + _UNQUOTED_ABSOLUTE_PATH_TAIL
+)
+_POSIX_MULTIPLE_ROOT_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![\w._~+:/\\-])/{2,}(?![\s/])"
+    + _UNQUOTED_ABSOLUTE_PATH_TAIL
+)
+_POSIX_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![\w._~+:/-])/(?![\s/])"
+    + _UNQUOTED_ABSOLUTE_PATH_TAIL
+)
+
+
+def _project_external_paths(text: str) -> str:
+    for pattern in (
+        _DOUBLE_QUOTED_ABSOLUTE_PATH_RE,
+        _SINGLE_QUOTED_ABSOLUTE_PATH_RE,
+        _WINDOWS_UNC_ABSOLUTE_PATH_RE,
+        _POSIX_MULTIPLE_ROOT_ABSOLUTE_PATH_RE,
+        _WINDOWS_DRIVE_ABSOLUTE_PATH_RE,
+        _POSIX_ABSOLUTE_PATH_RE,
+    ):
+        text = pattern.sub(_EXTERNAL_PATH_MARKER, text)
+    return text
+
+
 def _redact_text(
     text: str,
     secrets_by_name: tuple[tuple[str, str], ...],
@@ -731,15 +774,18 @@ def _redact_text(
     for env_name, secret in secrets_by_name:
         for variant in _secret_variants(secret):
             variants.setdefault(variant, env_name)
-    if not variants:
-        return text
-    pattern = re.compile(
-        "|".join(
-            re.escape(item)
-            for item in sorted(variants, key=len, reverse=True)
+    if variants:
+        pattern = re.compile(
+            "|".join(
+                re.escape(item)
+                for item in sorted(variants, key=len, reverse=True)
+            )
         )
-    )
-    return pattern.sub(lambda matched: f"«REDACTED:{variants[matched.group(0)]}»", text)
+        text = pattern.sub(
+            lambda matched: f"«REDACTED:{variants[matched.group(0)]}»",
+            text,
+        )
+    return _project_external_paths(text)
 
 
 def _redact_value(

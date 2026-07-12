@@ -4649,6 +4649,144 @@ def test_self_check_unsafe_latch_blocks_new_work_but_preserves_job_access() -> N
     assert services.self_check_requests == []
 
 
+def test_self_check_http_projects_external_paths_before_start_get_and_list(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "sandbox-repo" / "scripts" / "self_check.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("# synthetic self-check owner\n", encoding="utf-8")
+    model_id = "Systran/faster-whisper-large-v3"
+    ordinary_message = "ordinary diagnostic text"
+    windows_path = r"C:\Users\synthetic-user\models\private\model.bin"
+    unc_path = r"\\private-server\private-share\models\voice.pth"
+    posix_path = "/opt/private-owner/models/ocr.bin"
+    result_detail = {
+        "model_id": model_id,
+        "message": ordinary_message,
+        "nested": {
+            "locations": [
+                windows_path,
+                unc_path,
+                f"missing {posix_path}; inspect configuration",
+            ]
+        },
+    }
+    outcome = SelfCheckProcessOutcome(
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "mode": "light",
+                "results": [
+                    {
+                        "name": name,
+                        "status": "PASS",
+                        "reason": (
+                            f"load failed at {windows_path}; retry disabled"
+                            if name == "config"
+                            else ""
+                        ),
+                        "detail": result_detail if name == "config" else {},
+                        "duration_s": 0.0,
+                    }
+                    for name in LIGHT_CHECKS
+                ],
+                "exit_code": 0,
+            }
+        ),
+        stderr="",
+        cleanup_confirmed=True,
+    )
+
+    class _Process:
+        containment_established = True
+
+        def wait(self, _timeout_s: float) -> SelfCheckProcessOutcome:
+            return outcome
+
+        def cancel(self) -> bool:
+            return True
+
+        def stderr_snapshot(self) -> SelfCheckStderrSummary:
+            return SelfCheckStderrSummary()
+
+    class _Runner:
+        def start(self, _argv: tuple[str, ...], _environment: Any) -> _Process:
+            return _Process()
+
+    service = SelfCheckService(
+        script_path=script,
+        job_manager=SelfCheckJobManager(runner=_Runner()),
+        environment_inputs=lambda: SelfCheckEnvironmentInputs(
+            environment_snapshot=EnvironmentSnapshot.from_mapping(
+                {}, layer="synthetic"
+            ),
+            secrets=Secrets(),
+        ),
+    )
+    services = ReadOnlyConfigStudioServices(
+        repo_root=script.parents[2],
+        environment_snapshot=EnvironmentSnapshot.from_mapping(
+            {}, layer="synthetic"
+        ),
+        background_health_code=None,
+        platform_capabilities=_platform(tmp_path),
+        self_check_service=service,
+    )
+    app = create_config_studio_app(services, _security_context())
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        started = client.post(
+            "/api/v1/self-check/jobs",
+            headers=_bootstrap_write_headers(client),
+            json={"mode": "light"},
+        )
+        assert started.status_code == 202
+        job_id = started.json()["job_id"]
+        deadline = time.monotonic() + 1.0
+        while True:
+            job = client.get(f"/api/v1/self-check/jobs/{job_id}")
+            assert job.status_code == 200
+            if job.json()["status"] == "PASS":
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        collection = client.get("/api/v1/self-check/jobs")
+
+    assert collection.status_code == 200
+    expected_detail = {
+        "model_id": model_id,
+        "message": ordinary_message,
+        "nested": {
+            "locations": [
+                "<external-path>",
+                "<external-path>",
+                "missing <external-path>",
+            ]
+        },
+    }
+    expected_reason = "load failed at <external-path>"
+    get_result = job.json()["results"][0]
+    list_result = collection.json()["jobs"][0]["results"][0]
+    for result in (get_result, list_result):
+        assert result["reason"] == expected_reason
+        assert result["detail"] == expected_detail
+    rendered = "\n".join((started.text, job.text, collection.text))
+    for private_fragment in (
+        windows_path,
+        unc_path,
+        posix_path,
+        "synthetic-user",
+        "private-server",
+        "private-share",
+        "model.bin",
+        "voice.pth",
+        "ocr.bin",
+    ):
+        assert private_fragment not in rendered
+    assert model_id in rendered
+    assert ordinary_message in rendered
+
+
 def test_real_self_check_collection_returns_active_plus_twenty_terminals(
     tmp_path: Path,
 ) -> None:

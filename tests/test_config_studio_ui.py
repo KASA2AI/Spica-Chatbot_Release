@@ -317,6 +317,43 @@ def test_incomplete_catalog_closes_set_but_preserves_unset_only_repair():
     assert "!appDraftOperationsAllowed()" in commit_handler
 
 
+def test_managed_document_catalog_discloses_omitted_documents_and_truncation():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    css = (UI / "studio.css").read_text(encoding="utf-8")
+    javascript = (UI / "studio.js").read_text(encoding="utf-8")
+
+    notice = html.split('id="managed-documents-incomplete-notice"', 1)[1].split(
+        "</div>", 1
+    )[0]
+    assert 'role="status"' in notice
+    assert 'aria-live="polite"' in notice
+    assert "ManagedDocument Catalog 完整性元数据不可用" in notice
+    assert ".document-card .document-card__warning" in css
+
+    loader = javascript[
+        javascript.index("async function reloadStudioData"):
+        javascript.index('window.addEventListener("DOMContentLoaded"')
+    ]
+    renderer = javascript[
+        javascript.index("function renderManagedDocuments"):
+        javascript.index("function renderOverlayDocument")
+    ]
+    assert "catalog.truncation.managed_documents_omitted" in loader
+    assert "state.managedDocumentsOmitted" in loader
+    assert "managed-documents-incomplete-notice" in renderer
+    assert "ManagedDocument Catalog 已省略" in renderer
+    assert "documentInfo.truncation" in renderer
+    assert "安全投影截断：" in renderer
+    for counter in (
+        "strings",
+        "collections",
+        "depth",
+        "unsupported",
+        "total_bytes",
+    ):
+        assert counter in renderer
+
+
 def test_structured_app_writer_uses_schema_rows_without_raw_document_editor():
     html = (UI / "index.html").read_text(encoding="utf-8")
     javascript = (UI / "studio.js").read_text(encoding="utf-8")

@@ -818,6 +818,55 @@ def test_short_secret_redaction_preserves_managed_document_wire_keys_and_budget(
     assert len(encoded) <= 512 * 1024
 
 
+def test_short_secret_redaction_preserves_fixed_managed_document_metadata(
+    tmp_path: Path,
+) -> None:
+    root = _repository(tmp_path)
+    _write(root / "data" / "config" / "tts.yaml", "voice: a\n")
+    services = ReadOnlyConfigStudioServices(
+        repo_root=root,
+        environment_snapshot=EnvironmentSnapshot.from_mapping(
+            {}, layer="synthetic"
+        ),
+        secrets=Secrets(openai_api_key="a"),
+        background_health_code=None,
+        platform_capabilities=_platform(root),
+    )
+
+    catalog = services.catalog()
+    overlay = _document(catalog, "overlay_preferences")
+    tts = _document(catalog, "character_tts")
+
+    assert {
+        key: overlay[key]
+        for key in (
+            "id",
+            "title",
+            "category",
+            "owner",
+            "effect_policy",
+            "source_kind",
+            "external",
+            "editable",
+            "unsupported_reason",
+        )
+    } == {
+        "id": "overlay_preferences",
+        "title": "Overlay preferences",
+        "category": "ui",
+        "owner": "spica.config.overlay_owner/OverlayConfig",
+        "effect_policy": "next_spica_launch",
+        "source_kind": "ui_owner_document",
+        "external": False,
+        "editable": True,
+        "unsupported_reason": None,
+    }
+    assert overlay["health"] == {"status": "healthy", "code": None}
+    assert _managed_field(tts, "voice")["current_value"] == (
+        "«REDACTED:OPENAI_API_KEY»"
+    )
+
+
 def test_short_secret_redaction_preserves_environment_and_plugin_dto_keys(
     tmp_path: Path,
 ) -> None:

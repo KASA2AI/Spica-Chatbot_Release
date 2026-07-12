@@ -51,6 +51,7 @@
     meta: null,
     fields: [],
     managedDocuments: [],
+    managedDocumentsOmitted: null,
     pluginStatuses: [],
     environmentOnlySettings: [],
     level: "basic",
@@ -1065,6 +1066,14 @@
 
   function renderManagedDocuments() {
     const root = byId("character-documents");
+    const completenessNotice = byId("managed-documents-incomplete-notice");
+    const completenessCopy = byId("managed-documents-incomplete-copy");
+    completenessNotice.hidden = state.managedDocumentsOmitted === 0;
+    completenessCopy.textContent = Number.isSafeInteger(
+      state.managedDocumentsOmitted,
+    )
+      ? `ManagedDocument Catalog 已省略 ${state.managedDocumentsOmitted} 份文档；下方仅显示其余安全投影。`
+      : "ManagedDocument Catalog 完整性元数据不可用；下方卡片可能不完整。";
     const cards = state.managedDocuments
       .filter((documentInfo) => documentInfo.id !== "overlay_preferences")
       .map((documentInfo) => {
@@ -1078,12 +1087,35 @@
       owner.textContent = `${documentInfo.owner || "production owner"} · ${fieldCount} fields`;
       const status = document.createElement("p");
       status.textContent = `${health.status || "unknown"} · ${documentInfo.effect_policy || "owner-specific"}`;
+      const documentTruncation = documentInfo.truncation
+        && typeof documentInfo.truncation === "object"
+        ? documentInfo.truncation
+        : {};
+      const truncationDetails = [
+        ["strings", "字符串"],
+        ["collections", "集合"],
+        ["depth", "深度"],
+        ["unsupported", "不支持值"],
+        ["total_bytes", "字节预算"],
+      ].flatMap(([key, label]) => {
+        const count = documentTruncation[key];
+        return Number.isSafeInteger(count) && count > 0
+          ? [`${label} ${count}`]
+          : [];
+      });
       const action = document.createElement("button");
       action.type = "button";
       action.className = "text-button";
       action.textContent = "只读 Catalog";
       action.disabled = true;
-      card.append(title, owner, status, action);
+      card.append(title, owner, status);
+      if (truncationDetails.length) {
+        const warning = document.createElement("p");
+        warning.className = "document-card__warning";
+        warning.textContent = `安全投影截断：${truncationDetails.join(" · ")}；当前卡片仅展示截断后的安全投影。`;
+        card.append(warning);
+      }
+      card.append(action);
       return card;
       });
     root.replaceChildren(...cards);
@@ -2132,6 +2164,15 @@
     state.managedDocuments = Array.isArray(catalog.managed_documents)
       ? catalog.managed_documents
       : [];
+    const managedDocumentsOmitted = catalog.truncation
+      && typeof catalog.truncation === "object"
+      ? catalog.truncation.managed_documents_omitted
+      : null;
+    state.managedDocumentsOmitted = Number.isSafeInteger(managedDocumentsOmitted)
+      && managedDocumentsOmitted >= 0
+      && managedDocumentsOmitted <= MAX_STRUCTURED_ITEMS
+      ? managedDocumentsOmitted
+      : null;
     state.pluginStatuses = Array.isArray(catalog.plugin_statuses)
       ? catalog.plugin_statuses
       : [];

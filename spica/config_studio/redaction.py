@@ -206,13 +206,17 @@ def _redact_managed_document(
                 _redact_catalog_field(field, redact_text, visit_data)
                 for field in value
             ]
+        elif key == "basename":
+            result[key] = visit_data(value)
         elif key in {"health", "truncation"} and isinstance(value, Mapping):
-            result[key] = {
-                str(child_key): visit(child_value)
-                for child_key, child_value in value.items()
-            }
+            result[key] = dict(value)
         else:
-            result[key] = visit(value)
+            # ManagedDocumentCatalog owns every remaining slot.  IDs, owner
+            # names, effect policies, health codes, and other fixed contract
+            # metadata must not be rewritten merely because a short secret
+            # happens to match a common character.  Basenames and field data
+            # are the explicit user-data slots handled above.
+            result[key] = value
     return result
 
 

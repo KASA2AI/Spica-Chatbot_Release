@@ -221,6 +221,12 @@
 
         <section class="view-panel" data-panel="character" aria-labelledby="character-title">
           <div class="page-heading"><p class="eyebrow">CHARACTER DOCUMENTS</p><h1 id="character-title">角色数据</h1><p>TTS、visual 与外部角色文档在 canonical schema 完成前明确只读。</p></div>
+          <div id="managed-documents-incomplete-notice" class="warning-strip recovery-notice" role="status" aria-live="polite">
+            <span aria-hidden="true">!</span>
+            <div class="recovery-copy">
+              <p id="managed-documents-incomplete-copy">ManagedDocument Catalog 完整性元数据不可用；下方卡片可能不完整。</p>
+            </div>
+          </div>
           <div id="character-documents" class="document-grid"></div>
         </section>
 

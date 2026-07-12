@@ -301,6 +301,7 @@ h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 .setting-card:hover { border-color: rgba(244,143,174,.22); background: rgba(244,143,174,.07); }
 .setting-card h3, .document-card h3 { margin: 0; font-size: 13px; }
 .setting-card p, .document-card p { margin: 8px 0 0; color: var(--faint); font-size: 10px; line-height: 1.55; }
+.document-card .document-card__warning { padding-left: 8px; border-left: 2px solid rgba(255,198,117,.35); color: #f7dfb9; }
 .safety-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
 .status-card { min-height: 150px; padding: 18px; }
 .status-card h2 { margin-bottom: 13px; }

@@ -218,7 +218,10 @@ def main(
                         terminal_write=terminal_write,
                     )
             config = server.uvicorn_config(app)
-            server_factory(config).run(sockets=[server.socket])
+            try:
+                server_factory(config).run(sockets=[server.socket])
+            except KeyboardInterrupt:
+                pass
     finally:
         cancel_fallback = getattr(fallback_handle, "cancel", None)
         if callable(cancel_fallback):

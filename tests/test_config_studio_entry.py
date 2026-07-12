@@ -1113,6 +1113,53 @@ def test_cli_no_open_browser_keeps_default_loopback_port(
     assert "paste" in output.lower()
 
 
+def test_cli_treats_keyboard_interrupt_as_clean_operator_shutdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import config_studio
+
+    trace: list[object] = []
+    monkeypatch.setattr(
+        config_studio,
+        "load_secrets",
+        lambda **_kwargs: _loaded_secrets(),
+    )
+
+    class InterruptingServer:
+        def __init__(self, config: object) -> None:
+            trace.append(("uvicorn", config))
+
+        def run(self, *, sockets: list[object]) -> None:
+            trace.append(("run", sockets))
+            raise KeyboardInterrupt
+
+    try:
+        result = config_studio.main(
+            ["--no-open-browser"],
+            repo_root=_synthetic_repository(tmp_path),
+            server_bind=lambda *, host, port: (
+                trace.append(("bind", host, port))
+                or _FakeBoundServer(trace, port=port)
+            ),
+            server_factory=InterruptingServer,
+            token_factory=lambda: "interrupt-bootstrap-token-opaque",
+            terminal_write=lambda _message: None,
+            background_health_code=None,
+            platform_capabilities=_PLATFORM,
+        )
+    except KeyboardInterrupt:
+        pytest.fail("operator Ctrl-C escaped the Config Studio CLI")
+
+    assert result == 0
+    assert ("bind", "127.0.0.1", 8765) in trace
+    assert any(
+        isinstance(event, tuple) and event[0] == "run"
+        for event in trace
+    )
+    assert trace[-1] == "server-close"
+
+
 def test_cli_browser_failure_prints_the_same_manual_grant_immediately(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

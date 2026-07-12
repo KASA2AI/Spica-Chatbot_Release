@@ -10,6 +10,12 @@ from typing import Any, Callable
 from spica.config.secrets import Secrets
 
 
+_CATALOG_ROW_DATA_SLOTS = {
+    "environment_only_settings": frozenset({"configured_value"}),
+    "plugin_statuses": frozenset({"name", "next_launch_enabled"}),
+}
+
+
 def secret_canaries(
     secrets: Secrets,
     extra_canaries: tuple[tuple[str, str], ...] = (),
@@ -73,12 +79,15 @@ def redact_catalog_payload(
                 )
                 for item in value
             ]
-        elif key in {"environment_only_settings", "plugin_statuses"} and isinstance(
-            value, (tuple, list)
-        ):
+        elif key in _CATALOG_ROW_DATA_SLOTS and isinstance(value, (tuple, list)):
+            data_slots = _CATALOG_ROW_DATA_SLOTS[key]
             result[key] = [
                 {
-                    str(child_key): visit(child_value)
+                    str(child_key): (
+                        visit_data(child_value)
+                        if child_key in data_slots
+                        else visit(child_value)
+                    )
                     for child_key, child_value in item.items()
                 }
                 if isinstance(item, Mapping)

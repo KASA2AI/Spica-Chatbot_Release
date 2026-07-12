@@ -15,9 +15,11 @@ uses the fragment handoff; disabled or failed browser launch uses the same high-
 entropy, short-lived, one-shot grant through an explicit nonpersistent paste
 dialog. It never degrades to a short human-memorable code.
 
-This is an uncommitted implementation checkpoint, not a claim that Windows or
-real-machine secret/env smoke has passed, not a final integration-test report,
-and not a formal `$code-review` result.
+The implementation is preserved in separately authorized local checkpoint
+commits. It is not merged, pushed, released, or evidence that Windows or
+real-machine secret/env smoke has passed. The final commit range must pass a
+formal `$code-review` before integration, and every review-fix checkpoint
+requires a fresh review.
 
 This document is the implementation contract for Config Studio v1. It records the
 accepted design decisions, security boundaries, non-goals, public seams, error
@@ -1218,12 +1220,11 @@ deleted at task completion.
     `$code-review` only after separately authorized feature-only checkpoint
     commits, using `22512ee9be026de133bcaaa4afc852e88d25aa6c...HEAD` and this spec.
 
-At the current uncommitted checkpoint, the functional implementation through
-the Linux owner composition, browser writer controls, and synthetic socket
-evidence exists. Remaining integration gates and review evidence are reported
-separately when actually run; this document intentionally records no unfinished
-final test total and does not label the current pre-review as formal
-`$code-review`.
+The local feature checkpoint includes the Linux owner composition, browser
+writer controls, and synthetic socket evidence. Integration gates and review
+evidence are reported separately when actually run; this document intentionally
+records neither a moving test total nor a claim that the final commit range has
+passed review.
 
 ## 22. Expected file-level impact
 
@@ -1266,18 +1267,20 @@ cleaned, copied, or reused. Subsequent changes in the main worktree do not enter
 the feature worktree implicitly.
 
 Branch/worktree creation was authorized with implementation. The one task-temp
-dependency install described in section 17 was separately authorized and is now
-complete. Staging, committing, pushing, any future install, real secret/env
-smoke, and real heavy/LLM self-check remain separately unauthorized.
+dependency install described in section 17 was separately authorized and is
+complete. Local checkpoint staging and commits have occurred only under
+separate, path-bounded authorization. They do not authorize push, any future
+install, real secret/env smoke, or real heavy/LLM self-check.
 
 Uncommitted changes may receive an ordinary read-only Standards/Spec pre-review,
-but that is not the formal `$code-review` skill. Before any local checkpoint,
+but that is not the formal `$code-review` skill. Before each local checkpoint,
 the diff/stat and staged diff must prove that only feature files are included.
-Commit authorization, if later granted, covers only explicitly reviewed feature
-files and never implies push. Review fixes require a new commit authorization
-and another review.
+Each additional commit requires fresh authorization covering only explicitly
+reviewed feature files and never implies push. Review fixes require a new commit
+authorization and another review.
 
-The shared `.git/info/exclude` ignores `/docs/`, so ordinary `git add -A` would
-omit this design and ADR. If staging is later authorized, only these two fixed
-documentation paths may use `git add -f`, and the staged diff must prove both are
-present. The shared exclude file is not modified.
+The shared `.git/info/exclude` ignored `/docs/` when this design and ADR were
+first added, so their initial path-bounded staging used explicit force-add under
+separate authorization. Both files are now tracked and subsequent authorized
+updates use their explicit paths normally. The shared exclude file is not
+modified, and unbounded `git add -A` remains prohibited.

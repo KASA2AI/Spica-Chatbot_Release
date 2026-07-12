@@ -291,6 +291,9 @@ _CONFIG_PATH = re.compile(
 )
 _STABLE_CODE = re.compile(r"[A-Z][A-Z0-9_]{0,127}\Z")
 _SOURCE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+_REDACTED_DATA_VALUE = re.compile(
+    r"«REDACTED:[A-Z][A-Z0-9_]{0,127}»\Z"
+)
 _MANAGED_OVERRIDE_NAMES = frozenset(
     (*APP_ENV_MAP.values(), *SCREEN_ENV_MAP.values())
 )
@@ -314,6 +317,7 @@ _SERVICE_ERROR_STATUS = {
     "PERMISSION_HARDENING_FAILED": 503,
     "PREVIEW_UNAVAILABLE": 503,
     "RECOVERY_ONLY": 409,
+    "ROLLBACK_CONFIRMATION_INVALID": 409,
     "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS": 503,
     "UNKNOWN_FIELD": 400,
     "WRITES_UNVERIFIED_ON_WINDOWS": 503,
@@ -746,13 +750,8 @@ def _overlay_preview_dto(
         raise TypeError("service returned mismatched overlay semantics")
     before = preview.get("file_value_before")
     after = preview.get("file_value_after")
-    if (
-        type(before) not in (int, float)
-        or not math.isfinite(before)
-        or type(after) not in (int, float)
-        or not math.isfinite(after)
-    ):
-        raise TypeError("service returned invalid overlay values")
+    before = _finite_number_or_redacted_data(before)
+    after = _finite_number_or_redacted_data(after)
     effect_policy = preview.get("effect_policy")
     if effect_policy not in {"next_spica_launch", "owner_mtime_reload"}:
         raise TypeError("service returned invalid effect policy")
@@ -764,6 +763,14 @@ def _overlay_preview_dto(
         "changed": _exact_bool(preview.get("changed")),
         "effect_policy": effect_policy,
     }
+
+
+def _finite_number_or_redacted_data(value: object) -> int | float | str:
+    if type(value) in (int, float) and math.isfinite(value):
+        return value
+    if isinstance(value, str) and _REDACTED_DATA_VALUE.fullmatch(value) is not None:
+        return value
+    raise TypeError("service returned invalid overlay values")
 
 
 def _sensitive_command(

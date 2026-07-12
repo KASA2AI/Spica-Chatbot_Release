@@ -721,7 +721,7 @@ _OWNER_ERROR_NORMALIZATION = {
     "PREVIEW_UNAVAILABLE": "PREVIEW_UNAVAILABLE",
     "RECOVERY_ONLY": "RECOVERY_ONLY",
     "ROLLBACK_CONFIRMATION_EXPIRED": "CONFIRMATION_REQUIRED",
-    "ROLLBACK_CONFIRMATION_INVALID": "CONFIRMATION_REQUIRED",
+    "ROLLBACK_CONFIRMATION_INVALID": "ROLLBACK_CONFIRMATION_INVALID",
     "ROLLBACK_CONFIRMATION_UNAVAILABLE": "CONFIRMATION_UNAVAILABLE",
     "SECRET_CLEAR_CONFIRMATION_EXPIRED": "CONFIRMATION_REQUIRED",
     "SECRET_CLEAR_CONFIRMATION_INVALID": "CONFIRMATION_REQUIRED",
@@ -1017,6 +1017,7 @@ class OwnerBackedConfigStudioServices(ReadOnlyConfigStudioServices):
         session_id: str,
     ) -> Mapping[str, Any]:
         owner = self._require_overlay_owner()
+        loaded = self._latest_loaded_environment()
         if not isinstance(command, OverlaySetValue):
             raise ConfigStudioServiceError("DOCUMENT_INVALID")
         try:
@@ -1026,8 +1027,14 @@ class OwnerBackedConfigStudioServices(ReadOnlyConfigStudioServices):
         return {
             "preview_id": preview.preview_id,
             "key": preview.key,
-            "file_value_before": preview.file_value_before,
-            "file_value_after": preview.file_value_after,
+            "file_value_before": _sanitize_owner_wire_value(
+                preview.file_value_before,
+                loaded,
+            ),
+            "file_value_after": _sanitize_owner_wire_value(
+                preview.file_value_after,
+                loaded,
+            ),
             "changed": preview.changed,
             "effect_policy": preview.effect_policy,
         }

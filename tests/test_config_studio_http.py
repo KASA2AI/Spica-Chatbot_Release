@@ -485,6 +485,8 @@ def _real_app_http_services(
 
 def _real_overlay_http_services(
     tmp_path: Path,
+    *,
+    secret_canary: str | None = None,
 ) -> tuple[OwnerBackedConfigStudioServices, Path]:
     repo_root = tmp_path / "sandbox-repo"
     app_path = repo_root / "data" / "config" / "app.yaml"
@@ -507,6 +509,7 @@ def _real_overlay_http_services(
         ),
         background_health_code=None,
         platform_capabilities=_platform(tmp_path),
+        secrets=Secrets(openai_api_key=secret_canary),
         overlay_document=overlay_document,
         enabled_write_capabilities=frozenset({"overlay_write"}),
     )
@@ -930,15 +933,15 @@ def test_catalog_redacts_a_repo_secret_shadowed_by_inherited_environment(
     assert shadowed_secret not in response.text
 
 
-def test_catalog_redacts_numeric_file_scalar_matching_owner_secret_material(
+def test_catalog_redacts_integer_one_matching_owner_secret_material(
     tmp_path: Path,
 ) -> None:
     repo_root = tmp_path / "sandbox-repo"
     app_path = repo_root / "data" / "config" / "app.yaml"
     app_path.parent.mkdir(parents=True)
-    app_path.write_bytes(b"screen:\n  provider: 123\n")
+    app_path.write_bytes(b"max_tool_rounds: 1\n")
     repo_env = repo_root / "xiaosan.env"
-    repo_env.write_bytes(b"OPENAI_API_KEY=123\n")
+    repo_env.write_bytes(b"OPENAI_API_KEY=1\n")
     repo_env.chmod(0o600)
     parent_env = tmp_path / "sandbox-parent" / "xiaosan.env"
     parent_env.parent.mkdir()
@@ -973,15 +976,15 @@ def test_catalog_redacts_numeric_file_scalar_matching_owner_secret_material(
         response = client.get("/api/v1/catalog")
 
     response.raise_for_status()
-    provider = next(
+    max_tool_rounds = next(
         field
         for field in response.json()["fields"]
-        if field["display_path"] == "screen.provider"
+        if field["display_path"] == "max_tool_rounds"
     )
-    assert provider["file_value"] == "«REDACTED:OPENAI_API_KEY»"
-    assert provider["next_launch_value"] == "«REDACTED:OPENAI_API_KEY»"
-    assert provider["authoring_complete"] is False
-    assert '"file_value":123' not in response.text
+    assert max_tool_rounds["file_value"] == "«REDACTED:OPENAI_API_KEY»"
+    assert max_tool_rounds["next_launch_value"] == "«REDACTED:OPENAI_API_KEY»"
+    assert max_tool_rounds["authoring_complete"] is False
+    assert '"file_value":1' not in response.text
 
 
 def test_catalog_redacts_boolean_secret_data_without_rewriting_schema_metadata(
@@ -1026,6 +1029,44 @@ def test_catalog_redacts_boolean_secret_data_without_rewriting_schema_metadata(
     assert enabled["authoring_complete"] is False
     assert body["fields_complete"] is True
     assert body["recovery_only"] is False
+
+
+def test_catalog_redacts_plugin_boolean_data_without_rewriting_status_metadata(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "sandbox-repo"
+    app_path = repo_root / "data" / "config" / "app.yaml"
+    app_path.parent.mkdir(parents=True)
+    app_path.write_text(
+        "plugins:\n  - name: sample\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    services = OwnerBackedConfigStudioServices(
+        repo_root=repo_root,
+        environment_snapshot=EnvironmentSnapshot.from_mapping(
+            {}, layer="synthetic"
+        ),
+        background_health_code=None,
+        platform_capabilities=_platform(tmp_path),
+        secrets=Secrets(openai_api_key="false"),
+    )
+    app = create_config_studio_app(services, _security_context())
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        client.post(
+            "/api/v1/session/bootstrap",
+            headers={
+                "Origin": "http://127.0.0.1:8765",
+                "X-Spica-Bootstrap": "one-time-bootstrap-token",
+            },
+        ).raise_for_status()
+        response = client.get("/api/v1/catalog")
+
+    response.raise_for_status()
+    plugin = response.json()["plugin_statuses"][0]
+    assert plugin["next_launch_enabled"] == "«REDACTED:OPENAI_API_KEY»"
+    assert plugin["configured"] is True
+    assert plugin["package_status"] == "missing"
 
 
 def test_app_preview_rejects_a_repo_secret_shadowed_by_inherited_environment(
@@ -3061,6 +3102,49 @@ def test_real_overlay_owner_maps_validation_and_stale_preview_errors(
     assert overlay_path.read_bytes() == b'{"spica_voice_volume": 0.9}\n'
 
 
+@pytest.mark.parametrize(
+    ("existing_value", "requested_value", "expected_before", "expected_after"),
+    (
+        (None, 1.5, 1.0, "«REDACTED:OPENAI_API_KEY»"),
+        (1.5, 1.2, "«REDACTED:OPENAI_API_KEY»", 1.2),
+    ),
+)
+def test_real_overlay_preview_redacts_canonical_float_data_slots(
+    tmp_path: Path,
+    existing_value: float | None,
+    requested_value: float,
+    expected_before: float | str,
+    expected_after: float | str,
+) -> None:
+    services, overlay_path = _real_overlay_http_services(
+        tmp_path,
+        secret_canary="1.5",
+    )
+    if existing_value is not None:
+        overlay_path.write_text(
+            json.dumps({"default_ui_scale": existing_value}) + "\n",
+            encoding="utf-8",
+        )
+    app = create_config_studio_app(services, _security_context())
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        response = client.post(
+            "/api/v1/overlay/previews",
+            headers=_bootstrap_write_headers(client),
+            json={"key": "default_ui_scale", "value": requested_value},
+        )
+
+    response.raise_for_status()
+    assert response.json() == {
+        "preview_id": "real-overlay-preview-token",
+        "key": "default_ui_scale",
+        "file_value_before": expected_before,
+        "file_value_after": expected_after,
+        "changed": True,
+        "effect_policy": "next_spica_launch",
+    }
+
+
 def test_real_sensitive_owner_sets_secret_then_get_returns_only_configuration(
     tmp_path: Path,
 ) -> None:
@@ -3295,7 +3379,9 @@ def test_real_sensitive_owner_rollback_restores_whole_document_once(
     assert restored.status_code == 200
     assert restored.json()["status"] == "restored"
     assert reused.status_code == 409
-    assert reused.json() == {"error": {"code": "CONFIRMATION_REQUIRED"}}
+    assert reused.json() == {
+        "error": {"code": "ROLLBACK_CONFIRMATION_INVALID"}
+    }
     model = next(
         field
         for field in catalog.json()["fields"]
@@ -3306,6 +3392,65 @@ def test_real_sensitive_owner_rollback_restores_whole_document_once(
     assert sensitive_path.read_bytes() == original
     for response in (points, prepared, restored, reused, catalog):
         assert canary not in response.text
+
+
+def test_real_sensitive_rollback_preserves_owner_invalid_code_when_parent_changes(
+    tmp_path: Path,
+) -> None:
+    canary = "synthetic-owner-change-secret-canary"
+    services, sensitive_path = _real_sensitive_http_services(
+        tmp_path,
+        repo_env_content=(
+            f"OPENAI_API_KEY={canary}\nMODEL=repo-model\n".encode("utf-8")
+        ),
+    )
+    parent_path = tmp_path / "sandbox-parent" / "xiaosan.env"
+    app = create_config_studio_app(services, _security_context())
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        headers = _bootstrap_write_headers(client)
+        preview = client.post(
+            "/api/v1/sensitive/previews",
+            headers=headers,
+            json={
+                "command": {
+                    "kind": "clear_mapped_override",
+                    "environment_variable": "MODEL",
+                }
+            },
+        )
+        preview.raise_for_status()
+        committed = client.post(
+            "/api/v1/sensitive/commits",
+            headers=headers,
+            json={"preview_id": preview.json()["preview_id"]},
+        )
+        committed.raise_for_status()
+        current = sensitive_path.read_bytes()
+        prepared = client.post(
+            "/api/v1/sensitive/restore-points/"
+            + committed.json()["restore_point_id"]
+            + "/prepare-rollback",
+            headers=headers,
+        )
+        prepared.raise_for_status()
+        parent_path.write_bytes(b"MODEL=parent-model\n")
+        rejected = client.post(
+            "/api/v1/sensitive/rollbacks",
+            headers=headers,
+            json={
+                "confirmation_receipt": prepared.json()[
+                    "confirmation_receipt"
+                ]
+            },
+        )
+
+    assert rejected.status_code == 409
+    assert rejected.json() == {
+        "error": {"code": "ROLLBACK_CONFIRMATION_INVALID"}
+    }
+    assert sensitive_path.read_bytes() == current
+    assert canary not in rejected.text
 
 
 def test_sensitive_rollback_preview_redacts_a_secret_next_launch_fallback(

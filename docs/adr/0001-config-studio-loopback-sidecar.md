@@ -203,9 +203,10 @@ Trade-offs:
   hostile processes remain outside the v1 threat model.
 - Windows writes remain capability-gated until real-machine locking/replacement
   and DACL smoke tests pass.
-- The current Linux implementation and synthetic evidence remain uncommitted;
-  they have not completed a formal `$code-review`, real `xiaosan.env` smoke,
-  staging, commit, or push authorization.
+- The Linux implementation and synthetic evidence are preserved in separately
+  authorized local checkpoint commits. They are not merged, pushed, or released;
+  real `xiaosan.env` and Windows smoke remain unperformed, and the final commit
+  range must pass formal `$code-review` before integration.
 - The legacy `ManagementSurface` remains an explicitly documented unsafe writer;
   Studio is not yet the repository’s only writer.
 

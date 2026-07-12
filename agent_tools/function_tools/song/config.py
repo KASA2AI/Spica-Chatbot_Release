@@ -11,6 +11,21 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_DIR.parents[2]
 DEFAULT_CONFIG_PATH = PACKAGE_DIR / "song_config.json"
 
+# Qt-free owner metadata consumed by read-only configuration surfaces.  Keep
+# these paths beside the production resolver so a UI cannot invent a second,
+# drifting list of path-like song settings.
+SONG_PATH_KINDS: dict[tuple[str, ...], str] = {
+    ("generated_root",): "directory",
+    ("applio_root",): "directory",
+    ("rvc", "worker_python"): "file",
+}
+_VOICE_PATH_KINDS: dict[str, str] = {
+    "model_path": "file",
+    "index_path": "file",
+    "embedder_model_custom": "directory",
+    "reference_audio_dir": "directory",
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -149,6 +164,16 @@ def song_enabled(config: dict[str, Any] | None) -> bool:
     return False
 
 
+def song_path_kind(path: tuple[str, ...]) -> str | None:
+    """Return the production owner's declared filesystem kind for a leaf."""
+    direct = SONG_PATH_KINDS.get(path)
+    if direct is not None:
+        return direct
+    if len(path) == 4 and path[:2] == ("rvc", "voices"):
+        return _VOICE_PATH_KINDS.get(path[3])
+    return None
+
+
 def ensure_song_dirs(config: dict[str, Any]) -> dict[str, Path]:
     root = Path(str(config["generated_root"]))
     cache = root / "cache"
@@ -182,7 +207,7 @@ def _resolve_config_paths(config: dict[str, Any]) -> dict[str, Any]:
         for voice in voices.values():
             if not isinstance(voice, dict):
                 continue
-            for key in ("model_path", "index_path", "embedder_model_custom", "reference_audio_dir"):
+            for key in _VOICE_PATH_KINDS:
                 value = voice.get(key)
                 if value:
                     voice[key] = str(_resolve_project_path(value))

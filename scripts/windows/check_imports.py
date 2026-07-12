@@ -26,6 +26,10 @@ import sys
 # (pip distribution name, import module name, alternate distributions that
 #  may provide the same module — for version lookup only)
 REQUIRED = [
+    # Local Config Studio sidecar (requirements-config-studio.txt).
+    ("fastapi", "fastapi", ()),
+    ("uvicorn", "uvicorn", ()),
+    ("ruamel.yaml", "ruamel.yaml", ()),
     ("PySide6", "PySide6", ()),
     ("openai", "openai", ()),
     ("httpx", "httpx", ()),

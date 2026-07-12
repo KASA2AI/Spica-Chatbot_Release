@@ -23,6 +23,8 @@ static/
 # Local SQLite memory DB
 spica_data/*.sqlite3
 spica_data/*.sqlite3-*
+# Config Studio locks, RestorePoints, and task runtime state
+/spica_data/config_studio/
 
 # Large local character assets (binary); role-card text under Spica_skill stays tracked
 spica_data/diffs/

@@ -94,8 +94,9 @@ class ManagedCatalogSnapshot:
     def song_legacy_path(self) -> Path:
         return self._song_legacy_path
 
-    def to_wire(self) -> list[dict[str, Any]]:
+    def to_wire(self) -> tuple[list[dict[str, Any]], int]:
         documents = [dict(document) for document in self._documents]
+        document_count = len(documents)
         payload = {"managed_documents": documents}
         while documents and _encoded_size(payload) > _MAX_MANAGED_WIRE_BYTES:
             fields = documents[-1].get("fields")
@@ -105,7 +106,7 @@ class ManagedCatalogSnapshot:
                 truncation["total_bytes"] += 1
             else:
                 documents.pop()
-        return documents
+        return documents, document_count - len(documents)
 
 
 class ManagedDocumentCatalog:

@@ -613,7 +613,11 @@ class ReadOnlyConfigStudioServices:
                 readonly_reasons=managed_snapshot.readonly_reasons,
             ).snapshot()
             payload = snapshot.to_wire(max_total_bytes=320 * 1024)
-            payload["managed_documents"] = managed_snapshot.to_wire()
+            managed_documents, managed_documents_omitted = managed_snapshot.to_wire()
+            payload["managed_documents"] = managed_documents
+            payload["truncation"]["managed_documents_omitted"] = (
+                managed_documents_omitted
+            )
             payload["environment_only_settings"] = environment_only_settings(
                 environment_snapshot
             )

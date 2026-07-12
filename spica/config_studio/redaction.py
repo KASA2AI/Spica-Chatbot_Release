@@ -140,6 +140,9 @@ def enforce_catalog_wire_budget(
                 truncation["total_bytes"] = int(
                     truncation.get("total_bytes", 0)
                 ) + 1
+                truncation["managed_documents_omitted"] = int(
+                    truncation.get("managed_documents_omitted", 0)
+                ) + 1
             removed = True
         if not removed:
             raise ValueError("catalog response budget cannot represent metadata")

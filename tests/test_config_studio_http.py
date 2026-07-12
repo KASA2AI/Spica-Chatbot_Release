@@ -870,6 +870,38 @@ def test_environment_refresh_failure_has_a_stable_service_unavailable_response()
     }
 
 
+def test_invalid_dotenv_candidate_is_an_http_validation_error() -> None:
+    class InvalidDotenvServices(_FakeServices):
+        def preview_sensitive(
+            self,
+            command: object,
+            *,
+            session_id: str,
+        ) -> dict[str, Any]:
+            raise ConfigStudioServiceError("DOTENV_INVALID")
+
+    app = create_config_studio_app(
+        InvalidDotenvServices(sensitive_write_enabled=True),
+        _security_context(),
+    )
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        response = client.post(
+            "/api/v1/sensitive/previews",
+            headers=_bootstrap_write_headers(client),
+            json={
+                "command": {
+                    "kind": "set_secret",
+                    "slot": "openai_api_key",
+                    "value": "synthetic-secret",
+                }
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": "DOTENV_INVALID"}}
+
+
 def test_catalog_redacts_a_repo_secret_shadowed_by_inherited_environment(
     tmp_path: Path,
 ) -> None:

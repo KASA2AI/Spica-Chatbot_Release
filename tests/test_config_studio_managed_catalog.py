@@ -691,6 +691,29 @@ def test_managed_catalog_redacts_secret_keys_and_enforces_response_budgets(
     assert tts["truncation"]["strings"] > 0
 
 
+def test_managed_catalog_reports_documents_omitted_by_wire_budget(
+    tmp_path: Path,
+) -> None:
+    root = _repository(tmp_path)
+    _write(
+        root / "data" / "config" / "tts.yaml",
+        yaml.safe_dump(
+            {
+                f"field_{index:03d}": "x" * 2048
+                for index in range(256)
+            },
+            sort_keys=False,
+        ),
+    )
+
+    catalog = _services(root).catalog()
+
+    assert {
+        document["id"] for document in catalog["managed_documents"]
+    } == {"character_package", "character_tts"}
+    assert catalog["truncation"]["managed_documents_omitted"] == 2
+
+
 def test_untyped_managed_numbers_are_always_json_wire_safe(tmp_path: Path) -> None:
     root = _repository(tmp_path, "song:\n  mix:\n    vocal_gain: .nan\n")
     _write(root / "data" / "config" / "tts.yaml", "temperature: .inf\n")

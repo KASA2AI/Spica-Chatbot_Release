@@ -4660,14 +4660,27 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
     windows_path = r"C:\Users\synthetic-user\models\private\model.bin"
     unc_path = r"\\private-server\private-share\models\voice.pth"
     posix_path = "/opt/private-owner/models/ocr.bin"
+    network_url = "https://huggingface.co/model/file.bin"
+    drive_relative = r"C:models\relative-safe-id.bin"
+    unsafe_url_shaped_paths = [
+        "model_path:C://Users/synthetic-user/model.bin",
+        "model_path:c://Users/synthetic-user/model.bin",
+        "model_path:file:///home/synthetic-user/model.bin",
+        "model_path:FILE:///home/synthetic-user/model.bin",
+        "model_path:file://private-server/private-share/model.bin",
+        "model_path:https:///home/synthetic-user/model.bin",
+    ]
     result_detail = {
         "model_id": model_id,
         "message": ordinary_message,
+        "network_url": network_url,
+        "drive_relative": drive_relative,
         "nested": {
             "locations": [
                 f"model_path:{posix_path}",
                 f"model_path:{windows_path}",
                 f"model_path:{unc_path}",
+                *unsafe_url_shaped_paths,
             ]
         },
     }
@@ -4681,7 +4694,7 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
                         "name": name,
                         "status": "PASS",
                         "reason": (
-                            f"model_path:{windows_path}"
+                            unsafe_url_shaped_paths[0]
                             if name == "config"
                             else ""
                         ),
@@ -4756,11 +4769,19 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
     expected_detail = {
         "model_id": model_id,
         "message": ordinary_message,
+        "network_url": network_url,
+        "drive_relative": drive_relative,
         "nested": {
             "locations": [
                 "model_path:<external-path>",
                 "model_path:<external-path>",
                 "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:file:<external-path>",
+                "model_path:FILE:<external-path>",
+                "model_path:file:<external-path>",
+                "model_path:https:<external-path>",
             ]
         },
     }
@@ -4772,6 +4793,7 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
         assert result["detail"] == expected_detail
     rendered = "\n".join((started.text, job.text, collection.text))
     for private_fragment in (
+        *unsafe_url_shaped_paths,
         windows_path,
         unc_path,
         posix_path,
@@ -4785,6 +4807,7 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
         assert private_fragment not in rendered
     assert model_id in rendered
     assert ordinary_message in rendered
+    assert network_url in rendered
 
 
 def test_real_self_check_collection_returns_active_plus_twenty_terminals(

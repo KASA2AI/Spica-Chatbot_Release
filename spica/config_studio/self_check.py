@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
+from urllib.parse import urlsplit
 
 from spica.config.env_roster import (
     APP_ENV_MAP,
@@ -722,9 +723,9 @@ _DOUBLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
 _SINGLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
     r"'(?:/|[A-Za-z]:[\\/]|\\\\)[^'\r\n]*'"
 )
-_URL_SPAN_RE = re.compile(
+_NETWORK_URL_SPAN_RE = re.compile(
     r"(?<![A-Za-z0-9+./\\-])"
-    r"[A-Za-z][A-Za-z0-9+.-]*://"
+    r"(?i:https?)://"
     r"[^\s<>\[\]{}\"']+"
 )
 # POSIX permits punctuation and spaces in filenames, so an unquoted diagnostic
@@ -755,8 +756,8 @@ def _project_non_url_external_paths(text: str) -> str:
         _DOUBLE_QUOTED_ABSOLUTE_PATH_RE,
         _SINGLE_QUOTED_ABSOLUTE_PATH_RE,
         _WINDOWS_UNC_ABSOLUTE_PATH_RE,
-        _POSIX_MULTIPLE_ROOT_ABSOLUTE_PATH_RE,
         _WINDOWS_DRIVE_ABSOLUTE_PATH_RE,
+        _POSIX_MULTIPLE_ROOT_ABSOLUTE_PATH_RE,
         _POSIX_ABSOLUTE_PATH_RE,
     ):
         text = pattern.sub(_EXTERNAL_PATH_MARKER, text)
@@ -766,12 +767,27 @@ def _project_non_url_external_paths(text: str) -> str:
 def _project_external_paths(text: str) -> str:
     projected: list[str] = []
     start = 0
-    for match in _URL_SPAN_RE.finditer(text):
+    for match in _NETWORK_URL_SPAN_RE.finditer(text):
+        if not _has_network_authority(match.group(0)):
+            continue
         projected.append(_project_non_url_external_paths(text[start : match.start()]))
         projected.append(match.group(0))
         start = match.end()
     projected.append(_project_non_url_external_paths(text[start:]))
     return "".join(projected)
+
+
+def _has_network_authority(candidate: str) -> bool:
+    try:
+        parsed = urlsplit(candidate)
+        _ = parsed.port
+        return (
+            bool(parsed.netloc)
+            and "\\" not in parsed.netloc
+            and bool(parsed.hostname)
+        )
+    except ValueError:
+        return False
 
 
 def _redact_text(

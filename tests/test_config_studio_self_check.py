@@ -943,12 +943,74 @@ def test_job_projects_absolute_paths_immediately_after_field_label_colon(
 
 
 @pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "model_path:C://Users/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:c://Users/alice/model.bin",
+            "model_path:<external-path>",
+        ),
+        (
+            "model_path:file:///home/alice/model.bin",
+            "model_path:file:<external-path>",
+        ),
+        (
+            "model_path:FILE:///home/alice/model.bin",
+            "model_path:FILE:<external-path>",
+        ),
+        (
+            "model_path:file://server/share/model.bin",
+            "model_path:file:<external-path>",
+        ),
+        (
+            "model_path:https:///home/alice/model.bin",
+            "model_path:https:<external-path>",
+        ),
+        (
+            "model_path:https://host:not-a-port/home/alice/model.bin",
+            "model_path:https:<external-path>",
+        ),
+        (
+            r"model_path:https://\server\share\model.bin",
+            "model_path:https:<external-path>",
+        ),
+    ],
+)
+def test_job_rejects_local_or_authorityless_url_shaped_path_exemptions(
+    tmp_path: Path,
+    message: str,
+    expected: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {"message": message},
+            "reason": message,
+        },
+        job_id="unsafe_url_shaped_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == expected
+    assert finished.results[0].detail == {"message": expected}
+    assert "alice" not in repr(finished)
+    assert "model.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
     "message",
     [
         "无 NVIDIA 驱动/GPU——所有 cuda 配置将失败",
         "输出不可解码/为空",
         "ordinary CPU / GPU diagnostic text",
+        "http://localhost:8765/model/file.bin",
         "https://huggingface.co/model/file.bin",
+        "HTTPS://huggingface.co/model/file.bin",
         "source:https://huggingface.co/model/file.bin",
         r"C:models\model.bin",
         r"model_path:C:models\model.bin",

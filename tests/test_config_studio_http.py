@@ -4665,9 +4665,9 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
         "message": ordinary_message,
         "nested": {
             "locations": [
-                windows_path,
-                unc_path,
-                f"missing {posix_path}; inspect configuration",
+                f"model_path:{posix_path}",
+                f"model_path:{windows_path}",
+                f"model_path:{unc_path}",
             ]
         },
     }
@@ -4681,7 +4681,7 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
                         "name": name,
                         "status": "PASS",
                         "reason": (
-                            f"load failed at {windows_path}; retry disabled"
+                            f"model_path:{windows_path}"
                             if name == "config"
                             else ""
                         ),
@@ -4758,13 +4758,13 @@ def test_self_check_http_projects_external_paths_before_start_get_and_list(
         "message": ordinary_message,
         "nested": {
             "locations": [
-                "<external-path>",
-                "<external-path>",
-                "missing <external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
+                "model_path:<external-path>",
             ]
         },
     }
-    expected_reason = "load failed at <external-path>"
+    expected_reason = "model_path:<external-path>"
     get_result = job.json()["results"][0]
     list_result = collection.json()["jobs"][0]["results"][0]
     for result in (get_result, list_result):

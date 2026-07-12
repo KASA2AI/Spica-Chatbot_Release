@@ -722,30 +722,35 @@ _DOUBLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
 _SINGLE_QUOTED_ABSOLUTE_PATH_RE = re.compile(
     r"'(?:/|[A-Za-z]:[\\/]|\\\\)[^'\r\n]*'"
 )
+_URL_SPAN_RE = re.compile(
+    r"(?<![A-Za-z0-9+./\\-])"
+    r"[A-Za-z][A-Za-z0-9+.-]*://"
+    r"[^\s<>\[\]{}\"']+"
+)
 # POSIX permits punctuation and spaces in filenames, so an unquoted diagnostic
 # has no reliable lexical boundary after an absolute-path start.  Project the
 # rest of that line fail-closed; quoted paths retain their explicit boundary.
 _UNQUOTED_ABSOLUTE_PATH_TAIL = r"[^\r\n]*"
 _WINDOWS_DRIVE_ABSOLUTE_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9._~+:/\\-])[A-Za-z]:[\\/]"
+    r"(?<![A-Za-z0-9._~+/\\-])[A-Za-z]:[\\/]"
     + _UNQUOTED_ABSOLUTE_PATH_TAIL
 )
 _WINDOWS_UNC_ABSOLUTE_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9._~+:/\\-])\\\\"
+    r"(?<![A-Za-z0-9._~+/\\-])\\\\"
     r"(?!\\)[^\\\r\n\"']+\\(?!\\)"
     + _UNQUOTED_ABSOLUTE_PATH_TAIL
 )
 _POSIX_MULTIPLE_ROOT_ABSOLUTE_PATH_RE = re.compile(
-    r"(?<![\w._~+:/\\-])/{2,}(?![\s/])"
+    r"(?<![\w._~+/\\-])/{2,}(?![\s/])"
     + _UNQUOTED_ABSOLUTE_PATH_TAIL
 )
 _POSIX_ABSOLUTE_PATH_RE = re.compile(
-    r"(?<![\w._~+:/-])/(?![\s/])"
+    r"(?<![\w._~+/-])/(?![\s/])"
     + _UNQUOTED_ABSOLUTE_PATH_TAIL
 )
 
 
-def _project_external_paths(text: str) -> str:
+def _project_non_url_external_paths(text: str) -> str:
     for pattern in (
         _DOUBLE_QUOTED_ABSOLUTE_PATH_RE,
         _SINGLE_QUOTED_ABSOLUTE_PATH_RE,
@@ -756,6 +761,17 @@ def _project_external_paths(text: str) -> str:
     ):
         text = pattern.sub(_EXTERNAL_PATH_MARKER, text)
     return text
+
+
+def _project_external_paths(text: str) -> str:
+    projected: list[str] = []
+    start = 0
+    for match in _URL_SPAN_RE.finditer(text):
+        projected.append(_project_non_url_external_paths(text[start : match.start()]))
+        projected.append(match.group(0))
+        start = match.end()
+    projected.append(_project_non_url_external_paths(text[start:]))
+    return "".join(projected)
 
 
 def _redact_text(

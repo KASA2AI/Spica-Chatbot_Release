@@ -913,11 +913,45 @@ def test_job_projects_ambiguous_unquoted_path_suffixes_fail_closed(
 @pytest.mark.parametrize(
     "message",
     [
+        "model_path:/home/alice/model.bin",
+        r"model_path:C:\Users\alice\model.bin",
+        r"model_path:\\server\share\model.bin",
+    ],
+)
+def test_job_projects_absolute_paths_immediately_after_field_label_colon(
+    tmp_path: Path,
+    message: str,
+) -> None:
+    finished = _finished_fake_full_ocr_result(
+        tmp_path=tmp_path,
+        result={
+            "name": "ocr",
+            "status": "PASS",
+            "detail": {"message": message},
+            "reason": message,
+        },
+        job_id="colon_adjacent_external_path_projection",
+    )
+
+    assert finished.status is SelfCheckJobStatus.PASS
+    assert finished.results[0].reason == "model_path:<external-path>"
+    assert finished.results[0].detail == {
+        "message": "model_path:<external-path>"
+    }
+    assert "alice" not in repr(finished)
+    assert "model.bin" not in repr(finished)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
         "无 NVIDIA 驱动/GPU——所有 cuda 配置将失败",
         "输出不可解码/为空",
         "ordinary CPU / GPU diagnostic text",
         "https://huggingface.co/model/file.bin",
+        "source:https://huggingface.co/model/file.bin",
         r"C:models\model.bin",
+        r"model_path:C:models\model.bin",
     ],
 )
 def test_job_preserves_non_path_diagnostic_text(

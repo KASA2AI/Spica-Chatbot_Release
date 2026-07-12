@@ -55,8 +55,7 @@ from spica.config_studio.sensitive_status import (
 from spica.config_studio.yaml_owner import load_yaml_mapping
 from spica.config_studio.paths import (
     FieldSegment,
-    ListIndexSegment,
-    MapKeySegment,
+    PathSegment,
 )
 
 
@@ -327,6 +326,23 @@ class ReadOnlyConfigStudioServices:
 
     def capability_enabled(self, capability: str) -> bool:
         return bool(self._capabilities().get(capability, False))
+
+    def capability_denial_code(self, capability: str) -> str | None:
+        if self.capability_enabled(capability):
+            return None
+        if (
+            capability in {"app_config_write", "overlay_write"}
+            and self._platform_capabilities.os_family == "nt"
+            and not self._platform_capabilities.managed_document_writes
+        ):
+            return "WRITES_UNVERIFIED_ON_WINDOWS"
+        if (
+            capability == "sensitive_write"
+            and self._platform_capabilities.os_family == "nt"
+            and not self._platform_capabilities.sensitive_document_writes
+        ):
+            return "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS"
+        return "CAPABILITY_UNAVAILABLE"
 
     def self_check_jobs_available(self) -> bool:
         """Keep retained jobs queryable after the new-start safety latch trips."""
@@ -1319,18 +1335,11 @@ class OwnerBackedConfigStudioServices(ReadOnlyConfigStudioServices):
         }
 
 
-def _field_path_wire(segments: tuple[object, ...]) -> list[dict[str, Any]]:
-    rendered: list[dict[str, Any]] = []
-    for segment in segments:
-        if isinstance(segment, FieldSegment):
-            rendered.append({"kind": "field", "name": segment.name})
-        elif isinstance(segment, MapKeySegment):
-            rendered.append({"kind": "map_key", "key": segment.key})
-        elif isinstance(segment, ListIndexSegment):
-            rendered.append({"kind": "list_index", "index": segment.index})
-        else:
-            raise ConfigStudioServiceError("INTERNAL_ERROR")
-    return rendered
+def _field_path_wire(segments: tuple[PathSegment, ...]) -> list[dict[str, Any]]:
+    try:
+        return [segment.to_wire() for segment in segments]
+    except (AttributeError, TypeError):
+        raise ConfigStudioServiceError("INTERNAL_ERROR") from None
 
 
 def _secret_values(

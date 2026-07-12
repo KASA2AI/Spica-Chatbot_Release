@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import hmac
+import json
 import os
 import threading
 import time
@@ -446,20 +447,24 @@ class AppConfigDocument:
                 selected_forbidden,
                 loaded_environment=loaded_environment,
             )
-            self._assert_environment_guard(
-                environment_guard,
-                environment_snapshot=selected_environment,
-                forbidden_values=selected_forbidden,
-                loaded_environment=loaded_environment,
-                candidate_document=candidate_document,
-            )
-            self._assert_legacy_owner_guard(
-                legacy_owner_guard,
-                authored_roots=preview.authored_roots,
-            )
+            def recheck_owner_state() -> None:
+                self._assert_environment_guard(
+                    environment_guard,
+                    environment_snapshot=selected_environment,
+                    forbidden_values=selected_forbidden,
+                    loaded_environment=loaded_environment,
+                    candidate_document=candidate_document,
+                )
+                self._assert_legacy_owner_guard(
+                    legacy_owner_guard,
+                    authored_roots=preview.authored_roots,
+                )
+
+            recheck_owner_state()
             result = self._transaction.commit(
                 preview.candidate,
                 expected_revision=preview.revision,
+                before_publication=recheck_owner_state,
             )
         except DocumentTransactionError as exc:
             raise AppDocumentError(exc.code, "app document commit failed") from exc
@@ -599,20 +604,24 @@ class AppConfigDocument:
                     "CONFIRMATION_REQUIRED",
                     "rollback semantics changed",
                 )
-            self._assert_environment_guard(
-                environment_guard,
-                environment_snapshot=selected_environment,
-                forbidden_values=selected_forbidden,
-                loaded_environment=loaded_environment,
-                candidate_document=restored_document,
-            )
-            self._assert_legacy_owner_guard(
-                legacy_owner_guard,
-                authored_roots=receipt.authored_roots,
-            )
+            def recheck_owner_state() -> None:
+                self._assert_environment_guard(
+                    environment_guard,
+                    environment_snapshot=selected_environment,
+                    forbidden_values=selected_forbidden,
+                    loaded_environment=loaded_environment,
+                    candidate_document=restored_document,
+                )
+                self._assert_legacy_owner_guard(
+                    legacy_owner_guard,
+                    authored_roots=receipt.authored_roots,
+                )
+
+            recheck_owner_state()
             result = self._transaction.rollback(
                 receipt.preview.restore_point_id,
                 expected_revision=receipt.current_revision,
+                before_publication=recheck_owner_state,
             )
         except AppDocumentError:
             raise
@@ -987,6 +996,9 @@ def _contains_forbidden_value(
         return any(
             secret.encode("utf-8") in value for secret in forbidden_values
         )
+    canonical_scalar = _canonical_json_scalar(value)
+    if canonical_scalar is not None:
+        return any(secret in canonical_scalar for secret in forbidden_values)
     if isinstance(value, dict):
         model_type = _nested_model(annotation)
         if model_type is not None:
@@ -1024,6 +1036,20 @@ def _contains_forbidden_value(
             for child in value
         )
     return False
+
+
+def _canonical_json_scalar(value: Any) -> str | None:
+    if type(value) not in (bool, int, float):
+        return None
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalized_forbidden_values(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -1072,6 +1098,9 @@ def _contains_owner_secret_material(
         except UnicodeError:
             return True
         return loaded_environment.contains_secret_material(decoded)
+    canonical_scalar = _canonical_json_scalar(value)
+    if canonical_scalar is not None:
+        return loaded_environment.contains_secret_material(canonical_scalar)
     if isinstance(value, Mapping):
         model_type = _nested_model(annotation)
         if model_type is not None:
@@ -1148,30 +1177,6 @@ def _sequence_item_annotation(annotation: Any) -> Any:
     return Any
 
 
-def _plain_path(path: ConfigFieldPath) -> tuple[str | int, ...]:
-    result: list[str | int] = []
-    for segment in path.segments:
-        if isinstance(segment, FieldSegment):
-            result.append(segment.name)
-        elif isinstance(segment, MapKeySegment):
-            result.append(segment.key)
-        elif isinstance(segment, ListIndexSegment):
-            result.append(segment.index)
-    return tuple(result)
-
-
-def _display_path(path: ConfigFieldPath) -> str:
-    rendered = ""
-    for segment in path.segments:
-        if isinstance(segment, FieldSegment):
-            rendered += ("." if rendered else "") + segment.name
-        elif isinstance(segment, MapKeySegment):
-            rendered += f"[{segment.key!r}]"
-        elif isinstance(segment, ListIndexSegment):
-            rendered += f"[{segment.index}]"
-    return rendered
-
-
 def _get_path(document: Any, path: tuple[str | int, ...]) -> Any:
     current = document
     for segment in path:
@@ -1194,7 +1199,7 @@ def _field_change(
     before_resolution: ConfigResolution,
     after_resolution: ConfigResolution,
 ) -> AppFieldChange:
-    plain = _plain_path(path)
+    plain = path.plain_values()
     before_leaf = before_resolution.resolved_at(plain)
     after_leaf = after_resolution.resolved_at(plain)
     file_before = _get_path(base_document, plain)
@@ -1205,7 +1210,7 @@ def _field_change(
     }
     return AppFieldChange(
         path=path,
-        display_path=_display_path(path),
+        display_path=path.display_path(),
         file_value_before=None if file_before is _MISSING else file_before,
         file_value_after=None if file_after is _MISSING else file_after,
         next_launch_value_before=before_leaf.next_launch_value,

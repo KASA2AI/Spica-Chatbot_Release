@@ -7,7 +7,7 @@ import os
 import pytest
 
 from spica.adapters.config_studio.platform import platform_capabilities_for
-from ui.config_studio.overlay_document import (
+from spica.config_studio.overlay_document import (
     OverlayConfigDocument,
     OverlayDocumentError,
     OverlaySetValue,

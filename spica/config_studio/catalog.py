@@ -26,6 +26,7 @@ from spica.config_studio.paths import (
     FieldSegment,
     ListIndexSegment,
     MapKeySegment,
+    PathSegment,
 )
 
 
@@ -1131,7 +1132,7 @@ def _field_to_wire(
             for segment in path_segments
         ],
         "display_path": _bounded_text(
-            _display_path(field.path),
+            field.path.display_path(),
             max_string_chars=max_string_chars,
             truncation=field_truncation,
         ),
@@ -1185,7 +1186,7 @@ def _field_to_wire(
                     for segment in dependency.path.segments
                 ],
                 "display_path": _bounded_text(
-                    _display_path(dependency.path),
+                    dependency.path.display_path(),
                     max_string_chars=max_string_chars,
                     truncation=field_truncation,
                 ),
@@ -1236,43 +1237,19 @@ def _path_looks_secret(path: ConfigFieldPath) -> bool:
 
 
 def _segment_to_wire(
-    segment: Any,
+    segment: PathSegment,
     *,
     max_string_chars: int,
     truncation: dict[str, int],
 ) -> dict[str, Any]:
-    if isinstance(segment, FieldSegment):
-        return {
-            "kind": "field",
-            "name": _bounded_text(
-                segment.name,
+    rendered = segment.to_wire()
+    for text_key in ("name", "key"):
+        if text_key in rendered:
+            rendered[text_key] = _bounded_text(
+                rendered[text_key],
                 max_string_chars=max_string_chars,
                 truncation=truncation,
-            ),
-        }
-    if isinstance(segment, MapKeySegment):
-        return {
-            "kind": "map_key",
-            "key": _bounded_text(
-                segment.key,
-                max_string_chars=max_string_chars,
-                truncation=truncation,
-            ),
-        }
-    if isinstance(segment, ListIndexSegment):
-        return {"kind": "list_index", "index": segment.index}
-    raise TypeError("unsupported path segment")
-
-
-def _display_path(path: ConfigFieldPath) -> str:
-    rendered = ""
-    for segment in path.segments:
-        if isinstance(segment, FieldSegment):
-            rendered += ("." if rendered else "") + segment.name
-        elif isinstance(segment, MapKeySegment):
-            rendered += f"[{segment.key!r}]"
-        elif isinstance(segment, ListIndexSegment):
-            rendered += f"[{segment.index}]"
+            )
     return rendered
 
 

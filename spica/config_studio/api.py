@@ -74,6 +74,8 @@ class ConfigStudioServices(Protocol):
 
     def capability_enabled(self, capability: str) -> bool: ...
 
+    def capability_denial_code(self, capability: str) -> str | None: ...
+
     def self_check_jobs_available(self) -> bool: ...
 
     def preview_app(
@@ -494,15 +496,7 @@ def _config_field_path(value: object) -> ConfigFieldPath:
 
 def _typed_path_dto(value: object) -> list[dict[str, Any]]:
     path = _config_field_path(value)
-    result: list[dict[str, Any]] = []
-    for segment in path.segments:
-        if isinstance(segment, FieldSegment):
-            result.append({"kind": "field", "name": segment.name})
-        elif isinstance(segment, MapKeySegment):
-            result.append({"kind": "map_key", "key": segment.key})
-        else:
-            result.append({"kind": "list_index", "index": segment.index})
-    return result
+    return path.to_wire()
 
 
 def _required_mapping(value: object) -> Mapping[str, Any]:
@@ -1400,6 +1394,25 @@ def _self_check_service_error(exc: Exception) -> JSONResponse:
     return _json_error(500, "INTERNAL_ERROR")
 
 
+def _capability_denial_response(
+    services: ConfigStudioServices,
+    *capabilities: str,
+) -> JSONResponse | None:
+    for capability in capabilities:
+        if services.capability_enabled(capability):
+            continue
+        denial_owner = getattr(services, "capability_denial_code", None)
+        code = (
+            denial_owner(capability)
+            if callable(denial_owner)
+            else "CAPABILITY_UNAVAILABLE"
+        )
+        if code not in _SERVICE_ERROR_STATUS:
+            return _json_error(500, "INTERNAL_ERROR")
+        return _json_error(_SERVICE_ERROR_STATUS[code], code)
+    return None
+
+
 def create_config_studio_app(
     services: ConfigStudioServices,
     security_context: SecurityContext,
@@ -1501,8 +1514,10 @@ def create_config_studio_app(
         return JSONResponse(dict(services.meta()))
 
     @app.get("/api/v1/session/csrf")
-    async def rotate_csrf(request: Request) -> JSONResponse:
-        csrf_token = security_context.rotate_csrf(_single_session_cookie(request))
+    async def recover_csrf(request: Request) -> JSONResponse:
+        csrf_token = security_context.csrf_for_session(
+            _single_session_cookie(request)
+        )
         if csrf_token is None:
             return _json_error(401, "SESSION_REQUIRED")
         return JSONResponse({"csrf_token": csrf_token})
@@ -1513,8 +1528,9 @@ def create_config_studio_app(
 
     @app.post("/api/v1/app/previews")
     async def preview_app(request: Request) -> JSONResponse:
-        if not services.capability_enabled("app_config_write"):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(services, "app_config_write")
+        if denial is not None:
+            return denial
         try:
             operations = _app_operations(await _bounded_json_payload(request))
         except _WireError:
@@ -1527,8 +1543,9 @@ def create_config_studio_app(
 
     @app.post("/api/v1/app/commits")
     async def commit_app(request: Request) -> JSONResponse:
-        if not services.capability_enabled("app_config_write"):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(services, "app_config_write")
+        if denial is not None:
+            return denial
         try:
             payload = await _bounded_json_payload(request)
             if not isinstance(payload, dict) or set(payload) != {"preview_id"}:
@@ -1544,11 +1561,13 @@ def create_config_studio_app(
 
     @app.get("/api/v1/app/restore-points")
     async def list_app_restore_points(request: Request) -> JSONResponse:
-        if not (
-            services.capability_enabled("app_config_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "app_config_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         return JSONResponse(
             _ordinary_restore_points_dto(
                 services.list_app_restore_points(
@@ -1562,11 +1581,13 @@ def create_config_studio_app(
         restore_point_id: str,
         request: Request,
     ) -> JSONResponse:
-        if not (
-            services.capability_enabled("app_config_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "app_config_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         try:
             bounded_restore_point_id = _opaque_id(restore_point_id)
         except _WireError:
@@ -1579,11 +1600,13 @@ def create_config_studio_app(
 
     @app.post("/api/v1/app/rollbacks")
     async def rollback_app(request: Request) -> JSONResponse:
-        if not (
-            services.capability_enabled("app_config_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "app_config_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         try:
             payload = await _bounded_json_payload(request)
             if not isinstance(payload, dict) or set(payload) != {
@@ -1601,8 +1624,9 @@ def create_config_studio_app(
 
     @app.post("/api/v1/overlay/previews")
     async def preview_overlay(request: Request) -> JSONResponse:
-        if not services.capability_enabled("overlay_write"):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(services, "overlay_write")
+        if denial is not None:
+            return denial
         try:
             command = _overlay_command(await _bounded_json_payload(request))
         except _WireError:
@@ -1615,8 +1639,9 @@ def create_config_studio_app(
 
     @app.post("/api/v1/overlay/commits")
     async def commit_overlay(request: Request) -> JSONResponse:
-        if not services.capability_enabled("overlay_write"):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(services, "overlay_write")
+        if denial is not None:
+            return denial
         try:
             payload = await _bounded_json_payload(request)
             if not isinstance(payload, dict) or set(payload) != {"preview_id"}:
@@ -1632,11 +1657,13 @@ def create_config_studio_app(
 
     @app.get("/api/v1/overlay/restore-points")
     async def list_overlay_restore_points(request: Request) -> JSONResponse:
-        if not (
-            services.capability_enabled("overlay_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "overlay_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         return JSONResponse(
             _ordinary_restore_points_dto(
                 services.list_overlay_restore_points(
@@ -1652,11 +1679,13 @@ def create_config_studio_app(
         restore_point_id: str,
         request: Request,
     ) -> JSONResponse:
-        if not (
-            services.capability_enabled("overlay_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "overlay_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         try:
             bounded_restore_point_id = _opaque_id(restore_point_id)
         except _WireError:
@@ -1669,11 +1698,13 @@ def create_config_studio_app(
 
     @app.post("/api/v1/overlay/rollbacks")
     async def rollback_overlay(request: Request) -> JSONResponse:
-        if not (
-            services.capability_enabled("overlay_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "overlay_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         try:
             payload = await _bounded_json_payload(request)
             if not isinstance(payload, dict) or set(payload) != {
@@ -1699,8 +1730,9 @@ def create_config_studio_app(
 
     @app.post("/api/v1/sensitive/previews")
     async def preview_sensitive(request: Request) -> JSONResponse:
-        if not services.capability_enabled("sensitive_write"):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(services, "sensitive_write")
+        if denial is not None:
+            return denial
         try:
             command = _sensitive_command(await _bounded_json_payload(request))
         except _WireError:
@@ -1716,8 +1748,9 @@ def create_config_studio_app(
         preview_id: str,
         request: Request,
     ) -> JSONResponse:
-        if not services.capability_enabled("sensitive_write"):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(services, "sensitive_write")
+        if denial is not None:
+            return denial
         try:
             bounded_preview_id = _opaque_id(preview_id)
         except _WireError:
@@ -1730,8 +1763,9 @@ def create_config_studio_app(
 
     @app.post("/api/v1/sensitive/commits")
     async def commit_sensitive(request: Request) -> JSONResponse:
-        if not services.capability_enabled("sensitive_write"):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(services, "sensitive_write")
+        if denial is not None:
+            return denial
         try:
             payload = await _bounded_json_payload(request)
             if not isinstance(payload, dict) or not set(payload).issubset(
@@ -1753,11 +1787,13 @@ def create_config_studio_app(
 
     @app.get("/api/v1/sensitive/restore-points")
     async def list_sensitive_restore_points(request: Request) -> JSONResponse:
-        if not (
-            services.capability_enabled("sensitive_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "sensitive_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         return JSONResponse(
             _sensitive_restore_points_dto(
                 services.list_sensitive_restore_points(
@@ -1773,11 +1809,13 @@ def create_config_studio_app(
         restore_point_id: str,
         request: Request,
     ) -> JSONResponse:
-        if not (
-            services.capability_enabled("sensitive_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "sensitive_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         try:
             bounded_restore_point_id = _opaque_id(restore_point_id)
         except _WireError:
@@ -1790,11 +1828,13 @@ def create_config_studio_app(
 
     @app.post("/api/v1/sensitive/rollbacks")
     async def rollback_sensitive(request: Request) -> JSONResponse:
-        if not (
-            services.capability_enabled("sensitive_write")
-            and services.capability_enabled("rollback")
-        ):
-            return _json_error(403, "CAPABILITY_UNAVAILABLE")
+        denial = _capability_denial_response(
+            services,
+            "sensitive_write",
+            "rollback",
+        )
+        if denial is not None:
+            return denial
         try:
             payload = await _bounded_json_payload(request)
             if not isinstance(payload, dict) or set(payload) != {

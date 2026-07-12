@@ -220,6 +220,45 @@ def test_fixed_reader_rejects_a_posix_document_not_owned_by_the_current_user(
     assert document.read_bytes() == canary
 
 
+def test_fixed_reader_rejects_in_place_rewrite_after_descriptor_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = tmp_path / "synthetic-repo" / "data" / "config" / "app.yaml"
+    document.parent.mkdir(parents=True)
+    old_content = b"llm:\n  model: first-model\n"
+    new_content = b"{}\n"
+    document.write_bytes(old_content)
+    document_inode = document.stat().st_ino
+
+    import spica.config_studio.managed_catalog as managed_catalog
+
+    real_read = managed_catalog.os.read
+    rewritten = False
+
+    def rewrite_after_descriptor_read(descriptor, size):
+        nonlocal rewritten
+        chunk = real_read(descriptor, size)
+        if chunk and os.fstat(descriptor).st_ino == document_inode and not rewritten:
+            rewritten = True
+            document.write_bytes(new_content)
+            assert document.stat().st_ino == document_inode
+        return chunk
+
+    monkeypatch.setattr(managed_catalog.os, "read", rewrite_after_descriptor_read)
+
+    read = read_fixed_regular_file(
+        document,
+        platform_capabilities=_platform(document),
+    )
+
+    assert rewritten is True
+    assert read.status == "unsafe"
+    assert read.code == "MANAGED_DOCUMENT_UNSAFE"
+    assert read.content is None
+    assert document.read_bytes() == new_content
+
+
 def test_catalog_lists_non_app_environment_owners_without_exposing_paths(
     tmp_path: Path,
 ) -> None:

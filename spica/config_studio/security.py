@@ -196,8 +196,8 @@ class SecurityContext:
                 and _constant_time_equal(csrf_candidate, session.csrf_token)
             )
 
-    def rotate_csrf(self, session_candidate: str | None) -> str | None:
-        """Issue a fresh CSRF token for one already-authenticated session."""
+    def csrf_for_session(self, session_candidate: str | None) -> str | None:
+        """Return the existing CSRF token for one authenticated session."""
 
         with self._lock:
             session = self._active_session()
@@ -207,11 +207,7 @@ class SecurityContext:
                 or not _constant_time_equal(session_candidate, session.token)
             ):
                 return None
-            csrf_token = self._token_factory()
-            if not csrf_token:
-                raise RuntimeError("security token factory returned an empty token")
-            session.csrf_token = csrf_token
-            return csrf_token
+            return session.csrf_token
 
     def _active_session(self) -> _Session | None:
         session = self._session

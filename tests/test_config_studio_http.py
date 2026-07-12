@@ -50,7 +50,7 @@ from spica.config_studio.self_check_service import (
     SelfCheckService,
 )
 from spica.config_studio.server import LoopbackServer
-from ui.config_studio.overlay_document import OverlayConfigDocument
+from spica.config_studio.overlay_document import OverlayConfigDocument
 
 
 def _platform(tmp_path: Path):
@@ -734,11 +734,11 @@ def test_bootstrap_grant_has_a_minimum_high_entropy_shape_and_bounded_attempts()
     assert context.exchange_bootstrap(token) is None
 
 
-def test_authenticated_page_reload_rotates_and_recovers_the_csrf_token() -> None:
+def test_authenticated_page_reload_recovers_the_existing_csrf_token() -> None:
     services = _FakeServices(app_write_enabled=True)
     app = create_config_studio_app(
         services,
-        _security_context(tokens=["session-token", "initial-csrf", "reload-csrf"]),
+        _security_context(tokens=["session-token", "initial-csrf"]),
     )
 
     with TestClient(app, base_url="http://127.0.0.1:8765") as client:
@@ -750,19 +750,11 @@ def test_authenticated_page_reload_rotates_and_recovers_the_csrf_token() -> None
             },
         )
         recovered = client.get("/api/v1/session/csrf")
-        old_token_write = client.post(
+        recovered_token_write = client.post(
             "/api/v1/app/previews",
             headers={
                 "Origin": "http://127.0.0.1:8765",
                 "X-Spica-CSRF": bootstrap.json()["csrf_token"],
-            },
-            json={"operations": []},
-        )
-        new_token_write = client.post(
-            "/api/v1/app/previews",
-            headers={
-                "Origin": "http://127.0.0.1:8765",
-                "X-Spica-CSRF": recovered.json()["csrf_token"],
             },
             json={
                 "operations": [
@@ -776,11 +768,9 @@ def test_authenticated_page_reload_rotates_and_recovers_the_csrf_token() -> None
         )
 
     assert recovered.status_code == 200
-    assert recovered.json() == {"csrf_token": "reload-csrf"}
+    assert recovered.json() == {"csrf_token": "initial-csrf"}
     assert recovered.headers["cache-control"] == "no-store"
-    assert old_token_write.status_code == 403
-    assert old_token_write.json() == {"error": {"code": "CSRF_INVALID"}}
-    assert new_token_write.status_code == 200
+    assert recovered_token_write.status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -1341,6 +1331,233 @@ def test_write_capability_is_enforced_by_the_api_boundary() -> None:
     assert services.app_preview_requests == []
 
 
+def test_windows_app_write_denial_preserves_platform_capability_reason(
+    tmp_path,
+) -> None:
+    repo_root = tmp_path / "sandbox-repo"
+    app_path = repo_root / "data" / "config" / "app.yaml"
+    app_path.parent.mkdir(parents=True)
+    app_path.write_bytes(b"tts:\n  enabled: true\n")
+    services = ReadOnlyConfigStudioServices(
+        repo_root=repo_root,
+        environment_snapshot=EnvironmentSnapshot.from_mapping(
+            {},
+            layer="synthetic_inherited",
+        ),
+        background_health_code=None,
+        platform_capabilities=platform_capabilities_for(
+            os_family="nt",
+            runtime_name="win32",
+            user_id=None,
+            temp_directory=tmp_path / "platform-tmp",
+        ),
+    )
+    app = create_config_studio_app(services, _security_context())
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        bootstrap = client.post(
+            "/api/v1/session/bootstrap",
+            headers={
+                "Origin": "http://127.0.0.1:8765",
+                "X-Spica-Bootstrap": "one-time-bootstrap-token",
+            },
+        )
+        response = client.post(
+            "/api/v1/app/previews",
+            headers={
+                "Origin": "http://127.0.0.1:8765",
+                "X-Spica-CSRF": bootstrap.json()["csrf_token"],
+            },
+            json={
+                "operations": [
+                    {
+                        "kind": "set",
+                        "path": [
+                            {"kind": "field", "name": "tts"},
+                            {"kind": "field", "name": "enabled"},
+                        ],
+                        "value": False,
+                    }
+                ]
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {"code": "WRITES_UNVERIFIED_ON_WINDOWS"}
+    }
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "expected_code"),
+    (
+        ("POST", "/api/v1/app/commits", "WRITES_UNVERIFIED_ON_WINDOWS"),
+        ("GET", "/api/v1/app/restore-points", "WRITES_UNVERIFIED_ON_WINDOWS"),
+        (
+            "POST",
+            "/api/v1/app/restore-points/opaque-id/prepare-rollback",
+            "WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        ("POST", "/api/v1/app/rollbacks", "WRITES_UNVERIFIED_ON_WINDOWS"),
+        ("POST", "/api/v1/overlay/previews", "WRITES_UNVERIFIED_ON_WINDOWS"),
+        ("POST", "/api/v1/overlay/commits", "WRITES_UNVERIFIED_ON_WINDOWS"),
+        (
+            "GET",
+            "/api/v1/overlay/restore-points",
+            "WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        (
+            "POST",
+            "/api/v1/overlay/restore-points/opaque-id/prepare-rollback",
+            "WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        ("POST", "/api/v1/overlay/rollbacks", "WRITES_UNVERIFIED_ON_WINDOWS"),
+        (
+            "POST",
+            "/api/v1/sensitive/previews",
+            "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        (
+            "POST",
+            "/api/v1/sensitive/previews/opaque-id/confirm-clear",
+            "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        (
+            "POST",
+            "/api/v1/sensitive/commits",
+            "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        (
+            "GET",
+            "/api/v1/sensitive/restore-points",
+            "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        (
+            "POST",
+            "/api/v1/sensitive/restore-points/opaque-id/prepare-rollback",
+            "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        (
+            "POST",
+            "/api/v1/sensitive/rollbacks",
+            "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+    ),
+)
+def test_windows_write_routes_preserve_platform_capability_reason(
+    tmp_path,
+    method,
+    path,
+    expected_code,
+) -> None:
+    repo_root = tmp_path / "sandbox-repo"
+    app_path = repo_root / "data" / "config" / "app.yaml"
+    app_path.parent.mkdir(parents=True)
+    app_path.write_bytes(b"tts:\n  enabled: true\n")
+    services = ReadOnlyConfigStudioServices(
+        repo_root=repo_root,
+        environment_snapshot=EnvironmentSnapshot.from_mapping(
+            {},
+            layer="synthetic_inherited",
+        ),
+        background_health_code=None,
+        platform_capabilities=platform_capabilities_for(
+            os_family="nt",
+            runtime_name="win32",
+            user_id=None,
+            temp_directory=tmp_path / "platform-tmp",
+        ),
+    )
+    app = create_config_studio_app(services, _security_context())
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        bootstrap = client.post(
+            "/api/v1/session/bootstrap",
+            headers={
+                "Origin": "http://127.0.0.1:8765",
+                "X-Spica-Bootstrap": "one-time-bootstrap-token",
+            },
+        )
+        response = client.request(
+            method,
+            path,
+            headers={
+                "Origin": "http://127.0.0.1:8765",
+                "X-Spica-CSRF": bootstrap.json()["csrf_token"],
+            },
+            json={} if method == "POST" else None,
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"error": {"code": expected_code}}
+
+
+@pytest.mark.parametrize(
+    ("path", "content_type", "body", "expected_code"),
+    (
+        (
+            "/api/v1/app/previews",
+            "application/json",
+            b"{not-valid-json",
+            "WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+        (
+            "/api/v1/sensitive/previews",
+            "text/plain",
+            b"{}",
+            "SENSITIVE_WRITES_UNVERIFIED_ON_WINDOWS",
+        ),
+    ),
+)
+def test_windows_write_denial_precedes_body_parsing(
+    tmp_path,
+    path,
+    content_type,
+    body,
+    expected_code,
+) -> None:
+    repo_root = tmp_path / "sandbox-repo"
+    app_path = repo_root / "data" / "config" / "app.yaml"
+    app_path.parent.mkdir(parents=True)
+    app_path.write_bytes(b"tts:\n  enabled: true\n")
+    services = ReadOnlyConfigStudioServices(
+        repo_root=repo_root,
+        environment_snapshot=EnvironmentSnapshot.from_mapping(
+            {},
+            layer="synthetic_inherited",
+        ),
+        background_health_code=None,
+        platform_capabilities=platform_capabilities_for(
+            os_family="nt",
+            runtime_name="win32",
+            user_id=None,
+            temp_directory=tmp_path / "platform-tmp",
+        ),
+    )
+    app = create_config_studio_app(services, _security_context())
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
+        bootstrap = client.post(
+            "/api/v1/session/bootstrap",
+            headers={
+                "Origin": "http://127.0.0.1:8765",
+                "X-Spica-Bootstrap": "one-time-bootstrap-token",
+            },
+        )
+        response = client.post(
+            path,
+            headers={
+                "Origin": "http://127.0.0.1:8765",
+                "X-Spica-CSRF": bootstrap.json()["csrf_token"],
+                "Content-Type": content_type,
+            },
+            content=body,
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"error": {"code": expected_code}}
+
+
 def test_duplicate_csrf_headers_are_rejected() -> None:
     services = _FakeServices(app_write_enabled=True)
     app = create_config_studio_app(services, _security_context())
@@ -1584,13 +1801,12 @@ def test_real_owner_service_maps_lock_timeout_to_document_busy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    services, app_document, app_path = _real_app_http_services(tmp_path)
+    services, _, app_path = _real_app_http_services(tmp_path)
     app = create_config_studio_app(services, _security_context())
-    app_document._transaction.lock_timeout = 0.02
     competing = ManagedDocumentTransaction(
         app_path,
         backup_root=tmp_path / "competing-state" / "backups",
-        lock_root=app_document._transaction.lock_root,
+        lock_root=tmp_path / "sandbox-state" / "locks",
         lock_timeout=1.0,
         platform_capabilities=_platform(tmp_path),
     )
@@ -1602,7 +1818,7 @@ def test_real_owner_service_maps_lock_timeout_to_document_busy(
     def delayed_replace(source: object, target: object) -> None:
         if Path(target) == app_path and threading.current_thread() is worker:
             publication_started.set()
-            assert release_publication.wait(2)
+            assert release_publication.wait(5)
         real_replace(source, target)
 
     monkeypatch.setattr(

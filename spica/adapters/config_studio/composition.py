@@ -1,4 +1,4 @@
-"""Fixed-path production owner composition for the Config Studio sidecar."""
+"""Fixed-path adapter composition for the Config Studio sidecar."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from spica.config_studio.services import (
     ReadOnlyConfigStudioServices,
 )
 from spica.config_studio.yaml_owner import load_yaml_mapping
-from ui.config_studio.overlay_document import OverlayConfigDocument
+from spica.config_studio.overlay_document import OverlayConfigDocument
 
 
 def _private_state_tree_is_safe(

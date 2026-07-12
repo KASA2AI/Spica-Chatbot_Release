@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 import json
 import os
 from pathlib import Path
@@ -34,6 +34,7 @@ from spica.config_studio.sensitive_env import (
     SensitiveEnvDocument as _SensitiveEnvDocument,
     SensitiveEnvError,
 )
+from support.config_studio_transactions import after_first_transaction_fsync
 
 
 def test_sensitive_rollback_dtos_never_repr_values_paths_or_receipts() -> None:
@@ -110,6 +111,58 @@ def _sensitive_document(
         environment_owner=owner,
         **kwargs,
     )
+
+
+def _during_retention_listing(monkeypatch, backup_root: Path, callback) -> None:
+    real_iterdir = Path.iterdir
+    fired = False
+
+    def list_then_callback(path):
+        nonlocal fired
+        entries = tuple(real_iterdir(path))
+        if not fired and path.parent == backup_root:
+            fired = True
+            callback()
+        return iter(entries)
+
+    monkeypatch.setattr(Path, "iterdir", list_then_callback)
+
+
+class _ArmedTriggerLock:
+    def __init__(self, delegate) -> None:
+        self._delegate = delegate
+        self._callback = None
+        self._count = 0
+        self._trigger_on = 0
+
+    def arm(self, *, trigger_on: int, callback) -> None:
+        self._callback = callback
+        self._count = 0
+        self._trigger_on = trigger_on
+
+    def try_acquire(self, descriptor: int) -> bool:
+        acquired = self._delegate.try_acquire(descriptor)
+        if acquired and self._callback is not None:
+            self._count += 1
+            if self._count == self._trigger_on:
+                callback = self._callback
+                self._callback = None
+                callback()
+        return acquired
+
+    def release(self, descriptor: int) -> None:
+        self._delegate.release(descriptor)
+
+
+def _platform_with_trigger_lock(tmp_path: Path):
+    platform = platform_capabilities_for(
+        os_family="posix",
+        runtime_name="linux",
+        user_id=os.getuid(),
+        temp_directory=tmp_path / "platform-tmp",
+    )
+    trigger_lock = _ArmedTriggerLock(platform.file_lock)
+    return replace(platform, file_lock=trigger_lock), trigger_lock
 
 
 def test_production_sensitive_owner_rejects_raw_layer_mappings_and_is_opaque(
@@ -256,6 +309,105 @@ def test_mapped_override_commit_rejects_parent_owner_change_after_preview(
 
     assert caught.value.code == "CONFIRMATION_REQUIRED"
     assert document.read_bytes() == original
+
+
+def test_mapped_override_commit_rechecks_parent_inside_transaction(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    document = tmp_path / "xiaosan.env"
+    original = b"MODEL=repo-model\n"
+    document.write_bytes(original)
+    backup_root = tmp_path / "backups"
+    managed = _sensitive_document(
+        document,
+        backup_root=backup_root,
+        inherited_environment={},
+        parent_environment={"MODEL": "first-parent-model"},
+        base_document={"llm": {"model": "file-model"}},
+    )
+    preview = managed.preview(
+        ClearMappedOverride("MODEL"),
+        session_id="synthetic-session",
+    )
+    parent_path = backup_root.parent / f".{backup_root.name}-parent.env"
+
+    def change_parent():
+        parent_path.write_bytes(b"MODEL=second-parent-model\n")
+
+    after_first_transaction_fsync(monkeypatch, change_parent)
+
+    with pytest.raises(SensitiveEnvError) as caught:
+        managed.commit(preview, session_id="synthetic-session")
+
+    assert caught.value.code == "CONFIRMATION_REQUIRED"
+    assert document.read_bytes() == original
+    assert managed.restore_points() == ()
+    assert "first-parent-model" not in repr(caught.value)
+    assert "second-parent-model" not in repr(caught.value)
+
+
+def test_sensitive_commit_maps_late_in_place_parent_read_race_to_confirmation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import spica.config.secrets as secrets_owner
+
+    document = tmp_path / "xiaosan.env"
+    original = b"OPENAI_API_KEY=repo-secret\nMODEL=repo-model\n"
+    document.write_bytes(original)
+    backup_root = tmp_path / "backups"
+    old_parent_secret = "old-shadowed-parent-secret-canary"
+    new_parent_secret = "x"
+    managed = _sensitive_document(
+        document,
+        backup_root=backup_root,
+        inherited_environment={},
+        parent_environment={"OPENAI_API_KEY": old_parent_secret},
+    )
+    preview = managed.preview(ClearMappedOverride("MODEL"))
+    parent_path = backup_root.parent / f".{backup_root.name}-parent.env"
+    parent_inode = parent_path.stat().st_ino
+    real_read = secrets_owner.os.read
+    armed = False
+    rewritten = False
+
+    def arm_parent_race():
+        nonlocal armed
+        armed = True
+
+    def rewrite_parent_after_callback_read(descriptor, size):
+        nonlocal rewritten
+        chunk = real_read(descriptor, size)
+        if (
+            armed
+            and chunk
+            and os.fstat(descriptor).st_ino == parent_inode
+            and not rewritten
+        ):
+            rewritten = True
+            parent_path.write_text(
+                f"OPENAI_API_KEY='{new_parent_secret}'\n",
+                encoding="utf-8",
+            )
+            assert parent_path.stat().st_ino == parent_inode
+        return chunk
+
+    after_first_transaction_fsync(monkeypatch, arm_parent_race)
+    monkeypatch.setattr(
+        secrets_owner.os,
+        "read",
+        rewrite_parent_after_callback_read,
+    )
+
+    with pytest.raises(SensitiveEnvError) as caught:
+        managed.commit(preview)
+
+    assert caught.value.code == "CONFIRMATION_REQUIRED"
+    assert rewritten is True
+    assert document.read_bytes() == original
+    assert old_parent_secret not in repr(caught.value)
+    assert new_parent_secret not in repr(caught.value)
 
 
 def test_secret_clear_commit_rejects_parent_owner_change_after_receipt(
@@ -639,6 +791,71 @@ def test_override_commit_requires_a_new_preview_when_app_owner_changes(tmp_path)
     assert stale.value.code == "CONFIRMATION_REQUIRED"
     assert document.read_bytes() == original
     assert not (tmp_path / "backups").exists()
+
+
+def test_override_commit_rechecks_app_owner_inside_transaction_before_publication(
+    tmp_path,
+):
+    document = tmp_path / "xiaosan.env"
+    original = b"MODEL=repo-model\n"
+    document.write_bytes(original)
+    checks = 0
+
+    def app_owner():
+        nonlocal checks
+        checks += 1
+        model = "first-file-model" if checks <= 2 else "changed-file-model"
+        return {"llm": {"model": model}}
+
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+        base_document_owner=app_owner,
+    )
+    preview = managed.preview(ClearMappedOverride("MODEL"))
+
+    with pytest.raises(SensitiveEnvError) as stale:
+        managed.commit(preview)
+
+    assert stale.value.code == "CONFIRMATION_REQUIRED"
+    assert checks == 3
+    assert document.read_bytes() == original
+    assert managed.restore_points() == ()
+
+
+def test_override_commit_bounds_late_app_owner_failure_as_confirmation_required(
+    tmp_path,
+):
+    document = tmp_path / "xiaosan.env"
+    original = b"MODEL=repo-model\n"
+    document.write_bytes(original)
+    checks = 0
+
+    def app_owner():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            raise ValueError("private app owner path and content")
+        return {"llm": {"model": "first-file-model"}}
+
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+        base_document_owner=app_owner,
+    )
+    preview = managed.preview(ClearMappedOverride("MODEL"))
+
+    with pytest.raises(SensitiveEnvError) as stale:
+        managed.commit(preview)
+
+    assert stale.value.code == "CONFIRMATION_REQUIRED"
+    assert checks == 3
+    assert document.read_bytes() == original
+    assert "private app owner" not in repr(stale.value)
 
 
 def test_invalid_owner_override_can_be_cleared_and_shows_error_to_candidate_value(
@@ -1026,6 +1243,360 @@ def test_rollback_receipt_binds_opaque_parent_secret_material(tmp_path) -> None:
     assert document.read_bytes() == current
 
 
+def test_rollback_rechecks_shadowed_opaque_parent_secret_inside_transaction(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    document = tmp_path / "xiaosan.env"
+    original = b"OPENAI_API_KEY=repo-secret\nMODEL=repo-model\n"
+    document.write_bytes(original)
+    backup_root = tmp_path / "backups"
+    first_parent_secret = "first-shadowed-parent-secret"
+    second_parent_secret = "second-shadowed-parent-secret"
+    managed = _sensitive_document(
+        document,
+        backup_root=backup_root,
+        inherited_environment={},
+        parent_environment={"OPENAI_API_KEY": first_parent_secret},
+    )
+    committed = managed.commit(managed.preview(ClearMappedOverride("MODEL")))
+    current = document.read_bytes()
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+    restore_ids_before = tuple(item.id for item in managed.restore_points())
+    parent_path = backup_root.parent / f".{backup_root.name}-parent.env"
+
+    def change_parent_secret():
+        parent_path.write_text(
+            f"OPENAI_API_KEY='{second_parent_secret}'\n",
+            encoding="utf-8",
+        )
+
+    after_first_transaction_fsync(monkeypatch, change_parent_secret)
+
+    with pytest.raises(SensitiveEnvError) as caught:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert caught.value.code == "ROLLBACK_CONFIRMATION_INVALID"
+    assert document.read_bytes() == current
+    assert tuple(item.id for item in managed.restore_points()) == restore_ids_before
+    rendered = repr(caught.value)
+    assert first_parent_secret not in rendered
+    assert second_parent_secret not in rendered
+
+
+def test_sensitive_rollback_maps_late_parent_read_race_to_invalid_confirmation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import spica.config.secrets as secrets_owner
+
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"OPENAI_API_KEY=repo-secret\nMODEL=repo-model\n")
+    backup_root = tmp_path / "backups"
+    old_parent_secret = "rollback-old-shadowed-parent-secret"
+    new_parent_secret = "x"
+    managed = _sensitive_document(
+        document,
+        backup_root=backup_root,
+        inherited_environment={},
+        parent_environment={"OPENAI_API_KEY": old_parent_secret},
+    )
+    committed = managed.commit(managed.preview(ClearMappedOverride("MODEL")))
+    current = document.read_bytes()
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+    restore_ids_before = tuple(item.id for item in managed.restore_points())
+    parent_path = backup_root.parent / f".{backup_root.name}-parent.env"
+    parent_inode = parent_path.stat().st_ino
+    real_read = secrets_owner.os.read
+    armed = False
+    rewritten = False
+
+    def arm_parent_race():
+        nonlocal armed
+        armed = True
+
+    def rewrite_parent_after_callback_read(descriptor, size):
+        nonlocal rewritten
+        chunk = real_read(descriptor, size)
+        if (
+            armed
+            and chunk
+            and os.fstat(descriptor).st_ino == parent_inode
+            and not rewritten
+        ):
+            rewritten = True
+            parent_path.write_text(
+                f"OPENAI_API_KEY='{new_parent_secret}'\n",
+                encoding="utf-8",
+            )
+        return chunk
+
+    after_first_transaction_fsync(monkeypatch, arm_parent_race)
+    monkeypatch.setattr(
+        secrets_owner.os,
+        "read",
+        rewrite_parent_after_callback_read,
+    )
+
+    with pytest.raises(SensitiveEnvError) as caught:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert caught.value.code == "ROLLBACK_CONFIRMATION_INVALID"
+    assert rewritten is True
+    assert document.read_bytes() == current
+    assert tuple(item.id for item in managed.restore_points()) == restore_ids_before
+    assert old_parent_secret not in repr(caught.value)
+    assert new_parent_secret not in repr(caught.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_rollback_reports_conflict_if_document_is_replaced_after_publish(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo\n")
+    document.chmod(0o600)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    committed = managed.commit(managed.preview(ClearMappedOverride("MODEL")))
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+    real_replace = os.replace
+
+    def replace_then_external_writer_wins(source, target):
+        real_replace(source, target)
+        external = Path(target).with_name(f".{Path(target).name}.external-writer")
+        external.write_bytes(b"EXTERNAL=winner\n")
+        external.chmod(0o600)
+        real_replace(external, target)
+
+    monkeypatch.setattr(
+        "spica.config.document_transaction.os.replace",
+        replace_then_external_writer_wins,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == b"EXTERNAL=winner\n"
+    assert b"candidate-secret" not in document.read_bytes()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_rollback_can_restore_original_nonexistence(tmp_path):
+    document = tmp_path / "xiaosan.env"
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    committed = managed.commit(
+        managed.preview(SetSecret("openai_api_key", "synthetic-created-secret"))
+    )
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+
+    rolled_back = managed.rollback(
+        confirmation.receipt_token,
+        session_id="synthetic-session",
+    )
+
+    assert rolled_back.permission_health == "MISSING"
+    assert rolled_back.restore_point_id is not None
+    assert not document.exists()
+    undo = managed.prepare_rollback(
+        rolled_back.restore_point_id,
+        session_id="synthetic-session",
+    )
+    assert undo.preview.restore_point_id == rolled_back.restore_point_id
+    assert "synthetic-created-secret" not in repr(rolled_back) + repr(undo)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_rollback_to_missing_conflicts_if_external_file_appears(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "xiaosan.env"
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    committed = managed.commit(
+        managed.preview(SetSecret("openai_api_key", "synthetic-created-secret"))
+    )
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+    external_bytes = b"EXTERNAL=winner\n"
+    real_unlink = Path.unlink
+
+    def unlink_then_external_writer_wins(path, *args, **kwargs):
+        result = real_unlink(path, *args, **kwargs)
+        if path == document:
+            document.write_bytes(external_bytes)
+            document.chmod(0o600)
+        return result
+
+    monkeypatch.setattr(Path, "unlink", unlink_then_external_writer_wins)
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == external_bytes
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_rollback_to_missing_rechecks_after_retention_pruning(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "xiaosan.env"
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    committed = managed.commit(
+        managed.preview(SetSecret("openai_api_key", "synthetic-created-secret"))
+    )
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+    external_bytes = b"EXTERNAL=winner\n"
+
+    def external_writer_creates_file():
+        document.write_bytes(external_bytes)
+        document.chmod(0o600)
+
+    _during_retention_listing(
+        monkeypatch,
+        tmp_path / "backups",
+        external_writer_creates_file,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == external_bytes
+
+
+def test_sensitive_rollback_rechecks_app_owner_inside_transaction_before_publication(
+    tmp_path,
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo-model\n")
+    checks = 0
+
+    def app_owner():
+        nonlocal checks
+        checks += 1
+        model = "first-file-model" if checks <= 5 else "changed-file-model"
+        return {"llm": {"model": model}}
+
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+        base_document_owner=app_owner,
+    )
+    committed = managed.commit(managed.preview(ClearMappedOverride("MODEL")))
+    current = document.read_bytes()
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+
+    with pytest.raises(SensitiveEnvError) as stale:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert stale.value.code == "ROLLBACK_CONFIRMATION_INVALID"
+    assert checks == 6
+    assert document.read_bytes() == current
+
+
+def test_sensitive_rollback_bounds_late_app_owner_failure_as_invalid_receipt(
+    tmp_path,
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo-model\n")
+    checks = 0
+
+    def app_owner():
+        nonlocal checks
+        checks += 1
+        if checks == 6:
+            raise ValueError("private app owner path and content")
+        return {"llm": {"model": "first-file-model"}}
+
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+        base_document_owner=app_owner,
+    )
+    committed = managed.commit(managed.preview(ClearMappedOverride("MODEL")))
+    current = document.read_bytes()
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+
+    with pytest.raises(SensitiveEnvError) as stale:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert stale.value.code == "ROLLBACK_CONFIRMATION_INVALID"
+    assert checks == 6
+    assert document.read_bytes() == current
+    assert "private app owner" not in repr(stale.value)
+
+
 def test_rollback_receipt_is_bound_to_session_and_short_ttl(tmp_path):
     document = tmp_path / "xiaosan.env"
     document.write_bytes(b"MODEL=repo\n")
@@ -1263,6 +1834,344 @@ def test_sensitive_commit_restores_original_and_fails_on_permission_interference
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_commit_reports_conflict_if_document_is_replaced_after_publish(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo\n")
+    document.chmod(0o600)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    preview = managed.preview(SetSecret("openai_api_key", "candidate-secret"))
+    real_replace = os.replace
+
+    def replace_then_external_writer_wins(source, target):
+        real_replace(source, target)
+        external = Path(target).with_name(f".{Path(target).name}.external-writer")
+        external.write_bytes(b"EXTERNAL=winner\n")
+        external.chmod(0o600)
+        real_replace(external, target)
+
+    monkeypatch.setattr(
+        "spica.config.document_transaction.os.replace",
+        replace_then_external_writer_wins,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == b"EXTERNAL=winner\n"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_commit_never_recovers_over_same_bytes_from_another_inode(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo\n")
+    document.chmod(0o600)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    secret_canary = "same-bytes-external-secret-canary"
+    preview = managed.preview(SetSecret("openai_api_key", secret_canary))
+    real_replace = os.replace
+    external_publication: list[bytes] = []
+    swapped = False
+
+    def replace_then_external_writer_republishes_same_bytes(source, target):
+        nonlocal swapped
+        real_replace(source, target)
+        if swapped:
+            return
+        swapped = True
+        external = Path(target).with_name(f".{Path(target).name}.external-writer")
+        external.write_bytes(Path(target).read_bytes())
+        external.chmod(0o640)
+        external_publication.append(external.read_bytes())
+        real_replace(external, target)
+
+    monkeypatch.setattr(
+        "spica.config.document_transaction.os.replace",
+        replace_then_external_writer_republishes_same_bytes,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert external_publication
+    assert document.read_bytes() == external_publication[0]
+    assert stat.S_IMODE(document.stat().st_mode) == 0o640
+    assert secret_canary not in repr(failed.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_finalize_rejects_same_bytes_replaced_after_transaction_returns(
+    tmp_path,
+):
+    document = tmp_path / "xiaosan.env"
+    original = b"MODEL=repo\n"
+    document.write_bytes(original)
+    document.chmod(0o600)
+    platform, trigger_lock = _platform_with_trigger_lock(tmp_path)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+        platform_capabilities=platform,
+    )
+    secret_canary = "post-transaction-external-secret-canary"
+    preview = managed.preview(SetSecret("openai_api_key", secret_canary))
+    external_publication: list[bytes] = []
+    external_inode: int | None = None
+
+    def external_writer_republishes_same_bytes():
+        nonlocal external_inode
+        external = document.with_name(f".{document.name}.external-writer")
+        external.write_bytes(document.read_bytes())
+        external.chmod(0o640)
+        external_publication.append(external.read_bytes())
+        external_inode = external.stat().st_ino
+        os.replace(external, document)
+
+    trigger_lock.arm(
+        trigger_on=2,
+        callback=external_writer_republishes_same_bytes,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == external_publication[0]
+    assert document.stat().st_ino == external_inode
+    assert stat.S_IMODE(document.stat().st_mode) == 0o640
+    assert secret_canary not in repr(failed.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_commit_rechecks_identity_after_retention_pruning(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo\n")
+    document.chmod(0o600)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    preview = managed.preview(
+        SetSecret("openai_api_key", "post-prune-secret-canary")
+    )
+    external_publication: list[bytes] = []
+    external_inode: int | None = None
+
+    def external_writer_wins():
+        nonlocal external_inode
+        external = document.with_name(f".{document.name}.external-writer")
+        external.write_bytes(document.read_bytes())
+        external.chmod(0o600)
+        external_publication.append(external.read_bytes())
+        external_inode = external.stat().st_ino
+        os.replace(external, document)
+
+    _during_retention_listing(
+        monkeypatch,
+        tmp_path / "backups",
+        external_writer_wins,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == external_publication[0]
+    assert document.stat().st_ino == external_inode
+    assert "post-prune-secret-canary" not in repr(failed.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_commit_recovers_if_permissions_change_during_retention(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    original = b"MODEL=repo\n"
+    document.write_bytes(original)
+    document.chmod(0o600)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    preview = managed.preview(
+        SetSecret("openai_api_key", "post-prune-mode-secret-canary")
+    )
+    def relax_same_inode():
+        os.chmod(document, 0o640)
+
+    _during_retention_listing(
+        monkeypatch,
+        tmp_path / "backups",
+        relax_same_inode,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "PERMISSION_HARDENING_FAILED"
+    assert document.read_bytes() == original
+    assert stat.S_IMODE(document.stat().st_mode) == 0o600
+    assert "post-prune-mode-secret-canary" not in repr(failed.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_recovery_keeps_current_restore_point_across_clock_rollback(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo\n")
+    document.chmod(0o600)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+    )
+    now = [200]
+    monkeypatch.setattr(
+        "spica.config.document_transaction.time.time_ns",
+        lambda: now[0],
+    )
+    managed.commit(managed.preview(SetSecret("openai_api_key", "first-secret")))
+    previous = document.read_bytes()
+    now[0] = 1
+    preview = managed.preview(SetSecret("openai_api_key", "second-secret"))
+    def relax_same_inode():
+        os.chmod(document, 0o640)
+
+    _during_retention_listing(
+        monkeypatch,
+        tmp_path / "backups",
+        relax_same_inode,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "PERMISSION_HARDENING_FAILED"
+    assert document.read_bytes() == previous
+    assert stat.S_IMODE(document.stat().st_mode) == 0o600
+    assert "first-secret" not in repr(failed.value)
+    assert "second-secret" not in repr(failed.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_noop_rehardens_if_permissions_change_during_retention(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    original = b"KEEP=1\n"
+    document.write_bytes(original)
+    document.chmod(0o600)
+    platform, trigger_lock = _platform_with_trigger_lock(tmp_path)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={"MODEL": "inherited-model"},
+        parent_environment={},
+        platform_capabilities=platform,
+    )
+    preview = managed.preview(ClearMappedOverride("MODEL"))
+    assert preview.changed is False
+    def relax_same_inode():
+        os.chmod(document, 0o640)
+
+    trigger_lock.arm(
+        trigger_on=2,
+        callback=relax_same_inode,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "PERMISSION_HARDENING_FAILED"
+    assert document.read_bytes() == original
+    assert stat.S_IMODE(document.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_recovery_reports_conflict_before_touching_replacement(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo\n")
+    document.chmod(0o600)
+    platform, trigger_lock = _platform_with_trigger_lock(tmp_path)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+        platform_capabilities=platform,
+    )
+    preview = managed.preview(
+        SetSecret("openai_api_key", "recovery-race-secret-canary")
+    )
+    real_replace = os.replace
+    first_publish = True
+
+    def publish_with_unsafe_mode(source, target):
+        nonlocal first_publish
+        real_replace(source, target)
+        if first_publish:
+            first_publish = False
+            os.chmod(target, 0o640)
+
+    external_publication: list[bytes] = []
+    external_inode: int | None = None
+
+    def external_writer_wins_before_recovery():
+        nonlocal external_inode
+        external = document.with_name(f".{document.name}.external-writer")
+        external.write_bytes(document.read_bytes())
+        external.chmod(0o640)
+        external_publication.append(external.read_bytes())
+        external_inode = external.stat().st_ino
+        real_replace(external, document)
+
+    monkeypatch.setattr(
+        "spica.config.document_transaction.os.replace",
+        publish_with_unsafe_mode,
+    )
+    trigger_lock.arm(
+        trigger_on=2,
+        callback=external_writer_wins_before_recovery,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.commit(preview)
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == external_publication[0]
+    assert document.stat().st_ino == external_inode
+    assert stat.S_IMODE(document.stat().st_mode) == 0o640
+    assert "recovery-race-secret-canary" not in repr(failed.value)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
 def test_sensitive_commit_uses_final_fstat_permission_facts(
     tmp_path, monkeypatch
 ):
@@ -1456,6 +2365,70 @@ def test_sensitive_rollback_restores_current_and_fails_on_permission_interferenc
     assert failed.value.code == "PERMISSION_HARDENING_FAILED"
     assert document.read_bytes() == current
     assert (document.stat().st_mode & 0o777) == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")
+def test_sensitive_rollback_recovery_reports_conflict_before_touching_replacement(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "xiaosan.env"
+    document.write_bytes(b"MODEL=repo\n")
+    document.chmod(0o600)
+    platform, trigger_lock = _platform_with_trigger_lock(tmp_path)
+    managed = _sensitive_document(
+        document,
+        backup_root=tmp_path / "backups",
+        inherited_environment={},
+        parent_environment={},
+        platform_capabilities=platform,
+    )
+    committed = managed.commit(managed.preview(ClearMappedOverride("MODEL")))
+    confirmation = managed.prepare_rollback(
+        committed.restore_point_id,
+        session_id="synthetic-session",
+    )
+    real_replace = os.replace
+    first_publish = True
+
+    def publish_with_unsafe_mode(source, target):
+        nonlocal first_publish
+        real_replace(source, target)
+        if first_publish:
+            first_publish = False
+            os.chmod(target, 0o640)
+
+    external_publication: list[bytes] = []
+    external_inode: int | None = None
+
+    def external_writer_wins_before_recovery():
+        nonlocal external_inode
+        external = document.with_name(f".{document.name}.external-writer")
+        external.write_bytes(document.read_bytes())
+        external.chmod(0o640)
+        external_publication.append(external.read_bytes())
+        external_inode = external.stat().st_ino
+        real_replace(external, document)
+
+    monkeypatch.setattr(
+        "spica.config.document_transaction.os.replace",
+        publish_with_unsafe_mode,
+    )
+    trigger_lock.arm(
+        trigger_on=3,
+        callback=external_writer_wins_before_recovery,
+    )
+
+    with pytest.raises(SensitiveEnvError) as failed:
+        managed.rollback(
+            confirmation.receipt_token,
+            session_id="synthetic-session",
+        )
+
+    assert failed.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == external_publication[0]
+    assert document.stat().st_ino == external_inode
+    assert stat.S_IMODE(document.stat().st_mode) == 0o640
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission contract")

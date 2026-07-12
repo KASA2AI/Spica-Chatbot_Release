@@ -14,7 +14,9 @@ from spica.config.secrets import load_secrets
 from spica.config_studio.api import create_config_studio_app
 from spica.config_studio.security import SecurityContext
 from spica.config_studio.server import LoopbackServer
-from ui.config_studio.composition import create_production_config_studio_services
+from spica.adapters.config_studio.composition import (
+    create_production_config_studio_services,
+)
 
 
 def test_real_loopback_socket_commits_app_and_keeps_secret_canary_opaque(

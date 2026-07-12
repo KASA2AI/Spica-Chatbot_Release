@@ -824,6 +824,7 @@ def read_fixed_regular_file(
                     break
                 chunks.append(chunk)
                 remaining -= len(chunk)
+            final = os.fstat(descriptor)
         finally:
             os.close(descriptor)
         content = b"".join(chunks)
@@ -832,10 +833,12 @@ def read_fixed_regular_file(
         return FixedFileRead(None, "unavailable", "MANAGED_DOCUMENT_UNAVAILABLE")
     if len(content) > _MAX_DOCUMENT_BYTES:
         return FixedFileRead(None, "invalid", "MANAGED_DOCUMENT_TOO_LARGE")
-    if (
-        (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino)
-        or not _fixed_file_identity_is_safe(after, platform_capabilities)
-    ):
+    if not (
+        _fixed_file_generation(before)
+        == _fixed_file_generation(opened)
+        == _fixed_file_generation(final)
+        == _fixed_file_generation(after)
+    ) or not _fixed_file_identity_is_safe(after, platform_capabilities):
         return FixedFileRead(None, "unsafe", "MANAGED_DOCUMENT_UNSAFE")
     rechecked = _inspect_path(target, target_kind="file")
     if rechecked.status != "healthy":
@@ -852,6 +855,19 @@ def _fixed_file_identity_is_safe(
     if platform.posix_permissions:
         return platform.user_id is not None and file_stat.st_uid == platform.user_id
     return True
+
+
+def _fixed_file_generation(file_stat: os.stat_result) -> tuple[int, ...]:
+    return (
+        file_stat.st_dev,
+        file_stat.st_ino,
+        file_stat.st_size,
+        file_stat.st_mtime_ns,
+        file_stat.st_ctime_ns,
+        file_stat.st_mode,
+        file_stat.st_nlink,
+        file_stat.st_uid,
+    )
 
 
 def _parse_mapping(read: FixedFileRead, *, suffix: str) -> dict[str, Any] | None:

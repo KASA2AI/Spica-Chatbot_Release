@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 from spica.config.env_roster import APP_ENV_MAP, RESPEAKER_ENV_MAP, SCREEN_ENV_MAP
 from spica.config.environment_snapshot import EnvironmentSnapshot
+from spica.config.immutable import freeze_config_tree, thaw_config_tree
 from spica.config.schema import AppConfig
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -375,7 +376,7 @@ class ConfigResolution:
         config_data: dict[str, Any],
         leaves: dict[tuple[str | int, ...], ResolvedLeaf],
     ) -> None:
-        self._config_data = _freeze(config_data)
+        self._config_data = freeze_config_tree(config_data)
         self._leaves = MappingProxyType(dict(leaves))
 
     @classmethod
@@ -409,11 +410,14 @@ class ConfigResolution:
                 source = ResolutionSource(kind="file")
             else:
                 source = ResolutionSource(kind="default")
-            leaves[path] = ResolvedLeaf(next_launch_value=_freeze(value), source=source)
+            leaves[path] = ResolvedLeaf(
+                next_launch_value=freeze_config_tree(value),
+                source=source,
+            )
         return cls(config_data=config_data, leaves=leaves)
 
     def to_app_config(self) -> AppConfig:
-        return AppConfig.model_validate(_thaw(self._config_data))
+        return AppConfig.model_validate(thaw_config_tree(self._config_data))
 
     def leaf(self, path: tuple[str | int, ...]) -> ResolvedLeaf:
         return self._leaves[path]
@@ -521,19 +525,3 @@ def _document_effectively_owns_path(
         except (TypeError, ValueError):
             return False
     return True
-
-
-def _freeze(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(item) for item in value)
-    return value
-
-
-def _thaw(value: Any) -> Any:
-    if isinstance(value, MappingProxyType):
-        return {key: _thaw(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw(item) for item in value]
-    return value

@@ -256,7 +256,8 @@ def build_agent_services(
     # single desktop-runtime sys.platform read; every later AppHost consumer
     # reads services.effective_platform (§3.6). Independent sidecars keep their
     # process-platform probes inside their own outer adapters.
-    effective_platform = fold_platform(config.platform.os, sys.platform)
+    host_platform = sys.platform
+    effective_platform = fold_platform(config.platform.os, host_platform)
     window_locator = build_window_locator(effective_platform)
     screen_capture = build_screen_capture(effective_platform)
     game_launcher = build_game_launcher(effective_platform)
@@ -264,7 +265,7 @@ def build_agent_services(
         "platform resolved: os_cfg=%s host=%s effective=%s "
         "lanes=window_locator/%s screen_capture/%s game_launcher/%s",
         config.platform.os,
-        sys.platform,
+        host_platform,
         effective_platform,
         getattr(window_locator, "name", type(window_locator).__name__),
         getattr(screen_capture, "name", type(screen_capture).__name__),

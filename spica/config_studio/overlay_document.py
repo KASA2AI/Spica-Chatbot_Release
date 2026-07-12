@@ -1,4 +1,4 @@
-"""Typed authoring service for the fixed overlay preference document."""
+"""Typed owner for the fixed overlay preference document."""
 
 from __future__ import annotations
 

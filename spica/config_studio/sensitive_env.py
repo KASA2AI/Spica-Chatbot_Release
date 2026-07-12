@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping
 from dotenv.parser import parse_stream
 
 from spica.config.document_transaction import (
+    DocumentConflictError,
     DocumentRevision,
     DocumentSafetyError,
     DocumentTransactionError,
@@ -32,6 +33,7 @@ from spica.config.env_roster import APP_ENV_MAP, SCREEN_ENV_MAP, SECRETS_ENV_MAP
 from spica.config.manager import ConfigManager, ConfigResolution
 from spica.ports.config_studio_platform import PlatformCapabilities
 from spica.config.secrets import (
+    EnvironmentRefreshError,
     LoadedSecrets,
     RepoEnvironmentTransition,
     ResolvedRepoEnvironment,
@@ -405,14 +407,6 @@ class SensitiveEnvDocument:
                 session_id=bound_session,
             )
         record = self._consume_preview(preview, session_id=bound_session)
-        if (
-            record.base_document is not None
-            and self._current_base_document() != record.base_document
-        ):
-            raise SensitiveEnvError(
-                "CONFIRMATION_REQUIRED",
-                "app document changed after sensitive preview",
-            )
         self._assert_backup_root_safe()
         snapshot, permission_health = self._snapshot_and_permission_health()
         if snapshot is None:
@@ -422,38 +416,68 @@ class SensitiveEnvDocument:
                 "DOCUMENT_CONFLICT",
                 "sensitive document changed after preview",
             )
-        current_transition = self._environment_owner.resolve_repo_transition(
-            snapshot.content,
-            record.candidate,
-        )
-        if not record.owner_transition.same_secret_material(current_transition):
-            raise SensitiveEnvError(
-                "CONFIRMATION_REQUIRED",
-                "sensitive owner material changed after preview",
+        def recheck_owner_state() -> None:
+            if record.base_document is not None:
+                try:
+                    current_base_document = self._current_base_document()
+                except SensitiveEnvError as exc:
+                    if exc.code != "PREVIEW_UNAVAILABLE":
+                        raise
+                    raise SensitiveEnvError(
+                        "CONFIRMATION_REQUIRED",
+                        "app document changed after sensitive preview",
+                    ) from exc
+                if current_base_document != record.base_document:
+                    raise SensitiveEnvError(
+                        "CONFIRMATION_REQUIRED",
+                        "app document changed after sensitive preview",
+                    )
+            try:
+                current_transition = self._environment_owner.resolve_repo_transition(
+                    snapshot.content,
+                    record.candidate,
+                )
+            except EnvironmentRefreshError as exc:
+                raise SensitiveEnvError(
+                    "CONFIRMATION_REQUIRED",
+                    "sensitive owner changed after preview",
+                ) from exc
+            if not record.owner_transition.same_secret_material(current_transition):
+                raise SensitiveEnvError(
+                    "CONFIRMATION_REQUIRED",
+                    "sensitive owner material changed after preview",
+                )
+            current_preview = SensitiveEnvPreview(
+                preview_id=record.preview.preview_id,
+                **self._semantic_fields(
+                    current_content=snapshot.content,
+                    candidate=record.candidate,
+                    permission_health=permission_health,
+                    command_kind=record.preview.command_kind,
+                    target=record.preview.target,
+                    base_document=record.base_document,
+                    transition=current_transition,
+                ),
             )
-        current_preview = SensitiveEnvPreview(
-            preview_id=record.preview.preview_id,
-            **self._semantic_fields(
-                current_content=snapshot.content,
-                candidate=record.candidate,
-                permission_health=permission_health,
-                command_kind=record.preview.command_kind,
-                target=record.preview.target,
-                base_document=record.base_document,
-                transition=current_transition,
-            ),
-        )
-        if current_preview != record.preview:
-            raise SensitiveEnvError(
-                "CONFIRMATION_REQUIRED",
-                "sensitive preview semantics changed",
-            )
+            if current_preview != record.preview:
+                raise SensitiveEnvError(
+                    "CONFIRMATION_REQUIRED",
+                    "sensitive preview semantics changed",
+                )
+
+        recheck_owner_state()
         try:
             result = self._transaction.commit(
                 record.candidate,
                 expected_revision=record.current_revision,
                 defer_retention=True,
+                before_publication=recheck_owner_state,
             )
+        except DocumentConflictError as exc:
+            raise SensitiveEnvError(
+                "DOCUMENT_CONFLICT",
+                "sensitive document changed during publication",
+            ) from exc
         except PermissionError as exc:
             raise SensitiveEnvError(
                 "PERMISSION_HARDENING_FAILED",
@@ -608,32 +632,55 @@ class SensitiveEnvDocument:
             raise SensitiveEnvError(
                 "NO_VALID_RESTORE_POINT", "restore point is not available"
             ) from exc
-        current_transition = self._environment_owner.resolve_repo_transition(
-            current.content,
-            restored.content,
-        )
-        if not record.owner_transition.same_secret_material(current_transition):
-            raise SensitiveEnvError(
-                "ROLLBACK_CONFIRMATION_INVALID",
-                "rollback owner material changed",
-            )
-        current_preview = self._rollback_preview(
-            restore_point_id=record.preview.restore_point_id,
-            current=current,
-            restored=restored,
-            permission_health=permission_health,
-            transition=current_transition,
-        )
-        if current_preview != record.preview:
-            raise SensitiveEnvError(
-                "ROLLBACK_CONFIRMATION_INVALID", "rollback semantics changed"
-            )
+        def recheck_owner_state() -> None:
+            try:
+                current_transition = self._environment_owner.resolve_repo_transition(
+                    current.content,
+                    restored.content,
+                )
+            except EnvironmentRefreshError as exc:
+                raise SensitiveEnvError(
+                    "ROLLBACK_CONFIRMATION_INVALID",
+                    "rollback owner changed after confirmation",
+                ) from exc
+            if not record.owner_transition.same_secret_material(current_transition):
+                raise SensitiveEnvError(
+                    "ROLLBACK_CONFIRMATION_INVALID",
+                    "rollback owner material changed",
+                )
+            try:
+                current_preview = self._rollback_preview(
+                    restore_point_id=record.preview.restore_point_id,
+                    current=current,
+                    restored=restored,
+                    permission_health=permission_health,
+                    transition=current_transition,
+                )
+            except SensitiveEnvError as exc:
+                if exc.code != "PREVIEW_UNAVAILABLE":
+                    raise
+                raise SensitiveEnvError(
+                    "ROLLBACK_CONFIRMATION_INVALID",
+                    "rollback app owner changed",
+                ) from exc
+            if current_preview != record.preview:
+                raise SensitiveEnvError(
+                    "ROLLBACK_CONFIRMATION_INVALID", "rollback semantics changed"
+                )
+
+        recheck_owner_state()
         try:
             result = self._transaction.rollback(
                 record.preview.restore_point_id,
                 expected_revision=record.current_revision,
                 defer_retention=True,
+                before_publication=recheck_owner_state,
             )
+        except DocumentConflictError as exc:
+            raise SensitiveEnvError(
+                "DOCUMENT_CONFLICT",
+                "sensitive document changed during publication",
+            ) from exc
         except PermissionError as exc:
             raise SensitiveEnvError(
                 "PERMISSION_HARDENING_FAILED",
@@ -660,44 +707,94 @@ class SensitiveEnvDocument:
         previous: ManagedDocumentSnapshot,
     ) -> tuple[str, str | None]:
         live, permission_health = self._snapshot_and_permission_health()
-        if live is None or live.revision != result.snapshot.revision:
+        if live is None or not self._transaction.publication_matches(
+            live,
+            result.snapshot,
+        ):
             raise SensitiveEnvError(
                 "DOCUMENT_CONFLICT",
                 "sensitive document changed after publication",
             )
-        if permission_health == "PRIVATE":
-            return (
-                permission_health,
-                self._transaction.finalize_deferred_retention(),
+        publication_is_private = (
+            result.snapshot.revision.exists and permission_health == "PRIVATE"
+        ) or (
+            not result.snapshot.revision.exists and permission_health == "MISSING"
+        )
+        retention_maintenance: str | None = None
+        if publication_is_private:
+            try:
+                retention_maintenance = (
+                    self._transaction.finalize_deferred_retention(
+                        expected_snapshot=result.snapshot,
+                        protected_restore_point_id=(
+                            result.restore_point.id
+                            if result.restore_point is not None
+                            else None
+                        ),
+                    )
+                )
+            except DocumentConflictError as exc:
+                raise SensitiveEnvError(
+                    "DOCUMENT_CONFLICT",
+                    "sensitive document changed before retention",
+                ) from exc
+            live_after_retention, health_after_retention = (
+                self._snapshot_and_permission_health()
             )
+            if (
+                live_after_retention is None
+                or not self._transaction.publication_matches(
+                    live_after_retention,
+                    result.snapshot,
+                )
+            ):
+                raise SensitiveEnvError(
+                    "DOCUMENT_CONFLICT",
+                    "sensitive document changed after retention",
+                )
+            expected_health = (
+                "PRIVATE" if result.snapshot.revision.exists else "MISSING"
+            )
+            if health_after_retention == expected_health:
+                return health_after_retention, retention_maintenance
 
         try:
-            if result.restore_point is not None:
-                recovered = self._transaction.recover_failed_publication(
-                    result.restore_point.id,
-                    expected_revision=result.snapshot.revision,
-                    previous_revision=previous.revision,
-                )
-                if recovered.revision != previous.revision:
-                    raise DocumentSafetyError(
-                        "sensitive recovery did not restore previous bytes"
-                    )
-            elif live.revision != previous.revision:
+            recovered = self._transaction.recover_failed_publication(
+                (
+                    result.restore_point.id
+                    if result.restore_point is not None
+                    else None
+                ),
+                expected_snapshot=result.snapshot,
+                previous_revision=previous.revision,
+            )
+            if recovered.revision != previous.revision:
                 raise DocumentSafetyError(
-                    "sensitive recovery restore point is unavailable"
+                    "sensitive recovery did not restore previous bytes"
                 )
             recovered_live, recovered_health = (
                 self._snapshot_and_permission_health()
             )
             expected_health = "PRIVATE" if previous.revision.exists else "MISSING"
+            if recovered_live is None or not self._transaction.publication_matches(
+                recovered_live,
+                recovered,
+            ):
+                raise DocumentConflictError(
+                    "sensitive document changed after recovery"
+                )
             if (
-                recovered_live is None
-                or recovered_live.revision != previous.revision
+                recovered_live.revision != previous.revision
                 or recovered_health != expected_health
             ):
                 raise DocumentSafetyError(
                     "sensitive recovery could not prove the previous state"
                 )
+        except DocumentConflictError as exc:
+            raise SensitiveEnvError(
+                "DOCUMENT_CONFLICT",
+                "sensitive document changed before recovery",
+            ) from exc
         except (DocumentTransactionError, OSError) as exc:
             raise SensitiveEnvError(
                 "PERMISSION_HARDENING_FAILED",

@@ -9,13 +9,14 @@ import re
 import stat
 from collections.abc import Mapping as ABCMapping
 from dataclasses import dataclass, field
-from types import MappingProxyType, UnionType
+from types import UnionType
 from pathlib import Path
 from typing import Any, Literal, Mapping, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
 from spica.config.environment_snapshot import EnvironmentSnapshot
+from spica.config.immutable import freeze_config_tree, thaw_config_tree
 from spica.config.manager import ConfigManager, ConfigResolution
 from spica.config.schema import AppConfig
 from spica.config_studio.paths import (
@@ -64,7 +65,7 @@ class AuthoringValidation:
         return self.resolution.to_app_config()
 
     def candidate_document(self) -> dict[str, Any]:
-        return _thaw(self._candidate)
+        return thaw_config_tree(self._candidate)
 
     def __repr__(self) -> str:
         return "AuthoringValidation(<validated>)"
@@ -115,7 +116,7 @@ class ConfigAuthoringValidator:
             if not isinstance(operation, (SetValue, UnsetValue)):
                 raise AuthoringError("OPERATION_INVALID", "unsupported operation")
             segments, annotation, metadata = self._field_annotation(operation.path)
-            names = _plain_path(segments)
+            names = operation.path.plain_values()
             if operation.path.segments and operation.path.segments[0] == FieldSegment(
                 "plugins"
             ):
@@ -158,7 +159,7 @@ class ConfigAuthoringValidator:
             raise AuthoringError("DOCUMENT_INVALID", "candidate validation failed") from exc
         return AuthoringValidation(
             resolution=resolution,
-            _candidate=_freeze(candidate),
+            _candidate=freeze_config_tree(candidate),
         )
 
     def _field_annotation(
@@ -365,22 +366,6 @@ def _unset_nested(
             current.pop(final.index)
 
 
-def _freeze(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(item) for item in value)
-    return value
-
-
-def _thaw(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {key: _thaw(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw(item) for item in value]
-    return value
-
-
 def _unknown_values(
     document: Mapping[str, Any],
     model_type: type[BaseModel],
@@ -447,18 +432,6 @@ def _strip_optional(annotation: Any) -> Any:
         if len(options) == 1:
             return options[0]
     return annotation
-
-
-def _plain_path(segments: tuple[PathSegment, ...]) -> tuple[Any, ...]:
-    plain: list[Any] = []
-    for segment in segments:
-        if isinstance(segment, FieldSegment):
-            plain.append(segment.name)
-        elif isinstance(segment, MapKeySegment):
-            plain.append(segment.key)
-        elif isinstance(segment, ListIndexSegment):
-            plain.append(segment.index)
-    return tuple(plain)
 
 
 def _validate_plugins(value: Any) -> None:

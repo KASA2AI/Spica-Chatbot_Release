@@ -22,6 +22,20 @@ class CrossProcessFileLockPort(Protocol):
         ...
 
 
+@runtime_checkable
+class StableFileIdentityPort(Protocol):
+    """Opaque no-follow identity checks for one platform file implementation."""
+
+    def capture_descriptor(self, descriptor: int) -> object:
+        ...
+
+    def path_matches_no_follow(self, path: Path, identity: object) -> bool:
+        ...
+
+    def same(self, left: object, right: object) -> bool:
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class PlatformCapabilities:
     """Immutable, injectable decisions for privileged local operations."""
@@ -31,6 +45,7 @@ class PlatformCapabilities:
     user_id: int | None = field(repr=False)
     temp_directory: Path = field(repr=False)
     file_lock: CrossProcessFileLockPort = field(repr=False, compare=False)
+    file_identity: StableFileIdentityPort = field(repr=False, compare=False)
     posix_permissions: bool
     managed_document_writes: bool
     sensitive_document_writes: bool
@@ -43,4 +58,8 @@ class PlatformCapabilities:
         return self.temp_directory / "spica-config-studio-locks"
 
 
-__all__ = ["CrossProcessFileLockPort", "PlatformCapabilities"]
+__all__ = [
+    "CrossProcessFileLockPort",
+    "PlatformCapabilities",
+    "StableFileIdentityPort",
+]

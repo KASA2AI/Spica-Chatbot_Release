@@ -13,6 +13,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from spica.ports.config_studio_platform import PlatformCapabilities
 
@@ -33,6 +34,7 @@ class DocumentRevision:
 class ManagedDocumentSnapshot:
     content: bytes = field(repr=False)
     revision: DocumentRevision
+    _identity: object | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +66,12 @@ class DocumentCommit:
     snapshot: ManagedDocumentSnapshot
     restore_point: RestorePoint | None
     maintenance_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PublicationResult:
+    maintenance_code: str | None
+    identity: object | None = field(repr=False)
 
 
 class DocumentTransactionError(RuntimeError):
@@ -186,6 +194,7 @@ class ManagedDocumentTransaction:
         *,
         expected_revision: DocumentRevision,
         defer_retention: bool = False,
+        before_publication: Callable[[], None] | None = None,
     ) -> DocumentCommit:
         self._ensure_writes_supported()
         with self._write_lock():
@@ -201,32 +210,49 @@ class ManagedDocumentTransaction:
                 return DocumentCommit(current, None)
             restore_point = self._create_restore_point(current)
             try:
-                publish_maintenance = self._atomic_publish(
+                publication = self._atomic_publish(
                     candidate,
                     mode=self._target_mode(),
-                    expected_revision=current.revision,
+                    expected_snapshot=current,
                     restore_point=restore_point,
+                    before_publication=before_publication,
                 )
             except BaseException as publish_error:
                 self._discard_restore_point_if_unpublished(
                     restore_point,
-                    previous_revision=current.revision,
+                    previous_snapshot=current,
                     publish_error=publish_error,
                 )
                 raise
-            published = self._snapshot()
-            publication_maintenance = self._publication_maintenance(
-                published,
-                expected_revision=DocumentRevision.from_bytes(candidate),
+            published = self._snapshot_after_publication(
+                expected_identity=publication.identity,
+            )
+            if published.revision != DocumentRevision.from_bytes(candidate):
+                raise DocumentConflictError(
+                    "managed document changed after publication"
+                )
+            publication_maintenance = self._publication_permission_maintenance(
+                published
             )
             retention_maintenance = (
-                None if defer_retention else self._prune_after_publish()
+                None
+                if defer_retention
+                else self._prune_after_publish(
+                    protected_restore_point_id=restore_point.id,
+                )
             )
+            published = self._snapshot_after_publication(
+                expected_identity=publication.identity,
+            )
+            if published.revision != DocumentRevision.from_bytes(candidate):
+                raise DocumentConflictError(
+                    "managed document changed after publication"
+                )
             result = DocumentCommit(
                 published,
                 restore_point,
                 publication_maintenance
-                or publish_maintenance
+                or publication.maintenance_code
                 or retention_maintenance,
             )
             return result
@@ -237,6 +263,7 @@ class ManagedDocumentTransaction:
         *,
         expected_revision: DocumentRevision,
         defer_retention: bool = False,
+        before_publication: Callable[[], None] | None = None,
     ) -> DocumentCommit:
         self._ensure_writes_supported()
         with self._write_lock():
@@ -247,53 +274,89 @@ class ManagedDocumentTransaction:
             undo_restore_point = self._create_restore_point(current)
             try:
                 if restored.revision.exists:
-                    publish_maintenance = self._atomic_publish(
+                    publication = self._atomic_publish(
                         restored.content,
                         mode=self._target_mode(),
-                        expected_revision=current.revision,
+                        expected_snapshot=current,
                         restore_point=undo_restore_point,
+                        before_publication=before_publication,
                     )
                 else:
-                    publish_maintenance = self._atomic_remove(
-                        expected_revision=current.revision,
+                    publication = self._atomic_remove(
+                        expected_snapshot=current,
                         restore_point=undo_restore_point,
+                        before_publication=before_publication,
                     )
             except BaseException as publish_error:
                 self._discard_restore_point_if_unpublished(
                     undo_restore_point,
-                    previous_revision=current.revision,
+                    previous_snapshot=current,
                     publish_error=publish_error,
                 )
                 raise
-            published = self._snapshot()
-            publication_maintenance = self._publication_maintenance(
-                published,
-                expected_revision=restored.revision,
+            published = self._snapshot_after_publication(
+                expected_identity=publication.identity,
+            )
+            if published.revision != restored.revision:
+                raise DocumentConflictError(
+                    "managed document changed after publication"
+                )
+            publication_maintenance = self._publication_permission_maintenance(
+                published
             )
             retention_maintenance = (
-                None if defer_retention else self._prune_after_publish()
+                None
+                if defer_retention
+                else self._prune_after_publish(
+                    protected_restore_point_id=undo_restore_point.id,
+                )
             )
+            published = self._snapshot_after_publication(
+                expected_identity=publication.identity,
+            )
+            if published.revision != restored.revision:
+                raise DocumentConflictError(
+                    "managed document changed after publication"
+                )
             result = DocumentCommit(
                 published,
                 undo_restore_point,
                 publication_maintenance
-                or publish_maintenance
+                or publication.maintenance_code
                 or retention_maintenance,
             )
             return result
 
-    def finalize_deferred_retention(self) -> str | None:
+    def finalize_deferred_retention(
+        self,
+        *,
+        expected_snapshot: ManagedDocumentSnapshot,
+        protected_restore_point_id: str | None,
+    ) -> str | None:
         """Apply retention after a caller has accepted a guarded publication."""
 
         self._ensure_writes_supported()
         with self._write_lock():
-            return self._prune_after_publish()
+            current = self._snapshot()
+            if not self._same_live_snapshot(current, expected_snapshot):
+                raise DocumentConflictError(
+                    "managed document changed before retention"
+                )
+            maintenance_code = self._prune_after_publish(
+                protected_restore_point_id=protected_restore_point_id,
+            )
+            current = self._snapshot()
+            if not self._same_live_snapshot(current, expected_snapshot):
+                raise DocumentConflictError(
+                    "managed document changed during retention"
+                )
+            return maintenance_code
 
     def recover_failed_publication(
         self,
-        restore_point_id: str,
+        restore_point_id: str | None,
         *,
-        expected_revision: DocumentRevision,
+        expected_snapshot: ManagedDocumentSnapshot,
         previous_revision: DocumentRevision,
     ) -> ManagedDocumentSnapshot:
         """Restore a failed guarded publication without creating user history."""
@@ -301,37 +364,50 @@ class ManagedDocumentTransaction:
         self._ensure_writes_supported()
         with self._write_lock():
             current = self._snapshot()
-            if current.revision != expected_revision:
+            if not self._same_live_snapshot(current, expected_snapshot):
                 raise DocumentConflictError("managed document revision changed")
-            restored = self._load_restore_point(restore_point_id)
-            if restored.revision != previous_revision:
-                raise RestorePointError("restore point does not match prior document")
-            if restored.revision.exists:
-                self._atomic_publish(
-                    restored.content,
-                    mode=self._target_mode(),
-                    expected_revision=current.revision,
-                    restore_point=None,
-                )
+            if restore_point_id is None:
+                if current.revision != previous_revision:
+                    raise RestorePointError(
+                        "recovery requires the prior document bytes"
+                    )
+                recovered = current
             else:
-                self._atomic_remove(
-                    expected_revision=current.revision,
-                    restore_point=None,
+                restored = self._load_restore_point(restore_point_id)
+                if restored.revision != previous_revision:
+                    raise RestorePointError(
+                        "restore point does not match prior document"
+                    )
+                if restored.revision.exists:
+                    publication = self._atomic_publish(
+                        restored.content,
+                        mode=self._target_mode(),
+                        expected_snapshot=current,
+                        restore_point=None,
+                    )
+                else:
+                    publication = self._atomic_remove(
+                        expected_snapshot=current,
+                        restore_point=None,
+                    )
+                recovered = self._snapshot_after_publication(
+                    expected_identity=publication.identity,
                 )
-            recovered = self._snapshot()
             if recovered.revision != previous_revision:
                 raise DocumentConflictError("managed document recovery changed")
             if previous_revision.exists and self.publish_mode is not None:
                 self._harden_current_mode(
-                    expected_revision=previous_revision,
+                    expected_snapshot=recovered,
                     mode=self.publish_mode,
                 )
-                recovered = self._snapshot()
-                if recovered.revision != previous_revision:
+                hardened = self._snapshot()
+                if not self._same_live_snapshot(hardened, recovered):
                     raise DocumentConflictError(
                         "managed document recovery changed"
                     )
-            self._delete_restore_point(restore_point_id)
+                recovered = hardened
+            if restore_point_id is not None:
+                self._delete_restore_point(restore_point_id)
             return recovered
 
     def restore_snapshot(self, restore_point_id: str) -> ManagedDocumentSnapshot:
@@ -363,8 +439,54 @@ class ManagedDocumentTransaction:
             )
         return tuple(valid)
 
+    def publication_matches(
+        self,
+        current: ManagedDocumentSnapshot,
+        published: ManagedDocumentSnapshot,
+    ) -> bool:
+        """Compare private live-file identity without exposing its token."""
+
+        return self._same_live_snapshot(current, published)
+
     def _snapshot(self) -> ManagedDocumentSnapshot:
         snapshot, _ = self._snapshot_with_stat()
+        return snapshot
+
+    def _capture_file_identity(self, descriptor: int) -> object | None:
+        if not self._platform.managed_document_writes:
+            return None
+        return self._platform.file_identity.capture_descriptor(descriptor)
+
+    def _same_identity(self, left: object | None, right: object | None) -> bool:
+        if left is None or right is None:
+            return left is right
+        return self._platform.file_identity.same(left, right)
+
+    def _same_live_snapshot(
+        self,
+        left: ManagedDocumentSnapshot,
+        right: ManagedDocumentSnapshot,
+    ) -> bool:
+        return left.revision == right.revision and self._same_identity(
+            left._identity,
+            right._identity,
+        )
+
+    def _snapshot_after_publication(
+        self,
+        *,
+        expected_identity: object | None,
+    ) -> ManagedDocumentSnapshot:
+        try:
+            snapshot = self._snapshot()
+        except (DocumentSafetyError, OSError) as exc:
+            raise DocumentConflictError(
+                "managed document changed after publication"
+            ) from exc
+        if not self._same_identity(snapshot._identity, expected_identity):
+            raise DocumentConflictError(
+                "managed document changed after publication"
+            )
         return snapshot
 
     def _snapshot_with_stat(
@@ -383,12 +505,16 @@ class ManagedDocumentTransaction:
         if not stat.S_ISREG(document_stat.st_mode):
             raise DocumentSafetyError("managed document is not a regular file")
         self._validate_managed_file_stat(document_stat)
-        content, opened_stat = self._read_verified_regular_with_stat(
+        content, opened_stat, opened_identity = self._read_verified_regular_with_stat(
             self.document_path,
             document_stat,
         )
         return (
-            ManagedDocumentSnapshot(content, DocumentRevision.from_bytes(content)),
+            ManagedDocumentSnapshot(
+                content,
+                DocumentRevision.from_bytes(content),
+                opened_identity,
+            ),
             opened_stat,
         )
 
@@ -408,12 +534,12 @@ class ManagedDocumentTransaction:
     def _read_verified_regular(
         self, path: Path, expected_stat: os.stat_result
     ) -> bytes:
-        content, _ = self._read_verified_regular_with_stat(path, expected_stat)
+        content, _, _ = self._read_verified_regular_with_stat(path, expected_stat)
         return content
 
     def _read_verified_regular_with_stat(
         self, path: Path, expected_stat: os.stat_result
-    ) -> tuple[bytes, os.stat_result]:
+    ) -> tuple[bytes, os.stat_result, object | None]:
         open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
         open_flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
@@ -431,17 +557,84 @@ class ManagedDocumentTransaction:
             chunks: list[bytes] = []
             while chunk := os.read(descriptor, 64 * 1024):
                 chunks.append(chunk)
+            content = b"".join(chunks)
             final_stat = os.fstat(descriptor)
-            if (
-                final_stat.st_dev,
-                final_stat.st_ino,
-            ) != (opened_stat.st_dev, opened_stat.st_ino):
+            if not self._same_content_payload_facts(opened_stat, final_stat):
                 raise DocumentSafetyError("managed document changed during read")
+            if opened_stat.st_ctime_ns != final_stat.st_ctime_ns:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                verified_chunks: list[bytes] = []
+                while chunk := os.read(descriptor, 64 * 1024):
+                    verified_chunks.append(chunk)
+                verified_content = b"".join(verified_chunks)
+                verified_stat = os.fstat(descriptor)
+                if (
+                    verified_content != content
+                    or not self._same_content_generation(final_stat, verified_stat)
+                ):
+                    raise DocumentSafetyError(
+                        "managed document changed during read"
+                    )
+                final_stat = verified_stat
             self._validate_managed_file_stat(final_stat)
-            return b"".join(chunks), final_stat
+            identity = self._capture_file_identity(descriptor)
+            if identity is not None and not self._platform.file_identity.path_matches_no_follow(
+                path,
+                identity,
+            ):
+                raise DocumentSafetyError("managed document changed during read")
+            if identity is None:
+                try:
+                    final_path_stat = path.lstat()
+                except OSError as exc:
+                    raise DocumentSafetyError(
+                        "managed document changed during read"
+                    ) from exc
+                if (
+                    final_path_stat.st_dev,
+                    final_path_stat.st_ino,
+                ) != (final_stat.st_dev, final_stat.st_ino):
+                    raise DocumentSafetyError("managed document changed during read")
+            return content, final_stat, identity
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
+
+    @staticmethod
+    def _same_content_generation(
+        before: os.stat_result,
+        after: os.stat_result,
+    ) -> bool:
+        return (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+
+    @staticmethod
+    def _same_content_payload_facts(
+        before: os.stat_result,
+        after: os.stat_result,
+    ) -> bool:
+        return (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
 
     def _validate_managed_file_stat(self, file_stat: os.stat_result) -> None:
         if file_stat.st_nlink != 1:
@@ -487,7 +680,7 @@ class ManagedDocumentTransaction:
     def _harden_current_mode(
         self,
         *,
-        expected_revision: DocumentRevision,
+        expected_snapshot: ManagedDocumentSnapshot,
         mode: int,
     ) -> None:
         self._validate_directory_chain(self.document_path.parent)
@@ -512,21 +705,32 @@ class ManagedDocumentTransaction:
             ) != (expected_stat.st_dev, expected_stat.st_ino):
                 raise DocumentSafetyError("managed document changed")
             self._validate_managed_file_stat(opened_stat)
+            opened_identity = self._capture_file_identity(descriptor)
+            if not self._same_identity(
+                opened_identity,
+                expected_snapshot._identity,
+            ):
+                raise DocumentConflictError("managed document changed")
             chunks: list[bytes] = []
             while chunk := os.read(descriptor, 64 * 1024):
                 chunks.append(chunk)
-            if DocumentRevision.from_bytes(b"".join(chunks)) != expected_revision:
+            content_stat = os.fstat(descriptor)
+            if not self._same_content_generation(opened_stat, content_stat):
+                raise DocumentConflictError("managed document changed")
+            if (
+                DocumentRevision.from_bytes(b"".join(chunks))
+                != expected_snapshot.revision
+            ):
                 raise DocumentConflictError("managed document changed")
             os.fchmod(descriptor, mode)
             hardened_stat = os.fstat(descriptor)
             self._validate_managed_file_stat(hardened_stat)
             if stat.S_IMODE(hardened_stat.st_mode) != mode:
                 raise DocumentSafetyError("managed document mode is unsafe")
-            path_stat = self.document_path.lstat()
-            if (
-                path_stat.st_dev,
-                path_stat.st_ino,
-            ) != (hardened_stat.st_dev, hardened_stat.st_ino):
+            if opened_identity is None or not self._platform.file_identity.path_matches_no_follow(
+                self.document_path,
+                opened_identity,
+            ):
                 raise DocumentConflictError("managed document changed")
         finally:
             os.close(descriptor)
@@ -536,11 +740,9 @@ class ManagedDocumentTransaction:
             return self.publish_mode
         return self._current_mode()
 
-    def _publication_maintenance(
+    def _publication_permission_maintenance(
         self,
         published: ManagedDocumentSnapshot,
-        *,
-        expected_revision: DocumentRevision,
     ) -> str | None:
         if (
             published.revision.exists
@@ -548,8 +750,6 @@ class ManagedDocumentTransaction:
             and self._current_mode() != self.publish_mode
         ):
             return "DOCUMENT_PUBLICATION_PERMISSIONS_UNSAFE"
-        if published.revision != expected_revision:
-            return "DOCUMENT_PUBLICATION_CONFLICT"
         return None
 
     def _ensure_writes_supported(self) -> None:
@@ -678,16 +878,16 @@ class ManagedDocumentTransaction:
         self,
         restore_point: RestorePoint,
         *,
-        previous_revision: DocumentRevision,
+        previous_snapshot: ManagedDocumentSnapshot,
         publish_error: BaseException,
     ) -> None:
-        """Remove the attempt backup only when live bytes prove no publication."""
+        """Remove the attempt backup only when live identity proves no publication."""
 
         try:
-            live_revision = self._snapshot().revision
+            live_snapshot = self._snapshot()
         except DocumentTransactionError:
             return
-        if live_revision != previous_revision:
+        if not self._same_live_snapshot(live_snapshot, previous_snapshot):
             return
         try:
             self._delete_restore_point(restore_point.id)
@@ -699,18 +899,20 @@ class ManagedDocumentTransaction:
     def _recheck_before_publication(
         self,
         *,
-        expected_revision: DocumentRevision,
+        expected_snapshot: ManagedDocumentSnapshot,
         restore_point: RestorePoint | None,
     ) -> None:
         """Close the RestorePoint creation window before touching live bytes."""
 
         try:
-            live_revision = self._snapshot().revision
-        except BaseException:
+            live_snapshot = self._snapshot()
+        except (DocumentSafetyError, OSError) as exc:
             if restore_point is not None:
                 self._discard_prepublication_restore_point(restore_point)
-            raise
-        if live_revision == expected_revision:
+            raise DocumentConflictError(
+                "managed document changed before publication"
+            ) from exc
+        if self._same_live_snapshot(live_snapshot, expected_snapshot):
             return
         if restore_point is not None:
             self._discard_prepublication_restore_point(restore_point)
@@ -865,10 +1067,24 @@ class ManagedDocumentTransaction:
             raise RestorePointError("restore point is invalid")
         return self._document_backup_root() / restore_point_id
 
-    def _prune_restore_points(self) -> None:
+    def _prune_restore_points(
+        self,
+        *,
+        protected_restore_point_id: str | None = None,
+    ) -> None:
         restore_points = self._restore_point_entries()
-        restore_points.sort()
-        for _, _, restore_dir in restore_points[: -self.retention]:
+        newest_first = sorted(restore_points, reverse=True)
+        available_ids = {restore_id for _, restore_id, _ in newest_first}
+        keep_ids: set[str] = set()
+        if protected_restore_point_id in available_ids:
+            keep_ids.add(protected_restore_point_id)
+        for _, restore_id, _ in newest_first:
+            if len(keep_ids) >= self.retention:
+                break
+            keep_ids.add(restore_id)
+        for _, restore_id, restore_dir in restore_points:
+            if restore_id in keep_ids:
+                continue
             for filename in ("content", "metadata"):
                 try:
                     child = restore_dir / filename
@@ -881,11 +1097,17 @@ class ManagedDocumentTransaction:
                     pass
             restore_dir.rmdir()
 
-    def _prune_after_publish(self) -> str | None:
+    def _prune_after_publish(
+        self,
+        *,
+        protected_restore_point_id: str | None = None,
+    ) -> str | None:
         """Run retention without misreporting an already-published commit as failed."""
 
         try:
-            self._prune_restore_points()
+            self._prune_restore_points(
+                protected_restore_point_id=protected_restore_point_id,
+            )
         except (DocumentTransactionError, OSError):
             return "RESTORE_RETENTION_DEGRADED"
         return None
@@ -941,9 +1163,10 @@ class ManagedDocumentTransaction:
         content: bytes,
         *,
         mode: int,
-        expected_revision: DocumentRevision,
+        expected_snapshot: ManagedDocumentSnapshot,
         restore_point: RestorePoint | None,
-    ) -> str | None:
+        before_publication: Callable[[], None] | None = None,
+    ) -> _PublicationResult:
         parent = self.document_path.parent
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{self.document_path.name}.config-studio-",
@@ -952,27 +1175,47 @@ class ManagedDocumentTransaction:
         temporary_path = Path(temporary_name)
         try:
             os.fchmod(descriptor, mode)
+            with os.fdopen(descriptor, "wb", closefd=False) as temporary_file:
+                temporary_file.write(content)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
             prepared_stat = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(prepared_stat.st_mode)
                 or stat.S_IMODE(prepared_stat.st_mode) != mode
             ):
                 raise DocumentSafetyError("temporary document permissions are unsafe")
-            with os.fdopen(descriptor, "wb") as temporary_file:
-                descriptor = -1
-                temporary_file.write(content)
-                temporary_file.flush()
-                os.fsync(temporary_file.fileno())
+            self._validate_managed_file_stat(prepared_stat)
+            prepared_identity = self._capture_file_identity(descriptor)
+            if prepared_identity is None:
+                raise DocumentWriteUnsupportedError(
+                    "stable publication identity is unavailable"
+                )
+            if before_publication is not None:
+                before_publication()
+            if not self._platform.file_identity.path_matches_no_follow(
+                temporary_path,
+                prepared_identity,
+            ):
+                raise DocumentSafetyError("temporary document identity changed")
             self._recheck_before_publication(
-                expected_revision=expected_revision,
+                expected_snapshot=expected_snapshot,
                 restore_point=restore_point,
             )
             os.replace(temporary_path, self.document_path)
+            if not self._platform.file_identity.path_matches_no_follow(
+                self.document_path,
+                prepared_identity,
+            ):
+                raise DocumentConflictError(
+                    "managed document changed after publication"
+                )
+            maintenance_code = None
             try:
                 self._fsync_directory(parent)
             except (DocumentTransactionError, OSError):
-                return "DOCUMENT_DURABILITY_UNCONFIRMED"
-            return None
+                maintenance_code = "DOCUMENT_DURABILITY_UNCONFIRMED"
+            return _PublicationResult(maintenance_code, prepared_identity)
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
@@ -984,26 +1227,32 @@ class ManagedDocumentTransaction:
     def _atomic_remove(
         self,
         *,
-        expected_revision: DocumentRevision,
+        expected_snapshot: ManagedDocumentSnapshot,
         restore_point: RestorePoint | None,
-    ) -> str | None:
+        before_publication: Callable[[], None] | None = None,
+    ) -> _PublicationResult:
         try:
             document_stat = self.document_path.lstat()
         except FileNotFoundError:
+            if before_publication is not None:
+                before_publication()
             self._recheck_before_publication(
-                expected_revision=expected_revision,
+                expected_snapshot=expected_snapshot,
                 restore_point=restore_point,
             )
-            return None
+            return _PublicationResult(None, None)
         if not stat.S_ISREG(document_stat.st_mode):
             raise DocumentSafetyError("managed document is not a regular file")
+        if before_publication is not None:
+            before_publication()
         self._recheck_before_publication(
-            expected_revision=expected_revision,
+            expected_snapshot=expected_snapshot,
             restore_point=restore_point,
         )
         self.document_path.unlink()
+        maintenance_code = None
         try:
             self._fsync_directory(self.document_path.parent)
         except (DocumentTransactionError, OSError):
-            return "DOCUMENT_DURABILITY_UNCONFIRMED"
-        return None
+            maintenance_code = "DOCUMENT_DURABILITY_UNCONFIRMED"
+        return _PublicationResult(maintenance_code, None)

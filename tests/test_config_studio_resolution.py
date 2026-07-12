@@ -420,6 +420,53 @@ def test_loaded_owner_refresh_rejects_a_swapped_dotenv_hardlink(tmp_path: Path):
     assert "outside-secret-canary" not in repr(raised.value)
 
 
+def test_loaded_owner_refresh_rejects_in_place_dotenv_rewrite_after_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    repo_env = tmp_path / "repo.env"
+    parent_env = tmp_path / "parent.env"
+    repo_env.write_text("MODEL=initial\n", encoding="utf-8")
+    old_secret = "old-parent-secret-canary"
+    new_secret = "x"
+    parent_env.write_text(
+        f"OPENAI_API_KEY={old_secret}\n",
+        encoding="utf-8",
+    )
+    loaded = load_secrets(
+        with_environment_snapshot=True,
+        inherited_environment={},
+        repo_env_path=repo_env,
+        parent_env_path=parent_env,
+        prime_process=False,
+    )
+    parent_inode = parent_env.stat().st_ino
+    real_read = secrets_owner.os.read
+    rewritten = False
+
+    def rewrite_parent_after_descriptor_read(descriptor, size):
+        nonlocal rewritten
+        chunk = real_read(descriptor, size)
+        if chunk and os.fstat(descriptor).st_ino == parent_inode and not rewritten:
+            rewritten = True
+            parent_env.write_text(
+                f"OPENAI_API_KEY={new_secret}\n",
+                encoding="utf-8",
+            )
+            assert parent_env.stat().st_ino == parent_inode
+        return chunk
+
+    monkeypatch.setattr(secrets_owner.os, "read", rewrite_parent_after_descriptor_read)
+
+    with pytest.raises(EnvironmentRefreshError) as raised:
+        loaded.refresh()
+
+    assert str(raised.value) == "environment owner document unsafe"
+    assert rewritten is True
+    assert old_secret not in repr(raised.value)
+    assert new_secret not in repr(raised.value)
+
+
 @pytest.mark.skipif(not hasattr(os, "link"), reason="hardlink unavailable")
 def test_loaded_owner_rejects_hardlinks_even_outside_the_posix_uid_branch(
     tmp_path: Path,
@@ -721,6 +768,83 @@ def test_loaded_owner_refresh_rebuilds_all_secret_material_from_current_layers(
     )
     with pytest.raises(TypeError):
         json.dumps(refreshed)
+
+
+@pytest.mark.parametrize("secret_layer", ("inherited", "repo", "parent"))
+def test_fresh_owner_quarantines_config_interpolated_from_heuristic_secret_name(
+    tmp_path: Path,
+    secret_layer: str,
+):
+    repo_env = tmp_path / "repo" / "xiaosan.env"
+    parent_env = tmp_path / "parent" / "xiaosan.env"
+    repo_env.parent.mkdir()
+    parent_env.parent.mkdir()
+    canary = f"fresh-{secret_layer}-heuristic-secret-canary"
+    custom_names = {
+        "inherited": "CUSTOM_SECRET_ALIAS",
+        "repo": "CUSTOM_ACCESS_TOKEN",
+        "parent": "CUSTOM_PASSWORD",
+    }
+    custom_name = custom_names[secret_layer]
+    inherited: dict[str, str] = {}
+    repo_lines: list[str] = []
+    parent_lines: list[str] = []
+    if secret_layer == "inherited":
+        inherited[custom_name] = canary
+        repo_lines.append(f"MODEL=${{{custom_name}}}\n")
+    elif secret_layer == "repo":
+        repo_lines.extend(
+            (f"{custom_name}={canary}\n", f"MODEL=${{{custom_name}}}\n")
+        )
+    else:
+        parent_lines.extend(
+            (f"{custom_name}={canary}\n", f"MODEL=${{{custom_name}}}\n")
+        )
+    repo_env.write_text("".join(repo_lines), encoding="utf-8")
+    parent_env.write_text("".join(parent_lines), encoding="utf-8")
+
+    loaded = load_secrets(
+        with_environment_snapshot=True,
+        inherited_environment=inherited,
+        repo_env_path=repo_env,
+        parent_env_path=parent_env,
+        prime_process=False,
+    )
+
+    assert loaded.environment_snapshot.get("MODEL") is None
+    assert loaded.environment_snapshot.is_tainted("MODEL") is True
+    assert loaded.tainted_environment_names == ("MODEL",)
+    sanitized = loaded.sanitize_secret_material(canary)
+    assert sanitized == "«REDACTED:HEURISTIC_SECRET»"
+    assert canary not in sanitized + repr(loaded)
+    assert custom_name not in sanitized
+
+
+def test_fresh_owner_recognizes_compact_api_key_name_without_exposing_it(
+    tmp_path: Path,
+):
+    repo_env = tmp_path / "repo" / "xiaosan.env"
+    parent_env = tmp_path / "parent" / "xiaosan.env"
+    repo_env.parent.mkdir()
+    parent_env.parent.mkdir()
+    custom_name = "CUSTOM_APIKEY"
+    canary = "fresh-compact-api-key-canary"
+    repo_env.write_text(f"MODEL=${{{custom_name}}}\n", encoding="utf-8")
+    parent_env.write_text("", encoding="utf-8")
+
+    loaded = load_secrets(
+        with_environment_snapshot=True,
+        inherited_environment={custom_name: canary},
+        repo_env_path=repo_env,
+        parent_env_path=parent_env,
+        prime_process=False,
+    )
+
+    assert loaded.environment_snapshot.is_tainted("MODEL") is True
+    assert loaded.sanitize_secret_material(canary) == (
+        "«REDACTED:HEURISTIC_SECRET»"
+    )
+    assert custom_name not in loaded.sanitize_secret_material(canary)
 
 
 def test_loaded_owner_compares_complete_shadowed_and_duplicate_secret_material(

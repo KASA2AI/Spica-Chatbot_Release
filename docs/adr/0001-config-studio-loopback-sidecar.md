@@ -64,13 +64,30 @@ Config Studio is a separately launched local management process that:
 - sanitizes canonical JSON scalar data as well as strings/keys across Catalog,
   writer previews, rollback previews, and self-check results, without rewriting
   fixed schema or protocol metadata for common-word secrets;
+- treats heuristic secret/token/password/cookie/credential names from explicit
+  inherited, repo, and parent inputs as opaque secret material under one generic
+  label. Interpolated typed overrides are quarantined and unmanaged source names
+  never enter redaction markers;
 - rejects operations on runtime-derived leaves or their ancestors and rejects
   whole nested-model operations that could bypass leaf owner constraints;
 - rechecks retired plugin/screen/song owner files across preview, commit, and
   rollback so a reappearing legacy file closes only its corresponding app lane;
-- injects platform capabilities and file-lock contracts from a concrete adapter
-  at composition roots, keeping Config Studio's general platform selection,
-  cross-process lock, and containment implementation out of `spica/config`;
+- keeps two explicitly different platform owners: `agent_assembly.fold_platform`
+  owns the configurable desktop effective platform, while the Config Studio
+  adapter alone owns real kernel/UID security facts and never consumes
+  `platform.os`; an exact AST allowlist pins both owners and the separate
+  `secrets.py` file-ownership checks;
+- injects sidecar platform capabilities and file-lock contracts from the
+  adapter composition root, keeping its cross-process lock and containment
+  implementation out of `spica/config`;
+- injects an opaque stable-file-identity contract from that same adapter. The
+  verified Linux lane retains the temporary descriptor through replace and
+  compares no-follow descriptor/path identity before and after publication;
+  same-byte replacement, in-place content mutation, a new hardlink, or an owner
+  change is still `DOCUMENT_CONFLICT`. Fixed app/dotenv owner reads compare
+  opened, final-descriptor, and final-path mutation facts before their result
+  may satisfy a publication guard. Windows supplies no
+  production identity implementation and therefore remains write-disabled;
 - applies those injected platform facts to ordinary fixed-document reads and
   transactions as well as the sensitive lane: symlink/reparse, non-regular,
   multiply linked, and (on verified POSIX) wrong-UID targets fail closed;
@@ -88,11 +105,15 @@ Config Studio is a separately launched local management process that:
   opaque all-layer owner change even when the public redacted DTO is unchanged.
   Permission-failure recovery uses a private publication path, never records the
   failed secret candidate as a user RestorePoint, and verifies/hardens the same
-  no-follow descriptor using final `fstat`/`fchmod` while locked.
+  no-follow descriptor using final `fstat`/`fchmod` while locked. Recovery is
+  permitted only while the live file remains the exact opaque identity Studio
+  published; it never overwrites a same-byte replacement from another inode.
 
-The final revision check happens after candidate temp-file fsync, directly
-before replace. For rollback-to-missing, the final safe-file-type check happens
-first, then the final revision check is immediately adjacent to unlink. An
+The final revision-and-file-identity check happens after candidate temp-file
+fsync, directly before replace, and the open temp identity is verified again at
+the published path before the descriptor closes. For rollback-to-missing, the
+final safe-file-type check happens first, then the final revision check is
+immediately adjacent to unlink. An
 external deletion discovered by that type check is still revision-checked and
 conflicts. Ordinary app and overlay rollback use the same kernel and expose
 only capability-gated,
@@ -105,9 +126,11 @@ entries are omitted rather than advertised as selectable rollback targets.
 
 The accepted app structured set/unset, overlay authoring, mapped repo-override
 clear, write-only secret set/clear, and lane-specific rollback protocols are now
-implemented. On the verified Linux adapter, the production composition exposes
-only owners that pass fixed-path and private-state checks; unsupported or unsafe
-lanes remain closed. Secret clear and rollback use bound one-shot receipts, while
+implemented. Only exact `sys.platform == "linux"` with POSIX and a valid UID
+selects the verified Linux adapter; prefix variants remain read-only. Production
+composition exposes only owners that pass fixed-path and private-state checks;
+unsupported or unsafe lanes remain closed. Secret clear and rollback use bound
+one-shot receipts, while
 app/overlay authoring and non-destructive sensitive commands commit only their
 server-stored preview IDs.
 
@@ -134,6 +157,8 @@ and capability gates at the API layer. JSON routes require
 `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, a deny-by-default
 `Permissions-Policy`, same-origin COOP/CORP, and a local-only CSP with
 `form-action 'none'`. Automatic launch transports the grant in the fragment.
+Authenticated CSRF recovery is a read-only GET of the existing session token;
+it does not rotate or mutate session state.
 Disabled or failed launch uses the same short-lived grant through a
 nonpersistent manual paste dialog; it never substitutes a low-entropy code.
 A successful launcher return is not proof of redemption, so an unredeemed grant

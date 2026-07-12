@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -39,6 +41,66 @@ class _FcntlFileLock:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
 
 
+@dataclass(frozen=True, slots=True)
+class _PosixFileIdentity:
+    device: int = field(repr=False)
+    inode: int = field(repr=False)
+    owner_id: int = field(repr=False)
+
+
+class _UnavailableStableFileIdentity:
+    def capture_descriptor(self, descriptor: int) -> object:
+        del descriptor
+        raise RuntimeError("stable file identity is unavailable")
+
+    def path_matches_no_follow(self, path: Path, identity: object) -> bool:
+        del path, identity
+        raise RuntimeError("stable file identity is unavailable")
+
+    def same(self, left: object, right: object) -> bool:
+        del left, right
+        raise RuntimeError("stable file identity is unavailable")
+
+
+class _PosixStableFileIdentity:
+    def __init__(self, owner_id: int) -> None:
+        self._owner_id = owner_id
+
+    def capture_descriptor(self, descriptor: int) -> object:
+        file_stat = os.fstat(descriptor)
+        return _PosixFileIdentity(
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_uid,
+        )
+
+    def path_matches_no_follow(self, path: Path, identity: object) -> bool:
+        if not isinstance(identity, _PosixFileIdentity):
+            return False
+        try:
+            path_stat = path.lstat()
+        except OSError:
+            return False
+        return (
+            stat.S_ISREG(path_stat.st_mode)
+            and path_stat.st_nlink == 1
+            and identity.owner_id == self._owner_id
+            and (
+                path_stat.st_dev,
+                path_stat.st_ino,
+                path_stat.st_uid,
+            )
+            == (identity.device, identity.inode, identity.owner_id)
+        )
+
+    def same(self, left: object, right: object) -> bool:
+        return (
+            isinstance(left, _PosixFileIdentity)
+            and isinstance(right, _PosixFileIdentity)
+            and left == right
+        )
+
+
 def platform_capabilities_for(
     *,
     os_family: str,
@@ -56,13 +118,18 @@ def platform_capabilities_for(
         and not isinstance(user_id, bool)
         and user_id >= 0
     )
-    verified_linux = valid_posix_user and runtime_name.startswith("linux")
+    verified_linux = valid_posix_user and runtime_name == "linux"
     return PlatformCapabilities(
         os_family=os_family,
         runtime_name=runtime_name,
         user_id=user_id if valid_posix_user else None,
         temp_directory=Path(temp_directory),
         file_lock=_FcntlFileLock() if verified_linux else _UnavailableFileLock(),
+        file_identity=(
+            _PosixStableFileIdentity(user_id)
+            if verified_linux
+            else _UnavailableStableFileIdentity()
+        ),
         posix_permissions=valid_posix_user,
         managed_document_writes=verified_linux,
         sensitive_document_writes=verified_linux,
@@ -74,9 +141,10 @@ def platform_capabilities_for(
 def current_platform_capabilities() -> PlatformCapabilities:
     """Detect the process platform at an outer composition boundary."""
 
-    user_id = os.getuid() if os.name == "posix" else None
+    os_family = os.name
+    user_id = os.getuid() if os_family == "posix" else None
     return platform_capabilities_for(
-        os_family=os.name,
+        os_family=os_family,
         runtime_name=sys.platform,
         user_id=user_id,
         temp_directory=tempfile.gettempdir(),

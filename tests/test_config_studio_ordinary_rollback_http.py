@@ -15,7 +15,7 @@ from spica.config_studio.app_document import AppConfigDocument
 from spica.config_studio.authoring import AuthoringOperation
 from spica.config_studio.security import SecurityContext
 from spica.config_studio.services import OwnerBackedConfigStudioServices
-from ui.config_studio.overlay_document import OverlayConfigDocument
+from spica.config_studio.overlay_document import OverlayConfigDocument
 
 
 _BOOTSTRAP_TOKEN = "ordinary-rollback-bootstrap-token"

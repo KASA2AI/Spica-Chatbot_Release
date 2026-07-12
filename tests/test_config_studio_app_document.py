@@ -7,6 +7,7 @@ import pytest
 
 from spica.adapters.config_studio.platform import platform_capabilities_for
 from spica.config.environment_snapshot import EnvironmentSnapshot
+from spica.config.secrets import LoadedSecrets, Secrets
 from spica.config_studio.app_document import (
     AppConfigDocument,
     AppDocumentError,
@@ -90,6 +91,39 @@ def test_app_preview_validates_with_owner_and_commits_exact_candidate_bytes(tmp_
     assert committed.effect_policy == "next_spica_launch"
 
 
+def test_app_commit_rechecks_legacy_owner_inside_transaction_before_publication(
+    tmp_path,
+):
+    base = b"plugins:\n  - name: alpha\n    enabled: false\n"
+    candidate = b"plugins:\n  - name: beta\n    enabled: false\n"
+    document, path = _document(tmp_path, base=base, candidate=candidate)
+    preview = document.preview(
+        (
+            SetValue(
+                ConfigFieldPath.fields("plugins"),
+                [{"name": "beta", "enabled": False}],
+            ),
+        )
+    )
+    checks = 0
+
+    def legacy_owner_guard():
+        nonlocal checks
+        checks += 1
+        return frozenset() if checks == 1 else frozenset({"plugins"})
+
+    with pytest.raises(AppDocumentError) as caught:
+        document.commit(
+            preview.preview_id,
+            legacy_owner_guard=legacy_owner_guard,
+        )
+
+    assert caught.value.code == "DOCUMENT_UNSAFE"
+    assert checks == 2
+    assert path.read_bytes() == base
+    assert document.restore_points() == ()
+
+
 def test_app_unset_can_remove_a_preexisting_forbidden_secret_value(tmp_path):
     secret_canary = "synthetic-preexisting-secret"
     base = f"llm:\n  model: {secret_canary}\n".encode("utf-8")
@@ -120,6 +154,105 @@ def test_app_preview_rejects_secret_material_after_owner_type_coercion(tmp_path)
         document.preview(
             (SetValue(ConfigFieldPath.fields("tts", "enabled"), False),),
             forbidden_values=(secret_canary,),
+        )
+
+    assert caught.value.code == "DOCUMENT_INVALID"
+    assert path.read_bytes() == base
+
+
+@pytest.mark.parametrize(
+    ("base", "candidate", "field_path", "value", "secret_canary"),
+    (
+        (
+            b"tts:\n  enabled: true\n",
+            b"tts:\n  enabled: false\n",
+            ConfigFieldPath.fields("tts", "enabled"),
+            False,
+            "false",
+        ),
+        (
+            b"max_tool_rounds: 2\n",
+            b"max_tool_rounds: 3\n",
+            ConfigFieldPath.fields("max_tool_rounds"),
+            3,
+            "3",
+        ),
+        (
+            b"screen:\n  infer_timeout_sec: 30.0\n",
+            b"screen:\n  infer_timeout_sec: 1.5\n",
+            ConfigFieldPath.fields("screen", "infer_timeout_sec"),
+            1.5,
+            "1.5",
+        ),
+    ),
+)
+def test_app_preview_rejects_canonical_scalar_forbidden_material(
+    tmp_path,
+    base,
+    candidate,
+    field_path,
+    value,
+    secret_canary,
+):
+    document, path = _document(tmp_path, base=base, candidate=candidate)
+
+    with pytest.raises(AppDocumentError) as caught:
+        document.preview(
+            (SetValue(field_path, value),),
+            forbidden_values=(secret_canary,),
+        )
+
+    assert caught.value.code == "DOCUMENT_INVALID"
+    assert path.read_bytes() == base
+
+
+@pytest.mark.parametrize(
+    ("base", "candidate", "field_path", "value", "secret_canary"),
+    (
+        (
+            b"tts:\n  enabled: true\n",
+            b"tts:\n  enabled: false\n",
+            ConfigFieldPath.fields("tts", "enabled"),
+            False,
+            "false",
+        ),
+        (
+            b"max_tool_rounds: 2\n",
+            b"max_tool_rounds: 3\n",
+            ConfigFieldPath.fields("max_tool_rounds"),
+            3,
+            "3",
+        ),
+        (
+            b"screen:\n  infer_timeout_sec: 30.0\n",
+            b"screen:\n  infer_timeout_sec: 1.5\n",
+            ConfigFieldPath.fields("screen", "infer_timeout_sec"),
+            1.5,
+            "1.5",
+        ),
+    ),
+)
+def test_app_preview_rejects_canonical_scalar_owner_secret_material(
+    tmp_path,
+    base,
+    candidate,
+    field_path,
+    value,
+    secret_canary,
+):
+    document, path = _document(tmp_path, base=base, candidate=candidate)
+    loaded_environment = LoadedSecrets(
+        secrets=Secrets(openai_api_key=secret_canary),
+        environment_snapshot=EnvironmentSnapshot.from_mapping(
+            {},
+            layer="synthetic_inherited",
+        ),
+    )
+
+    with pytest.raises(AppDocumentError) as caught:
+        document.preview(
+            (SetValue(field_path, value),),
+            loaded_environment=loaded_environment,
         )
 
     assert caught.value.code == "DOCUMENT_INVALID"
@@ -439,6 +572,45 @@ def test_app_rollback_receipt_rechecks_current_document_revision(tmp_path):
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
     assert path.read_bytes() == b"llm:\n  model: another-session\n"
+
+
+def test_app_rollback_rechecks_legacy_owner_inside_transaction_before_publication(
+    tmp_path,
+):
+    base = b"plugins:\n  - name: alpha\n    enabled: false\n"
+    candidate = b"plugins:\n  - name: beta\n    enabled: false\n"
+    document, path = _document(tmp_path, base=base, candidate=candidate)
+    committed = document.commit(
+        document.preview(
+            (
+                SetValue(
+                    ConfigFieldPath.fields("plugins"),
+                        [{"name": "beta", "enabled": False}],
+                ),
+            )
+        ).preview_id
+    )
+    confirmation = document.prepare_rollback(
+        committed.restore_point_id,
+        session_id="browser-session",
+    )
+    checks = 0
+
+    def legacy_owner_guard():
+        nonlocal checks
+        checks += 1
+        return frozenset() if checks == 1 else frozenset({"plugins"})
+
+    with pytest.raises(AppDocumentError) as caught:
+        document.rollback(
+            confirmation.receipt_token,
+            session_id="browser-session",
+            legacy_owner_guard=legacy_owner_guard,
+        )
+
+    assert caught.value.code == "DOCUMENT_UNSAFE"
+    assert checks == 2
+    assert path.read_bytes() == candidate
 
 
 def test_recovery_only_mode_can_rollback_corrupt_live_yaml_to_a_valid_restore_point(

@@ -21,6 +21,7 @@ from spica.config.document_transaction import (
     RestorePointError,
 )
 from spica.adapters.config_studio.platform import platform_capabilities_for
+from support.config_studio_transactions import after_first_transaction_fsync
 
 
 def _transaction(document, *, backup_root, **kwargs):
@@ -394,14 +395,10 @@ def test_commit_rechecks_revision_after_restore_point_before_publication(
         backup_root=tmp_path / "backups",
     )
     revision = transaction.preview(b"owner: candidate\n").current.revision
-    create_restore_point = transaction._create_restore_point
-
-    def create_then_external_edit(snapshot):
-        restore_point = create_restore_point(snapshot)
-        document.write_bytes(b"owner: other-session\n")
-        return restore_point
-
-    monkeypatch.setattr(transaction, "_create_restore_point", create_then_external_edit)
+    after_first_transaction_fsync(
+        monkeypatch,
+        lambda: document.write_bytes(b"owner: other-session\n"),
+    )
 
     with pytest.raises(DocumentConflictError) as caught:
         transaction.commit(
@@ -443,6 +440,334 @@ def test_commit_rechecks_revision_after_tempfile_is_prepared_before_replace(
     assert caught.value.code == "DOCUMENT_CONFLICT"
     assert document.read_bytes() == b"owner: other-session\n"
     assert transaction.restore_points() == ()
+
+
+def test_commit_rejects_same_bytes_replaced_inside_publication_callback(
+    tmp_path,
+):
+    document = tmp_path / "app.yaml"
+    original = b"owner: studio\n"
+    document.write_bytes(original)
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(b"owner: candidate\n").current.revision
+    external_inode: int | None = None
+
+    def external_writer_replaces_same_bytes():
+        nonlocal external_inode
+        external = tmp_path / "external-writer.yaml"
+        external.write_bytes(original)
+        external_inode = external.stat().st_ino
+        os.replace(external, document)
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.commit(
+            b"owner: candidate\n",
+            expected_revision=revision,
+            before_publication=external_writer_replaces_same_bytes,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == original
+    assert document.stat().st_ino == external_inode
+    assert transaction.restore_points() == ()
+
+
+def test_commit_rejects_path_replacement_after_final_snapshot_opens(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    original = b"owner: studio\n"
+    external_bytes = b"owner: other-session\n"
+    document.write_bytes(original)
+    original_stat = document.stat()
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(b"owner: candidate\n").current.revision
+    real_read = transaction_module.os.read
+    real_replace = os.replace
+    document_reads = 0
+
+    def replace_path_after_open_descriptor_read(descriptor, size):
+        nonlocal document_reads
+        chunk = real_read(descriptor, size)
+        descriptor_stat = os.fstat(descriptor)
+        if chunk and (descriptor_stat.st_dev, descriptor_stat.st_ino) == (
+            original_stat.st_dev,
+            original_stat.st_ino,
+        ):
+            document_reads += 1
+            if document_reads == 2:
+                external = tmp_path / "external-writer.yaml"
+                external.write_bytes(external_bytes)
+                real_replace(external, document)
+        return chunk
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "read",
+        replace_path_after_open_descriptor_read,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.commit(
+            b"owner: candidate\n",
+            expected_revision=revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document_reads >= 2
+    assert document.read_bytes() == external_bytes
+    assert transaction.restore_points() == ()
+
+
+def test_commit_rejects_in_place_rewrite_after_final_snapshot_read(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    original = b"owner: studio\n"
+    external_bytes = b"other\n"
+    document.write_bytes(original)
+    original_inode = document.stat().st_ino
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(b"owner: candidate\n").current.revision
+    real_read = transaction_module.os.read
+    document_reads = 0
+
+    def rewrite_same_inode_after_descriptor_read(descriptor, size):
+        nonlocal document_reads
+        chunk = real_read(descriptor, size)
+        descriptor_stat = os.fstat(descriptor)
+        if chunk and descriptor_stat.st_ino == original_inode:
+            document_reads += 1
+            if document_reads == 2:
+                document.write_bytes(external_bytes)
+                assert document.stat().st_ino == original_inode
+        return chunk
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "read",
+        rewrite_same_inode_after_descriptor_read,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.commit(
+            b"owner: candidate\n",
+            expected_revision=revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document_reads >= 2
+    assert document.read_bytes() == external_bytes
+    assert document.stat().st_ino == original_inode
+    assert transaction.restore_points() == ()
+
+
+def test_commit_rejects_same_size_rewrite_even_if_mtime_is_restored(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    original = b"owner: studio\n"
+    external_bytes = b"owner: other!\n"
+    assert len(external_bytes) == len(original)
+    document.write_bytes(original)
+    original_stat = document.stat()
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(b"owner: candidate\n").current.revision
+    real_read = transaction_module.os.read
+    document_reads = 0
+
+    def rewrite_then_restore_mtime(descriptor, size):
+        nonlocal document_reads
+        chunk = real_read(descriptor, size)
+        descriptor_stat = os.fstat(descriptor)
+        if chunk and descriptor_stat.st_ino == original_stat.st_ino:
+            document_reads += 1
+            if document_reads == 2:
+                document.write_bytes(external_bytes)
+                os.utime(
+                    document,
+                    ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+                )
+        return chunk
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "read",
+        rewrite_then_restore_mtime,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.commit(
+            b"owner: candidate\n",
+            expected_revision=revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document_reads >= 2
+    assert document.read_bytes() == external_bytes
+    assert document.stat().st_ino == original_stat.st_ino
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX hardlink contract")
+def test_commit_rejects_hardlink_added_before_final_path_identity_check(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    original = b"owner: studio\n"
+    document.write_bytes(original)
+    original_inode = document.stat().st_ino
+    platform = platform_capabilities_for(
+        os_family="posix",
+        runtime_name="linux",
+        user_id=os.getuid(),
+        temp_directory=tmp_path / "platform-tmp",
+    )
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+        platform_capabilities=platform,
+    )
+    revision = transaction.preview(b"owner: candidate\n").current.revision
+    identity_owner = platform.file_identity
+    capture_descriptor = identity_owner.capture_descriptor
+    original_captures = 0
+    outside_link = tmp_path / "outside-hardlink.yaml"
+
+    def capture_then_add_hardlink(descriptor):
+        nonlocal original_captures
+        identity = capture_descriptor(descriptor)
+        if os.fstat(descriptor).st_ino == original_inode:
+            original_captures += 1
+            if original_captures == 2:
+                os.link(document, outside_link)
+        return identity
+
+    monkeypatch.setattr(
+        identity_owner,
+        "capture_descriptor",
+        capture_then_add_hardlink,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.commit(
+            b"owner: candidate\n",
+            expected_revision=revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert original_captures >= 2
+    assert document.read_bytes() == original
+    assert outside_link.read_bytes() == original
+    assert document.stat().st_ino == outside_link.stat().st_ino
+
+
+def test_commit_callback_runs_after_temp_fsync_and_before_final_target_cas(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    document.write_bytes(b"version: old\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(b"version: new\n").current.revision
+    events: list[str] = []
+    temporary_descriptor: int | None = None
+    real_mkstemp = transaction_module.tempfile.mkstemp
+    real_fsync = transaction_module.os.fsync
+    real_open = transaction_module.os.open
+    real_replace = os.replace
+    callback_completed = False
+    target_cas_recorded = False
+
+    def record_mkstemp(*args, **kwargs):
+        nonlocal temporary_descriptor
+        temporary_descriptor, name = real_mkstemp(*args, **kwargs)
+        return temporary_descriptor, name
+
+    def record_fsync(descriptor):
+        result = real_fsync(descriptor)
+        if descriptor == temporary_descriptor:
+            events.append("temp_fsync")
+        return result
+
+    def record_callback():
+        nonlocal callback_completed
+        callback_completed = True
+        events.append("callback")
+
+    def record_open(path, flags, mode=0o777):
+        nonlocal target_cas_recorded
+        if (
+            callback_completed
+            and not target_cas_recorded
+            and Path(path) == document
+        ):
+            target_cas_recorded = True
+            events.append("target_cas")
+        return real_open(path, flags, mode)
+
+    def record_replace(source, target):
+        if Path(target) == document:
+            events.append("replace")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(transaction_module.tempfile, "mkstemp", record_mkstemp)
+    monkeypatch.setattr(transaction_module.os, "fsync", record_fsync)
+    monkeypatch.setattr(transaction_module.os, "open", record_open)
+    monkeypatch.setattr(transaction_module.os, "replace", record_replace)
+
+    transaction.commit(
+        b"version: new\n",
+        expected_revision=revision,
+        before_publication=record_callback,
+    )
+
+    assert events == ["temp_fsync", "callback", "target_cas", "replace"]
+
+
+def test_commit_callback_failure_removes_only_attempt_state(
+    tmp_path,
+):
+    document = tmp_path / "app.yaml"
+    original = b"version: old\n"
+    document.write_bytes(original)
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(b"version: new\n").current.revision
+
+    def reject_publication():
+        raise RuntimeError("synthetic owner guard rejection")
+
+    with pytest.raises(RuntimeError, match="synthetic owner guard rejection"):
+        transaction.commit(
+            b"version: new\n",
+            expected_revision=revision,
+            before_publication=reject_publication,
+        )
+
+    assert document.read_bytes() == original
+    assert transaction.restore_points() == ()
+    assert not list(tmp_path.glob(".app.yaml.config-studio-*"))
 
 
 def test_transactions_for_one_document_share_a_bounded_process_mutex(
@@ -605,7 +930,7 @@ def test_failed_publish_leaves_original_bytes_intact_and_removes_temp_file(
     assert transaction.restore_points() == ()
 
 
-def test_commit_recaptures_actual_live_bytes_if_a_nonparticipating_writer_wins(
+def test_commit_reports_conflict_if_a_nonparticipating_writer_wins_after_publish(
     tmp_path, monkeypatch
 ):
     document = tmp_path / "app.yaml"
@@ -619,21 +944,142 @@ def test_commit_recaptures_actual_live_bytes_if_a_nonparticipating_writer_wins(
 
     def overwrite_after_replace(source, target):
         real_replace(source, target)
-        Path(target).write_bytes(b"version: legacy-writer\n")
+        external = Path(target).with_name(f".{Path(target).name}.external-writer")
+        external.write_bytes(b"version: legacy-writer\n")
+        real_replace(external, target)
 
     monkeypatch.setattr(
         "spica.config.document_transaction.os.replace",
         overwrite_after_replace,
     )
 
-    committed = transaction.commit(
-        b"version: studio\n",
-        expected_revision=revision,
+    with pytest.raises(DocumentConflictError):
+        transaction.commit(
+            b"version: studio\n",
+            expected_revision=revision,
+        )
+
+    assert document.read_bytes() == b"version: legacy-writer\n"
+
+
+def test_commit_reports_conflict_for_same_bytes_on_a_different_inode_after_publish(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "app.yaml"
+    candidate = b"version: studio\n"
+    document.write_bytes(b"version: old\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(candidate).current.revision
+    real_replace = os.replace
+    external_inode: int | None = None
+
+    def replace_then_publish_same_bytes_from_another_inode(source, target):
+        nonlocal external_inode
+        real_replace(source, target)
+        external = Path(target).with_name(f".{Path(target).name}.external-writer")
+        external.write_bytes(candidate)
+        external_inode = external.stat().st_ino
+        real_replace(external, target)
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "replace",
+        replace_then_publish_same_bytes_from_another_inode,
     )
 
-    assert committed.snapshot.content == b"version: legacy-writer\n"
-    assert committed.maintenance_code == "DOCUMENT_PUBLICATION_CONFLICT"
-    assert document.read_bytes() == committed.snapshot.content
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.commit(candidate, expected_revision=revision)
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == candidate
+    assert document.stat().st_ino == external_inode
+
+
+def test_commit_rejects_in_place_rewrite_during_post_publication_read(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    candidate = b"version: studio\n"
+    external_bytes = b"other\n"
+    document.write_bytes(b"version: old\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(candidate).current.revision
+    real_read = transaction_module.os.read
+    publication_inode: int | None = None
+    publication_reads = 0
+    real_replace = os.replace
+
+    def remember_publication_inode(source, target):
+        nonlocal publication_inode
+        real_replace(source, target)
+        publication_inode = document.stat().st_ino
+
+    def rewrite_same_inode_after_publication_read(descriptor, size):
+        nonlocal publication_reads
+        chunk = real_read(descriptor, size)
+        descriptor_stat = os.fstat(descriptor)
+        if chunk and publication_inode == descriptor_stat.st_ino:
+            publication_reads += 1
+            if publication_reads == 1:
+                document.write_bytes(external_bytes)
+                assert document.stat().st_ino == publication_inode
+        return chunk
+
+    monkeypatch.setattr(transaction_module.os, "replace", remember_publication_inode)
+    monkeypatch.setattr(
+        transaction_module.os,
+        "read",
+        rewrite_same_inode_after_publication_read,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.commit(candidate, expected_revision=revision)
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert publication_reads == 1
+    assert document.read_bytes() == external_bytes
+    assert document.stat().st_ino == publication_inode
+
+
+def test_commit_reports_conflict_if_target_becomes_a_symlink_after_publish(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "app.yaml"
+    document.write_bytes(b"version: old\n")
+    outside = tmp_path / "outside-owner-file"
+    outside.write_bytes(b"outside must remain untouched\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    revision = transaction.preview(b"version: studio\n").current.revision
+    real_replace = os.replace
+
+    def replace_then_swap_to_symlink(source, target):
+        real_replace(source, target)
+        Path(target).unlink()
+        Path(target).symlink_to(outside)
+
+    monkeypatch.setattr(
+        "spica.config.document_transaction.os.replace",
+        replace_then_swap_to_symlink,
+    )
+
+    with pytest.raises(DocumentConflictError):
+        transaction.commit(
+            b"version: studio\n",
+            expected_revision=revision,
+        )
+
+    assert document.is_symlink()
+    assert outside.read_bytes() == b"outside must remain untouched\n"
 
 
 def test_post_publish_retention_failure_is_reported_as_maintenance_not_false_commit_failure(
@@ -641,16 +1087,20 @@ def test_post_publish_retention_failure_is_reported_as_maintenance_not_false_com
 ):
     document = tmp_path / "app.yaml"
     document.write_bytes(b"version: 1\n")
+    backup_root = tmp_path / "backups"
     transaction = _transaction(
         document,
-        backup_root=tmp_path / "backups",
+        backup_root=backup_root,
     )
     revision = transaction.preview(b"version: 2\n").current.revision
+    real_iterdir = Path.iterdir
 
-    def fail_retention():
-        raise DocumentSafetyError("injected retention failure")
+    def fail_retention(path):
+        if path.parent == backup_root:
+            raise OSError("injected retention failure")
+        return real_iterdir(path)
 
-    monkeypatch.setattr(transaction, "_prune_restore_points", fail_retention)
+    monkeypatch.setattr(Path, "iterdir", fail_retention)
 
     committed = transaction.commit(
         b"version: 2\n",
@@ -660,6 +1110,99 @@ def test_post_publish_retention_failure_is_reported_as_maintenance_not_false_com
     assert document.read_bytes() == b"version: 2\n"
     assert committed.snapshot.content == b"version: 2\n"
     assert committed.maintenance_code == "RESTORE_RETENTION_DEGRADED"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private recovery contract")
+def test_failed_publication_recovery_rechecks_identity_after_hardening(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "xiaosan.env"
+    original = b"MODEL=original\n"
+    candidate = b"MODEL=candidate\n"
+    document.write_bytes(original)
+    document.chmod(0o600)
+    platform = platform_capabilities_for(
+        os_family="posix",
+        runtime_name="linux",
+        user_id=os.getuid(),
+        temp_directory=tmp_path / "platform-tmp",
+    )
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+        retention=1,
+        publish_mode=0o600,
+        private_posix=True,
+        platform_capabilities=platform,
+    )
+    revision = transaction.preview(candidate).current.revision
+    committed = transaction.commit(
+        candidate,
+        expected_revision=revision,
+        defer_retention=True,
+    )
+    document.chmod(0o640)
+    real_fchmod = transaction_module.os.fchmod
+    real_replace = os.replace
+    identity_owner = platform.file_identity
+    path_matches_no_follow = identity_owner.path_matches_no_follow
+    external_inode: int | None = None
+    external_published = False
+    hardened_live_document = False
+
+    def remember_live_document_hardening(descriptor, mode):
+        nonlocal hardened_live_document
+        result = real_fchmod(descriptor, mode)
+        descriptor_stat = os.fstat(descriptor)
+        document_stat = document.stat()
+        if (
+            (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            == (document_stat.st_dev, document_stat.st_ino)
+            and document.read_bytes() == original
+        ):
+            hardened_live_document = True
+        return result
+
+    def publish_external_before_identity_check(path, identity):
+        nonlocal external_inode, external_published
+        if (
+            hardened_live_document
+            and not external_published
+            and Path(path) == document
+        ):
+            external_published = True
+            external = tmp_path / "external-writer.env"
+            external.write_bytes(original)
+            external.chmod(0o600)
+            external_inode = external.stat().st_ino
+            real_replace(external, document)
+        return path_matches_no_follow(path, identity)
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "fchmod",
+        remember_live_document_hardening,
+    )
+    monkeypatch.setattr(
+        identity_owner,
+        "path_matches_no_follow",
+        publish_external_before_identity_check,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.recover_failed_publication(
+            committed.restore_point.id,
+            expected_snapshot=committed.snapshot,
+            previous_revision=revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == original
+    assert document.stat().st_ino == external_inode
+    assert tuple(item.id for item in transaction.restore_points()) == (
+        committed.restore_point.id,
+    )
 
 
 def test_parent_fsync_failure_after_replace_reports_durability_without_false_failure(
@@ -672,14 +1215,21 @@ def test_parent_fsync_failure_after_replace_reports_durability_without_false_fai
         backup_root=tmp_path / "backups",
     )
     revision = transaction.preview(b"version: new\n").current.revision
-    real_fsync_directory = transaction._fsync_directory
+    real_fsync = transaction_module.os.fsync
+    parent_stat = document.parent.stat()
 
-    def fail_live_parent(path):
-        if path == document.parent:
+    def fail_live_parent(descriptor):
+        descriptor_stat = os.fstat(descriptor)
+        if (
+            stat.S_ISDIR(descriptor_stat.st_mode)
+            and (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            == (parent_stat.st_dev, parent_stat.st_ino)
+            and document.read_bytes() == b"version: new\n"
+        ):
             raise OSError("injected live parent fsync failure")
-        return real_fsync_directory(path)
+        return real_fsync(descriptor)
 
-    monkeypatch.setattr(transaction, "_fsync_directory", fail_live_parent)
+    monkeypatch.setattr(transaction_module.os, "fsync", fail_live_parent)
 
     committed = transaction.commit(
         b"version: new\n",
@@ -720,6 +1270,85 @@ def test_rollback_restores_exact_bytes_and_first_backs_up_current_state(tmp_path
     assert undone.snapshot.content == replacement
 
 
+def test_rollback_reports_conflict_if_a_nonparticipating_writer_wins_after_publish(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "app.yaml"
+    document.write_bytes(b"version: original\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    original_revision = transaction.preview(b"version: current\n").current.revision
+    committed = transaction.commit(
+        b"version: current\n",
+        expected_revision=original_revision,
+    )
+    real_replace = os.replace
+
+    def overwrite_after_replace(source, target):
+        real_replace(source, target)
+        external = Path(target).with_name(f".{Path(target).name}.external-writer")
+        external.write_bytes(b"version: legacy-writer\n")
+        real_replace(external, target)
+
+    monkeypatch.setattr(
+        "spica.config.document_transaction.os.replace",
+        overwrite_after_replace,
+    )
+
+    with pytest.raises(DocumentConflictError):
+        transaction.rollback(
+            committed.restore_point.id,
+            expected_revision=committed.snapshot.revision,
+        )
+
+    assert document.read_bytes() == b"version: legacy-writer\n"
+
+
+def test_rollback_reports_conflict_for_same_bytes_on_a_different_inode_after_publish(
+    tmp_path, monkeypatch
+):
+    document = tmp_path / "app.yaml"
+    original = b"version: original\n"
+    document.write_bytes(original)
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    original_revision = transaction.preview(b"version: current\n").current.revision
+    committed = transaction.commit(
+        b"version: current\n",
+        expected_revision=original_revision,
+    )
+    real_replace = os.replace
+    external_inode: int | None = None
+
+    def replace_then_publish_same_bytes_from_another_inode(source, target):
+        nonlocal external_inode
+        real_replace(source, target)
+        external = Path(target).with_name(f".{Path(target).name}.external-writer")
+        external.write_bytes(original)
+        external_inode = external.stat().st_ino
+        real_replace(external, target)
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "replace",
+        replace_then_publish_same_bytes_from_another_inode,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.rollback(
+            committed.restore_point.id,
+            expected_revision=committed.snapshot.revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == original
+    assert document.stat().st_ino == external_inode
+
+
 def test_rollback_rechecks_revision_after_undo_restore_point_before_publication(
     tmp_path,
     monkeypatch,
@@ -736,14 +1365,10 @@ def test_rollback_rechecks_revision_after_undo_restore_point_before_publication(
         expected_revision=original_revision,
     )
     restore_ids_before = tuple(item.id for item in transaction.restore_points())
-    create_restore_point = transaction._create_restore_point
-
-    def create_then_external_edit(snapshot):
-        restore_point = create_restore_point(snapshot)
-        document.write_bytes(b"version: other-session\n")
-        return restore_point
-
-    monkeypatch.setattr(transaction, "_create_restore_point", create_then_external_edit)
+    after_first_transaction_fsync(
+        monkeypatch,
+        lambda: document.write_bytes(b"version: other-session\n"),
+    )
 
     with pytest.raises(DocumentConflictError) as caught:
         transaction.rollback(
@@ -788,6 +1413,247 @@ def test_rollback_rechecks_revision_after_tempfile_is_prepared_before_replace(
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
     assert document.read_bytes() == b"version: other-session\n"
+
+
+def test_rollback_rejects_same_bytes_replaced_inside_publication_callback(
+    tmp_path,
+):
+    document = tmp_path / "app.yaml"
+    original = b"version: original\n"
+    current = b"version: current\n"
+    document.write_bytes(original)
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    original_revision = transaction.preview(current).current.revision
+    committed = transaction.commit(current, expected_revision=original_revision)
+    restore_ids_before = tuple(item.id for item in transaction.restore_points())
+    external_inode: int | None = None
+
+    def external_writer_replaces_same_bytes():
+        nonlocal external_inode
+        external = tmp_path / "external-writer.yaml"
+        external.write_bytes(current)
+        external_inode = external.stat().st_ino
+        os.replace(external, document)
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.rollback(
+            committed.restore_point.id,
+            expected_revision=committed.snapshot.revision,
+            before_publication=external_writer_replaces_same_bytes,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document.read_bytes() == current
+    assert document.stat().st_ino == external_inode
+    assert tuple(item.id for item in transaction.restore_points()) == restore_ids_before
+
+
+def test_rollback_rejects_path_replacement_after_final_snapshot_opens(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    original = b"version: original\n"
+    current = b"version: current\n"
+    external_bytes = b"version: other-session\n"
+    document.write_bytes(original)
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    original_revision = transaction.preview(current).current.revision
+    committed = transaction.commit(current, expected_revision=original_revision)
+    current_stat = document.stat()
+    restore_ids_before = tuple(item.id for item in transaction.restore_points())
+    real_read = transaction_module.os.read
+    real_replace = os.replace
+    document_reads = 0
+
+    def replace_path_after_open_descriptor_read(descriptor, size):
+        nonlocal document_reads
+        chunk = real_read(descriptor, size)
+        descriptor_stat = os.fstat(descriptor)
+        if chunk and (descriptor_stat.st_dev, descriptor_stat.st_ino) == (
+            current_stat.st_dev,
+            current_stat.st_ino,
+        ):
+            document_reads += 1
+            if document_reads == 2:
+                external = tmp_path / "external-writer.yaml"
+                external.write_bytes(external_bytes)
+                real_replace(external, document)
+        return chunk
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "read",
+        replace_path_after_open_descriptor_read,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.rollback(
+            committed.restore_point.id,
+            expected_revision=committed.snapshot.revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document_reads >= 2
+    assert document.read_bytes() == external_bytes
+    assert tuple(item.id for item in transaction.restore_points()) == restore_ids_before
+
+
+def test_rollback_rejects_in_place_rewrite_after_final_snapshot_read(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    original = b"version: original\n"
+    current = b"version: current\n"
+    external_bytes = b"other\n"
+    document.write_bytes(original)
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    original_revision = transaction.preview(current).current.revision
+    committed = transaction.commit(current, expected_revision=original_revision)
+    current_inode = document.stat().st_ino
+    restore_ids_before = tuple(item.id for item in transaction.restore_points())
+    real_read = transaction_module.os.read
+    document_reads = 0
+
+    def rewrite_same_inode_after_descriptor_read(descriptor, size):
+        nonlocal document_reads
+        chunk = real_read(descriptor, size)
+        descriptor_stat = os.fstat(descriptor)
+        if chunk and descriptor_stat.st_ino == current_inode:
+            document_reads += 1
+            if document_reads == 2:
+                document.write_bytes(external_bytes)
+                assert document.stat().st_ino == current_inode
+        return chunk
+
+    monkeypatch.setattr(
+        transaction_module.os,
+        "read",
+        rewrite_same_inode_after_descriptor_read,
+    )
+
+    with pytest.raises(DocumentConflictError) as caught:
+        transaction.rollback(
+            committed.restore_point.id,
+            expected_revision=committed.snapshot.revision,
+        )
+
+    assert caught.value.code == "DOCUMENT_CONFLICT"
+    assert document_reads >= 2
+    assert document.read_bytes() == external_bytes
+    assert document.stat().st_ino == current_inode
+    assert tuple(item.id for item in transaction.restore_points()) == restore_ids_before
+
+
+def test_rollback_callback_runs_after_temp_fsync_and_before_final_target_cas(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    document.write_bytes(b"version: original\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    original_revision = transaction.preview(b"version: current\n").current.revision
+    committed = transaction.commit(
+        b"version: current\n",
+        expected_revision=original_revision,
+    )
+    events: list[str] = []
+    temporary_descriptor: int | None = None
+    real_mkstemp = transaction_module.tempfile.mkstemp
+    real_fsync = transaction_module.os.fsync
+    real_open = transaction_module.os.open
+    real_replace = os.replace
+    callback_completed = False
+    target_cas_recorded = False
+
+    def record_mkstemp(*args, **kwargs):
+        nonlocal temporary_descriptor
+        temporary_descriptor, name = real_mkstemp(*args, **kwargs)
+        return temporary_descriptor, name
+
+    def record_fsync(descriptor):
+        result = real_fsync(descriptor)
+        if descriptor == temporary_descriptor:
+            events.append("temp_fsync")
+        return result
+
+    def record_callback():
+        nonlocal callback_completed
+        callback_completed = True
+        events.append("callback")
+
+    def record_open(path, flags, mode=0o777):
+        nonlocal target_cas_recorded
+        if (
+            callback_completed
+            and not target_cas_recorded
+            and Path(path) == document
+        ):
+            target_cas_recorded = True
+            events.append("target_cas")
+        return real_open(path, flags, mode)
+
+    def record_replace(source, target):
+        if Path(target) == document:
+            events.append("replace")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(transaction_module.tempfile, "mkstemp", record_mkstemp)
+    monkeypatch.setattr(transaction_module.os, "fsync", record_fsync)
+    monkeypatch.setattr(transaction_module.os, "open", record_open)
+    monkeypatch.setattr(transaction_module.os, "replace", record_replace)
+
+    transaction.rollback(
+        committed.restore_point.id,
+        expected_revision=committed.snapshot.revision,
+        before_publication=record_callback,
+    )
+
+    assert events == ["temp_fsync", "callback", "target_cas", "replace"]
+
+
+def test_rollback_callback_failure_keeps_selected_restore_point_only(
+    tmp_path,
+):
+    document = tmp_path / "app.yaml"
+    document.write_bytes(b"version: original\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+    )
+    original_revision = transaction.preview(b"version: current\n").current.revision
+    committed = transaction.commit(
+        b"version: current\n",
+        expected_revision=original_revision,
+    )
+    restore_ids_before = tuple(item.id for item in transaction.restore_points())
+
+    def reject_publication():
+        raise RuntimeError("synthetic owner guard rejection")
+
+    with pytest.raises(RuntimeError, match="synthetic owner guard rejection"):
+        transaction.rollback(
+            committed.restore_point.id,
+            expected_revision=committed.snapshot.revision,
+            before_publication=reject_publication,
+        )
+
+    assert document.read_bytes() == b"version: current\n"
+    assert tuple(item.id for item in transaction.restore_points()) == restore_ids_before
+    assert not list(tmp_path.glob(".app.yaml.config-studio-*"))
 
 
 def test_restore_snapshot_is_safe_for_backend_semantic_preview_only(tmp_path):
@@ -866,7 +1732,6 @@ def test_rollback_restores_original_nonexistence(tmp_path):
 
 def test_rollback_to_nonexistence_rechecks_after_final_lstat_before_unlink(
     tmp_path,
-    monkeypatch,
 ):
     document = tmp_path / "new.yaml"
     transaction = _transaction(
@@ -878,41 +1743,22 @@ def test_rollback_to_nonexistence_rechecks_after_final_lstat_before_unlink(
         b"created: true\n",
         expected_revision=preview.current.revision,
     )
-    real_atomic_remove = transaction._atomic_remove
-    real_lstat = Path.lstat
-    state = {"active": False, "target_lstats": 0}
-
-    def mark_atomic_remove(**kwargs):
-        state["active"] = True
-        try:
-            return real_atomic_remove(**kwargs)
-        finally:
-            state["active"] = False
-
-    def edit_on_second_target_lstat(path):
-        if state["active"] and path == document:
-            state["target_lstats"] += 1
-            if state["target_lstats"] == 2:
-                document.write_bytes(b"owner: other-session\n")
-        return real_lstat(path)
-
-    monkeypatch.setattr(transaction, "_atomic_remove", mark_atomic_remove)
-    monkeypatch.setattr(Path, "lstat", edit_on_second_target_lstat)
 
     with pytest.raises(DocumentConflictError) as caught:
         transaction.rollback(
             committed.restore_point.id,
             expected_revision=committed.snapshot.revision,
+            before_publication=lambda: document.write_bytes(
+                b"owner: other-session\n"
+            ),
         )
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
-    assert state["target_lstats"] == 2
     assert document.read_bytes() == b"owner: other-session\n"
 
 
 def test_rollback_to_nonexistence_treats_concurrent_delete_as_conflict(
     tmp_path,
-    monkeypatch,
 ):
     document = tmp_path / "new.yaml"
     transaction = _transaction(
@@ -924,34 +1770,15 @@ def test_rollback_to_nonexistence_treats_concurrent_delete_as_conflict(
         b"created: true\n",
         expected_revision=preview.current.revision,
     )
-    real_atomic_remove = transaction._atomic_remove
-    real_lstat = Path.lstat
-    state = {"active": False, "deleted": False}
-
-    def mark_atomic_remove(**kwargs):
-        state["active"] = True
-        try:
-            return real_atomic_remove(**kwargs)
-        finally:
-            state["active"] = False
-
-    def delete_before_final_type_check(path):
-        if state["active"] and path == document and not state["deleted"]:
-            state["deleted"] = True
-            document.unlink()
-        return real_lstat(path)
-
-    monkeypatch.setattr(transaction, "_atomic_remove", mark_atomic_remove)
-    monkeypatch.setattr(Path, "lstat", delete_before_final_type_check)
 
     with pytest.raises(DocumentConflictError) as caught:
         transaction.rollback(
             committed.restore_point.id,
             expected_revision=committed.snapshot.revision,
+            before_publication=document.unlink,
         )
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
-    assert state["deleted"] is True
     assert not document.exists()
 
 
@@ -982,6 +1809,42 @@ def test_successful_commits_retain_only_the_five_newest_restore_points(tmp_path)
         expected_revision=revision,
     )
     assert rolled_back.snapshot.content == b"version: 5\n"
+
+
+def test_retention_always_keeps_the_restore_point_created_by_this_commit(
+    tmp_path,
+    monkeypatch,
+):
+    document = tmp_path / "app.yaml"
+    document.write_bytes(b"version: 0\n")
+    transaction = _transaction(
+        document,
+        backup_root=tmp_path / "backups",
+        retention=1,
+    )
+    now = [200]
+    monkeypatch.setattr(transaction_module.time, "time_ns", lambda: now[0])
+    first = transaction.commit(
+        b"version: 1\n",
+        expected_revision=transaction.preview(b"").current.revision,
+    )
+    now[0] = 1
+
+    second = transaction.commit(
+        b"version: 2\n",
+        expected_revision=first.snapshot.revision,
+    )
+
+    assert tuple(item.id for item in transaction.restore_points()) == (
+        second.restore_point.id,
+    )
+    with pytest.raises(RestorePointError):
+        transaction.restore_snapshot(first.restore_point.id)
+    restored = transaction.rollback(
+        second.restore_point.id,
+        expected_revision=second.snapshot.revision,
+    )
+    assert restored.snapshot.content == b"version: 1\n"
 
 
 def test_restore_point_ids_are_opaque_and_allocated_exclusively(

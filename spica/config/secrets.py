@@ -39,6 +39,34 @@ _SECRET_MATERIAL_ORDER = tuple(SECRETS_ENV_MAP.values()) + tuple(
     LEGACY_SECRET_ENV_VARS
 )
 _SECRET_MATERIAL_NAMES = frozenset(_SECRET_MATERIAL_ORDER)
+_HEURISTIC_SECRET_LABEL = "heuristic_secret".upper()
+_SECRET_MATERIAL_LABELS = _SECRET_MATERIAL_NAMES | {_HEURISTIC_SECRET_LABEL}
+_HEURISTIC_SECRET_TOKENS = frozenset(
+    {
+        "accesskey",
+        "apikey",
+        "authorization",
+        "cookie",
+        "credential",
+        "credentials",
+        "password",
+        "passwd",
+        "privatekey",
+        "secret",
+        "token",
+    }
+)
+
+
+def _looks_like_secret_name(name: str) -> bool:
+    normalized = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()
+    parts = tuple(part for part in re.split(r"[^a-z0-9]+", normalized) if part)
+    if _HEURISTIC_SECRET_TOKENS.intersection(parts):
+        return True
+    return any(
+        pair in {("api", "key"), ("access", "key"), ("private", "key")}
+        for pair in zip(parts, parts[1:])
+    )
 
 
 class EnvironmentRefreshError(RuntimeError):
@@ -82,10 +110,10 @@ class _SecretMaterial:
         complete: bool = True,
     ) -> None:
         if any(
-            name not in _SECRET_MATERIAL_NAMES or not isinstance(value, str)
+            name not in _SECRET_MATERIAL_LABELS or not isinstance(value, str)
             for name, value in entries
         ):
-            raise TypeError("secret material must use rostered text values")
+            raise TypeError("secret material must use approved text labels")
         if type(complete) is not bool:
             raise TypeError("secret material completeness must be boolean")
         object.__setattr__(self, "_entries", tuple(entries))
@@ -98,6 +126,12 @@ class _SecretMaterial:
                 (name, values[name])
                 for name in _SECRET_MATERIAL_ORDER
                 if name in values
+            )
+            + tuple(
+                (_HEURISTIC_SECRET_LABEL, values[name])
+                for name in sorted(values)
+                if name not in _SECRET_MATERIAL_NAMES
+                and _looks_like_secret_name(name)
             )
         )
 
@@ -946,6 +980,8 @@ def _parse_dotenv_text_explicit(
         resolved[binding.key] = value
         if binding.key in _SECRET_MATERIAL_NAMES:
             secret_entries.append((binding.key, value))
+        elif _looks_like_secret_name(binding.key):
+            secret_entries.append((_HEURISTIC_SECRET_LABEL, value))
     return _ParsedDotenv(
         resolved,
         _SecretMaterial(tuple(secret_entries), complete=complete),
@@ -1022,6 +1058,7 @@ def _read_owned_dotenv_bytes(path: Path) -> bytes | None:
                     break
                 chunks.append(chunk)
                 remaining -= len(chunk)
+            final = os.fstat(descriptor)
         finally:
             os.close(descriptor)
     except EnvironmentRefreshError:
@@ -1032,12 +1069,24 @@ def _read_owned_dotenv_bytes(path: Path) -> bytes | None:
     if len(content) > _MAX_DOTENV_BYTES:
         raise EnvironmentRefreshError("environment owner document invalid")
     after = inspect_chain()
-    if after is None or (
-        before.st_dev,
-        before.st_ino,
-        opened.st_dev,
-        opened.st_ino,
-    ) != (after.st_dev, after.st_ino, after.st_dev, after.st_ino):
+    def stable_generation(file_stat: os.stat_result) -> tuple[int, ...]:
+        return (
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_size,
+            file_stat.st_mtime_ns,
+            file_stat.st_ctime_ns,
+            file_stat.st_mode,
+            file_stat.st_nlink,
+            file_stat.st_uid,
+        )
+
+    if after is None or not (
+        stable_generation(before)
+        == stable_generation(opened)
+        == stable_generation(final)
+        == stable_generation(after)
+    ):
         raise EnvironmentRefreshError("environment owner document unsafe")
     return content
 

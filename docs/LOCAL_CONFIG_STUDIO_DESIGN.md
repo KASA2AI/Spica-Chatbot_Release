@@ -145,8 +145,10 @@ schema with a zero-diff production gate before its form is enabled.
 ### 4.1 Fixed-path Linux owner composition
 
 The normal sidecar entry delegates writer selection to
-`ui.config_studio.composition.create_production_config_studio_services()`. The
-composition accepts no browser-selected path. It may construct owners only for:
+`spica.adapters.config_studio.composition.create_production_config_studio_services()`.
+This is the independent sidecar composition root; `ui/config_studio/` contains
+only the fixed browser client and presentation assets. The composition accepts
+no browser-selected path. It may construct owners only for:
 
 - `<repo>/data/config/app.yaml`;
 - `<repo>/ui/overlay_config.json`;
@@ -381,6 +383,11 @@ The transaction kernel is byte-oriented and stdlib-only. It has no dependency
 on FastAPI or ruamel.yaml so existing UI persistence owners can reuse it.
 Platform details are injected through the pure port described in section 15;
 the transaction owner never detects the OS or imports `fcntl` itself.
+The same adapter supplies an opaque stable-file-identity contract. The verified
+Linux implementation compares no-follow descriptor/path `(device, inode)`
+identity without placing either value in a DTO or log. The Windows adapter
+deliberately exposes no usable identity implementation while writes remain
+unverified and disabled.
 
 The fixed-document reader and transaction kernel both consume the explicit
 capabilities supplied by the platform adapter. They use no-follow identity
@@ -402,29 +409,47 @@ Each document uses both an in-process mutex and a stable cross-process file
 lock. A commit performs, while holding both locks:
 
 1. `lstat` and safe-path checks;
-2. revision reread and exact `DocumentRevision` comparison;
+2. revision reread plus capture of the live target's opaque file identity;
 3. candidate validation;
 4. RestorePoint creation for the current bytes/existence state;
 5. temporary-file creation in the destination directory;
-6. complete write, flush, `fsync`, required permission setup and verification;
+6. complete write, flush, `fsync`, required permission setup, and capture of the
+   still-open temporary descriptor's opaque identity;
 7. a second validation where required;
 8. for removal, the final safe-file-type `lstat` check;
-9. a second target revision reread after temporary-file fsync and immediately
-   before `os.replace`, or after the final removal type check and immediately
-   before unlink;
-10. `os.replace` publication or unlink;
+9. revalidation that the temp path still names that open descriptor, followed
+   by a second target revision-and-identity reread immediately before
+   `os.replace`; removal performs the equivalent final target check;
+10. `os.replace` publication or unlink while the temp descriptor remains open;
 11. parent-directory `fsync` where supported;
-12. post-publication revision capture;
-13. retention pruning only after successful publication.
+12. post-publication revision and exact published-file-identity capture;
+13. retention pruning only after successful publication, followed by one final
+    revision-and-identity check before returning success. Sensitive deferred
+    retention reacquires the transaction lock and performs the same check both
+    before and after pruning; the sensitive owner then reopens the target and
+    proves `PRIVATE` or `MISSING` again. A same-inode permission change during
+    pruning is recovered and reported as `PERMISSION_HARDENING_FAILED`. Retention
+    always protects the RestorePoint/undo RestorePoint created by the current
+    transaction, independent of wall-clock ordering, then fills remaining slots
+    with the newest other valid entries.
 
 `os.replace` is atomic publication, not compare-and-swap. Both commit and
-rollback recheck the target after RestorePoint creation and immediately before
-publication while still holding the shared lock. This catches a non-cooperating
-writer that edits or deletes between the initial check and publication. A
-missing target discovered by the final removal `lstat` still performs this
-revision recheck and is a conflict, not a successful Studio removal. A bounded lock
-timeout returns `DOCUMENT_BUSY`; either mismatch returns `DOCUMENT_CONFLICT`
-without overwriting the external bytes.
+rollback recheck the target's content revision and stable file identity after
+RestorePoint creation and immediately before publication while still holding
+the shared lock. The path is revalidated after every descriptor read, so a
+same-byte replacement is a conflict rather than an apparent match. Immediate
+post-publication verification must still observe the exact temp identity that
+Studio published; different bytes, identical bytes on another inode, symlinks,
+new hardlinks, unsafe owners, and in-place rewrites all fail closed. Descriptor
+reads compare size and modification time before/final read; a ctime change
+triggers a bounded second read so an mtime-restored rewrite is detected without
+misclassifying a pure chmod of the same sensitive inode. Fixed app and dotenv
+owner readers apply the same opened/final/path mutation-fact discipline. A
+missing target discovered by the final
+removal `lstat` still performs this revision recheck and is a conflict, not a
+successful Studio removal. A bounded lock timeout returns `DOCUMENT_BUSY`;
+either mismatch returns `DOCUMENT_CONFLICT` without overwriting the external
+bytes.
 
 RestorePoints use opaque, exclusively created identifiers that cannot be
 interpreted as paths. They store exact bytes and whether the original existed.
@@ -537,6 +562,9 @@ On POSIX:
 - backup directory: `0700`;
 - RestorePoint: `0600`;
 - newly published repo `xiaosan.env`: `0600`;
+- a rollback whose RestorePoint records original nonexistence succeeds only when
+  the final target is still missing; its undo RestorePoint remains the single
+  retained sensitive entry;
 - inputs must be ordinary files owned by the current user, with no symlink or
   unsafe path component;
 - the existing `0664` file produces a health warning only at startup;
@@ -549,14 +577,19 @@ On POSIX:
   `PERMISSION_HARDENING_FAILED` rather than a successful maintenance warning.
   This internal recovery publication does not create a user-visible
   RestorePoint and cannot retain the failed secret candidate in the rollback
-  sequence. Content identity, owner, link count, and the final permission mode
-  come from one `O_NOFOLLOW` descriptor and its final `fstat`; recovery mode
-  hardening uses `fchmod` on that verified descriptor while the transaction lock
-  is held, never a path-following `chmod` after unlock.
+  sequence. Content identity, stable file identity, owner, link count, and the
+  final permission mode come from one `O_NOFOLLOW` descriptor and its final
+  `fstat`; recovery mode hardening uses `fchmod` on that verified descriptor
+  while the transaction lock is held, never a path-following `chmod` after
+  unlock.
 
 If post-publication verification instead finds that a third party has already
 replaced the candidate, recovery must not overwrite those external bytes; the
-operation returns `DOCUMENT_CONFLICT`.
+operation returns `DOCUMENT_CONFLICT`. This includes a different file carrying
+byte-for-byte identical candidate data. Permission recovery receives the
+private identity of the actual Studio publication and rechecks it before any
+restore and again after descriptor hardening; only chmod interference on that
+same file is recoverable.
 
 On Windows, chmod is not treated as a security guarantee. Sensitive backup,
 write, and rollback remain disabled until an owner-only DACL adapter has passed a
@@ -631,6 +664,9 @@ rebinding. Every state-changing endpoint requires an exact same-origin `Origin`.
 Bootstrap alone is exempt from an existing session and CSRF; every other API
 requires a valid session, and every other mutating API also requires the
 session-bound CSRF token. There are no arbitrary command or file-browsing inputs.
+Authenticated `GET /api/v1/session/csrf` only returns the session's existing
+token so a page reload can recover it; it neither rotates nor otherwise mutates
+session state.
 An owner refresh failure maps to stable `ENVIRONMENT_REFRESH_UNAVAILABLE` with
 HTTP 503. Sensitive status first performs the fixed no-follow safety inspection,
 so a hardlink, wrong-owner file, or symlink can still report its bounded health
@@ -663,6 +699,12 @@ the new-start safety latch trips.
 
 Redaction first uses the explicit secret roster and owner metadata. A recursive
 key-name heuristic is a conservative fallback, not the primary classification.
+Fresh inherited, repo-dotenv, and parent-dotenv inputs whose names contain
+standalone secret/token/password/cookie/credential markers (or canonical API,
+access, or private-key pairs) contribute opaque secret material under the
+generic `HEURISTIC_SECRET` label. The original unmanaged name never appears in
+a redaction marker. A typed override interpolated from that material is
+quarantined instead of entering the Catalog or self-check environment.
 Fixed owner metadata such as JSON Schema keywords, path segment kinds, and
 Literal choices is not rewritten merely because a short secret canary happens
 to equal a common schema word. Actual file/next-launch/current data slots,
@@ -913,22 +955,41 @@ Platform detection, cross-process file locking, and containment implementations
 live in `spica/adapters/config_studio/platform.py` and
 `spica/adapters/config_studio/self_check_process.py` (and future sibling adapters).
 Core owners depend only on the immutable
-`PlatformCapabilities` and `CrossProcessFileLockPort` contracts in
+`PlatformCapabilities`, `CrossProcessFileLockPort`, and opaque
+`StableFileIdentityPort` contracts in
 `spica/ports/config_studio_platform.py`; they receive those capabilities explicitly
-from the sidecar or overlay composition root. Config Studio's general platform
-selection, cross-process lock, and containment implementation do not live in
-`spica/config`, and there is no reverse compatibility facade. Existing
-secret-file owner/link safety checks in `spica/config/secrets.py` remain an
-intentional whitelist boundary and are not migrated by this decision.
+from the sidecar or overlay composition root. Two distinct platform-selection
+owners are intentional and must not be conflated:
+
+- `spica.host.agent_assembly.fold_platform()` owns the configurable desktop
+  *effective platform*. It captures the host `sys.platform` once, but an
+  explicit `platform.os` may override that desktop selection.
+- `spica.adapters.config_studio.platform.current_platform_capabilities()` owns
+  the sidecar's actual kernel/UID security facts. It reads the real process
+  `os.name`, `sys.platform`, and UID exactly once and never consults AppConfig or
+  `platform.os`.
+
+An AST guard pins those exact production read sites. Existing secret-file
+owner/link safety checks in `spica/config/secrets.py` remain a separately named,
+exact whitelist boundary and are not platform selection. Config Studio's lock
+and containment implementation do not live in `spica/config`, and there is no
+reverse compatibility facade.
+
+The fixed-point feature worktree does not contain the main checkout's ignored
+standing guidance files. Before merge or push, the target branch's standing
+platform guardrail must be reconciled to describe these two semantic owners;
+the feature must not copy unrelated main-worktree WIP merely to make that edit.
 
 The POSIX process-group signals, `start_new_session` launch, and Linux `pwd`/
 base-child-environment construction are concrete adapter responsibilities. The
 self-check plan/job/service layer receives a runner and full base environment;
 it contains no POSIX fallback implementation.
 
-The currently verified production write lane is Linux POSIX with a valid current
-UID and the concrete `flock` adapter. Other POSIX runtimes, Windows, and unknown
-platforms fail closed rather than inheriting Linux capability by analogy.
+The currently verified production write lane is the exact `sys.platform ==
+"linux"` POSIX runtime with a valid current UID and the concrete `flock`
+adapter. Prefix variants such as `linux-custom`, other POSIX runtimes, Windows,
+and unknown platforms fail closed rather than inheriting Linux capability by
+analogy.
 
 Non-sensitive app/overlay writes are not production-supported on Windows until
 real-machine smoke tests prove `LockFileEx`, replacement, stable locking, and
@@ -964,17 +1025,18 @@ unclassified internal failure is 500. In particular, `DOCUMENT_CONFLICT` is
 | `CSRF_INVALID` | Write request lacks the session-bound CSRF proof |
 | `CAPABILITY_UNAVAILABLE` | Requested operation is not enabled by server policy |
 | `DOCUMENT_BUSY` | Stable document lock could not be acquired in time |
-| `DOCUMENT_CONFLICT` | Revision changed before publication |
+| `DOCUMENT_CONFLICT` | Revision changed before publication or final publication verification observed a third-party replacement |
 | `DOCUMENT_UNSAFE` | File/path type, owner, symlink, reparse, or root check failed |
 | `DOCUMENT_INVALID` | Candidate fails syntax, typed schema, or owner validation |
 | `DOTENV_INVALID` | Candidate dotenv syntax/semantics cannot be safely parsed |
 | `UNKNOWN_FIELD` | Operation introduces an unsupported field |
 | `RECOVERY_ONLY` | Damaged source permits only safe recovery operations |
 | `NO_VALID_RESTORE_POINT` | No validated rollback target exists |
-| `CONFIRMATION_REQUIRED` | A destructive or heavy action lacks a bound receipt |
+| `CONFIRMATION_REQUIRED` | A bound preview/receipt is absent or its owner snapshot changed |
 | `CONFIRMATION_INVALID` | A supplied confirmation identifier has an invalid shape |
 | `CONFIRMATION_UNAVAILABLE` | A bounded confirmation/receipt slot cannot be allocated |
-| `PREVIEW_UNAVAILABLE` | A bounded preview slot cannot be allocated |
+| `PREVIEW_UNAVAILABLE` | A bounded preview slot or required owner snapshot is unavailable |
+| `ROLLBACK_CONFIRMATION_INVALID` | Rollback receipt, owner material, or semantic snapshot no longer matches |
 | `RESTORE_POINT_INVALID` | A supplied RestorePoint identifier has an invalid shape |
 | `OVERLAY_COMMAND_INVALID` | An overlay authoring command is malformed or unsupported |
 | `SENSITIVE_COMMAND_INVALID` | A sensitive-document command is malformed or unsupported |
@@ -1177,10 +1239,12 @@ areas (exact split may deepen without broadening behaviour):
 - `spica/config/overlay_owner.py`
 - `spica/ports/config_studio_platform.py`
 - `spica/adapters/config_studio/platform.py`
+- `spica/adapters/config_studio/composition.py`
 - `spica/adapters/config_studio/self_check_process.py`
 - `spica/config_studio/` (catalogue, authoring, sensitive env, self-check,
-  security, API, server, schema-metadata projection, DTOs)
-- `ui/config_studio/` (fixed client and accepted asset)
+  security, API, server, overlay document owner, schema-metadata projection,
+  DTOs)
+- `ui/config_studio/` (fixed browser client and accepted asset only)
 - `ui/overlay_config.py` and the minimal overlay persistence call sites needed
   to share the transaction primitive without per-tick writes
 - `scripts/config_studio.py`

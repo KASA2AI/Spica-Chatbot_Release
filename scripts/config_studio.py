@@ -35,7 +35,7 @@ from spica.config_studio.self_check_service import (  # noqa: E402
     SelfCheckEnvironmentInputs,
     create_production_self_check_service,
 )
-from ui.config_studio.composition import (  # noqa: E402
+from spica.adapters.config_studio.composition import (  # noqa: E402
     create_production_config_studio_services,
 )
 

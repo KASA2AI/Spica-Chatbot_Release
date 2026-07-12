@@ -67,6 +67,24 @@ def _managed_override_status(*, defined: frozenset[str] = frozenset()):
     ]
 
 
+def test_sidecar_backend_composition_is_not_owned_by_the_ui_package() -> None:
+    assert (
+        REPO_ROOT / "spica" / "adapters" / "config_studio" / "composition.py"
+    ).is_file()
+    assert (
+        REPO_ROOT / "spica" / "config_studio" / "overlay_document.py"
+    ).is_file()
+    assert not (REPO_ROOT / "ui" / "config_studio" / "composition.py").exists()
+    assert not (
+        REPO_ROOT / "ui" / "config_studio" / "overlay_document.py"
+    ).exists()
+    script = (REPO_ROOT / "scripts" / "config_studio.py").read_text(
+        encoding="utf-8"
+    )
+    assert "spica.adapters.config_studio.composition" in script
+    assert "ui.config_studio.composition" not in script
+
+
 def test_read_only_services_use_the_explicit_owner_snapshot_and_close_writes(
     tmp_path: Path,
 ) -> None:
@@ -1256,7 +1274,9 @@ def test_production_composition_closes_only_the_hardlinked_ordinary_writer_lane(
     lane: str,
     relative_path: Path,
 ) -> None:
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     managed_path = repo_root / relative_path
@@ -1324,7 +1344,9 @@ def test_production_composition_closes_only_the_wrong_owner_ordinary_writer_lane
     lane: str,
     relative_path: Path,
 ) -> None:
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     managed_path = repo_root / relative_path
@@ -1375,7 +1397,9 @@ def test_production_composition_closes_only_the_wrong_owner_ordinary_writer_lane
 def test_production_composition_closes_all_writes_for_a_symlinked_state_root(
     tmp_path: Path,
 ) -> None:
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     outside = tmp_path / "outside-state"
@@ -1413,7 +1437,9 @@ def test_production_composition_closes_all_writes_for_a_symlinked_state_root(
 def test_production_composition_closes_all_writes_for_a_symlinked_state_parent(
     tmp_path: Path,
 ) -> None:
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     (repo_root / "spica_data").rmdir()
@@ -1451,7 +1477,9 @@ def test_production_composition_closes_all_writes_for_a_symlinked_state_parent(
 def test_production_composition_does_not_repair_an_unsafe_existing_backup_root(
     tmp_path: Path,
 ) -> None:
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     state_root = repo_root / "spica_data" / "config_studio"
@@ -1496,7 +1524,9 @@ def test_production_composition_keeps_unverified_platform_writes_closed(
     runtime_name: str,
     user_id: int | None,
 ) -> None:
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     state_root = repo_root / "spica_data" / "config_studio"
@@ -1534,7 +1564,9 @@ def test_production_composition_hardlinked_env_closes_only_sensitive_writes(
 
     from spica.config_studio.api import create_config_studio_app
     from spica.config_studio.security import SecurityContext
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     outside = tmp_path / "synthetic-hardlink-source.env"
@@ -1604,7 +1636,9 @@ def test_production_composition_wrong_owner_env_closes_only_sensitive_writes(
         SensitiveEnvDocument,
         SensitiveEnvStatus,
     )
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     sensitive_path = repo_root / "xiaosan.env"
@@ -1639,7 +1673,9 @@ def test_production_composition_allows_0664_env_with_permission_hardening_previe
     tmp_path: Path,
 ) -> None:
     from spica.config_studio.sensitive_env import SetSecret
-    from ui.config_studio.composition import create_production_config_studio_services
+    from spica.adapters.config_studio.composition import (
+        create_production_config_studio_services,
+    )
 
     repo_root, loaded = _synthetic_composition_repository(tmp_path)
     sensitive_path = repo_root / "xiaosan.env"

@@ -1103,11 +1103,6 @@
           ? [`${label} ${count}`]
           : [];
       });
-      const action = document.createElement("button");
-      action.type = "button";
-      action.className = "text-button";
-      action.textContent = "只读 Catalog";
-      action.disabled = true;
       card.append(title, owner, status);
       if (truncationDetails.length) {
         const warning = document.createElement("p");
@@ -1115,7 +1110,64 @@
         warning.textContent = `安全投影截断：${truncationDetails.join(" · ")}；当前卡片仅展示截断后的安全投影。`;
         card.append(warning);
       }
-      card.append(action);
+      const details = document.createElement("details");
+      details.className = "document-card__details";
+      const summary = document.createElement("summary");
+      summary.textContent = "查看只读内容";
+      const metadata = document.createElement("dl");
+      metadata.className = "document-card__metadata";
+      [
+        ["basename", documentInfo.basename || "未公开"],
+        ["source", documentInfo.source_kind || "unknown"],
+        ["external", text(documentInfo.external)],
+        ["health code", health.code || "none"],
+        ["read-only reason", documentInfo.unsupported_reason || "none"],
+      ].forEach(([label, value]) => {
+        const row = document.createElement("div");
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = label;
+        description.textContent = text(value);
+        row.append(term, description);
+        metadata.append(row);
+      });
+      const fields = Array.isArray(documentInfo.fields)
+        ? documentInfo.fields
+        : [];
+      const fieldList = document.createElement("div");
+      fieldList.className = "document-field-list";
+      fieldList.setAttribute("role", "list");
+      fields.forEach((field) => {
+        const row = document.createElement("article");
+        row.className = "document-field-row";
+        row.setAttribute("role", "listitem");
+        const heading = document.createElement("strong");
+        heading.textContent = text(field.display_path);
+        const valueType = document.createElement("small");
+        valueType.textContent = text(field.value_type);
+        const currentLabel = document.createElement("span");
+        currentLabel.textContent = "current";
+        const currentValue = document.createElement("code");
+        currentValue.textContent = text(field.current_value);
+        const defaultLabel = document.createElement("span");
+        defaultLabel.textContent = "default";
+        const defaultValue = document.createElement("code");
+        defaultValue.textContent = text(field.default_value);
+        row.append(
+          heading,
+          valueType,
+          currentLabel,
+          currentValue,
+          defaultLabel,
+          defaultValue,
+        );
+        fieldList.append(row);
+      });
+      if (!fields.length) {
+        fieldList.textContent = "此 owner 未返回可查看字段；仅展示安全元数据。";
+      }
+      details.append(summary, metadata, fieldList);
+      card.append(details);
       return card;
       });
     root.replaceChildren(...cards);

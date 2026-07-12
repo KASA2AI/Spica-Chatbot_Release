@@ -354,6 +354,42 @@ def test_managed_document_catalog_discloses_omitted_documents_and_truncation():
         assert counter in renderer
 
 
+def test_character_data_catalog_exposes_read_only_fields_and_safe_metadata():
+    css = (UI / "studio.css").read_text(encoding="utf-8")
+    javascript = (UI / "studio.js").read_text(encoding="utf-8")
+    renderer = javascript[
+        javascript.index("function renderManagedDocuments"):
+        javascript.index("function renderOverlayDocument")
+    ]
+
+    assert 'document.createElement("details")' in renderer
+    assert 'document.createElement("summary")' in renderer
+    assert 'summary.textContent = "查看只读内容"' in renderer
+    assert "documentInfo.basename" in renderer
+    assert "documentInfo.source_kind" in renderer
+    assert "documentInfo.external" in renderer
+    assert "documentInfo.unsupported_reason" in renderer
+    assert "health.code" in renderer
+    assert "documentInfo.fields" in renderer
+    assert "field.display_path" in renderer
+    assert "field.current_value" in renderer
+    assert "field.default_value" in renderer
+    assert "field.value_type" in renderer
+    assert "heading.textContent = text(field.display_path)" in renderer
+    assert "currentValue.textContent = text(field.current_value)" in renderer
+    assert "defaultValue.textContent = text(field.default_value)" in renderer
+    assert "boundedText(text(field.current_value)" not in renderer
+    assert "action.disabled = true" not in renderer
+    assert "documentInfo.path" not in renderer
+    for selector in (
+        ".document-card__details",
+        ".document-card__metadata",
+        ".document-field-list",
+        ".document-field-row",
+    ):
+        assert selector in css
+
+
 def test_structured_app_writer_uses_schema_rows_without_raw_document_editor():
     html = (UI / "index.html").read_text(encoding="utf-8")
     javascript = (UI / "studio.js").read_text(encoding="utf-8")

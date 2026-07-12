@@ -775,7 +775,8 @@ def test_character_tab_renders_read_only_managed_document_cards() -> None:
     assert "catalog.managed_documents" in javascript
     assert "renderManagedDocuments" in javascript
     assert 'byId("character-documents")' in javascript
-    assert "action.disabled = true" in javascript
+    assert 'summary.textContent = "查看只读内容"' in javascript
+    assert "documentInfo.fields" in javascript
 
 
 def test_short_secret_redaction_preserves_managed_document_wire_keys_and_budget(

@@ -302,6 +302,18 @@ h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 .setting-card h3, .document-card h3 { margin: 0; font-size: 13px; }
 .setting-card p, .document-card p { margin: 8px 0 0; color: var(--faint); font-size: 10px; line-height: 1.55; }
 .document-card .document-card__warning { padding-left: 8px; border-left: 2px solid rgba(255,198,117,.35); color: #f7dfb9; }
+.document-card__details { margin-top: 14px; border-top: 1px solid var(--line); }
+.document-card__details summary { padding: 12px 0 4px; color: var(--rose); cursor: pointer; font-size: 11px; font-weight: 700; }
+.document-card__metadata { display: grid; gap: 5px; margin: 10px 0; }
+.document-card__metadata > div { display: grid; grid-template-columns: minmax(90px, .45fr) minmax(0, 1fr); gap: 10px; }
+.document-card__metadata dt { color: var(--faint); font-size: 10px; text-transform: uppercase; }
+.document-card__metadata dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--muted); font-family: ui-monospace, monospace; font-size: 10px; }
+.document-field-list { display: grid; gap: 7px; max-height: min(48vh, 480px); margin-top: 12px; overflow: auto; scrollbar-color: rgba(244,143,174,.34) rgba(255,255,255,.035); }
+.document-field-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 10px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.025); }
+.document-field-row strong { min-width: 0; overflow-wrap: anywhere; font-size: 10px; }
+.document-field-row small { color: var(--faint); font-size: 10px; }
+.document-field-row span { color: var(--faint); font-size: 10px; text-transform: uppercase; }
+.document-field-row code { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 10px; white-space: pre-wrap; }
 .safety-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
 .status-card { min-height: 150px; padding: 18px; }
 .status-card h2 { margin-bottom: 13px; }

@@ -25,6 +25,7 @@ class SettingsPanel(QFrame):
     overall_scale_changed = Signal(float)
     typing_speed_changed = Signal(float)
     voice_volume_changed = Signal(float)  # linear 0.0-1.0 (slider shows 0-100%)
+    voice_volume_commit_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -178,6 +179,12 @@ class SettingsPanel(QFrame):
 
         self.voice_volume_slider.valueChanged.connect(self._voice_volume_slider_changed)
         self.voice_volume_spin.valueChanged.connect(self._voice_volume_spin_changed)
+        self.voice_volume_slider.sliderReleased.connect(
+            self.voice_volume_commit_requested.emit
+        )
+        self.voice_volume_spin.editingFinished.connect(
+            self.voice_volume_commit_requested.emit
+        )
 
         volume_layout.addWidget(self.voice_volume_slider, 1)
         volume_layout.addWidget(self.voice_volume_spin)
@@ -349,4 +356,3 @@ class SettingsPanel(QFrame):
         )
         self.layout().setContentsMargins(scaled_px(14, scale), scaled_px(12, scale), scaled_px(14, scale), scaled_px(14, scale))
         self.layout().setSpacing(scaled_px(10, scale))
-

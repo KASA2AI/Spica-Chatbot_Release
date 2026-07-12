@@ -1,0 +1,8 @@
+# Local Config Studio direct dependencies.
+#
+# Keep this file small: transitive imports are not part of the supported API.
+# ruamel.yaml preserves comments/order only; production PyYAML and ConfigManager
+# still validate every candidate before publication.
+fastapi>=0.112.2,<1
+uvicorn>=0.30,<1
+ruamel.yaml>=0.18.6,<0.19

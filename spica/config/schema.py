@@ -47,8 +47,24 @@ class CharacterConfig(BaseModel):
     # / DEFAULT_SPICA_SKILL_DIR, keeping this layer character-agnostic.
     interlocutor_name: str | None = None
     profile_override: str | None = None
-    skill_dir: str | None = None
-    package_dir: str | None = None  # active CharacterPackage dir (Phase 7); None -> Spica
+    skill_dir: str | None = Field(
+        default=None,
+        json_schema_extra={
+            "path_semantics": {
+                "base": "launch_working_directory",
+                "kind": "directory",
+            }
+        },
+    )
+    package_dir: str | None = Field(
+        default=None,
+        json_schema_extra={
+            "path_semantics": {
+                "base": "launch_working_directory",
+                "kind": "directory",
+            }
+        },
+    )  # active CharacterPackage dir (Phase 7); None -> Spica
     # Resolved active character id (from the CharacterPackage); None -> "spica".
     # Set by the host after package load so the typed deps namespace memory by it.
     character_id: str | None = None
@@ -227,7 +243,7 @@ class ScreenConfig(BaseModel):
     revision: str = "2025-06-21"
     device: str = "cuda"
     dtype: str = "bfloat16"
-    max_side: int = 768
+    max_side: int = Field(default=768, ge=128, le=4096)
     reasoning: bool = False
     preload: bool = False
     ocr_enabled: bool = True
@@ -322,7 +338,15 @@ class SttConfig(BaseModel):
     warmup_on_startup: bool = True
     # None -> faster-whisper's default HF cache. Set to a dir to pin a pre-downloaded
     # model (China-friendly: avoids a blocking first-startup download).
-    download_root: str | None = None
+    download_root: str | None = Field(
+        default=None,
+        json_schema_extra={
+            "path_semantics": {
+                "base": "launch_working_directory",
+                "kind": "directory",
+            }
+        },
+    )
 
 
 class TrtOcrConfig(BaseModel):
@@ -336,7 +360,12 @@ class TrtOcrConfig(BaseModel):
     # on fp16. fp16 stays configurable as the step-2 follow-up.
     fp16: bool = False
     # Repo-relative; the host resolves to an absolute path. Gitignored (§7.3).
-    engine_cache_dir: str = "artifacts/trt"
+    engine_cache_dir: str = Field(
+        default="artifacts/trt",
+        json_schema_extra={
+            "path_semantics": {"base": "repository", "kind": "directory"}
+        },
+    )
     timing_cache: bool = True
     # Explicit TRT min/opt/max shape profiles, filled ONLY if the real-machine shape
     # probe shows many shapes (D3). Empty -> rely on ORT's per-shape engine cache.
@@ -407,7 +436,16 @@ class AnimeConfig(BaseModel):
     # Repo-relative (anchored at the repo root by the anime assembly's
     # resolve_data_path) + gitignored via static/, next to generated_voice/song.
     # Downloads group per anime: <download_dir>/<anime_dirname(title)>/<episode>.
-    download_dir: str = "static/generated_anime"
+    download_dir: str = Field(
+        default="static/generated_anime",
+        json_schema_extra={
+            "path_semantics": {
+                "base": "repository",
+                "expand_user": True,
+                "kind": "directory",
+            }
+        },
+    )
     player_command: str = "vlc"           # VLC handles AV1/HEVC/MKV more reliably
     bilibili_spaces: list[str] = Field(default_factory=lambda: ["3493112693394137"])
     mikan_base_urls: list[str] = Field(
@@ -431,8 +469,26 @@ class AnimeConfig(BaseModel):
     )
     ytdlp_format: str = "bv*[height<=1080]+ba/b[height<=1080]"
     ytdlp_min_rate_kib_per_second: float = 512.0  # 0 disables low-speed reconnect
-    cookies_file: str = "data/cookies.txt"       # yt-dlp --cookies; 文件可缺省(匿名降清晰度)
-    library_file: str = "data/anime/library.json"  # host 唯一写点 (P1-6); pending.json 同目录
+    cookies_file: str = Field(
+        default="data/cookies.txt",
+        json_schema_extra={
+            "path_semantics": {
+                "base": "repository",
+                "expand_user": True,
+                "kind": "file",
+            }
+        },
+    )  # yt-dlp --cookies; 文件可缺省(匿名降清晰度)
+    library_file: str = Field(
+        default="data/anime/library.json",
+        json_schema_extra={
+            "path_semantics": {
+                "base": "repository",
+                "expand_user": True,
+                "kind": "file",
+            }
+        },
+    )  # host 唯一写点 (P1-6); pending.json 同目录
 
 
 class AppConfig(BaseModel):

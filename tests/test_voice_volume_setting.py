@@ -131,6 +131,25 @@ def test_save_is_merge_safe_and_preserves_hand_edited_keys(tmp_path):
         assert raw[key] == value  # every hand-edited key untouched
 
 
+def test_overlay_save_uses_managed_document_restore_protocol(tmp_path):
+    p = tmp_path / "overlay.json"
+    p.write_text('{"spica_voice_volume": 0.5}\n', encoding="utf-8")
+    backup_root = tmp_path / "studio-state"
+
+    assert save_overlay_config_value(
+        "spica_voice_volume",
+        0.7,
+        p,
+        backup_root=backup_root,
+    ) is True
+
+    restore_metadata = list(backup_root.rglob("metadata"))
+    restore_content = list(backup_root.rglob("content"))
+    assert len(restore_metadata) == 1
+    assert len(restore_content) == 1
+    assert restore_content[0].read_bytes() == b'{"spica_voice_volume": 0.5}\n'
+
+
 def test_save_creates_file_when_absent(tmp_path):
     p = tmp_path / "nope.json"
     assert save_overlay_config_value("spica_voice_volume", 0.7, p) is True
@@ -143,6 +162,21 @@ def test_save_skips_corrupt_file_without_clobber(tmp_path):
     p.write_text("{not valid json", encoding="utf-8")
     assert save_overlay_config_value("spica_voice_volume", 0.7, p) is False
     assert p.read_text(encoding="utf-8") == "{not valid json"
+
+
+def test_injected_overlay_path_never_uses_the_production_backup_root(
+    tmp_path, monkeypatch
+):
+    p = tmp_path / "sandbox" / "overlay_config.json"
+    p.parent.mkdir()
+    p.write_text('{"spica_voice_volume": 0.4}\n', encoding="utf-8")
+    forbidden = tmp_path / "production-spica-data"
+    monkeypatch.setattr("ui.overlay_config._DEFAULT_BACKUP_ROOT", forbidden)
+
+    assert save_overlay_config_value("spica_voice_volume", 0.6, p) is True
+
+    assert not forbidden.exists()
+    assert (p.parent / ".config_studio_backups").is_dir()
 
 
 # ---------------- (c) SettingsPanel widget ---------------- #
@@ -175,6 +209,22 @@ def test_voice_volume_spin_emits_linear_and_syncs_slider(qapp):
     assert panel.voice_volume_slider.value() == 30
 
 
+def test_voice_volume_persistence_signal_only_fires_on_edit_completion(qapp):
+    panel = SettingsPanel()
+    committed = []
+    panel.voice_volume_commit_requested.connect(lambda: committed.append(True))
+
+    panel.voice_volume_slider.setValue(44)
+    assert committed == []
+    panel.voice_volume_slider.sliderReleased.emit()
+    assert committed == [True]
+
+    panel.voice_volume_spin.setValue(55)
+    assert committed == [True]
+    panel.voice_volume_spin.editingFinished.emit()
+    assert committed == [True, True]
+
+
 # ---------------- (d) qt_overlay wiring ---------------- #
 
 def _window():
@@ -189,7 +239,7 @@ def test_startup_applies_persisted_volume_to_audio_controller(qapp):
     window.close()
 
 
-def test_set_spica_voice_volume_applies_live_and_persists(qapp, monkeypatch):
+def test_set_spica_voice_volume_applies_live_and_defers_persistence(qapp, monkeypatch):
     window = _window()
     saved = {}
     monkeypatch.setattr(
@@ -201,7 +251,13 @@ def test_set_spica_voice_volume_applies_live_and_persists(qapp, monkeypatch):
 
     assert window.spica_voice_volume == pytest.approx(0.42)
     assert window.audio_controller._chat_volume == pytest.approx(0.42, abs=1e-3)
+    assert saved == {}
+    assert window._voice_volume_save_timer.isActive()
+
+    window.persist_spica_voice_volume()
+
     assert saved["spica_voice_volume"] == pytest.approx(0.42)  # persisted
+    assert not window._voice_volume_save_timer.isActive()
     window.close()
 
 

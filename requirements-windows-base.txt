@@ -14,6 +14,7 @@
 # loop); the PREFLIGHT section is currently empty.
 
 # --- REQUIRED ---
+-r requirements-config-studio.txt
 PySide6>=6.6,<7
 openai>=2,<3
 httpx>=0.27,<1

@@ -27,6 +27,8 @@ import os
 
 import pytest
 
+from spica.config.env_roster import LEGACY_ENV_VARS, consumed_env_names
+
 
 @pytest.fixture(autouse=True)
 def _restore_os_environ():
@@ -36,3 +38,22 @@ def _restore_os_environ():
     finally:
         os.environ.clear()
         os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_studio_environment(request):
+    """Config Studio tests must never observe real roster or legacy values."""
+
+    if not request.node.path.name.startswith("test_config_studio_"):
+        yield
+        return
+    names = consumed_env_names() | frozenset(LEGACY_ENV_VARS)
+    previous = {name: os.environ[name] for name in names if name in os.environ}
+    for name in names:
+        os.environ.pop(name, None)
+    try:
+        yield
+    finally:
+        for name in names:
+            os.environ.pop(name, None)
+        os.environ.update(previous)

@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="referrer" content="no-referrer">
+    <title>Spica Config Studio</title>
+    <link rel="stylesheet" href="/assets/studio.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">跳到配置内容</a>
+    <div class="aurora" aria-hidden="true"></div>
+    <section id="manual-bootstrap" class="manual-bootstrap" role="dialog"
+             aria-modal="true" aria-labelledby="manual-bootstrap-title" hidden>
+      <div class="glass-card manual-bootstrap__card">
+        <p class="eyebrow">LOCAL SESSION</p>
+        <h1 id="manual-bootstrap-title">粘贴启动授权</h1>
+        <p>授权仅在内存中短暂有效、只能使用一次。它不会保存到浏览器。</p>
+        <label for="manual-bootstrap-token">高熵 bootstrap grant</label>
+        <input id="manual-bootstrap-token" type="password" autocomplete="off"
+               autocapitalize="none" spellcheck="false" maxlength="256"
+               aria-describedby="manual-bootstrap-status">
+        <button id="manual-bootstrap-submit" class="primary-button" type="button">
+          建立本机会话
+        </button>
+        <p id="manual-bootstrap-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand" aria-label="Spica Config Studio">
+          <span class="brand-mark" aria-hidden="true">✦</span>
+          <span class="brand-copy">
+            <strong>Spica</strong>
+            <small>Local Config Studio</small>
+          </span>
+        </div>
+
+        <label class="search-box" for="field-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="field-search" type="search" autocomplete="off"
+                 placeholder="搜索字段、owner 或来源…">
+          <kbd>Ctrl K</kbd>
+        </label>
+
+        <div class="topbar-actions">
+          <div class="view-switch" role="group" aria-label="字段复杂度">
+            <button class="view-button is-active" type="button" data-level="basic"
+                    aria-pressed="true">Basic</button>
+            <button class="view-button" type="button" data-level="advanced"
+                    aria-pressed="false">Advanced</button>
+          </div>
+          <div class="session-state" id="session-state" role="status" aria-live="polite"
+               aria-label="建立本地会话">
+            <span class="status-dot status-dot--pending" aria-hidden="true"></span>
+            <span>建立本地会话</span>
+          </div>
+        </div>
+      </header>
+
+      <nav class="sidebar" aria-label="Config Studio 导航">
+        <div class="nav-group">
+          <p class="nav-label">Studio</p>
+          <button class="nav-item is-active" type="button" data-view="overview"
+                  aria-current="page">
+            <span aria-hidden="true">◈</span><span>概览</span>
+          </button>
+          <button class="nav-item" type="button" data-view="switches">
+            <span aria-hidden="true">◌</span><span>功能开关</span>
+          </button>
+          <button class="nav-item" type="button" data-view="configuration">
+            <span aria-hidden="true">⌘</span><span>分类配置</span>
+          </button>
+          <button class="nav-item" type="button" data-view="character">
+            <span aria-hidden="true">◇</span><span>角色数据</span>
+          </button>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">Safety</p>
+          <button class="nav-item" type="button" data-view="secrets">
+            <span aria-hidden="true">⊙</span><span>Secrets & Overrides</span>
+          </button>
+          <button class="nav-item" type="button" data-view="self-check">
+            <span aria-hidden="true">✓</span><span>自检</span>
+          </button>
+          <button class="nav-item" type="button" data-view="restore">
+            <span aria-hidden="true">↶</span><span>恢复点</span>
+          </button>
+        </div>
+
+        <div class="side-note">
+          <span class="side-note__eyebrow">生效语义</span>
+          <strong>下一次 Spica 启动</strong>
+          <p>Studio 不推测已运行进程中的值。</p>
+        </div>
+      </nav>
+
+      <main id="workspace" class="workspace" tabindex="-1">
+        <section class="view-panel is-active" data-panel="overview" aria-labelledby="overview-title">
+          <div class="hero-row">
+            <div>
+              <p class="eyebrow">LOCAL · LOOPBACK ONLY</p>
+              <h1 id="overview-title">把复杂配置，收进一个安静的地方。</h1>
+              <p class="lede">字段来自生产 schema；来源、默认值与下一次启动值彼此分开，修改前始终先预览。</p>
+            </div>
+            <div class="hero-orbit" aria-hidden="true">
+              <span></span><i>✦</i>
+            </div>
+          </div>
+
+          <div class="health-grid">
+            <article class="glass-card health-card health-card--primary">
+              <div class="card-heading">
+                <span class="card-icon" aria-hidden="true">◆</span>
+                <div><p>配置健康</p><strong id="config-health">正在读取…</strong></div>
+              </div>
+              <p id="health-detail">等待本机 owner 返回安全的 Catalog 快照。</p>
+              <div class="meter"><span id="health-meter"></span></div>
+            </article>
+            <article class="glass-card health-card">
+              <div class="card-heading">
+                <span class="card-icon card-icon--violet" aria-hidden="true">↗</span>
+                <div><p>生效策略</p><strong>Next launch</strong></div>
+              </div>
+              <p>仅 owner 明确支持的 mtime 重读会单独标注。</p>
+            </article>
+            <article class="glass-card health-card">
+              <div class="card-heading">
+                <span class="card-icon card-icon--amber" aria-hidden="true">⌁</span>
+                <div><p>自检摘要</p><strong id="self-check-summary">尚未运行</strong></div>
+              </div>
+              <p>轻量检查不会下载模型；重检查需要逐项确认。</p>
+            </article>
+          </div>
+
+          <div class="content-grid">
+            <section class="glass-card config-preview" aria-labelledby="preview-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">SCHEMA CATALOG</p>
+                  <h2 id="preview-title">关键配置</h2>
+                </div>
+                <button class="text-button" type="button" data-view-target="configuration">查看全部</button>
+              </div>
+              <div id="featured-fields" class="field-list" aria-busy="true">
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+              </div>
+            </section>
+
+            <section class="glass-card activity-card" aria-labelledby="source-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">PROVENANCE</p>
+                  <h2 id="source-title">来源层级</h2>
+                </div>
+              </div>
+              <ol class="source-stack">
+                <li><span class="source-index">01</span><div><strong>Env override</strong><small>inherited → repo → parent</small></div></li>
+                <li><span class="source-index">02</span><div><strong>app.yaml</strong><small>typed owner document</small></div></li>
+                <li><span class="source-index">03</span><div><strong>Schema default</strong><small>production fallback</small></div></li>
+              </ol>
+              <div class="warning-strip" id="override-warning" hidden>
+                <span aria-hidden="true">!</span>
+                <p>存在 env override；修改 app.yaml 不会改变对应的下一次启动值。</p>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view-panel" data-panel="switches" aria-labelledby="switches-title">
+          <div class="page-heading"><p class="eyebrow">CAPABILITIES</p><h1 id="switches-title">功能开关</h1><p>集中查看 typed enable/backend 开关和 owner 生效策略。</p></div>
+          <div id="switch-grid" class="settings-grid"></div>
+        </section>
+
+        <section class="view-panel" data-panel="configuration" aria-labelledby="configuration-title">
+          <div class="page-heading"><p class="eyebrow">APP CONFIG</p><h1 id="configuration-title">分类配置</h1><p>LLM · TTS · STT · Screen/OCR · Song · Anime · Galgame · Memory · Plugins · Stream/UI</p></div>
+          <div id="app-recovery-notice" class="warning-strip recovery-notice" role="status" hidden>
+            <span aria-hidden="true">!</span>
+            <div class="recovery-copy">
+              <p>app.yaml 当前处于 recovery-only；字段 set、unset 与预览均已关闭。若服务端同时开放 app 与 rollback capability，可在“恢复点”中执行语义回滚。</p>
+              <p id="app-manual-repair-guidance" hidden><code>APP_YAML_MANUAL_REPAIR_REQUIRED</code>：没有可用 RestorePoint 时，停止 Spica 与 Studio，先备份 <code>data/config/app.yaml</code>，再使用生产 AppConfig/PyYAML 契约修复语法或字段并重新启动 Studio 验证。V1 不提供默认重置。</p>
+            </div>
+          </div>
+          <div id="catalog-fields-incomplete-notice" class="warning-strip recovery-notice" role="status" hidden>
+            <span aria-hidden="true">!</span>
+            <div class="recovery-copy">
+              <p><code>CATALOG_FIELDS_INCOMPLETE</code>：Catalog 安全投影、行或字节预算导致 AppConfig 字段展示不完整；set fail-closed，已有 file override 的 unset 修复路径仍可用。Studio 不恢复默认。</p>
+            </div>
+          </div>
+          <div class="filter-row" id="category-filter" role="toolbar" aria-label="配置分类"></div>
+          <div id="catalog-fields" class="settings-stack"></div>
+          <section id="overlay-settings" class="glass-card overlay-settings" aria-labelledby="overlay-settings-title">
+            <div class="section-heading">
+              <div><p class="eyebrow">UI OWNER DOCUMENT</p><h2 id="overlay-settings-title">Overlay 偏好</h2></div>
+              <span class="tag">NEXT LAUNCH</span>
+            </div>
+            <div id="overlay-fields" class="overlay-field-grid"></div>
+            <p id="overlay-operation-result" class="operation-result" role="status" aria-live="polite"></p>
+          </section>
+          <div class="readonly-catalog-grid">
+            <section id="plugin-status-catalog" class="glass-card readonly-catalog-card" aria-labelledby="plugin-status-title">
+              <div class="section-heading">
+                <div><p class="eyebrow">PLUGIN OWNER HEALTH</p><h2 id="plugin-status-title">插件状态</h2></div>
+                <span class="tag">READ ONLY</span>
+              </div>
+              <div id="plugin-statuses" class="readonly-status-list" role="list"></div>
+            </section>
+            <section id="environment-only-catalog" class="glass-card readonly-catalog-card" aria-labelledby="environment-only-title">
+              <div class="section-heading">
+                <div><p class="eyebrow">NON-APP OWNERS</p><h2 id="environment-only-title">环境专属设置</h2></div>
+                <span class="tag">READ ONLY</span>
+              </div>
+              <p class="safe-status-copy">这些字段没有等价 app.yaml owner；Studio 只展示服务端返回的安全状态，不提供编辑或清除。</p>
+              <div id="environment-only-settings" class="readonly-status-list" role="list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view-panel" data-panel="character" aria-labelledby="character-title">
+          <div class="page-heading"><p class="eyebrow">CHARACTER DOCUMENTS</p><h1 id="character-title">角色数据</h1><p>TTS、visual 与外部角色文档在 canonical schema 完成前明确只读。</p></div>
+          <div id="character-documents" class="document-grid"></div>
+        </section>
+
+        <section class="view-panel" data-panel="secrets" aria-labelledby="secrets-title">
+          <div class="page-heading"><p class="eyebrow">WRITE ONLY</p><h1 id="secrets-title">Secrets & Overrides</h1><p>GET 只显示是否配置；现有明文永不返回浏览器。</p></div>
+          <div class="safety-status-grid">
+            <article class="glass-card status-card">
+              <p class="eyebrow">SECRET SLOTS</p>
+              <h2>配置状态与来源</h2>
+              <ul id="secret-slot-status" class="safe-status-list" aria-live="polite"></ul>
+            </article>
+            <article class="glass-card status-card">
+              <p class="eyebrow">REPO DOCUMENT</p>
+              <h2>仓库 xiaosan.env</h2>
+              <p id="repo-env-health" class="safe-status-copy">正在读取安全状态…</p>
+            </article>
+            <article class="glass-card status-card">
+              <p class="eyebrow">PARENT · READ ONLY</p>
+              <h2>父级 xiaosan.env</h2>
+              <p id="parent-env-health" class="safe-status-copy">正在读取安全状态…</p>
+            </article>
+            <article class="glass-card status-card">
+              <p class="eyebrow">OVERRIDE SOURCES</p>
+              <h2>非敏感 owner override</h2>
+              <p id="override-source-summary" class="safe-status-copy">正在汇总来源…</p>
+            </article>
+          </div>
+          <div class="sensitive-writer-grid">
+            <section id="secret-actions" class="glass-card sensitive-writer-card" aria-labelledby="secret-actions-title">
+              <p class="eyebrow">WRITE ONLY COMMANDS</p>
+              <h2 id="secret-actions-title">Secret 槽位</h2>
+              <label class="writer-control"><span>槽位</span><select id="secret-slot-select" disabled></select></label>
+              <label class="writer-control"><span>新值（只写，不回显）</span><input id="secret-value-input" type="password" autocomplete="off" spellcheck="false" maxlength="16384" disabled></label>
+              <div class="sensitive-actions">
+                <button id="secret-set-preview" class="primary-button" type="button" disabled>预览设置 / 替换</button>
+                <button id="secret-clear-preview" class="secondary-button" type="button" disabled>预览清除</button>
+              </div>
+              <p id="sensitive-operation-result" class="operation-result" role="status" aria-live="polite"></p>
+            </section>
+            <section class="glass-card sensitive-writer-card" aria-labelledby="mapped-overrides-title">
+              <p class="eyebrow">REPO CLEAR ONLY</p>
+              <h2 id="mapped-overrides-title">映射到 app.yaml 的 override</h2>
+              <div id="mapped-overrides" class="mapped-overrides"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view-panel" data-panel="self-check" aria-labelledby="check-title">
+          <div class="page-heading"><p class="eyebrow">SAFE DIAGNOSTICS</p><h1 id="check-title">自检</h1><p>复用现有 self_check.py；默认不下载模型，不运行真实重检查。</p></div>
+          <div class="self-check-grid">
+            <section class="glass-card check-console" aria-labelledby="light-plan-title">
+              <div class="check-console__head">
+                <div><p class="eyebrow">LIGHT PLAN</p><h2 id="light-plan-title">轻量自检</h2></div>
+                <span class="tag" id="self-check-status-badge">IDLE</span>
+              </div>
+              <p>只运行固定轻量计划；不会加入 <code>--full</code>、调用真实 LLM 或允许模型下载。</p>
+              <div class="check-actions">
+                <button id="self-check-light-start" class="primary-button" type="button" disabled>运行轻量自检</button>
+                <button id="self-check-cancel" class="secondary-button" type="button" disabled hidden>取消当前任务</button>
+              </div>
+            </section>
+
+            <section class="glass-card heavy-plan" aria-labelledby="heavy-plan-title">
+              <div class="check-console__head">
+                <div><p class="eyebrow">EXPLICIT HEAVY PLAN</p><h2 id="heavy-plan-title">分项重检查</h2></div>
+                <span class="tag tag--warning">CONFIRM</span>
+              </div>
+              <p class="check-help">选择固定 allowlist 中的子系统。浏览器不会发送自报确认；服务端会为完整计划签发短期 receipt。</p>
+              <fieldset id="self-check-heavy-controls" disabled>
+                <legend>重检查子系统</legend>
+                <div class="check-choice-grid">
+                  <label><input type="checkbox" name="self-check-heavy" value="tts"> TTS</label>
+                  <label><input type="checkbox" name="self-check-heavy" value="stt"> STT</label>
+                  <label><input type="checkbox" name="self-check-heavy" value="moondream"> Moondream</label>
+                  <label><input type="checkbox" name="self-check-heavy" value="ocr"> OCR</label>
+                  <label><input type="checkbox" name="self-check-heavy" value="song_uvr"> Song UVR</label>
+                  <label><input type="checkbox" name="self-check-heavy" value="song_rvc"> Song RVC</label>
+                  <label><input type="checkbox" name="self-check-heavy" value="llm"> LLM</label>
+                </div>
+                <div class="check-options">
+                  <label><input id="self-check-enable-llm" type="checkbox"> 调用真实 LLM（<code>--llm</code>）</label>
+                  <label><input id="self-check-include-disabled" type="checkbox"> 检查已禁用子系统（<code>--all</code>）</label>
+                  <label><input id="self-check-allow-downloads" type="checkbox"> 允许模型下载</label>
+                </div>
+                <div class="confirmation-stack" aria-label="重检查确认">
+                  <label><input id="self-check-confirm-heavy" type="checkbox"> 我确认运行所选真实重检查</label>
+                  <label><input id="self-check-confirm-llm" type="checkbox" disabled> 我单独确认调用真实 LLM</label>
+                  <label><input id="self-check-confirm-include-disabled" type="checkbox" disabled> 我单独确认检查已禁用子系统（<code>--all</code>）</label>
+                  <label><input id="self-check-confirm-downloads" type="checkbox" disabled> 我单独确认允许模型下载</label>
+                </div>
+              </fieldset>
+              <button id="self-check-heavy-start" class="primary-button" type="button" disabled>获取服务端确认并运行</button>
+            </section>
+
+            <section id="self-check-monitor" class="glass-card self-check-monitor" aria-labelledby="self-check-monitor-title" aria-live="polite" aria-atomic="false" aria-busy="false">
+              <div class="check-console__head">
+                <div><p class="eyebrow">BOUNDED JOB VIEW</p><h2 id="self-check-monitor-title">任务状态</h2></div>
+                <strong id="self-check-job-status">尚未运行</strong>
+              </div>
+              <p id="self-check-job-summary">任务在页面关闭后仍由 sidecar 管理；重新打开页面可继续查询。</p>
+              <div class="check-report-grid">
+                <div><h3>进度</h3><ul id="self-check-progress" class="check-report-list"><li>等待任务</li></ul></div>
+                <div><h3>结果</h3><ul id="self-check-results" class="check-report-list"><li>暂无结果</li></ul></div>
+              </div>
+              <p id="self-check-output-note" class="output-note">不会显示原始 stderr。</p>
+            </section>
+          </div>
+        </section>
+
+        <section class="view-panel" data-panel="restore" aria-labelledby="restore-title">
+          <div class="page-heading"><p class="eyebrow">RESTORE POINTS</p><h1 id="restore-title">恢复点</h1><p>仅展示 opaque 元数据与语义预览，不暴露原始字节、hash 或大小。</p></div>
+          <div class="restore-grid">
+            <section class="glass-card restore-lane" aria-labelledby="restore-app-title"><p class="eyebrow">APP DOCUMENT</p><h2 id="restore-app-title">app.yaml</h2><div id="restore-app" class="restore-point-list"></div></section>
+            <section class="glass-card restore-lane" aria-labelledby="restore-overlay-title"><p class="eyebrow">UI DOCUMENT</p><h2 id="restore-overlay-title">overlay_config.json</h2><div id="restore-overlay" class="restore-point-list"></div></section>
+            <section class="glass-card restore-lane restore-lane--sensitive" aria-labelledby="restore-sensitive-title"><p class="eyebrow">WHOLE SENSITIVE DOCUMENT</p><h2 id="restore-sensitive-title">repo xiaosan.env</h2><p>这里回滚整个敏感 ManagedDocument，不是单个 secret。</p><div id="restore-sensitive" class="restore-point-list"></div></section>
+          </div>
+          <p id="restore-operation-result" class="operation-result" role="status" aria-live="polite"></p>
+        </section>
+      </main>
+
+      <aside class="inspector" aria-labelledby="inspector-title">
+        <div class="inspector-head">
+          <p class="eyebrow">FIELD INSPECTOR</p>
+          <h2 id="inspector-title" tabindex="-1" aria-live="polite">选择一个字段</h2>
+        </div>
+        <div id="inspector-content" class="inspector-content">
+          <div class="inspector-empty">
+            <span aria-hidden="true">✦</span>
+            <p>点击配置项，查看类型、默认值、next launch value、来源与 owner。</p>
+          </div>
+        </div>
+        <section id="field-editor" class="field-editor" aria-labelledby="field-editor-title" hidden>
+          <p class="eyebrow">TYPED AUTHORING</p>
+          <h3 id="field-editor-title">修改 file value</h3>
+          <div id="field-editor-control"></div>
+          <div class="field-editor__actions">
+            <button id="field-editor-set" class="primary-button" type="button" disabled>加入变更</button>
+            <button id="field-editor-unset" class="secondary-button" type="button" disabled>移除文件值</button>
+          </div>
+          <p id="field-editor-status" class="operation-result" role="status"></p>
+        </section>
+        <div class="review-dock">
+          <div><small>变更</small><strong id="change-count">0 项</strong></div>
+          <button id="app-preview-button" class="primary-button" type="button" disabled>预览变更</button>
+        </div>
+      </aside>
+    </div>
+
+    <dialog id="app-preview-dialog" class="writer-dialog" aria-labelledby="app-preview-title">
+      <form method="dialog" class="glass-card writer-dialog__card">
+        <div class="writer-dialog__head">
+          <div><p class="eyebrow">CHANGE PREVIEW</p><h2 id="app-preview-title">保存前语义 diff</h2></div>
+          <button id="app-preview-cancel" class="text-button" value="cancel" type="submit">取消</button>
+        </div>
+        <ul id="app-preview-changes" class="preview-change-list" aria-live="polite"></ul>
+        <p id="operation-result" class="operation-result" role="status" aria-live="polite"></p>
+        <div class="writer-dialog__actions">
+          <button class="secondary-button" value="cancel" type="submit">返回编辑</button>
+          <button id="app-preview-commit" class="primary-button" value="default" type="button" disabled>保存 app.yaml</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="overlay-preview-dialog" class="writer-dialog" aria-labelledby="overlay-preview-title">
+      <form method="dialog" class="glass-card writer-dialog__card">
+        <div class="writer-dialog__head">
+          <div><p class="eyebrow">OVERLAY PREVIEW</p><h2 id="overlay-preview-title">确认 UI owner 变更</h2></div>
+          <button id="overlay-preview-cancel" class="text-button" value="cancel" type="submit">取消</button>
+        </div>
+        <p id="overlay-preview-summary" class="safe-status-copy" aria-live="polite"></p>
+        <div class="writer-dialog__actions">
+          <button class="secondary-button" value="cancel" type="submit">返回编辑</button>
+          <button id="overlay-preview-commit" class="primary-button" value="default" type="button" disabled>保存 overlay_config.json</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="sensitive-preview-dialog" class="writer-dialog" aria-labelledby="sensitive-preview-title">
+      <form method="dialog" class="glass-card writer-dialog__card">
+        <div class="writer-dialog__head">
+          <div><p class="eyebrow">SENSITIVE PREVIEW</p><h2 id="sensitive-preview-title">确认敏感文档语义变更</h2></div>
+          <button id="sensitive-preview-cancel" class="text-button" value="cancel" type="submit">取消</button>
+        </div>
+        <div id="sensitive-preview-summary" class="sensitive-preview-summary" aria-live="polite"></div>
+        <label id="sensitive-clear-confirm-row" class="danger-confirm" hidden>
+          <input id="sensitive-clear-confirm" type="checkbox">
+          <span>我确认清除这个 secret；提交前请签发一次性二次确认。</span>
+        </label>
+        <div class="writer-dialog__actions">
+          <button class="secondary-button" value="cancel" type="submit">返回编辑</button>
+          <button id="sensitive-preview-commit" class="primary-button" value="default" type="button" disabled>提交敏感文档变更</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="rollback-preview-dialog" class="writer-dialog" aria-labelledby="rollback-preview-title">
+      <form method="dialog" class="glass-card writer-dialog__card">
+        <div class="writer-dialog__head">
+          <div><p class="eyebrow">ROLLBACK PREVIEW</p><h2 id="rollback-preview-title">确认语义回滚</h2></div>
+          <button id="rollback-preview-cancel" class="text-button" value="cancel" type="submit">取消</button>
+        </div>
+        <div id="rollback-preview-summary" class="rollback-preview-summary" aria-live="polite"></div>
+        <label class="danger-confirm"><input id="rollback-confirm" type="checkbox"><span>我确认按以上语义回滚，并理解当前状态会先生成一个新的 RestorePoint。</span></label>
+        <div class="writer-dialog__actions">
+          <button class="secondary-button" value="cancel" type="submit">返回</button>
+          <button id="rollback-preview-commit" class="primary-button" value="default" type="button" disabled>执行回滚</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script src="/assets/studio.js" defer></script>
+  </body>
+</html>

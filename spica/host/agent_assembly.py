@@ -138,8 +138,9 @@ def build_moondream_provider(
 def fold_platform(os_cfg: str, host_platform: str) -> str:
     """Fold the typed ``platform.os`` value into the effective platform (W1,
     WINDOWS_COMPAT_PLAN §3.2). Pure function -- no ``sys`` read here, so Layer B
-    pins it with injected values; the ONE production ``sys.platform`` read is in
-    ``build_agent_services``.
+    pins it with injected values. The desktop runtime's single platform read is
+    in ``build_agent_services``; independent sidecars detect their own process
+    platform at their adapter composition boundary.
 
     - explicit "linux"/"windows" -> returned verbatim (never looks at the host;
       also the only escape hatch on unknown hosts);
@@ -252,8 +253,9 @@ def build_agent_services(
     data_dir = _REPO_ROOT / "spica_data"
     # W1: fold the platform ONCE (resolve-once + inject, the screen/song precedent)
     # and select the three platform-adapter lanes via the factories. This is the
-    # single production sys.platform read; every later consumer reads
-    # services.effective_platform (§3.6), never sys.platform again.
+    # single desktop-runtime sys.platform read; every later AppHost consumer
+    # reads services.effective_platform (§3.6). Independent sidecars keep their
+    # process-platform probes inside their own outer adapters.
     effective_platform = fold_platform(config.platform.os, sys.platform)
     window_locator = build_window_locator(effective_platform)
     screen_capture = build_screen_capture(effective_platform)

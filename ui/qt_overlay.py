@@ -128,6 +128,10 @@ class OverlayWindow(QWidget):
         self.overlay_initial_height_scale = self.overlay_config.overlay_initial_height_scale
         self.character_max_height_ratio = self.overlay_config.character_max_height_ratio
         self.spica_voice_volume = self.overlay_config.spica_voice_volume
+        self._voice_volume_save_timer = QTimer(self)
+        self._voice_volume_save_timer.setSingleShot(True)
+        self._voice_volume_save_timer.setInterval(600)
+        self._voice_volume_save_timer.timeout.connect(self.persist_spica_voice_volume)
         self._last_layout_log_state: tuple[Any, ...] | None = None
         self.settings_panel: SettingsPanel | None = None
         self.screenshot_selector: ScreenshotSelectionOverlay | None = None
@@ -1302,6 +1306,9 @@ class OverlayWindow(QWidget):
             self.settings_panel.overall_scale_changed.connect(self.set_overall_scale)
             self.settings_panel.typing_speed_changed.connect(self.set_typewriter_speed)
             self.settings_panel.voice_volume_changed.connect(self.set_spica_voice_volume)
+            self.settings_panel.voice_volume_commit_requested.connect(
+                self.persist_spica_voice_volume
+            )
             self.settings_panel.apply_scale(self.ui_scale)
             self.settings_panel.hide()
 
@@ -1349,11 +1356,14 @@ class OverlayWindow(QWidget):
         self.typewriter_controller.set_speed(speed)
 
     def set_spica_voice_volume(self, volume: float) -> None:
-        """Apply her-voice volume live (settings slider, GUI thread) and persist it
-        merge-safely to overlay_config.json so it survives a restart. Linear 0.0-1.0;
-        only the chat/TTS output is affected (song keeps its own level)."""
+        """Apply her-voice volume live and schedule bounded persistence."""
         self.spica_voice_volume = max(0.0, min(1.0, float(volume)))
         self.audio_controller.set_chat_volume(self.spica_voice_volume)
+        self._voice_volume_save_timer.start()
+
+    def persist_spica_voice_volume(self) -> None:
+        """Persist at edit completion or after the bounded debounce."""
+        self._voice_volume_save_timer.stop()
         save_overlay_config_value("spica_voice_volume", self.spica_voice_volume)
 
     def _start_corner_resize(self, event: QMouseEvent) -> None:
@@ -1578,6 +1588,8 @@ class OverlayWindow(QWidget):
         self.move(event.globalPosition().toPoint() - self.drag_offset)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self._voice_volume_save_timer.isActive():
+            self.persist_spica_voice_volume()
         self.typewriter_controller.stop()
         self.audio_controller.stop_all()
         if self.galgame_controller is not None:

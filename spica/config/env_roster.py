@@ -108,6 +108,7 @@ RESPEAKER_ENV_MAP: dict[str, str] = {
 # set (P0b step 1); delete the lines from xiaosan.env.
 
 LEGACY_ENV_VARS: tuple[str, ...] = ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL")
+LEGACY_SECRET_ENV_VARS: tuple[str, ...] = ("DEEPSEEK_API_KEY",)
 
 # -- written/stripped: process-env mutations for the vendored GPT-SoVITS/HF
 # runtime (spica/config/runtime_env.py). Not configuration reads; listed so the

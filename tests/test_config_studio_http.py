@@ -4525,7 +4525,10 @@ def test_fixed_local_ui_and_background_load_without_a_session() -> None:
         arbitrary = client.get("/assets/../../data/config/app.yaml")
 
     assert index.status_code == 200
-    assert "Spica Config Studio" in index.text
+    assert "Spica 本地配置中心" in index.text
+    assert 'data-locale="zh-CN"' in index.text
+    assert 'data-locale="en"' in index.text
+    assert 'data-locale="ja"' in index.text
     assert stylesheet.status_code == 200
     assert 'url("/assets/background.png")' in stylesheet.text
     assert javascript.status_code == 200

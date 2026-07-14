@@ -61,6 +61,9 @@ cd Spica-Chatbot_Release
 pip install -r requirements-stt.txt
 pip install -r requirements-screen.txt
 
+# ローカル設定スタジオ（Windows では requirements-windows-base.txt に含まれます）
+python -m pip install -r requirements-config-studio.txt
+
 # Windows ユーザーは以下の分割ファイルを参照：
 #   requirements-windows-base.txt   基本動作
 #   requirements-windows-app.txt    音声合成 + 歌唱（constraints-windows-app.txt と併用）
@@ -142,6 +145,23 @@ python webui_qt.py
 ```
 
 機能のオン/オフ（アニメ / 歌唱 / 画面認識の有効化、音声デバイス、GPU など）は `data/config/app.yaml` で調整します。
+
+### 8. ローカル設定スタジオ
+
+ローカル設定スタジオは、Spica とは別に起動するブラウザー管理画面です。Spica と同時には起動せず、リモートアクセスにも公開されません。既定では `127.0.0.1:8765` だけで待ち受け、標準ブラウザーを自動で開きます：
+
+```bash
+python scripts/config_studio.py
+```
+
+ポートを明示的に指定するか、ブラウザーの自動起動を無効にできます：
+
+```bash
+python scripts/config_studio.py --port 8765
+python scripts/config_studio.py --no-open-browser
+```
+
+`--no-open-browser` を使う場合は、端末に表示されたローカル URL を開き、ページへ一度限りの起動認証を貼り付けます。右上の切り替えで `中文`、`English`、`日本語` を選べます。言語切り替えは画面の説明だけを変更し、設定キーや値は変更しません。終了するには、起動した端末で `Ctrl+C` を押してください。
 
 ---
 

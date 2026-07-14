@@ -61,6 +61,9 @@ Use a dedicated virtual environment (conda / venv). Install for your platform:
 pip install -r requirements-stt.txt
 pip install -r requirements-screen.txt
 
+# Local Config Studio (already included by requirements-windows-base.txt on Windows)
+python -m pip install -r requirements-config-studio.txt
+
 # Windows users: see the split files below
 #   requirements-windows-base.txt   base runtime
 #   requirements-windows-app.txt    voice synthesis + singing (with constraints-windows-app.txt)
@@ -142,6 +145,23 @@ python webui_qt.py
 ```
 
 Feature toggles (enable anime / singing / screen recognition, audio device, GPU, etc.) live in `data/config/app.yaml`.
+
+### 8. Local Config Studio
+
+Local Config Studio is an independently launched browser interface. It does not start with Spica and is not exposed for remote access. By default it listens only on `127.0.0.1:8765` and opens your default browser:
+
+```bash
+python scripts/config_studio.py
+```
+
+You can select the stable port explicitly or disable automatic browser opening:
+
+```bash
+python scripts/config_studio.py --port 8765
+python scripts/config_studio.py --no-open-browser
+```
+
+With `--no-open-browser`, open the local URL printed in the terminal and paste the one-time bootstrap grant into the page. Use the top-right switch to choose `中文`, `English`, or `日本語`. The language switch changes presentation text only; it does not change configuration keys or values. Press `Ctrl+C` in the launch terminal to stop the service.
 
 ---
 

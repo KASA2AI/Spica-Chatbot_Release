@@ -61,6 +61,9 @@ cd Spica-Chatbot_Release
 pip install -r requirements-stt.txt
 pip install -r requirements-screen.txt
 
+# 本地配置中心（Windows 的 requirements-windows-base.txt 已包含这些依赖）
+python -m pip install -r requirements-config-studio.txt
+
 # Windows 用户另见下面的分文件（base / app / heavy）：
 #   requirements-windows-base.txt   基础运行
 #   requirements-windows-app.txt    语音合成 + 唱歌（配合 constraints-windows-app.txt）
@@ -142,6 +145,23 @@ python webui_qt.py
 ```
 
 功能开关（是否启用看番 / 唱歌 / 屏幕识别、语音设备、GPU 等）在 `data/config/app.yaml` 里调。
+
+### 8. 本地配置中心
+
+本地配置中心是独立启动的浏览器管理页面，不会随 Spica 自动启动，也不会开放远程访问。启动后默认只监听 `127.0.0.1:8765`，并自动打开默认浏览器：
+
+```bash
+python scripts/config_studio.py
+```
+
+可以指定固定端口，或关闭自动打开浏览器：
+
+```bash
+python scripts/config_studio.py --port 8765
+python scripts/config_studio.py --no-open-browser
+```
+
+使用 `--no-open-browser` 时，按终端提示打开本机地址，并在页面中粘贴一次性启动授权。页面右上角可切换 `中文`、`English`、`日本語`；语言切换只改变界面说明，不改变配置键和值。完成后在启动终端按 `Ctrl+C` 停止服务。
 
 ---
 

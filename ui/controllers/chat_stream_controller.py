@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from PySide6.QtCore import QObject, QTimer
 from spica.core.events import event_from_legacy
 from spica.core.proactive import NO_COMMENT_SENTINEL, compose_system_directive_message
 from spica.core.state_machine import ChatStateMachine
+from spica.ports.conversation import AdmissionDecision, PresentationTerminalOutcome
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.models.playback import AudioOwner, AudioToken
@@ -40,6 +42,7 @@ class ChatStreamController(QObject):
         on_chat_done: Callable[[], None],
         on_error: Callable[[str], None],
         apply_visual: Callable[[dict[str, Any]], None],
+        conversation_coordinator: Any | None = None,
     ) -> None:
         super().__init__(parent)
         self.agent = agent
@@ -52,9 +55,11 @@ class ChatStreamController(QObject):
         self.on_chat_done = on_chat_done
         self.on_error = on_error
         self.apply_visual = apply_visual
+        self.conversation_coordinator = conversation_coordinator
 
         self.chat_worker: ChatWorker | None = None
         self.retired_chat_workers: list[ChatWorker] = []
+        self.active_coordinator_turn_id: str | None = None
         self.stream_session_id = 0
         self.active_stream_token: StreamToken | None = None
         self.current_stream_kind: StreamKind | None = None
@@ -100,17 +105,23 @@ class ChatStreamController(QObject):
             screen_attachment=screen_attachment,
         )
 
-    def start_system_turn(self, request: Any) -> StreamToken:
+    def start_system_turn(self, request: Any) -> StreamToken | None:
         """P3: launch a SYSTEM-initiated turn (a ProactiveTurnRequest). The framed
         directive rides the normal stream machinery -- ChatWorker / playback /
         typewriter / TTS / busy all behave exactly like a user turn, and a user
         message preempts it via the usual stop_current."""
+        if self.conversation_coordinator is not None and (
+            self.is_busy() or self.conversation_coordinator.is_busy()
+        ):
+            return None
         return self._start_stream(
             kind=StreamKind.SYSTEM,
             message=compose_system_directive_message(request.directive),
             visual_overrides=None,
             screen_attachment=None,
             conversation_id=request.conversation_id,
+            system_directive=request.directive,
+            system_source=str(getattr(request, "source", "") or ""),
         )
 
     def notify_on_current_stream_done(self, callback: Callable[[], None]) -> None:
@@ -129,7 +140,7 @@ class ChatStreamController(QObject):
             callback()
 
     def stop_current(self) -> None:
-        self._retire_chat_worker(interrupt=True)
+        retired_worker = self._retire_chat_worker(interrupt=True)
         self._invalidate_stream_token()
         self.current_stream_kind = None
         self._fire_current_stream_done()
@@ -137,24 +148,36 @@ class ChatStreamController(QObject):
         self.typewriter_controller.stop()
         self.audio_controller.release_chat_audio()
         self.audio_controller.release_preloaded()
+        self._report_presentation_terminal(
+            PresentationTerminalOutcome.STOPPED,
+            worker=retired_worker,
+        )
         self.set_busy(False)
 
     def is_busy(self) -> bool:
         # Phase 6E: UI reads busy-ness from the state machine, not scattered bools.
         return bool(self.state_machine.is_busy or (self.chat_worker and self.chat_worker.isRunning()))
 
-    def shutdown(self, wait_ms: int = 1500) -> None:
+    def shutdown(self, wait_ms: int = 1500) -> bool:
         self.stop_current()
         workers = [worker for worker in self.retired_chat_workers if worker is not None]
-        self.retired_chat_workers = []
+        all_stopped = True
         for worker in workers:
             if worker.isRunning():
                 worker.requestInterruption()
-                worker.wait(wait_ms)
+                if not worker.wait(wait_ms):
+                    # Never queue deletion of a live QThread.  Keep both the Qt
+                    # parent and this strong reference; its existing ``finished``
+                    # connection performs normal cleanup when it really exits.
+                    all_stopped = False
+                    continue
+            if worker in self.retired_chat_workers:
+                self.retired_chat_workers.remove(worker)
             try:
                 worker.deleteLater()
             except Exception:
                 pass
+        return all_stopped
 
     def _start_stream(
         self,
@@ -164,6 +187,8 @@ class ChatStreamController(QObject):
         visual_overrides: dict[str, Any] | None,
         screen_attachment: dict[str, Any] | None,
         conversation_id: str | None = None,
+        system_directive: str | None = None,
+        system_source: str = "",
     ) -> StreamToken:
         # Regression alarm for the system-turn GUI-thread marshal (2026-06-26
         # libQt6Gui GPF fix): every _start_stream -- user, song, AND reaction --
@@ -207,14 +232,53 @@ class ChatStreamController(QObject):
             interaction_mode,
             self,
             screen_attachment=screen_attachment if kind == StreamKind.CHAT else None,
+            conversation_coordinator=self.conversation_coordinator,
+            request_id=(uuid.uuid4().hex if self.conversation_coordinator is not None else None),
+            system_directive=system_directive,
+            system_source=system_source,
         )
         worker.token = token
         worker.stream_event.connect(self._handle_stream_event)
         worker.failed.connect(self._handle_chat_worker_error)
+        worker.admission_rejected.connect(self._handle_admission_rejected)
+        worker.turn_admitted.connect(self._handle_turn_admitted)
         worker.finished.connect(self._handle_chat_worker_finished)
         self.chat_worker = worker
         worker.start()
         return token
+
+    def _report_presentation_terminal(
+        self,
+        outcome: PresentationTerminalOutcome,
+        *,
+        worker: ChatWorker | None = None,
+    ) -> bool:
+        if self.conversation_coordinator is None:
+            return False
+        turn_id = self.active_coordinator_turn_id
+        if turn_id is None and worker is not None and worker.accepted_turn is not None:
+            turn_id = worker.accepted_turn.turn_id
+        if turn_id is None:
+            return False
+        reported = bool(
+            self.conversation_coordinator.report_presentation_terminal(
+                turn_id,
+                outcome,
+            )
+        )
+        if turn_id == self.active_coordinator_turn_id:
+            self.active_coordinator_turn_id = None
+        return reported
+
+    def _handle_turn_admitted(self, turn_id: str) -> None:
+        if self._active_stream_signal_token() is None:
+            if self.conversation_coordinator is not None:
+                self.conversation_coordinator.report_presentation_terminal(
+                    turn_id,
+                    PresentationTerminalOutcome.STOPPED,
+                )
+            return
+        self.active_coordinator_turn_id = turn_id
 
     def _next_stream_token(self, kind: StreamKind) -> StreamToken:
         self.stream_session_id += 1
@@ -240,10 +304,15 @@ class ChatStreamController(QObject):
         return token
 
     def _disconnect_chat_worker_signals(self, worker: ChatWorker) -> None:
+        # Retired workers must keep their lifecycle signals connected. Admission
+        # can complete after an immediate stop; _handle_turn_admitted then reports
+        # presentation STOPPED for the stale token. ``finished`` also removes the
+        # safely-draining worker from retired_chat_workers. Only user-visible
+        # output/error signals are disconnected here.
         for signal, handler in (
             (worker.stream_event, self._handle_stream_event),
             (worker.failed, self._handle_chat_worker_error),
-            (worker.finished, self._handle_chat_worker_finished),
+            (worker.admission_rejected, self._handle_admission_rejected),
         ):
             try:
                 signal.disconnect(handler)
@@ -536,10 +605,31 @@ class ChatStreamController(QObject):
         self._invalidate_stream_token(token)
         self._handle_stream_error(message, token.kind)
 
+    def _handle_admission_rejected(self, decision: str) -> None:
+        token = self._active_stream_signal_token()
+        if token is None:
+            self._log_stale_event_ignored("admission_rejected", decision=decision)
+            return
+        self._invalidate_stream_token(token)
+        if token.kind is not StreamKind.SYSTEM or decision != AdmissionDecision.BUSY.value:
+            self._handle_stream_error(
+                f"conversation admission rejected: {decision}",
+                token.kind,
+            )
+            return
+
+        self._reset_playback_state(streaming=False)
+        self.typewriter_controller.stop()
+        self.set_busy(False)
+        self._fire_current_stream_done()
+        self.current_stream_kind = None
+        self.on_chat_done()
+
     def _handle_stream_error(self, message: str, kind: StreamKind) -> None:
         del kind
         self._reset_playback_state(streaming=False)
         self.typewriter_controller.stop()
+        self._report_presentation_terminal(PresentationTerminalOutcome.FAILED)
         self.set_busy(False)
         self._fire_current_stream_done()  # an errored stream counts as done (B2 gate)
         self.current_stream_kind = None
@@ -879,6 +969,7 @@ class ChatStreamController(QObject):
         self.current_audio_finished = False
         self.current_text_finished = False
         self.audio_controller.release_preloaded()
+        self._report_presentation_terminal(PresentationTerminalOutcome.COMPLETED)
         self.set_busy(False)
         self.state_machine.stop()
         del completed_kind
@@ -1165,6 +1256,7 @@ class ChatStreamController(QObject):
                 QTimer.singleShot(0, self._pump_stream_playback)
             return
         self.audio_controller.release_preloaded()
+        self._report_presentation_terminal(PresentationTerminalOutcome.COMPLETED)
         self.set_busy(False)
         self.state_machine.stop()
         self._fire_current_stream_done()

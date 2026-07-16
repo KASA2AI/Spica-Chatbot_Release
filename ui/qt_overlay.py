@@ -357,6 +357,7 @@ class OverlayWindow(QWidget):
             on_chat_done=self._handle_chat_stream_done,
             on_error=self._handle_chat_error,
             apply_visual=self._apply_visual,
+            conversation_coordinator=self._desktop_conversation_coordinator(),
         )
         if self.song_controller is not None:
             self.song_controller.set_chat_stream_controller(self.chat_stream_controller)
@@ -1170,17 +1171,66 @@ class OverlayWindow(QWidget):
             self.voice_input_controller.toggle()
 
     def _schedule_next_voice_recording(self, delay_ms: int = 320) -> None:
-        if self.voice_input_controller is not None:
-            self.voice_input_controller.schedule_next_recording(delay_ms)
+        voice_input = self.voice_input_controller
+        if voice_input is None or not voice_input.voice_mode_active:
+            return
+        coordinator = self._desktop_conversation_coordinator()
+        if coordinator is None:
+            voice_input.schedule_next_recording(delay_ms)
+            return
+        session_id = voice_input.voice_session_id
+        QTimer.singleShot(
+            delay_ms,
+            lambda sid=session_id: self._resume_voice_recording_when_turn_idle(sid),
+        )
+
+    def _resume_voice_recording_when_turn_idle(self, session_id: int) -> None:
+        voice_input = self.voice_input_controller
+        if (
+            voice_input is None
+            or not voice_input.voice_mode_active
+            or session_id != voice_input.voice_session_id
+        ):
+            return
+        if self._is_conversation_busy():
+            QTimer.singleShot(
+                50,
+                lambda sid=session_id: self._resume_voice_recording_when_turn_idle(sid),
+            )
+            return
+        voice_input.maybe_start_recording(session_id)
 
     def _is_voice_mode_active(self) -> bool:
         return bool(self.voice_input_controller is not None and self.voice_input_controller.voice_mode_active)
 
+    def _desktop_conversation_coordinator(self) -> Any | None:
+        host = getattr(self, "host", None)
+        config = getattr(host, "config", None)
+        conversation = getattr(config, "conversation", None)
+        if not bool(getattr(conversation, "coordinator_desktop_enabled", False)):
+            return None
+        return getattr(host, "conversation_coordinator", None)
+
     def _is_conversation_busy(self) -> bool:
-        return bool(
-            (self.chat_stream_controller is not None and self.chat_stream_controller.is_busy())
-            or self._is_song_busy()
-        )
+        coordinator = self._desktop_conversation_coordinator()
+        if coordinator is not None:
+            # Coordinator owns every accepted turn. The controller term covers
+            # only the short replacement-user window before its atomic submit;
+            # keeping that window busy prevents a proactive proposal from
+            # ducking the mic and racing ahead of the user's pending message.
+            turn_busy = bool(
+                coordinator.is_busy()
+                or (
+                    self.chat_stream_controller is not None
+                    and self.chat_stream_controller.is_busy()
+                )
+            )
+        else:
+            turn_busy = bool(
+                self.chat_stream_controller is not None
+                and self.chat_stream_controller.is_busy()
+            )
+        return bool(turn_busy or self._is_song_busy())
 
     def _is_recording(self) -> bool:
         """A user voice segment is in flight (a SpeechWorker is running, idle OR
@@ -1232,7 +1282,14 @@ class OverlayWindow(QWidget):
         _system_turn_requested signal when started from a worker thread)."""
         if self.chat_stream_controller is None:
             return
-        self.chat_stream_controller.start_system_turn(request)
+        token = self.chat_stream_controller.start_system_turn(request)
+        if token is None:
+            # The proposal was valid when the arbiter checked, but a user turn
+            # won the queued GUI-thread race. Restore the duck/reaction gates
+            # immediately instead of attaching them to that unrelated turn.
+            self.proactive_arbiter.system_speech_finished()
+            self._reaction_stream_closed()
+            return
         self.chat_stream_controller.notify_on_current_stream_done(
             self.proactive_arbiter.system_speech_finished
         )
@@ -1592,6 +1649,14 @@ class OverlayWindow(QWidget):
             self.persist_spica_voice_volume()
         self.typewriter_controller.stop()
         self.audio_controller.stop_all()
+        if self.chat_stream_controller is not None:
+            chat_stopped = self.chat_stream_controller.shutdown(1500)
+            if chat_stopped is False:
+                logger.error(
+                    "event=desktop_close_rejected reason=chat_qthread_timeout"
+                )
+                event.ignore()
+                return
         if self.galgame_controller is not None:
             # Close-during-play: try a background stop for up to 3s, then abandon
             # -- the dangling session is 補總結'd by recovery on next startup.
@@ -1610,8 +1675,6 @@ class OverlayWindow(QWidget):
             # P1-9: terminate yt-dlp keeping .part; qbt polling stops, the
             # external service keeps the task (reconciled on next startup).
             self.anime_controller.shutdown(1500)
-        if self.chat_stream_controller is not None:
-            self.chat_stream_controller.shutdown(1500)
         if self.voice_input_controller is not None:
             self.voice_input_controller.shutdown(1500)
         if self.screenshot_selector is not None:

@@ -37,6 +37,9 @@
 #   play_unit_max_chars: 96      # env PLAY_UNIT_MAX_CHARS
 #   visual_stream_workers: 2     # env VISUAL_STREAM_WORKERS
 
+# conversation:                  # 桌面对话 owner 灰度开关；yaml-only、重启生效、无数据迁移
+#   coordinator_desktop_enabled: false  # 默认旧路径；仅在受控桌面验证时改 true
+
 # galgame:                                # 陪玩调参;env 无名,只此文件 (铁律 #4)。解开某键放进下方 live galgame 块即生效
 #   summary_model: null
 #   summary_trigger_chars: 3000           # 默认 2000:攒够这么多未总结字符触发后台总结

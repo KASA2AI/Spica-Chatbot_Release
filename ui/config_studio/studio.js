@@ -1382,6 +1382,23 @@
         advice: "数を増やすと並列性が上がる場合がありますが、CPU とメモリの使用量も増えます。一般的な環境では既定値を維持してください。",
       }),
     }),
+    "conversation.coordinator_desktop_enabled": Object.freeze({
+      "zh-CN": Object.freeze({
+        title: "启用桌面对话协调器",
+        description: "决定下次启动后，桌面的用户对话、系统主动对话、忙碌判断与停止请求是否统一交给对话协调器管理。",
+        advice: "默认保持关闭；仅在受控桌面验证后开启。需要回退时关闭并重启，不涉及对话数据迁移。",
+      }),
+      en: Object.freeze({
+        title: "Enable desktop conversation coordinator",
+        description: "Controls whether desktop user turns, proactive system turns, busy admission, and cancellation are owned by the conversation coordinator after the next launch.",
+        advice: "Leave this off by default and enable it only for controlled desktop validation. Turn it off and restart to restore the legacy path; no conversation data migration is involved.",
+      }),
+      ja: Object.freeze({
+        title: "デスクトップ会話コーディネーターを有効化",
+        description: "次回起動後、デスクトップのユーザー会話、システムからの自発会話、ビジー判定、停止要求を会話コーディネーターで一元管理するかを設定します。",
+        advice: "既定では無効のままにし、管理されたデスクトップ検証でのみ有効にしてください。無効に戻して再起動すれば従来経路へ戻り、会話データの移行はありません。",
+      }),
+    }),
     "galgame.summary_model": Object.freeze({
       "zh-CN": Object.freeze({
         title: "剧情总结模型",
@@ -2636,6 +2653,11 @@
       "zh-CN": "流式播放",
       "en": "Streaming playback",
       "ja": "ストリーミング再生",
+    }),
+    "conversation": Object.freeze({
+      "zh-CN": "对话协调",
+      "en": "Conversation coordination",
+      "ja": "会話コーディネーション",
     }),
     "galgame": Object.freeze({
       "zh-CN": "Galgame 陪玩",

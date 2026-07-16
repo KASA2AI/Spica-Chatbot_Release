@@ -90,6 +90,12 @@ class StreamConfig(BaseModel):
     visual_stream_workers: int = 2
 
 
+class ConversationConfig(BaseModel):
+    """Restart-effective rollout switches for desktop conversation ownership."""
+
+    coordinator_desktop_enabled: bool = False
+
+
 class ReactionTierParams(BaseModel):
     """One reaction tier's gate values (P5 step 4-B). Mirrors the code-side
     ``reaction.ReactionModeParams`` 1:1; fields are REQUIRED (no defaults) so a
@@ -496,6 +502,7 @@ class AppConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     character: CharacterConfig = Field(default_factory=CharacterConfig)
     stream: StreamConfig = Field(default_factory=StreamConfig)
+    conversation: ConversationConfig = Field(default_factory=ConversationConfig)
     galgame: GalgameConfig = Field(default_factory=GalgameConfig)
     tts: TtsConfig = Field(default_factory=TtsConfig)
     stt: SttConfig = Field(default_factory=SttConfig)

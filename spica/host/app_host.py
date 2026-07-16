@@ -26,10 +26,12 @@ import uuid
 from typing import Any, Callable
 
 
+from spica.adapters.conversation import LegacyRunTurnAdapter
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
 from spica.config.secrets import Secrets, load_secrets
 from spica.core.chat_engine import ChatEngine
+from spica.core.conversation_coordinator import ConversationCoordinator
 from spica.core.companion_events import CompanionEventSink, noop_companion_sink
 from spica.conversation.character_loader import DEFAULT_SPICA_SKILL_DIR
 from spica.core.character import load_character_package
@@ -138,6 +140,7 @@ class AppHost:
         self.services: Any | None = None
         self.character_package: Any | None = None
         self.chat_engine: Any | None = None
+        self.conversation_coordinator: ConversationCoordinator | None = None
         # galgame companion event sink (Phase 4). The PUBLIC sink is a stable
         # dispatcher (P5 tee, D-P5-0): it forwards to the UI bridge and -- when
         # the reaction engine is on -- enqueues into its worker queue. Default
@@ -356,6 +359,9 @@ class AppHost:
             # router (D6: the router is the ONE injector); galgame's binding
             # reaches it through the controller's sink at publish-LAST time.
             self.chat_engine.set_game_binding_provider(self.domain_router.current)
+            self.conversation_coordinator = ConversationCoordinator(
+                LegacyRunTurnAdapter(self.chat_engine)
+            )
             # P5 / Phase 4: reaction domain wiring via the assembly (judge before
             # engine; install() builds THROUGH the thin delegates below -- the
             # facade is the only build path, pinned by patch-validity tests).

@@ -207,6 +207,8 @@ class ChatEngine:
         conversation_id: str | None = None,
         source: str = "",
         cancelled: threading.Event | None = None,
+        visual_overrides: dict[str, Any] | None = None,
+        include_user_time_context: bool = True,
     ):
         """P3: a SYSTEM-initiated turn (proactive speech). Mode-agnostic: the
         caller (song report today, galgame tease / video commentary later) only
@@ -220,6 +222,8 @@ class ChatEngine:
             conversation_id=conversation_id or "default",
             interaction_mode="system",
             cancelled=cancelled,
+            visual_overrides=visual_overrides,
+            include_user_time_context=include_user_time_context,
         )
 
     def stream_voice(

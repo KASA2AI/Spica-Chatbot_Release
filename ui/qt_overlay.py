@@ -3,11 +3,14 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
+from PySide6.QtGui import QBitmap, QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsDropShadowEffect,
@@ -53,6 +56,9 @@ DEBUG_NORMAL_WINDOW = False
 MIN_WINDOW_SIZE = QSize(460, 360)
 CHARACTER_HIT_ALPHA_THRESHOLD = 8
 CHARACTER_HIT_MARGIN = 7
+RAW_PIXMAP_CACHE_LIMIT = 24
+SCALED_PIXMAP_CACHE_LIMIT = 64
+CHARACTER_HIT_REGION_CACHE_LIMIT = 64
 # Voice-mode visualisation (display-only): how long the recognized whole sentence
 # lingers in the input box before it is cleared. The turn auto-submits immediately
 # regardless, so this governs ONLY when the box returns to normal -- long enough to
@@ -117,8 +123,16 @@ class OverlayWindow(QWidget):
         self.resize_origin_ui_scale = 1.0
         self.current_pixmap: QPixmap | None = None
         self.current_pixmap_cache_key: str | None = None
-        self.pixmap_cache: dict[str, QPixmap] = {}
-        self.scaled_pixmap_cache: dict[tuple[str, int, int, float, float], QPixmap] = {}
+        self.pixmap_cache: OrderedDict[str, QPixmap] = OrderedDict()
+        self.scaled_pixmap_cache: OrderedDict[
+            tuple[str, int, int, float, float], QPixmap
+        ] = OrderedDict()
+        # Alpha hit regions are stored in pixmap-local coordinates.  Moving the
+        # label therefore only translates an existing region; image/size/scale
+        # changes select a different key and never reuse stale geometry.
+        self.character_hit_region_cache: OrderedDict[
+            tuple[str, int, int, float, float, int, int, int, int], QRegion
+        ] = OrderedDict()
         self.available_costumes: list[str] = []
         self.selected_costume: str | None = None
         self.interlocutor_name = DEFAULT_INTERLOCUTOR_NAME
@@ -828,11 +842,37 @@ class OverlayWindow(QWidget):
         logger.debug("event=%s monotonic_ms=%s%s", event, self._now_ms(), suffix)
 
     def _clear_scaled_pixmap_cache(self, reason: str) -> None:
-        if not self.scaled_pixmap_cache:
+        scaled_cache_size = len(self.scaled_pixmap_cache)
+        hit_region_cache_size = len(self.character_hit_region_cache)
+        if not scaled_cache_size and not hit_region_cache_size:
             return
-        cache_size = len(self.scaled_pixmap_cache)
         self.scaled_pixmap_cache.clear()
-        self._log_character_image_event("scaled_cache_clear", reason=reason, cache_size=cache_size)
+        self.character_hit_region_cache.clear()
+        self._log_character_image_event(
+            "scaled_cache_clear",
+            reason=reason,
+            cache_size=scaled_cache_size,
+            hit_region_cache_size=hit_region_cache_size,
+        )
+
+    def _remember_cache_value(
+        self,
+        cache: OrderedDict,
+        key: Any,
+        value: Any,
+        limit: int,
+    ) -> None:
+        """Insert an LRU value while keeping GUI image memory bounded."""
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > limit:
+            cache.popitem(last=False)
+
+    def _cached_value(self, cache: OrderedDict, key: Any) -> Any | None:
+        value = cache.get(key)
+        if value is not None:
+            cache.move_to_end(key)
+        return value
 
     def _scaled_pixmap_cache_key(self) -> tuple[str, int, int, float, float] | None:
         if not self.current_pixmap_cache_key:
@@ -853,7 +893,7 @@ class OverlayWindow(QWidget):
             return
         scaled_cache_key = self._scaled_pixmap_cache_key()
         if scaled_cache_key is not None:
-            cached_scaled = self.scaled_pixmap_cache.get(scaled_cache_key)
+            cached_scaled = self._cached_value(self.scaled_pixmap_cache, scaled_cache_key)
             if cached_scaled is not None and not cached_scaled.isNull():
                 self._log_character_image_event(
                     "scaled_cache_hit",
@@ -894,7 +934,12 @@ class OverlayWindow(QWidget):
             scaled_size=f"{scaled.width()}x{scaled.height()}",
         )
         if scaled_cache_key is not None and not scaled.isNull():
-            self.scaled_pixmap_cache[scaled_cache_key] = scaled
+            self._remember_cache_value(
+                self.scaled_pixmap_cache,
+                scaled_cache_key,
+                scaled,
+                SCALED_PIXMAP_CACHE_LIMIT,
+            )
         label_started_at_ms = self._now_ms()
         self._log_character_image_event("label_update_start")
         self.character_label.setPixmap(scaled)
@@ -909,7 +954,22 @@ class OverlayWindow(QWidget):
         started_at_ms = self._now_ms()
         cache_key = str(Path(path).resolve())
         self._log_character_image_event("set_character_image_start", path=cache_key)
-        raw_pixmap = self.pixmap_cache.get(cache_key)
+        label_pixmap = self.character_label.pixmap()
+        if (
+            cache_key == self.current_pixmap_cache_key
+            and self.current_pixmap is not None
+            and not self.current_pixmap.isNull()
+            and label_pixmap is not None
+            and not label_pixmap.isNull()
+        ):
+            self._log_character_image_event(
+                "set_character_image_unchanged",
+                path=cache_key,
+                duration_ms=self._duration_ms(started_at_ms),
+            )
+            return
+
+        raw_pixmap = self._cached_value(self.pixmap_cache, cache_key)
         if raw_pixmap is not None and not raw_pixmap.isNull():
             self._log_character_image_event("cache_hit", path=cache_key, cache_size=len(self.pixmap_cache))
             self._log_character_image_event("raw_cache_hit", path=cache_key, cache_size=len(self.pixmap_cache))
@@ -941,7 +1001,12 @@ class OverlayWindow(QWidget):
             return
         self.current_pixmap = pixmap
         self.current_pixmap_cache_key = cache_key
-        self.pixmap_cache[cache_key] = self.current_pixmap
+        self._remember_cache_value(
+            self.pixmap_cache,
+            cache_key,
+            self.current_pixmap,
+            RAW_PIXMAP_CACHE_LIMIT,
+        )
         self._layout_overlay()
         duration_ms = self._duration_ms(started_at_ms)
         self._log_character_image_event("set_character_image_done", path=cache_key, duration_ms=duration_ms, loaded=True)
@@ -1487,8 +1552,45 @@ class OverlayWindow(QWidget):
                 ).intersected(self.rect())
             )
 
-        image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
-        region = self._alpha_hit_region(image, pixmap_rect.topLeft())
+        scaled_key = self._scaled_pixmap_cache_key()
+        region_cache_key = None
+        if scaled_key is not None:
+            region_cache_key = (
+                *scaled_key,
+                pixmap.width(),
+                pixmap.height(),
+                CHARACTER_HIT_ALPHA_THRESHOLD,
+                CHARACTER_HIT_MARGIN,
+            )
+        local_region = (
+            self._cached_value(self.character_hit_region_cache, region_cache_key)
+            if region_cache_key is not None
+            else None
+        )
+        if local_region is None:
+            self._log_character_image_event(
+                "hit_region_cache_miss",
+                path=self.current_pixmap_cache_key,
+                pixmap_size=f"{pixmap.width()}x{pixmap.height()}",
+                cache_size=len(self.character_hit_region_cache),
+            )
+            local_region = self._alpha_hit_region(pixmap.toImage(), QPoint())
+            if region_cache_key is not None:
+                self._remember_cache_value(
+                    self.character_hit_region_cache,
+                    region_cache_key,
+                    local_region,
+                    CHARACTER_HIT_REGION_CACHE_LIMIT,
+                )
+        else:
+            self._log_character_image_event(
+                "hit_region_cache_hit",
+                path=self.current_pixmap_cache_key,
+                pixmap_size=f"{pixmap.width()}x{pixmap.height()}",
+                cache_size=len(self.character_hit_region_cache),
+            )
+
+        region = local_region.translated(pixmap_rect.topLeft())
         if region.isEmpty():
             return QRegion(pixmap_rect.intersected(self.rect()))
         return region.intersected(QRegion(self.rect()))
@@ -1517,36 +1619,38 @@ class OverlayWindow(QWidget):
         if image.isNull():
             return QRegion()
 
+        # QImage.pixelColor in a Python width*height loop used to block the GUI
+        # thread for 0.5-1.2 seconds on a normal character frame.  Build the
+        # exact same alpha>threshold bitmap with NumPy and let Qt convert it to
+        # a native QRegion.  Margin expansion is separable (horizontal, then
+        # vertical), reducing 225 unions to 30 without changing the result.
+        source = image.convertToFormat(QImage.Format.Format_RGBA8888)
         width = image.width()
         height = image.height()
         margin = CHARACTER_HIT_MARGIN
+        source_bytes = np.frombuffer(
+            source.constBits(), dtype=np.uint8, count=source.sizeInBytes()
+        ).reshape(height, source.bytesPerLine())
+        alpha = source_bytes[:, : width * 4].reshape(height, width, 4)[:, :, 3]
+
+        binary = QImage(width, height, QImage.Format.Format_RGBA8888)
+        binary.fill(0)
+        binary_bytes = np.frombuffer(
+            binary.bits(), dtype=np.uint8, count=binary.sizeInBytes()
+        ).reshape(height, binary.bytesPerLine())
+        binary_pixels = binary_bytes[:, : width * 4].reshape(height, width, 4)
+        binary_pixels[:, :, 3] = (alpha > CHARACTER_HIT_ALPHA_THRESHOLD).astype(np.uint8) * 255
+
+        base = QRegion(QBitmap.fromImage(binary.createAlphaMask()))
+        horizontal = QRegion()
+        for dx in range(-margin, margin + 1):
+            horizontal = horizontal.united(base.translated(dx, 0))
         region = QRegion()
+        for dy in range(-margin, margin + 1):
+            region = region.united(horizontal.translated(0, dy))
 
-        def add_run(start: int, stop: int, y: int) -> None:
-            nonlocal region
-            left = max(0, start - margin)
-            right = min(width, stop + margin)
-            top = max(0, y - margin)
-            bottom = min(height, y + margin + 1)
-            if right <= left or bottom <= top:
-                return
-            region = region.united(
-                QRegion(QRect(origin.x() + left, origin.y() + top, right - left, bottom - top))
-            )
-
-        for y in range(height):
-            run_start = -1
-            for x in range(width):
-                if image.pixelColor(x, y).alpha() > CHARACTER_HIT_ALPHA_THRESHOLD:
-                    if run_start < 0:
-                        run_start = x
-                elif run_start >= 0:
-                    add_run(run_start, x, y)
-                    run_start = -1
-            if run_start >= 0:
-                add_run(run_start, width, y)
-
-        return region
+        region = region.intersected(QRegion(QRect(0, 0, width, height)))
+        return region.translated(origin)
 
     def eventFilter(self, watched: QObject, event) -> bool:  # noqa: N802 - Qt override
         draggable_widgets = (

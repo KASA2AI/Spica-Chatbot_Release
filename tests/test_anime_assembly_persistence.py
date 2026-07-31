@@ -127,7 +127,14 @@ class FakePlayer:
         self.played.append(p)
 
 
-def _host(tmp_path, *, enabled=True, mikan_base_urls=None, bilibili_spaces=None):
+def _host(
+    tmp_path,
+    *,
+    enabled=True,
+    mikan_base_urls=None,
+    bilibili_spaces=None,
+    title_aliases=None,
+):
     dl = tmp_path / "dl"
     dl.mkdir(exist_ok=True)
     extra = {}
@@ -135,6 +142,8 @@ def _host(tmp_path, *, enabled=True, mikan_base_urls=None, bilibili_spaces=None)
         extra["mikan_base_urls"] = mikan_base_urls
     if bilibili_spaces is not None:
         extra["bilibili_spaces"] = bilibili_spaces
+    if title_aliases is not None:
+        extra["title_aliases"] = title_aliases
     h = SimpleNamespace()
     h.config = SimpleNamespace(anime=AnimeConfig(
         enabled=enabled,
@@ -569,6 +578,30 @@ def test_cancel_request_id_is_compared_as_an_opaque_token(tmp_path):
 
 
 # -- A2: empty source lists must not crash startup (P2-6) ----------------------
+
+def test_install_passes_title_aliases_to_bilibili_search_source(
+        tmp_path, monkeypatch):
+    aliases = {"星海旅人": ["星海旅行者"]}
+    seen = {}
+
+    class CapturingBilibiliSource:
+        def __init__(self, uploader_uids, **kwargs):
+            seen["uploader_uids"] = uploader_uids
+            seen.update(kwargs)
+
+    monkeypatch.setattr(
+        anime_assembly, "BilibiliSearchSource", CapturingBilibiliSource)
+    host = _host(
+        tmp_path,
+        mikan_base_urls=[],
+        bilibili_spaces=["123"],
+        title_aliases=aliases,
+    )
+
+    anime_assembly.install(host)
+
+    assert seen["uploader_uids"] == ["123"]
+    assert seen["title_aliases"] == aliases
 
 def test_install_empty_mikan_urls_disabled_does_not_crash(tmp_path):
     # install() runs UNCONDITIONALLY in AppHost.initialize, even when anime is

@@ -306,6 +306,9 @@ anime:
     - "3690989176752257"
     - "3546914945501863"
     - "690151424"
+  title_aliases:                      # 标准口语/Bangumi 标题 -> B站常用标题/日文标题
+    少女怪兽焦糖恋心: ["少女怪兽焦糖味", "乙女怪獣キャラメリゼ"]
+    在超市后门吸烟的二人: ["躲在超市后门抽烟的两人", "スーパーの裏でヤニ吸うふたり"]
   mikan_base_urls: ["https://mikanani.me", "https://mikan.tangbai.cc"]
   preferred_subgroups: []
   quality: "1080p"                   # D7

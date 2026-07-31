@@ -17,6 +17,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from spica.anime.title_aliases import (
+    default_title_aliases,
+    normalized_title_alias_groups,
+)
+
 
 class LLMConfig(BaseModel):
     provider: str = "openai_compatible"
@@ -457,6 +462,10 @@ class AnimeConfig(BaseModel):
         "3546914945501863",
         "690151424",
     ])
+    # Canonical spoken/Bangumi title -> alternative Bilibili/Japanese titles.
+    # Kept in YAML so new-season naming differences do not require a code change.
+    title_aliases: dict[str, list[str]] = Field(
+        default_factory=default_title_aliases)
     mikan_base_urls: list[str] = Field(
         default_factory=lambda: ["https://mikanani.me"])
     quality: str = "1080p"
@@ -498,6 +507,15 @@ class AnimeConfig(BaseModel):
             }
         },
     )  # host 唯一写点 (P1-6); pending.json 同目录
+
+    @field_validator("title_aliases")
+    @classmethod
+    def validate_title_aliases(
+        cls,
+        value: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        normalized_title_alias_groups(value)
+        return value
 
 
 class AppConfig(BaseModel):

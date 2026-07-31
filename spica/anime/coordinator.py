@@ -25,6 +25,7 @@ from typing import Callable, Literal, Sequence
 
 from spica.anime.models import AnimeResource, EpisodeRef, MatchResult
 from spica.anime.resolver import canonical_episode_key, resolve
+from spica.anime.title_aliases import TitleAliases
 from spica.ports.anime_source import AnimeSourceError, AnimeSourcePort
 
 MATCHED = "matched"
@@ -65,6 +66,7 @@ def resolve_episode(
     subtitle_pref: list[str] | None = None,
     budget_seconds: float | None = None,
     per_source_timeout: float | None = None,
+    title_aliases: TitleAliases | None = None,
     clock: Callable[[], float] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> CoordinatorResult:
@@ -126,7 +128,13 @@ def resolve_episode(
         if not candidates:
             continue
 
-        res = resolve(ref, candidates, quality=quality, subtitle_pref=subtitle_pref)
+        res = resolve(
+            ref,
+            candidates,
+            quality=quality,
+            subtitle_pref=subtitle_pref,
+            title_aliases=title_aliases,
+        )
         if res.status == "matched" and res.chosen is not None:
             if aborted := _abort():                   # before materialize
                 return aborted
@@ -145,7 +153,11 @@ def resolve_episode(
             key_season = (ref.season if ref.season is not None
                           else res.chosen.parsed.season)
             resource = replace(resource, episode_key=canonical_episode_key(
-                ref.title_query, key_season, res.chosen.parsed.episode))
+                ref.title_query,
+                key_season,
+                res.chosen.parsed.episode,
+                title_aliases=title_aliases,
+            ))
             return done(MATCHED, match=res, resource=resource,
                         source=src.name, reason=res.reason)
         if res.status in (AMBIGUOUS, NEED_EPISODE) and remembered is None:

@@ -23,6 +23,13 @@ def test_anime_config_defaults():
         "3546914945501863",
         "690151424",
     ]
+    assert a.title_aliases["少女怪兽焦糖恋心"] == [
+        "少女怪兽焦糖味",
+        "乙女怪獣キャラメリゼ",
+    ]
+    assert "躲在超市后门抽烟的两人" in (
+        a.title_aliases["在超市后门吸烟的二人"]
+    )
     assert a.mikan_base_urls == ["https://mikanani.me"]
     assert a.quality == "1080p"
     assert a.subtitle_preference == ["简繁", "简体"]
@@ -75,6 +82,25 @@ def test_invalid_stall_timeout_is_rejected(minutes):
 def test_invalid_auto_play_threshold_is_rejected(threshold):
     with pytest.raises(ValueError):
         AnimeConfig(auto_play_threshold_seconds=threshold)
+
+
+@pytest.mark.parametrize(
+    "title_aliases",
+    [
+        {"": ["有效别名"]},
+        {"---": ["有效别名"]},
+        {"有效标题": [""]},
+        {"有效标题": ["..."]},
+        {"有效标题": []},
+        {
+            "第一部作品": ["共同别名"],
+            "第二部作品": ["共同别名"],
+        },
+    ],
+)
+def test_invalid_anime_title_alias_groups_are_rejected(title_aliases):
+    with pytest.raises(ValueError):
+        AnimeConfig(title_aliases=title_aliases)
 
 
 def test_phase5_knobs_still_deferred():

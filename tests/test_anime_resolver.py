@@ -11,6 +11,7 @@ import pytest
 
 from spica.anime.models import LATEST, AnimeCandidate, EpisodeRef
 from spica.anime.resolver import (
+    canonical_episode_key,
     cn_to_int,
     name_matches,
     parse_query,
@@ -53,6 +54,9 @@ def test_parse_query(query, title, season, episode):
 
 @pytest.mark.parametrize("query,title,episode", [
     ("我想看尼古喵喵第四集（第四话）", "尼古喵喵", 4),
+    ("spica 我想看尼古喵喵第一集", "尼古喵喵", 1),
+    ("Spica,我想看尼古喵喵第二集", "尼古喵喵", 2),
+    ("spica，我想看尼古喵喵第四集（第四话）", "尼古喵喵", 4),
     (
         "我想看与你相恋到生命尽头 只愿深入爱河第二集",
         "与你相恋到生命尽头 只愿深入爱河",
@@ -162,7 +166,6 @@ def test_canonical_key_folds_all_query_wordings():
     # user queries, must key IDENTICALLY -- else the library dedup misses across
     # rewordings and re-downloads. The full name contains the canonical as a
     # substring, so the key basis must fold it down like _same_anime does.
-    from spica.anime.resolver import canonical_episode_key
     keys = {
         canonical_episode_key(parse_query(q).title_query, 3, 1)
         for q in (
@@ -330,7 +333,6 @@ def test_alias_slime_short_form_matches_full():
 
 
 def test_alias_slime_canonical_key_folds():
-    from spica.anime.resolver import canonical_episode_key
     short = canonical_episode_key(
         parse_query("转生史莱姆第四季第一集").title_query, 4, 1)
     full = canonical_episode_key(
@@ -399,6 +401,144 @@ def test_raw_collection_title_is_batch():
     # (real) the carrier bundles a season as one video 「01-02话」-> a range/batch
     st = parse_source_title("【4K超清】无职转生 第三季 01-02话（每周更新）")
     assert st.is_batch is True
+
+
+def test_collection_release_metadata_is_not_part_of_the_anime_name():
+    assert parse_source_title(
+        "【尼古喵喵】全13话 超清中字（未删减版）周更"
+    ).name_zh == "尼古喵喵"
+    assert parse_source_title(
+        "尼古喵喵 全12集（未删减版）更新中"
+    ).name_zh == "尼古喵喵"
+    assert parse_source_title(
+        "尼古喵喵 全13话周更"
+    ).name_zh == "尼古喵喵"
+    assert parse_source_title(
+        "尼古喵喵 全12集更新中"
+    ).name_zh == "尼古喵喵"
+    assert parse_source_title(
+        "尼古喵喵 全13话持续更新中"
+    ).name_zh == "尼古喵喵"
+    assert parse_source_title(
+        "尼古喵喵 全12集每周更新中"
+    ).name_zh == "尼古喵喵"
+
+
+@pytest.mark.parametrize("title", ["完结少女", "更新中的她"])
+def test_release_metadata_words_inside_anime_name_are_preserved(title):
+    parsed = parse_source_title(f"【{title}】第1集")
+
+    assert parsed.name_zh == title
+
+
+def test_same_anime_collections_with_different_counts_are_not_ambiguous():
+    ref = parse_query("我想看尼古喵喵第一集")
+    candidates = [
+        AnimeCandidate(
+            source="bilibili",
+            locator="BV1first0000:1",
+            parsed=part_source_title(
+                "【尼古喵喵】全13话持续更新中",
+                episode=1,
+            ),
+            display_title="【尼古喵喵】全13话持续更新中",
+        ),
+        AnimeCandidate(
+            source="bilibili",
+            locator="BV1second000:1",
+            parsed=part_source_title(
+                "尼古喵喵 全12集每周更新中",
+                episode=1,
+            ),
+            display_title="尼古喵喵 全12集每周更新中",
+        ),
+    ]
+
+    result = resolve(ref, candidates)
+
+    assert result.status == "matched"
+
+
+def test_bilibili_release_prefixes_before_title_brackets_do_not_split_one_anime():
+    ref = parse_query("我想看相反的你和我第二季第四集")
+    candidates = [
+        AnimeCandidate(
+            source="bilibili",
+            locator="BV1first0000:4",
+            parsed=part_source_title(
+                "4K超清【相反的你和我 第二季】全13集（更新中）",
+                episode=4,
+            ),
+        ),
+        AnimeCandidate(
+            source="bilibili",
+            locator="BV1second000:4",
+            parsed=part_source_title(
+                "正式版【相反的你和我 第二季】全13集（未删减版）周更",
+                episode=4,
+            ),
+        ),
+    ]
+
+    result = resolve(ref, candidates)
+
+    assert result.status == "matched"
+
+
+@pytest.mark.parametrize("prefix", ["真4K", "4K超清", "正式版"])
+def test_bilibili_release_prefix_before_title_bracket_is_not_the_anime_name(
+        prefix):
+    parsed = parse_source_title(
+        f"{prefix}【相反的你和我 第二季】全13集（更新中）")
+
+    assert parsed.name_zh == "相反的你和我"
+    assert parsed.season == 2
+
+
+def test_configured_aliases_match_bangumi_query_to_bilibili_title():
+    ref = parse_query("我想看在超市后门吸烟的二人第一季第三集")
+    candidate = AnimeCandidate(
+        source="bilibili",
+        locator="BV1smoke0000:3",
+        parsed=part_source_title(
+            "正式版【躲在超市后门抽烟的两人】全12集（更新中）",
+            episode=3,
+        ),
+    )
+
+    result = resolve(
+        ref,
+        [candidate],
+        title_aliases={
+            "在超市后门吸烟的二人": [
+                "躲在超市后门抽烟的两人",
+                "スーパーの裏でヤニ吸うふたり",
+            ],
+        },
+    )
+
+    assert result.status == "matched"
+
+
+@pytest.mark.parametrize(
+    "title_aliases",
+    [
+        {"---": ["..."]},
+        {"有效标题": "别名"},
+        {
+            "星海": ["星之海"],
+            "星海旅人": ["星海旅行者"],
+        },
+    ],
+)
+def test_direct_resolver_rejects_unsafe_alias_catalogs(title_aliases):
+    with pytest.raises(ValueError):
+        canonical_episode_key(
+            "有效标题",
+            1,
+            1,
+            title_aliases=title_aliases,
+        )
 
 
 def test_part_source_title_is_single_episode():

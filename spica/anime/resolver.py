@@ -28,6 +28,12 @@ from spica.anime.models import (
     SourceTitle,
     episode_key,
 )
+from spica.anime.title_aliases import (
+    DEFAULT_TITLE_ALIASES,
+    TitleAliases,
+    normalize_title_identity,
+    normalized_title_alias_groups,
+)
 
 # -- Chinese numerals -> int (covers 0-99, enough for episode/season) ---------
 
@@ -82,6 +88,14 @@ _EP_PATTERNS = [
 ]
 
 _LATEST_RE = re.compile(r"最新(?:的)?(?:一)?[话話集集]?|latest", re.I)
+# The model normally forwards only the anime query, but typed/voice tool
+# arguments can retain the assistant wake word.  Strip it only at the beginning
+# and only when separated or followed by a watch lead-in; an anime title merely
+# containing "spica" elsewhere remains untouched.
+_WAKE_PREFIX_RE = re.compile(
+    r"^\s*spica(?:\s*[,，:：、]\s*|\s+|(?=(?:我想看|想看|看|播放|放)))",
+    re.I,
+)
 
 # Explicit batch/collection keyword markers (mikan multi-episode torrents, D11).
 _BATCH_KEYWORD_RE = re.compile(
@@ -103,8 +117,26 @@ _SPECIAL_RE = re.compile(
 )
 
 _LEADING_BRACKET_RE = re.compile(r"^\s*([\[【])([^\]】]*)[\]】]")
+_FULLWIDTH_BRACKET_RE = re.compile(r"【([^】]*)】")
 _BRACKET_GROUP_RE = re.compile(r"[\[【（(][^\]】）)]*[\]】）)]")
 _QUALITY_RE = re.compile(r"(2160p|1080p|720p|480p)", re.I)
+# Whole-season carrier titles often append mutable release metadata after the
+# actual anime name.  It must not participate in title identity: otherwise
+# 「全13话…周更」and「全12集…更新中」from two trusted uploaders become two
+# different "anime" and the resolver raises a false ambiguity.
+_COLLECTION_RELEASE_METADATA_TOKEN = (
+    r"(?:全|共)\s*\d{1,3}\s*[话話集]|"
+    r"(?:4K|超清|高清)?中字|"
+    r"未(?:删|刪)减版|"
+    r"每(?:周|週)更新中?|(?:周|週)更中?|"
+    r"(?:持续|持續)更新中?|更新中|(?:连载|連載)中|完结|完結"
+)
+_TRAILING_COLLECTION_RELEASE_METADATA_RE = re.compile(
+    rf"[\s·|/，,:：-]+(?:{_COLLECTION_RELEASE_METADATA_TOKEN})"
+    rf"(?:[\s·|/，,:：-]*(?:{_COLLECTION_RELEASE_METADATA_TOKEN}))*"
+    r"[\s·|/，,:：-]*$",
+    re.I,
+)
 
 # A fullwidth 【..】 that is a TAG (quality/quarter/合集/…) vs a subgroup NAME vs
 # the anime TITLE itself (review tail #2). Halfwidth [..] is always a subgroup
@@ -131,6 +163,11 @@ _SEG_TAG_CJK_RE = re.compile(
 _SEG_TAG_ASCII_RE = re.compile(
     r"\d{3,4}p|4k|webrip|bdrip|hevc|avc|aac|flac|nvenc|x26[45]|\d+bit",
     re.I)
+_RELEASE_PREFIX_TOKEN_RE = re.compile(
+    r"(?:真\s*)?4k|超清|高清|蓝光|藍光|中字|正式版|先行版|完整版|"
+    r"无删减版|無刪減版|未删减版|未刪減版",
+    re.I,
+)
 
 
 def _leading_bracket_kind(open_br: str, content: str) -> str:
@@ -174,6 +211,14 @@ def _is_tag_segment(seg: str) -> bool:
                for tok in re.findall(r"[A-Za-z0-9]+", s))
 
 
+def _is_release_prefix(text: str) -> bool:
+    """True when text before a Bilibili ``【title】`` is release metadata only."""
+    if not text.strip():
+        return False
+    remainder = _RELEASE_PREFIX_TOKEN_RE.sub("", text)
+    return not re.sub(r"[\W_]+", "", remainder, flags=re.UNICODE)
+
+
 def _select_name_source(after_season: str) -> str:
     """Search-quality §2.1: the 「【组】★促销★[中文 / 別名 / English]」form hides the
     real title inside a LATER [..] whose content is a「/」-joined alias list, while
@@ -199,6 +244,17 @@ def _select_name_source(after_season: str) -> str:
         if any(_is_tag_segment(s) for s in segs):
             continue                      # a subtitle/quality/tag bracket, not a title
         if len(re.findall(r"[一-鿿]", segs[0])) >= 3:
+            return inner
+    # Bilibili carrier uploads also put release metadata BEFORE a later title
+    # bracket: 「真4K【作品名】…」/「正式版【作品名】…」.  The ordinary
+    # name-body pass removes every bracket and would retain only「真4K」or
+    # 「正式版」, splitting one anime into false title clusters.  Prefer the
+    # bracket only when everything before it is a closed set of release tokens;
+    # real leading text such as「ED纯享版：」therefore remains untouched.
+    for m in _FULLWIDTH_BRACKET_RE.finditer(after_season):
+        inner = m.group(1).strip()
+        if (_is_release_prefix(after_season[:m.start()])
+                and _leading_bracket_kind("【", inner) == "title"):
             return inner
     return after_season
 
@@ -241,7 +297,7 @@ def _extract_subtitle(text: str) -> str | None:
 
 def parse_query(text: str) -> EpisodeRef:
     """「无职转生第三季第一集」-> EpisodeRef(title_query='无职转生', season=3, episode=1)."""
-    raw = text.strip()
+    raw = _WAKE_PREFIX_RE.sub("", text.strip(), count=1)
     season, work = _extract_season(raw)
     episode: int | str | None
     if _LATEST_RE.search(work):
@@ -311,6 +367,7 @@ def parse_source_title(title: str) -> SourceTitle:
     name_body = _BRACKET_GROUP_RE.sub(" ", name_src)
     for pat in _EP_PATTERNS:
         name_body = pat.sub(" ", name_body)
+    name_body = _TRAILING_COLLECTION_RELEASE_METADATA_RE.sub(" ", name_body)
     name_zh, name_ja = name_body, ""
     if "/" in name_body:
         left, _, right = name_body.partition("/")
@@ -370,31 +427,47 @@ def _clean_name(s: str) -> str:
 
 def _norm(s: str) -> str:
     """Normalize for fuzzy name compare: drop spaces/punct, lowercase."""
-    return re.sub(r"[\s，,。.·・:：!！?？'\"「」『』()（）\-~～/]+", "", s).lower()
+    return normalize_title_identity(s)
 
 
-# Minimal, hand-maintained alias groups (already in _norm() form), each ordered
-# with the CANONICAL form first, so a query and a source that name the same anime
-# in zh/ja/romaji fold to one identity. Deliberately tiny -- NOT a big alias DB
-# (review tail #4).
-_ALIASES: list[tuple[str, ...]] = [
-    ("无职转生", "無職転生", "mushokutensei"),
-    # 转生史莱姆 is a popular short form that is NOT a contiguous substring of the
-    # full title (转生…史莱姆 split by 变成) -- the alias group folds them (§2.4).
-    ("关于我转生变成史莱姆这档事", "转生史莱姆", "tenseishitaraslimedattaken"),
-    # The Chinese release is searched under both names. Users also naturally say
-    # both together, so collapse the pair to one identity instead of requiring
-    # the upload title to contain both strings.
-    ("与你相恋到生命尽头", "只愿深入爱河"),
-]
+def _alias_groups(
+    title_aliases: TitleAliases | None,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    aliases = DEFAULT_TITLE_ALIASES if title_aliases is None else title_aliases
+    return normalized_title_alias_groups(aliases)
 
 
-def _canon(norm_name: str) -> str:
+def title_alias_variants(
+    title: str,
+    *,
+    title_aliases: TitleAliases | None = None,
+) -> tuple[str, ...]:
+    """Return the spoken title followed by configured aliases for source search."""
+    aliases = DEFAULT_TITLE_ALIASES if title_aliases is None else title_aliases
+    normalized_title_alias_groups(aliases)
+    query_norm = _norm(title)
+    variants = [title]
+    seen = {query_norm}
+    for canonical, values in aliases.items():
+        group = (canonical, *values)
+        if not any(
+            member_norm and member_norm in query_norm
+            for member_norm in (_norm(member) for member in group)
+        ):
+            continue
+        for member in group:
+            member_norm = _norm(member)
+            if member_norm and member_norm not in seen:
+                variants.append(member)
+                seen.add(member_norm)
+    return tuple(variants)
+
+
+def _canon(norm_name: str, title_aliases: TitleAliases | None = None) -> str:
     """Fold alias-group members to their canonical form so zh/ja/romaji names of
     one anime compare equal. Shared identity basis for name_matches AND
     _cluster_by_title (review tail #1)."""
-    for group in _ALIASES:
-        canonical = group[0]
+    for canonical, group in _alias_groups(title_aliases):
         for member in group[1:]:
             if member in norm_name:
                 norm_name = norm_name.replace(member, canonical)
@@ -406,44 +479,62 @@ def _canon(norm_name: str) -> str:
     return norm_name
 
 
-def _canon_title_for_key(title: str) -> str:
+def _canon_title_for_key(
+    title: str,
+    title_aliases: TitleAliases | None = None,
+) -> str:
     """Identity basis for the dedup key (F2 tail). Alias-fold, THEN collapse a
     title that merely *contains* an alias group's canonical -- a full name like
     「无职转生，到了异世界就拿出真本事」 -> 「无职转生」 -- so different wordings
     of one anime across SEPARATE user queries share one library key. This mirrors
     the substring basis ``_same_anime`` already uses for matching, so two titles
     that MATCH as the same anime also KEY the same (still bounded by
-    ``_ALIASES``: a group must exist for the fold to reach across zh/ja/romaji)."""
-    norm = _canon(_norm(title))
-    for group in _ALIASES:
-        canonical = group[0]
+    the configured alias map: a group must exist for the fold to reach across
+    zh/ja/romaji)."""
+    norm = _canon(_norm(title), title_aliases)
+    for canonical, _group in _alias_groups(title_aliases):
         if canonical in norm:
             return canonical
     return norm
 
 
 def canonical_episode_key(title_query: str, season: int | None,
-                          episode: int) -> str:
+                          episode: int, *,
+                          title_aliases: TitleAliases | None = None) -> str:
     """The SINGLE dedup-key generation point (F2). Identity basis is the
     alias-folded USER QUERY title (``_canon_title_for_key``) -- never a source
     title -- so the same episode keys identically across the query fast path
     (watch_flow), the coordinator overwrite after materialize, and every source
     adapter, as well as across reworded queries for one anime."""
-    return episode_key(_canon_title_for_key(title_query), season, episode)
+    return episode_key(
+        _canon_title_for_key(title_query, title_aliases),
+        season,
+        episode,
+    )
 
 
-def _same_anime(a_norm: str, b_norm: str) -> bool:
+def _same_anime(
+    a_norm: str,
+    b_norm: str,
+    title_aliases: TitleAliases | None = None,
+) -> bool:
     """True if two normalized names denote the same anime: alias-folded, one a
     substring of the other (short「无职转生」vs full「…到了异世界…」/ zh vs ja)."""
-    ca, cb = _canon(a_norm), _canon(b_norm)
+    ca = _canon(a_norm, title_aliases)
+    cb = _canon(b_norm, title_aliases)
     return bool(ca) and bool(cb) and (ca in cb or cb in ca)
 
 
-def name_matches(query: str, st: SourceTitle) -> bool:
+def name_matches(
+    query: str,
+    st: SourceTitle,
+    *,
+    title_aliases: TitleAliases | None = None,
+) -> bool:
     q = _norm(query)
     if not q:
         return False
-    return any(_same_anime(q, _norm(name))
+    return any(_same_anime(q, _norm(name), title_aliases)
                for name in (st.name_zh, st.name_ja, st.raw) if _norm(name))
 
 
@@ -486,19 +577,25 @@ def resolve(
     *,
     quality: str = "1080p",
     subtitle_pref: list[str] | None = None,
+    title_aliases: TitleAliases | None = None,
 ) -> MatchResult:
     subtitle_pref = subtitle_pref or ["简繁", "简体"]
 
     # 1) name filter + batch drop (D11) + special drop (finding #5)
     named = [c for c in candidates
-             if name_matches(ref.title_query, c.parsed)
+             if name_matches(
+                 ref.title_query,
+                 c.parsed,
+                 title_aliases=title_aliases,
+             )
              and not c.parsed.is_batch and not c.parsed.is_special]
     if not named:
         return MatchResult(status="none", reason="no title match")
 
     # confidence gate (finding #4): a very short query that pulls in several
     # DIFFERENT anime is too weak to pick from -> ask instead of guessing.
-    if len(_norm(ref.title_query)) < 2 and len(_cluster_by_title(named)) > 1:
+    if (len(_norm(ref.title_query)) < 2
+            and len(_cluster_by_title(named, title_aliases)) > 1):
         return MatchResult(status="ambiguous", candidates=tuple(named[:5]),
                            reason="query too short / low confidence")
 
@@ -529,7 +626,7 @@ def resolve(
         # episode number -> a silent wrong match. Cluster first; a pool spanning
         # distinct anime is ambiguous, never a guess (D10/P1-10). One anime across
         # subgroups is a single cluster and falls through to the max() below.
-        clusters = _cluster_by_title(pool)
+        clusters = _cluster_by_title(pool, title_aliases)
         if len(clusters) > 1:
             reps = tuple(rank_candidates(m, quality, subtitle_pref)[0]
                          for m in clusters)
@@ -553,7 +650,7 @@ def resolve(
     # DIFFERENT anime (name collision), don't silently rank -- surface for
     # confirmation. Same anime across subgroups (one name a substring of the
     # other, e.g. short vs full title) clusters together and is ranked below.
-    clusters = _cluster_by_title(ep_pool)
+    clusters = _cluster_by_title(ep_pool, title_aliases)
     if len(clusters) > 1:
         reps = tuple(rank_candidates(m, quality, subtitle_pref)[0]
                      for m in clusters)
@@ -566,7 +663,10 @@ def resolve(
                        reason=f"season={ref.season} ep={target}")
 
 
-def _cluster_by_title(cands: list[AnimeCandidate]) -> list[list[AnimeCandidate]]:
+def _cluster_by_title(
+    cands: list[AnimeCandidate],
+    title_aliases: TitleAliases | None = None,
+) -> list[list[AnimeCandidate]]:
     """Group candidates by anime identity via the SHARED ``_same_anime`` basis
     (review tail #1): alias-folded, one name a substring of the other. So
     「无职转生 3期」and「無職転生 S3」cluster together (not falsely ambiguous)."""
@@ -575,9 +675,10 @@ def _cluster_by_title(cands: list[AnimeCandidate]) -> list[list[AnimeCandidate]]
         n = _norm(c.parsed.name_zh) or _norm(c.parsed.raw)
         placed = False
         for i, (rep, members) in enumerate(clusters):
-            if _same_anime(n, rep):
+            if _same_anime(n, rep, title_aliases):
                 members.append(c)
-                if len(_canon(n)) < len(_canon(rep)):   # keep shortest as rep
+                if (len(_canon(n, title_aliases))
+                        < len(_canon(rep, title_aliases))):  # keep shortest as rep
                     clusters[i] = (n, members)
                 placed = True
                 break

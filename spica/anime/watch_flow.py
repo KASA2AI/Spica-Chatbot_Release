@@ -34,6 +34,7 @@ from spica.anime.resolver import (
     parse_query,
     parse_source_title,
 )
+from spica.anime.title_aliases import TitleAliases
 from spica.core.anime_events import AnimeRequestEvent
 from spica.ports.anime_source import AnimeSourcePort
 from spica.ports.media_player import MediaPlayerError
@@ -114,6 +115,7 @@ def run_watch_request(
         raise WatchAnimeError("ANIME_DISABLED", "看番功能还没开启哦")
     if not is_ready():
         raise WatchAnimeError("ANIME_NOT_READY", "看番功能还没准备好（界面还没接上）")
+    title_aliases = getattr(config, "title_aliases", None)
 
     # 「放吧」explicit escape (P1-11②): the LLM could not reconstruct the title
     # (e.g. after a restart) -- play the freshest unplayed download outright.
@@ -132,7 +134,7 @@ def run_watch_request(
             return _play(play_file, mru.file_path, mru.episode_key, mru.title,
                          mark_played=mark_played)
         ref = merge_episode_ref(query, episode)
-        if _pointer_matches(ref, mru):
+        if _pointer_matches(ref, mru, title_aliases=title_aliases):
             return _play(play_file, mru.file_path, mru.episode_key, mru.title,
                          mark_played=mark_played)
         # a non-empty query contradicting the pointer -> ordinary request below
@@ -144,7 +146,12 @@ def run_watch_request(
     # The key MUST be the canonical one (F2) or the library dedup silently misses.
     if isinstance(ref.episode, int):
         hit = library.find(
-            canonical_episode_key(ref.title_query, ref.season, ref.episode))
+            canonical_episode_key(
+                ref.title_query,
+                ref.season,
+                ref.episode,
+                title_aliases=title_aliases,
+            ))
         if hit is not None:
             return _play(play_file, hit.file_path, hit.episode_key, hit.title,
                          mark_played=mark_played)
@@ -156,7 +163,8 @@ def run_watch_request(
     # ask-which-episode contract is untouched. LATEST never matches the pointer
     # (「最新一集」may be newer than what we downloaded -> must re-resolve).
     mru = library.most_recent_unplayed()
-    if mru is not None and _pointer_matches(ref, mru):
+    if mru is not None and _pointer_matches(
+            ref, mru, title_aliases=title_aliases):
         return _play(play_file, mru.file_path, mru.episode_key, mru.title,
                      mark_played=mark_played)
 
@@ -176,6 +184,7 @@ def run_watch_request(
         subtitle_pref=list(getattr(config, "subtitle_preference", []) or []),
         budget_seconds=getattr(config, "resolve_budget_seconds", None),
         per_source_timeout=getattr(config, "source_timeout_seconds", None),
+        title_aliases=title_aliases,
     )
     if result.outcome != MATCHED or result.resource is None:
         raise _map_outcome(result)
@@ -201,7 +210,12 @@ def run_watch_request(
     }
 
 
-def _pointer_matches(ref: EpisodeRef, mru: LibraryEntry) -> bool:
+def _pointer_matches(
+    ref: EpisodeRef,
+    mru: LibraryEntry,
+    *,
+    title_aliases: TitleAliases | None = None,
+) -> bool:
     """Does the user's (possibly episode-less) request name the most-recent
     unplayed entry? Episode/season must not contradict; the title folds through
     the SAME canonical map the coordinator uses (aliases/romaji), with the
@@ -210,10 +224,18 @@ def _pointer_matches(ref: EpisodeRef, mru: LibraryEntry) -> bool:
         return False                    # a concrete mismatch or LATEST -> resolve
     if ref.season is not None and ref.season != mru.season:
         return False
-    if canonical_episode_key(ref.title_query, mru.season,
-                             mru.episode) == mru.episode_key:
+    if canonical_episode_key(
+        ref.title_query,
+        mru.season,
+        mru.episode,
+        title_aliases=title_aliases,
+    ) == mru.episode_key:
         return True
-    return name_matches(ref.title_query, parse_source_title(mru.title))
+    return name_matches(
+        ref.title_query,
+        parse_source_title(mru.title),
+        title_aliases=title_aliases,
+    )
 
 
 def _play(play_file: Callable[[str], None], path: str, key: str,

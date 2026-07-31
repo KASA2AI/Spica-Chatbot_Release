@@ -2300,6 +2300,23 @@
         advice: "信頼できる投稿者の数値UIDだけを追加してください。同じ表示名では許可されません。",
       }),
     }),
+    "anime.title_aliases": Object.freeze({
+      "zh-CN": Object.freeze({
+        title: "番剧标题别名表",
+        description: "把标准口语或 Bangumi 标题映射到 Bilibili 常用标题、日文标题等同一作品名称。",
+        advice: "键会用于本地剧集索引，请保持稳定；新增名称时放进对应数组，不同作品组之间不得复用或互相包含标题。",
+      }),
+      en: Object.freeze({
+        title: "Anime title aliases",
+        description: "Maps each canonical spoken or Bangumi title to equivalent Bilibili, Japanese, and other release titles.",
+        advice: "Keys are used for local episode identity, so keep them stable. Across different series, title variants must neither be reused nor contain one another.",
+      }),
+      ja: Object.freeze({
+        title: "アニメタイトルの別名表",
+        description: "標準の呼び名やBangumiの作品名を、Bilibiliで使われる題名、日本語名など同じ作品の名称に対応付けます。",
+        advice: "キーはローカルの話数識別にも使うため変更せず、別名は対応する配列へ追加し、別作品の名称と重複・包含しないようにしてください。",
+      }),
+    }),
     "anime.mikan_base_urls": Object.freeze({
       "zh-CN": Object.freeze({
         title: "Mikan 番剧来源地址",

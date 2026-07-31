@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from spica.adapters.anime_source.bilibili_search import BilibiliSearchSource
+from spica.anime.title_aliases import TitleAliases
 
 
 class BilibiliSpaceSource(BilibiliSearchSource):
@@ -26,6 +27,7 @@ class BilibiliSpaceSource(BilibiliSearchSource):
         max_pages: int = 10,
         sleep: Any = None,
         clock: Any = None,
+        title_aliases: TitleAliases | None = None,
     ) -> None:
         super().__init__(
             space_uids,
@@ -36,6 +38,7 @@ class BilibiliSpaceSource(BilibiliSearchSource):
             max_pages=max_pages,
             sleep=sleep,
             clock=clock,
+            title_aliases=title_aliases,
         )
 
 

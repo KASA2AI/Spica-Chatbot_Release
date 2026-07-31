@@ -79,6 +79,28 @@ def test_main_source_match_wins():
     assert main.seen_episode == 1
 
 
+def test_configured_aliases_flow_through_match_and_episode_key():
+    aliases = {
+        "少女怪兽焦糖恋心": [
+            "少女怪兽焦糖味",
+            "乙女怪獣キャラメリゼ",
+        ],
+    }
+    source = FakeSource(
+        "bilibili",
+        ["【少女怪兽焦糖味】第2话"],
+    )
+
+    result = resolve_episode(
+        parse_query("少女怪兽焦糖恋心第一季第二集"),
+        [source],
+        title_aliases=aliases,
+    )
+
+    assert result.outcome == MATCHED
+    assert result.resource.episode_key == "少女怪兽焦糖恋心|s1|e2"
+
+
 def test_falls_back_when_main_has_no_match():
     main = FakeSource("bilibili", ["[X] 间谍过家家 - 01 [1080p]"])  # wrong anime
     fb = FakeSource("mikan", [LOLI_S3E1])

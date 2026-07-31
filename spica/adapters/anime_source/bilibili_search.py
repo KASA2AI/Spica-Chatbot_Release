@@ -35,7 +35,13 @@ from spica.anime.models import (
     EpisodeRef,
     EpisodeSpec,
 )
-from spica.anime.resolver import name_matches, parse_source_title, part_source_title
+from spica.anime.resolver import (
+    name_matches,
+    parse_source_title,
+    part_source_title,
+    title_alias_variants,
+)
+from spica.anime.title_aliases import TitleAliases
 from spica.ports.anime_source import AnimeSourceError
 
 _LOG = logging.getLogger(__name__)
@@ -70,6 +76,10 @@ _RANGE_RE = re.compile(
     r"(?<![A-Za-z0-9])(\d{1,3})\s*-\s*(\d{1,3})(?![0-9A-Za-z])(?!\s*(?:赛季|年度))")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
+# With 50 results per page, three pages give each targeted keyword a useful
+# 150-result window without allowing one ranking variant to monopolize the
+# source's 15-second budget.
+_TARGET_MAX_PAGES_PER_KEYWORD = 3
 
 
 def _mixin_key(img: str, sub: str) -> str:
@@ -109,32 +119,48 @@ def _search_keywords(
     *,
     season: int | None = None,
     episode: EpisodeSpec = None,
+    title_aliases: TitleAliases | None = None,
 ) -> tuple[str, ...]:
-    """Build narrow season/episode terms before bounded title fallbacks.
+    """Build title/season terms before episode-specific fallbacks.
 
     ``parse_query`` preserves an intentional space in utterances such as
     「与你相恋到生命尽头 只愿深入爱河」. Bilibili may index only one displayed
-    title, so a zero-result full-title search gets one deterministic retry per
-    meaningful CJK segment. Very short or non-CJK tokens are not broadened.
+    title, so meaningful CJK segments are tried before the combined spoken
+    aliases.  Carrier uploads are usually titled as whole-season collections
+    (for example 「全13话」), so adding 「第N集」 first can bury the allowlisted
+    result and exhaust the deadline before the useful title-only search runs.
+    Episode-specific terms therefore remain bounded fallbacks.
     """
     full = re.sub(r"\s+", " ", title_query).strip()
     if not full:
         return ()
-    base_terms = [full]
-    for part in full.split():
-        if len(part) >= 4 and _CJK_RE.search(part) and part not in base_terms:
-            base_terms.append(part)
+    variants = (
+        (full,)
+        if title_aliases is None
+        else title_alias_variants(full, title_aliases=title_aliases)
+    )
+    base_terms: list[str] = []
+    for variant in variants:
+        normalized = re.sub(r"\s+", " ", variant).strip()
+        segments: list[str] = []
+        for part in normalized.split():
+            if len(part) >= 4 and _CJK_RE.search(part) and part not in segments:
+                segments.append(part)
+        if len(segments) > 1:
+            base_terms.extend(
+                part for part in segments if part not in base_terms)
+        if normalized not in base_terms:
+            base_terms.append(normalized)
 
     narrowed_bases: list[str] = []
     if season is not None:
         narrowed_bases.extend(f"{base} 第{season}季" for base in base_terms)
     narrowed_bases.extend(base_terms)
 
-    terms: list[str] = []
+    terms: list[str] = list(narrowed_bases)
     if isinstance(episode, int) and not isinstance(episode, bool):
         terms.extend(f"{base} 第{episode}集" for base in narrowed_bases)
         terms.extend(f"{base} 第{episode}话" for base in narrowed_bases)
-    terms.extend(narrowed_bases)
     return tuple(dict.fromkeys(terms))
 
 
@@ -173,7 +199,8 @@ class BilibiliSearchSource:
     def __init__(self, uploader_uids: list[str], *, cookie: str | None = None,
                  session: Any = None, timeout: float = 12, max_retries: int = 5,
                  max_pages: int = 10,
-                 sleep: Any = None, clock: Any = None) -> None:
+                 sleep: Any = None, clock: Any = None,
+                 title_aliases: TitleAliases | None = None) -> None:
         invalid_uids = [
             uid for uid in uploader_uids
             if not isinstance(uid, str)
@@ -196,7 +223,9 @@ class BilibiliSearchSource:
         self._max_pages = max_pages
         self._sleep = sleep if sleep is not None else time.sleep
         self._clock = clock if clock is not None else time.monotonic
+        self._title_aliases = title_aliases
         self._deadline_at: float | None = None
+        self._fingerprint_seeded = False
 
     # -- public port ---------------------------------------------------------
 
@@ -228,7 +257,10 @@ class BilibiliSearchSource:
         first_error: AnimeSourceError | None = None
         any_reachable = False
         for index, keyword in enumerate(_search_keywords(
-                title_query, season=season, episode=episode)):
+                title_query,
+                season=season,
+                episode=episode,
+                title_aliases=self._title_aliases)):
             if index:
                 self._sleep(0.5)
             self._set_search_referer(keyword)
@@ -289,15 +321,23 @@ class BilibiliSearchSource:
             raise AnimeSourceError("TIMEOUT", "search deadline exceeded")
         return min(self._timeout, remaining)
 
-    def _seed_buvid(self) -> None:
+    def _seed_buvid(self, *, force: bool = False) -> None:
+        # A browser fingerprint is session identity, not per-search entropy.
+        # Replacing it on every request makes anonymous search rankings/risk
+        # decisions needlessly unstable.  Only rotate after an actual
+        # risk-control response.
+        if self._fingerprint_seeded and not force:
+            return
         t = self._budget_timeout()               # outside the try (F6)
         try:
             resp = self._http.get(_FINGER, timeout=t)
             d = resp.json().get("data", {})
             if d.get("b_3"):
                 self._http.cookies.set("buvid3", d["b_3"], domain=".bilibili.com")
+                self._fingerprint_seeded = True
             if d.get("b_4"):
                 self._http.cookies.set("buvid4", d["b_4"], domain=".bilibili.com")
+                self._fingerprint_seeded = True
         except Exception:  # noqa: BLE001 -- best-effort seed, signing still tried
             pass
 
@@ -324,7 +364,10 @@ class BilibiliSearchSource:
                     "ad_resource": 5654,
                     "keyword": keyword,
                     "page": page,
-                    "page_size": 20,
+                    # Bilibili accepts 50 here.  A wider first page materially
+                    # reduces pagination/risk-control churn before the uploader
+                    # allowlist can find an older whole-season collection.
+                    "page_size": 50,
                     "order": "totalrank",
                     "duration": 0,
                     "tids": 0,
@@ -343,7 +386,7 @@ class BilibiliSearchSource:
                 d = resp.json()
             except Exception:  # noqa: BLE001 -- risk-control HTML/empty body
                 last = "non-json"
-                self._seed_buvid()
+                self._seed_buvid(force=True)
                 continue
             data = d.get("data")
             if (d.get("code") == 0 and isinstance(data, dict)
@@ -351,7 +394,7 @@ class BilibiliSearchSource:
                 return d
             last = "v_voucher" if isinstance(data, dict) and data.get(
                 "v_voucher") else d.get("code")
-            self._seed_buvid()
+            self._seed_buvid(force=True)
         raise AnimeSourceError("RISK_CONTROL", f"search/type code={last}")
 
     def _search_global(
@@ -367,7 +410,12 @@ class BilibiliSearchSource:
         fetched_any = False
         allowed = self._uids
         seen_bvids: set[str] = set()
-        for page in range(1, self._max_pages + 1):
+        page_limit = (
+            self._max_pages
+            if target_episode is None
+            else min(self._max_pages, _TARGET_MAX_PAGES_PER_KEYWORD)
+        )
+        for page in range(1, page_limit + 1):
             if page > 1:           # inter-page throttle (F9, §5.2)
                 self._sleep(0.5)
             try:
@@ -397,7 +445,21 @@ class BilibiliSearchSource:
                 title = html.unescape(_HTML_TAG_RE.sub(
                     "", str(row.get("title", "") or ""))).strip()
                 st = parse_source_title(title)
-                if not name_matches(match_query, st):   # resolver-based prefilter
+                if not name_matches(
+                        match_query,
+                        st,
+                        title_aliases=self._title_aliases):
+                    continue
+                # Do not spend a detail request on an explicitly different
+                # single episode.  Whole-season/range uploads have no concrete
+                # episode here and still flow to pagelist expansion.  This is
+                # especially important for older episode requests: current
+                # single-episode uploads otherwise consume the API/risk budget
+                # before the matching collection is inspected.
+                if (target_episode is not None
+                        and not st.is_batch
+                        and st.episode is not None
+                        and st.episode != target_episode):
                     continue
                 if bvid in seen_bvids:
                     continue

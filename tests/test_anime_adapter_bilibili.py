@@ -8,6 +8,7 @@ from spica.adapters.anime_source.bilibili_search import (
     BilibiliSearchSource,
     _episode_for_part,
     _mixin_key,
+    _search_keywords,
     _sign,
 )
 from spica.adapters.anime_source.bilibili_space import BilibiliSpaceSource
@@ -179,6 +180,21 @@ def test_episode_mapping_fallback_order():
     assert _episode_for_part("某视频", "", 1, None, None, multi_part=False) is None
 
 
+def test_title_search_terms_precede_episode_fallbacks():
+    assert _search_keywords("尼古喵喵", episode=2) == (
+        "尼古喵喵",
+        "尼古喵喵 第2集",
+        "尼古喵喵 第2话",
+    )
+    assert _search_keywords(
+        "与你相恋到生命尽头 只愿深入爱河", episode=2
+    )[:3] == (
+        "与你相恋到生命尽头",
+        "只愿深入爱河",
+        "与你相恋到生命尽头 只愿深入爱河",
+    )
+
+
 # -- search / expansion ------------------------------------------------------
 
 def test_collection_expands_to_per_part_episodes():
@@ -279,6 +295,18 @@ def test_global_search_skips_malformed_or_identityless_cards():
 def test_requested_spoken_queries_resolve_the_expected_parts():
     cases = [
         (
+            "我想看尼古喵喵第一集",
+            "BV1nigu00000",
+            "【尼古喵喵】全13话 超清中字（未删减版）周更",
+            1,
+        ),
+        (
+            "我想看尼古喵喵第二集",
+            "BV1nigu00000",
+            "【尼古喵喵】全13话 超清中字（未删减版）周更",
+            2,
+        ),
+        (
             "我想看尼古喵喵第四集（第四话）",
             "BV1nigu00000",
             "【尼古喵喵】全13话 超清中字（未删减版）周更",
@@ -295,14 +323,10 @@ def test_requested_spoken_queries_resolve_the_expected_parts():
         ref = parse_query(spoken)
         full_keyword = ref.title_query
         first_title = full_keyword.split()[0]
-        full_episode_keyword = f"{full_keyword} 第{ref.episode}集"
-        first_episode_keyword = f"{first_title} 第{ref.episode}集"
 
-        def search(params, *, _full=full_episode_keyword,
-                   _first=first_episode_keyword,
+        def search(params, *, _full=full_keyword,
+                   _first=first_title,
                    _bvid=bvid, _title=result_title):
-            if params["keyword"] == _full and _full != _first:
-                return _search_results()
             if params["keyword"] == _first:
                 return _search_results({
                     "mid": "3493112693394137",
@@ -327,6 +351,164 @@ def test_requested_spoken_queries_resolve_the_expected_parts():
 
         assert outcome.status == "matched"
         assert outcome.chosen.locator == f"{bvid}:{expected_part}"
+        first_search = next(
+            params for url, params in sess.calls
+            if "web-interface/wbi/search/type" in url
+        )
+        assert first_search["keyword"] == first_title
+
+
+def test_configured_aliases_survive_bilibili_prefilter_and_resolve():
+    aliases = {
+        "在超市后门吸烟的二人": [
+            "躲在超市后门抽烟的两人",
+            "スーパーの裏でヤニ吸うふたり",
+        ],
+    }
+    sess = FakeSession(_one_page_search({
+        "bvid": "BV1smoke0000",
+        "title": "正式版【躲在超市后门抽烟的两人】全12集（更新中）",
+    }))
+    src = BilibiliSearchSource(
+        ["3493112693394137"],
+        session=sess,
+        max_pages=1,
+        sleep=_nosleep,
+        title_aliases=aliases,
+    )
+    ref = parse_query("我想看在超市后门吸烟的二人第一季第二集")
+
+    outcome = resolve(
+        ref,
+        src.search(ref),
+        title_aliases=aliases,
+    )
+
+    assert outcome.status == "matched"
+    assert outcome.chosen.locator == "BV1smoke0000:2"
+
+
+def test_configured_aliases_expand_bilibili_search_terms():
+    aliases = {
+        "在超市后门吸烟的二人": [
+            "躲在超市后门抽烟的两人",
+        ],
+    }
+    searched: list[str] = []
+
+    def search(params):
+        searched.append(params["keyword"])
+        if params["keyword"] == "躲在超市后门抽烟的两人":
+            return _search_results({
+                "bvid": "BV1smoke0000",
+                "title": "【躲在超市后门抽烟的两人】全12集（更新中）",
+            })
+        return _search_results()
+
+    src = BilibiliSearchSource(
+        ["3493112693394137"],
+        session=FakeSession(search),
+        max_pages=1,
+        sleep=_nosleep,
+        title_aliases=aliases,
+    )
+    ref = parse_query("我想看在超市后门吸烟的二人第一季第二集")
+
+    candidates = src.search(ref)
+
+    assert any(c.locator == "BV1smoke0000:2" for c in candidates)
+    assert "躲在超市后门抽烟的两人" in searched
+
+
+def test_target_episode_skips_wrong_single_episode_detail_requests():
+    viewed: list[str] = []
+
+    def search(params):
+        if params["page"] != 1:
+            return _search_results()
+        return _search_results(
+            {"bvid": "BV1wrong00000", "title": "【尼古喵喵】第5集"},
+            {
+                "bvid": "BV1nigu00000",
+                "title": "【尼古喵喵】全13话 超清中字（未删减版）周更",
+            },
+        )
+
+    def view(params):
+        viewed.append(params["bvid"])
+        return FakeResp({"code": 0, "data": {"pages": [
+            {"page": episode, "part": f"第{episode:02d}话"}
+            for episode in range(1, 14)
+        ]}})
+
+    sess = FakeSession(search, view=view)
+    src = BilibiliSearchSource(
+        ["3493112693394137"], session=sess, max_pages=2, sleep=_nosleep)
+    ref = parse_query("我想看尼古喵喵第二集")
+
+    outcome = resolve(ref, src.search(ref))
+
+    assert outcome.status == "matched"
+    assert outcome.chosen.locator == "BV1nigu00000:2"
+    assert viewed == ["BV1nigu00000"]
+
+
+def test_global_search_requests_fifty_rows_per_page():
+    seen_page_sizes: list[int] = []
+
+    def search(params):
+        seen_page_sizes.append(params["page_size"])
+        return _search_results()
+
+    src = BilibiliSearchSource(
+        ["3493112693394137"],
+        session=FakeSession(search),
+        max_pages=1,
+        sleep=_nosleep,
+    )
+
+    assert src.search("尼古喵喵") == []
+    assert seen_page_sizes == [50]
+
+
+def test_episode_search_does_not_let_one_keyword_consume_all_pages():
+    calls: list[tuple[str, int]] = []
+
+    def search(params):
+        keyword, page = params["keyword"], params["page"]
+        calls.append((keyword, page))
+        if keyword == "尼古喵喵 第4集" and page == 1:
+            return _search_results({
+                "bvid": "BV1nigu00000",
+                "title": "【尼古喵喵】全13话 超清中字（未删减版）周更",
+            })
+        # Results exist, but their explicit episode cannot answer the request.
+        return _search_results({
+            "bvid": f"BV1wrong{page:04d}",
+            "title": "【尼古喵喵】第5集",
+        })
+
+    sess = FakeSession(
+        search,
+        view=lambda params: FakeResp({"code": 0, "data": {"pages": [
+            {"page": episode, "part": f"第{episode:02d}话"}
+            for episode in range(1, 14)
+        ]}}),
+    )
+    src = BilibiliSearchSource(
+        ["3493112693394137"], session=sess, max_pages=10, sleep=_nosleep)
+    ref = parse_query("我想看尼古喵喵第四集")
+
+    outcome = resolve(ref, src.search(ref))
+
+    assert outcome.status == "matched"
+    assert outcome.chosen.locator == "BV1nigu00000:4"
+    assert calls == [
+        ("尼古喵喵", 1),
+        ("尼古喵喵", 2),
+        ("尼古喵喵", 3),
+        ("尼古喵喵 第4集", 1),
+    ]
 
 
 def test_episode_hint_keeps_paging_past_a_wrong_episode():
@@ -393,6 +575,18 @@ def test_risk_control_retry_then_success():
     assert len(cands) == 2                       # recovered after retry
     assert sess.n_calls("wbi/search/type") >= 2       # retried
     assert sess.n_calls("finger/spi") >= 2       # re-seeded buvid on retry
+
+
+def test_successive_searches_reuse_the_seeded_fingerprint():
+    sess = FakeSession(
+        _one_page_search({"bvid": "BV1fmMP6NEvw", "title": MUSHOKU}))
+    src = BilibiliSearchSource(
+        ["3493112693394137"], session=sess, max_pages=1, sleep=_nosleep)
+
+    assert src.search("无职转生")
+    assert src.search("无职转生")
+
+    assert sess.n_calls("finger/spi") == 1
 
 
 def test_cookie_injected_not_from_env():

@@ -148,6 +148,24 @@ def test_flow_matched_emits_and_acks(monkeypatch):
     assert out["episode_key"] == "无职转生|s3|e1"
 
 
+def test_flow_passes_configured_title_aliases_to_resolver(monkeypatch):
+    aliases = {"少女怪兽焦糖恋心": ["少女怪兽焦糖味"]}
+    config = _cfg()
+    config.title_aliases = aliases
+    seen = {}
+
+    def fake_resolve(*args, **kwargs):
+        seen.update(kwargs)
+        return CoordinatorResult(NOT_FOUND)
+
+    monkeypatch.setattr(watch_flow, "resolve_episode", fake_resolve)
+
+    with pytest.raises(WatchAnimeError):
+        run_watch_request(**_kw(config=config))
+
+    assert seen["title_aliases"] is aliases
+
+
 @pytest.mark.parametrize("outcome,code", [
     (NEED_EPISODE, "ANIME_NEED_EPISODE"),
     (NOT_FOUND, "ANIME_NOT_FOUND"),
@@ -200,6 +218,36 @@ def test_flow_library_hit_wins_over_busy(monkeypatch):
         in_flight=lambda: {"progress": 0.1, "title": "别的番"}))
     assert out["status"] == "playing"
     assert played == ["/dl/ep1.mkv"]
+
+
+def test_flow_configured_alias_hits_existing_canonical_library_entry(monkeypatch):
+    aliases = {"星海旅人": ["星海旅行者"]}
+    config = _cfg()
+    config.title_aliases = aliases
+    library = AnimeLibrary([
+        LibraryEntry(
+            episode_key="星海旅人|s1|e2",
+            title="星海旅人",
+            season=1,
+            episode=2,
+            file_path="/dl/caramel-02.mkv",
+            size_bytes=700,
+            source="bilibili",
+        ),
+    ])
+    monkeypatch.setattr(watch_flow, "resolve_episode", lambda *a, **k: pytest.fail(
+        "configured alias must hit the existing library entry"))
+    played = []
+
+    result = run_watch_request(**_kw(
+        query="星海旅行者第一季第二集",
+        config=config,
+        library=library,
+        play_file=played.append,
+    ))
+
+    assert result["status"] == "playing"
+    assert played == ["/dl/caramel-02.mkv"]
 
 
 # -- flow: library hit -> play via port --------------------------------------
@@ -303,6 +351,36 @@ def test_flow_pointer_title_only_rephrase_plays(monkeypatch):
     assert played == ["/dl/ep1.mkv"]
     assert marked == [episode_key("无职转生", 3, 1)]
     assert out["status"] == "playing"
+
+
+def test_flow_pointer_uses_configured_title_alias(monkeypatch):
+    config = _cfg()
+    config.title_aliases = {"星海旅人": ["星海旅行者"]}
+    library = AnimeLibrary([
+        LibraryEntry(
+            episode_key="星海旅人|s1|e2",
+            title="星海旅人",
+            season=1,
+            episode=2,
+            file_path="/dl/star-sea-02.mkv",
+            size_bytes=700,
+            source="bilibili",
+        ),
+    ])
+    monkeypatch.setattr(watch_flow, "resolve_episode",
+                        lambda *a, **k: pytest.fail("pointer hit must not resolve"))
+    played = []
+
+    result = run_watch_request(**_kw(
+        query="星海旅行者",
+        episode=None,
+        config=config,
+        library=library,
+        play_file=played.append,
+    ))
+
+    assert result["status"] == "playing"
+    assert played == ["/dl/star-sea-02.mkv"]
 
 
 def test_flow_pointer_different_title_falls_through(monkeypatch):

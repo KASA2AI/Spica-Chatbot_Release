@@ -254,7 +254,11 @@ def _build_sources(cfg: Any, secrets: Any) -> list[AnimeSourcePort]:
     uploader_uids = list(cfg.bilibili_spaces)  # legacy key, allowlist semantics
     if uploader_uids:
         sources.append(BilibiliSearchSource(
-            uploader_uids, cookie=cookie, timeout=timeout))
+            uploader_uids,
+            cookie=cookie,
+            timeout=timeout,
+            title_aliases=getattr(cfg, "title_aliases", None),
+        ))
     urls = list(cfg.mikan_base_urls)
     if urls:
         sources.append(MikanRssSource(urls, timeout=timeout))

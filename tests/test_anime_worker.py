@@ -289,6 +289,12 @@ def _downloading(p: float) -> DownloadStatus:
     return DownloadStatus(task_id="a" * 40, state="downloading", progress=p)
 
 
+def test_worker_defaults_source_timeout_to_30_seconds(tmp_path):
+    worker = _worker(tmp_path)
+
+    assert worker._source_timeout_seconds == 30.0
+
+
 def _completed(path: str) -> DownloadStatus:
     return DownloadStatus(task_id="a" * 40, state="completed", progress=1.0,
                           save_path=path)

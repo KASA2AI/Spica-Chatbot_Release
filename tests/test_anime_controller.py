@@ -285,6 +285,14 @@ def test_request_event_starts_worker_and_sets_in_flight(qapp):
     assert any("下载中" in s for s in h.status)
 
 
+def test_request_event_defaults_source_timeout_to_30_seconds(qapp):
+    h = Harness(anime_config=lambda: SimpleNamespace())
+
+    h.controller.handle_anime_request_event(_request_event())
+
+    assert h.workers[0].kw["source_timeout_seconds"] == 30.0
+
+
 def test_request_event_passes_torrent_payload_to_worker(qapp):
     h = Harness()
     h.controller.handle_anime_request_event(

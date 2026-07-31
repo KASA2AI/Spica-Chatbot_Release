@@ -67,6 +67,7 @@ from PySide6.QtCore import QThread, Signal
 
 from spica.anime.download_health import DownloadHealthMonitor, DownloadProgressSample
 from spica.anime.models import (
+    DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS,
     DownloadStatus,
     DownloadTerminalCause,
     DownloadTerminalOwner,
@@ -215,7 +216,7 @@ class AnimeDownloadWorker(QThread):
         poll_seconds: float = 5.0,
         stall_timeout_minutes: float = 10.0,
         ytdlp_format: str = "bv*[height<=1080]+ba/b[height<=1080]",
-        source_timeout_seconds: float = 15.0,
+        source_timeout_seconds: float = DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS,
         ytdlp_min_rate_kib_per_second: float = 512.0,
         cookies_file: str = "",
         resume_task_id: str | None = None,

@@ -53,6 +53,7 @@ from spica.adapters.torrent.qbittorrent import QBittorrentClient
 from spica.adapters.tools.cancel_anime_download import CancelAnimeDownloadTool
 from spica.adapters.tools.watch_anime import WatchAnimeTool
 from spica.anime.library import AnimeLibrary, LibraryEntry
+from spica.anime.models import DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS
 from spica.anime.watch_flow import WatchAnimeError, run_watch_request
 from spica.core.anime_events import AnimeCancelRequestEvent, AnimeRequestEvent
 from spica.ports.anime_source import AnimeSourcePort
@@ -249,7 +250,10 @@ def _build_sources(cfg: Any, secrets: Any) -> list[AnimeSourcePort]:
     # that invariant stays). Both empty -> no sources -> resolve returns a stable
     # ANIME_SOURCE_ERROR, never a startup crash.
     cookie = getattr(secrets, "bilibili_cookie", None)
-    timeout = float(getattr(cfg, "source_timeout_seconds", 15) or 15)
+    timeout = float(
+        getattr(cfg, "source_timeout_seconds",
+                DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS)
+        or DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS)
     sources: list[AnimeSourcePort] = []
     uploader_uids = list(cfg.bilibili_spaces)  # legacy key, allowlist semantics
     if uploader_uids:

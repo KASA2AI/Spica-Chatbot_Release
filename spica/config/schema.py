@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from spica.anime.models import DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS
 from spica.anime.title_aliases import (
     default_title_aliases,
     normalized_title_alias_groups,
@@ -471,7 +472,7 @@ class AnimeConfig(BaseModel):
     quality: str = "1080p"
     subtitle_preference: list[str] = Field(
         default_factory=lambda: ["简繁", "简体"])
-    source_timeout_seconds: float = 15.0
+    source_timeout_seconds: float = DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS
     resolve_budget_seconds: float = 45.0
     qbittorrent_url: str = "http://127.0.0.1:8080"
     qbittorrent_username: str = "admin"   # password 是 secret (QBITTORRENT_PASSWORD)

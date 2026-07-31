@@ -314,7 +314,7 @@ anime:
   quality: "1080p"                   # D7
   subtitle_preference: ["简体", "简繁"]
   stall_timeout_minutes: 10       # >=1，有限 float；连续无真实活动的 hard cutoff
-  source_timeout_seconds: 15         # P1-8：每源网络超时
+  source_timeout_seconds: 30         # P1-8：每源网络超时
   resolve_budget_seconds: 45         # P1-8：resolve 总预算
   qbittorrent_url: "http://127.0.0.1:8080"
   qbittorrent_username: "admin"      # 密码进 secrets（P2-14：用户名是 config）

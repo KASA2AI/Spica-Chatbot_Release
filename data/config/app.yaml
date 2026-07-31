@@ -132,7 +132,7 @@
 #   mikan_base_urls: ["https://mikanani.me"]
 #   quality: 1080p
 #   subtitle_preference: ["简繁", "简体"]
-#   source_timeout_seconds: 15
+#   source_timeout_seconds: 30
 #   resolve_budget_seconds: 45
 #   qbittorrent_url: http://127.0.0.1:8080
 #   qbittorrent_username: admin  # password 是 secret (QBITTORRENT_PASSWORD)
@@ -252,6 +252,7 @@ stt:                                     # 本地语音转文字(Plan B):faster-
 anime:                                   # spica 看番:Phase 4 端到端验收通过,已启用。完整键见上方注释模板
   enabled: true
   player_command: vlc
+  source_timeout_seconds: 30             # B站无结果时完整跑完关键词/分页，仍受45秒总预算限制
   stall_timeout_minutes: 10             # 连续无有效进度；进度增长会重新计时
   bilibili_spaces:                      # 全站视频搜索后按数值 UID 严格过滤
     - "3493112693394137"

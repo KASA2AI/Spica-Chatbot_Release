@@ -33,7 +33,7 @@ def test_anime_config_defaults():
     assert a.mikan_base_urls == ["https://mikanani.me"]
     assert a.quality == "1080p"
     assert a.subtitle_preference == ["简繁", "简体"]
-    assert a.source_timeout_seconds == 15.0
+    assert a.source_timeout_seconds == 30.0
     assert a.resolve_budget_seconds == 45.0
     assert a.qbittorrent_url == "http://127.0.0.1:8080"
     assert a.qbittorrent_username == "admin"
@@ -67,6 +67,10 @@ def test_resolved_anime_auto_play_threshold_is_50_seconds():
 
 def test_resolved_anime_stall_timeout_is_10_minutes():
     assert ConfigManager().load().anime.stall_timeout_minutes == 10.0
+
+
+def test_resolved_anime_source_timeout_is_30_seconds():
+    assert ConfigManager().load().anime.source_timeout_seconds == 30.0
 
 
 @pytest.mark.parametrize(

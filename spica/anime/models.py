@@ -34,6 +34,11 @@ _WIN_RESERVED = frozenset({
 # bytes, and CJK is 3 bytes/char, so a 120-CHAR title would be 360 bytes.
 _DIRNAME_MAX_BYTES = 200
 
+# One runtime default shared by config validation, source assembly, and the UI
+# download boundary.  Keep deployment/documentation examples explicit so their
+# effective values remain independently inspectable.
+DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS = 30.0
+
 
 class DownloadTerminalOwner(str, Enum):
     """The single worker-side owner of a terminal decision."""

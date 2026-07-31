@@ -52,7 +52,11 @@ from spica.anime.playback_policy import (
     REQUIRE_CONFIRMATION,
     decide_playback,
 )
-from spica.anime.models import DownloadTerminalCause, DownloadTerminalResult
+from spica.anime.models import (
+    DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS,
+    DownloadTerminalCause,
+    DownloadTerminalResult,
+)
 from spica.core.proactive import ProactiveTurnRequest
 from spica.ports.media_player import MediaPlayerError
 from ui.workers.anime_worker import AnimeDownloadWorker
@@ -175,7 +179,8 @@ class AnimeController(QObject):
             ytdlp_format=str(getattr(
                 cfg, "ytdlp_format", "bv*[height<=1080]+ba/b[height<=1080]")),
             source_timeout_seconds=float(getattr(
-                cfg, "source_timeout_seconds", 15.0)),
+                cfg, "source_timeout_seconds",
+                DEFAULT_ANIME_SOURCE_TIMEOUT_SECONDS)),
             ytdlp_min_rate_kib_per_second=float(getattr(
                 cfg, "ytdlp_min_rate_kib_per_second", 512.0)),
             cookies_file=self._cookies_file,

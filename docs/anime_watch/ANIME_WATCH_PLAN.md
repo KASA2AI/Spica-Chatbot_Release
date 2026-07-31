@@ -94,7 +94,8 @@ spica/ports/
                          #   拒绝 .desktop/.sh/.html 等（种子内文件名由作者控制,是代码执行面）
 
 spica/adapters/anime_source/
-  bilibili_space.py      # 主源：space 视频列表检索（WBI 签名）+ yt-dlp 下载；每源超时(§5.2)
+  bilibili_search.py     # 主源：B站全站视频搜索（WBI）+ UP UID 白名单 + 分P解析；每源超时(§5.2)
+  bilibili_space.py      # 旧导入/space_uids= 兼容 shim；不再访问空间投稿列表
   mikan.py               # 备源：官方 RSS 为主 + HTML 兜底(挂账)；base_url 列表轮询；每源超时(§5.3)
 
 spica/adapters/torrent/
@@ -168,7 +169,7 @@ ui/
       1. resolver 解析 EpisodeRef（番名规范化 + 季/集抽取；"最新一集"→LATEST 哨兵）
       2. library 查重（含"最近完成未播"指针,P1-11）→ 命中 → 请求 host 播放闭包 play_file → 返回「已开播」
       3. coordinator.resolve（带每源超时+总预算,P1-8）:
-         主源 bilibili_space → 命中 → AnimeResource(url)
+         主源 Bilibili 全站搜索 → 数字 UID 白名单过滤 → 命中 → AnimeResource(bvid:part)
          未命中/失败/网络错 → 备源 mikan（过滤 batch,D11）→ 磁力 AnimeResource(magnet)
          候选歧义（含 LATEST 季度歧义）→ 返回候选列表由 LLM 向用户确认（绝不静默选最相似,D10/P1-11）
          真彻底没有 → ToolError(ANIME_NOT_FOUND)；网络全挂 → ToolError(ANIME_SOURCE_ERROR)（P1-10 改码）
@@ -207,11 +208,13 @@ watch_anime 返回 {"candidates": ["无职转生II 第2クール(01起)", "无�
 - 别名（「无职转生」/「Mushoku Tensei」/「無職転生」）：v1 内置小别名规范化；不建大别名库，不够用挂账。
 - **v1 不做的话数映射**见 §0.3（specials 非剧集、クール/绝对话数不重映射，安全非匹配）。
 
-### 5.2 主源：bilibili space（Phase 0 已侦察，见 probes/PHASE0_FINDINGS.md）
+### 5.2 主源：Bilibili 全站视频搜索 + UP UID 白名单
 
-- space UID **可配列表**，默认 `["3493112693394137"]`；`bilibili_fallback_search` 默认关（避免搜到不相干投稿）。
+- 不再逐个翻 UP 空间投稿列表。adapter 直接调用 Bilibili 全站视频搜索，再对结果中的**数字 `mid` 做精确白名单过滤**；昵称、标题或同名账号都不能授权，缺失/畸形 `mid` 直接丢弃。过滤通过后才读取视频分 P。
+- 旧配置键 `bilibili_spaces` 为兼容保留，语义改为 UP UID 白名单。默认包含 `3493112693394137`、`4262884`、`3546957240862932`、`3690989176752257`、`3546914945501863`、`690151424`。
+- 搜索结果标题的 `<em>` 高亮先清理，重复 `bvid` 去重；完整双标题零命中时，只对用户明确用空格分开的、长度足够的 CJK 标题段做有界重试。所有候选仍由 resolver 以原始完整标题复核。
 - **resolve 结果是 `(bvid, part_index)` 不是单 URL**（Phase 0 实测：搬运号是「一个 bvid = 整季合集分P」，如 `【4K超清】无职转生 第三季 01-02话`，ep1=P1/ep2=P2）；adapter 用 yt-dlp 按 `-I <part>`/`?p=N` 下指定集。matcher 先定位「番+季」合集视频，再把分P列表映射到集号——**集号在标题里位置不固定，不能靠位置解析**。
-- **风控重试是硬要求（Phase 0 实测）**：裸调 `-403`；仅 WBI `-352`；**buvid3/buvid4 指纹（`finger/spi`）+ dm_* 指纹参数 + WBI 签名才通，且概率性**（单页 1-3 次重试）。adapter 必须 re-seed buvid 重签重试；**有 cookie 优先带**（既稳风控又解 1080p，D7）。页间加节流。
+- **风控重试是硬要求**：搜索接口可能返回 `-352`、非 JSON，或 `code=0` 但只有 `v_voucher`。**buvid3/buvid4 指纹（`finger/spi`）+ dm_* 指纹参数 + WBI 签名**必须保留；adapter re-seed buvid、重签重试，页间加节流。
 - 下载 yt-dlp 子进程：**每源网络超时 `source_timeout_seconds`（§6）**、stderr 收集、`.part` 断点续传；无/失效 cookie 时的行为见 §7（区分降清晰度 vs auth 失败 vs 充电专属）。
 - **搬运号随时会没是常态**：任何失败 → WARNING + 静默回退蜜柑，不崩 turn。
 
@@ -296,8 +299,13 @@ anime:
   disk_limit_gb: 100                 # D6
   auto_play_threshold_seconds: 50    # D5: <=50秒自动;>50秒确认
   player_command: ""                 # 空 = xdg-open / os.startfile
-  bilibili_spaces: ["3493112693394137"]
-  bilibili_fallback_search: false
+  bilibili_spaces:                    # 全站搜索结果的 UP UID 白名单
+    - "3493112693394137"
+    - "4262884"
+    - "3546957240862932"
+    - "3690989176752257"
+    - "3546914945501863"
+    - "690151424"
   mikan_base_urls: ["https://mikanani.me", "https://mikan.tangbai.cc"]
   preferred_subgroups: []
   quality: "1080p"                   # D7
@@ -400,7 +408,7 @@ anime:
 | --- | --- | --- |
 | **0 探针** ✅ | 一次性脚本（不进 spica/）验证：space API 可爬性+命名规律；蜜柑官方站 RSS 结构+磁力覆盖；qbt Web API 走通 add/status/cancel。**样本入库前脱敏**（cookie/buvid/WBI key 不进 git，P2-21） | **mikan/bilibili 探针已跑，样本+结论存 probes/（PHASE0_FINDINGS.md）；qbt 探针就绪待安装。开放问题 1/2/3/6 已答，4/5 待安装/手动** |
 | **1 纯逻辑** ✅ | `spica/anime/` models + resolver + coordinator（编排骨架，源用 mock）+ library（含**对账纯逻辑**，P2-17）+ playback_policy + ports 定义 + 全部 golden/单元测试 | **完成：models/resolver/coordinator/library/playback_policy + 3 ports；全部 anime 单元/golden 测试绿（真实样本验证）；全量 pytest 绿** |
-| **2 adapters** | bilibili_space / mikan（RSS-only）/ qbittorrent / system_default 四 adapter（合同测试 mock 网络层） | mock 合同测试绿；真机脚本各跑通一次 |
+| **2 adapters** | Bilibili 全站搜索+UID白名单 / mikan（RSS-only）/ qbittorrent / system_default 四 adapter（合同测试 mock 网络层） | mock 合同测试绿；真机脚本各跑通一次 |
 | **3 工具+装配** | watch_anime 垫片 + `assemblies/anime.py`（install + 写权限闭包）+ anime_events + AnimeConfig/secrets + 基线 diff + **enabled 默认 false** | 工具经 registry 状态供给、供给测试绿、ToolError 全路径、config 零漂移；**真机此时不触发下载**（P1-12） |
 | **4 UI+完成行为** | anime_worker / controller / 事件桥 / playback_policy 接线 / 安全延后 / 系统 turn 确认 + 短周期空闲调度 / 生命周期 | 真机端到端：语音点片→下载→自动播 & 慢下确认→「放吧」→播；**过后翻 enabled=true**（P1-12） |
 | **5 打磨** | 磁盘提醒、崩溃对账接线、stall 处理、cookie 生命周期、**搜索质量 hardening（简称别名/零命中变体重试/`[NN(MM)]` 双编号/假歧义归并——2026 春季番真样本实测见 `SEARCH_QUALITY_FINDINGS.md`，含 golden case 清单）**、文档收尾（CLAUDE.md §0 立项状态更新） | 手动验收清单全过 |

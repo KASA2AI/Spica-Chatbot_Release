@@ -20,7 +20,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Any
 
-from spica.anime.models import AnimeCandidate, AnimeResource
+from spica.anime.models import AnimeCandidate, AnimeResource, EpisodeRef
 from spica.anime.resolver import parse_source_title
 from spica.anime.torrent_metadata import (
     MAX_TORRENT_BYTES,
@@ -130,8 +130,12 @@ class MikanRssSource:
             raise AnimeSourceError("TIMEOUT", "search deadline exceeded")
         return min(self._timeout, remaining)
 
-    def search(self, title_query: str, *,
+    def search(self, request: EpisodeRef | str, *,
                deadline: float | None = None) -> list[AnimeCandidate]:
+        # Keep direct string probes compatible while the shared port carries the
+        # complete request. Mikan needs only the title; resolver handles hints.
+        title_query = (
+            request.title_query if isinstance(request, EpisodeRef) else request)
         self._deadline_at = (None if deadline is None
                              else self._clock() + deadline)
         cands = self._search_once(title_query)

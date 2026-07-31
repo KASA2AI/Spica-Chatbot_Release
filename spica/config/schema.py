@@ -447,7 +447,16 @@ class AnimeConfig(BaseModel):
         },
     )
     player_command: str = "vlc"           # VLC handles AV1/HEVC/MKV more reliably
-    bilibili_spaces: list[str] = Field(default_factory=lambda: ["3493112693394137"])
+    # Exact uploader UID allowlist applied to Bilibili global video-search
+    # results. The legacy key name is retained so existing YAML stays valid.
+    bilibili_spaces: list[str] = Field(default_factory=lambda: [
+        "3493112693394137",
+        "4262884",
+        "3546957240862932",
+        "3690989176752257",
+        "3546914945501863",
+        "690151424",
+    ])
     mikan_base_urls: list[str] = Field(
         default_factory=lambda: ["https://mikanani.me"])
     quality: str = "1080p"

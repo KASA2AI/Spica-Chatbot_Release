@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from spica.anime.models import LATEST, AnimeCandidate, EpisodeRef, SourceTitle
+from spica.anime.models import LATEST, AnimeCandidate, EpisodeRef
 from spica.anime.resolver import (
     cn_to_int,
     name_matches,
@@ -48,6 +48,20 @@ def test_parse_query(query, title, season, episode):
     ref = parse_query(query)
     assert ref.title_query == title
     assert ref.season == season
+    assert ref.episode == episode
+
+
+@pytest.mark.parametrize("query,title,episode", [
+    ("我想看尼古喵喵第四集（第四话）", "尼古喵喵", 4),
+    (
+        "我想看与你相恋到生命尽头 只愿深入爱河第二集",
+        "与你相恋到生命尽头 只愿深入爱河",
+        2,
+    ),
+])
+def test_parse_requested_spoken_search_phrases(query, title, episode):
+    ref = parse_query(query)
+    assert ref.title_query == title
     assert ref.episode == episode
 
 

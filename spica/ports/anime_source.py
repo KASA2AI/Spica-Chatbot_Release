@@ -1,6 +1,6 @@
 """Anime source capability port (Phase 1).
 
-One implementation per source (bilibili space / mikan RSS). ``search`` returns
+One implementation per source (Bilibili global search / Mikan RSS). ``search`` returns
 per-episode candidates already parsed for matching; the coordinator runs
 ``spica.anime.resolver.resolve`` over the union with main->fallback ordering.
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from spica.anime.models import AnimeCandidate, AnimeResource
+from spica.anime.models import AnimeCandidate, AnimeResource, EpisodeRef
 
 
 class AnimeSourceError(Exception):
@@ -29,13 +29,17 @@ class AnimeSourceError(Exception):
 class AnimeSourcePort(Protocol):
     name: str  # "bilibili" | "mikan"
 
-    def search(self, title_query: str, *,
+    def search(self, request: EpisodeRef, *,
                deadline: float | None = None) -> list[AnimeCandidate]:
         """Return per-episode candidates for the anime name (matching data only).
         A bilibili collection is expanded to per-part single-episode candidates
         here (finding #1); mikan multi-episode torrents are filtered (D11). Raises
         AnimeSourceError on failure; an empty list means "reachable but nothing
         found" (-> NOT_FOUND upstream).
+
+        ``request.season`` / ``request.episode`` are search hints, never
+        selection authority: adapters may use them to narrow an external query,
+        but the coordinator's resolver still validates every returned candidate.
 
         ``deadline`` (F6/P1-8) is the remaining seconds this call may spend --
         the adapter checks it before EVERY HTTP request and raises

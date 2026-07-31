@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from agent_tools.function_tools.screen.schema import ScreenToolError
-from spica.adapters.anime_source.bilibili_space import BilibiliSpaceSource
+from spica.adapters.anime_source.bilibili_search import BilibiliSearchSource
 from spica.adapters.anime_source.mikan import MikanRssSource
 from spica.adapters.media_player.system_default import SystemDefaultPlayer
 from spica.adapters.torrent.qbittorrent import QBittorrentClient
@@ -242,7 +242,8 @@ def build_request_anime_cancel(host: Any) -> Callable[[str], dict[str, Any]]:
 
 
 def _build_sources(cfg: Any, secrets: Any) -> list[AnimeSourcePort]:
-    # bilibili main, mikan fallback (coordinator order). Constructors do NO I/O.
+    # Bilibili global search + uploader-UID allowlist is the main source; Mikan
+    # remains the fallback (coordinator order). Constructors do NO I/O.
     # An EMPTY config list skips that source (P2-6, D2): a bare `mikan_base_urls:
     # []` must not crash startup (MikanRssSource enforces non-empty internally --
     # that invariant stays). Both empty -> no sources -> resolve returns a stable
@@ -250,9 +251,10 @@ def _build_sources(cfg: Any, secrets: Any) -> list[AnimeSourcePort]:
     cookie = getattr(secrets, "bilibili_cookie", None)
     timeout = float(getattr(cfg, "source_timeout_seconds", 15) or 15)
     sources: list[AnimeSourcePort] = []
-    spaces = list(cfg.bilibili_spaces)
-    if spaces:
-        sources.append(BilibiliSpaceSource(spaces, cookie=cookie, timeout=timeout))
+    uploader_uids = list(cfg.bilibili_spaces)  # legacy key, allowlist semantics
+    if uploader_uids:
+        sources.append(BilibiliSearchSource(
+            uploader_uids, cookie=cookie, timeout=timeout))
     urls = list(cfg.mikan_base_urls)
     if urls:
         sources.append(MikanRssSource(urls, timeout=timeout))

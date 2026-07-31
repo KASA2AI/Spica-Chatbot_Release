@@ -38,7 +38,9 @@ class FakeSource:
         self._clock = clock
         self._on_search = on_search                  # side-effect hook after search
 
-    def search(self, title_query, *, deadline=None):
+    def search(self, request, *, deadline=None):
+        self.seen_season = request.season
+        self.seen_episode = request.episode
         self.seen_deadline = deadline            # recorded for the F6 tests
         if self._clock is not None:
             self._clock.now += self._elapsed
@@ -73,6 +75,8 @@ def test_main_source_match_wins():
     r = resolve_episode(parse_query("无职转生第三季第一集"), [main, fb])
     assert r.outcome == MATCHED
     assert r.source == "bilibili"
+    assert main.seen_season == 3
+    assert main.seen_episode == 1
 
 
 def test_falls_back_when_main_has_no_match():

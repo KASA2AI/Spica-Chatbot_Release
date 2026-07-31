@@ -16,7 +16,7 @@ class FakeSource:
     def __init__(self):
         self.searched = 0
 
-    def search(self, q, *, deadline=None):
+    def search(self, request, *, deadline=None):
         self.searched += 1
         return []
 

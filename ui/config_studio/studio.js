@@ -2285,19 +2285,19 @@
     }),
     "anime.bilibili_spaces": Object.freeze({
       "zh-CN": Object.freeze({
-        title: "Bilibili 番剧来源空间",
-        description: "列出允许搜索番剧内容的 Bilibili 空间标识。",
-        advice: "这是结构化列表；仅添加可信且确实用于番剧内容的来源。",
+        title: "Bilibili UP 主白名单",
+        description: "全站搜索视频后，仅接受这些数字 UID 对应的 UP 主投稿。",
+        advice: "只填写可信 UP 主的数字 UID；昵称相同不会获得授权。",
       }),
       en: Object.freeze({
-        title: "Bilibili anime-source spaces",
-        description: "Lists the Bilibili space identifiers permitted as anime search sources.",
-        advice: "This is a structured list. Add only trusted spaces that actually provide anime content.",
+        title: "Bilibili uploader allowlist",
+        description: "After a global video search, only uploads whose numeric UID appears here are accepted.",
+        advice: "Add only trusted numeric uploader UIDs. A matching display name never grants access.",
       }),
       ja: Object.freeze({
-        title: "Bilibiliのアニメ取得元スペース",
-        description: "アニメ検索の取得元として許可するBilibiliスペースの識別子を一覧で指定します。",
-        advice: "構造化された一覧です。信頼でき、実際にアニメを提供している取得元だけを追加してください。",
+        title: "Bilibili投稿者の許可リスト",
+        description: "動画を全体検索した後、ここにある数値UIDの投稿者だけを採用します。",
+        advice: "信頼できる投稿者の数値UIDだけを追加してください。同じ表示名では許可されません。",
       }),
     }),
     "anime.mikan_base_urls": Object.freeze({

@@ -109,7 +109,7 @@ def resolve_episode(
         else:
             deadline = remaining
         try:
-            candidates = src.search(ref.title_query, deadline=deadline)
+            candidates = src.search(ref, deadline=deadline)
         except AnimeSourceError as e:
             errors.append(SourceError(src.name, e.code))
             continue

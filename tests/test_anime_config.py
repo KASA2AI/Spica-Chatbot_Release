@@ -15,7 +15,14 @@ def test_anime_config_defaults():
     assert a.enabled is False
     assert a.download_dir == "static/generated_anime"
     assert a.player_command == "vlc"
-    assert a.bilibili_spaces == ["3493112693394137"]
+    assert a.bilibili_spaces == [
+        "3493112693394137",
+        "4262884",
+        "3546957240862932",
+        "3690989176752257",
+        "3546914945501863",
+        "690151424",
+    ]
     assert a.mikan_base_urls == ["https://mikanani.me"]
     assert a.quality == "1080p"
     assert a.subtitle_preference == ["简繁", "简体"]

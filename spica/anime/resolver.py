@@ -92,7 +92,7 @@ _BATCH_KEYWORD_RE = re.compile(
 # 「2024-25」whose「024-25」submatch would otherwise fire (F12); the trailing
 # negative lookahead drops sports-style「24-25赛季/年度」spans; a code-level
 # ascending check (left < right) rejects incidental pairs like「H-264」/「2-0」
-# (finding #7). Keep in sync with bilibili_space._RANGE_RE (F12).
+# (finding #7). Keep in sync with bilibili_search._RANGE_RE (F12).
 _RANGE_RE = re.compile(
     r"(?<![A-Za-z0-9])(\d{1,3})\s*-\s*(\d{1,3})(?![0-9A-Za-z])(?!\s*(?:赛季|年度))")
 
@@ -255,7 +255,14 @@ def parse_query(text: str) -> EpisodeRef:
     # strip common lead-ins / trailing quality words from the name
     work = re.sub(r"^(我想看|想看|看|播放|放)\s*", "", work)
     work = _QUALITY_RE.sub(" ", work)
-    title = re.sub(r"\s+", "", work).strip("　 ·/-")
+    # Repeated spoken episode markers commonly leave an empty pair behind:
+    # 「第四集（第四话）」->「（）」 after both markers are consumed.  It is not
+    # part of the title and degrades external search quality.
+    work = re.sub(r"[（(]\s*[）)]", " ", work)
+    # Preserve an intentional internal boundary between alternate titles or
+    # translated names. Name identity still goes through _norm(), which removes
+    # whitespace, while external search gets the useful token boundary.
+    title = re.sub(r"\s+", " ", work).strip("　 ·/-")
     return EpisodeRef(title_query=title, season=season, episode=episode)
 
 
@@ -375,6 +382,10 @@ _ALIASES: list[tuple[str, ...]] = [
     # 转生史莱姆 is a popular short form that is NOT a contiguous substring of the
     # full title (转生…史莱姆 split by 变成) -- the alias group folds them (§2.4).
     ("关于我转生变成史莱姆这档事", "转生史莱姆", "tenseishitaraslimedattaken"),
+    # The Chinese release is searched under both names. Users also naturally say
+    # both together, so collapse the pair to one identity instead of requiring
+    # the upload title to contain both strings.
+    ("与你相恋到生命尽头", "只愿深入爱河"),
 ]
 
 
@@ -387,6 +398,11 @@ def _canon(norm_name: str) -> str:
         for member in group[1:]:
             if member in norm_name:
                 norm_name = norm_name.replace(member, canonical)
+        # A user may state both the canonical title and one alias together;
+        # replacement then yields the canonical twice back-to-back.
+        doubled = canonical + canonical
+        while doubled in norm_name:
+            norm_name = norm_name.replace(doubled, canonical)
     return norm_name
 
 

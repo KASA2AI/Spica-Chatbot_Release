@@ -119,7 +119,13 @@
 #   enabled: false               # 默认关;Phase 4 端到端过后才翻 true
 #   download_dir: static/generated_anime   # 默认;repo 根下 static/(gitignore),按番名分子目录 <anime>/<episode>。相对路径锚 repo 根
 #   player_command: vlc          # VLC 默认播放(AV1/HEVC/MKV 更稳);可填空串走 xdg-open / os.startfile
-#   bilibili_spaces: ["3493112693394137"]
+#   bilibili_spaces:                # B站全站搜索结果的 UP UID 白名单（不是逐个翻空间主页）
+#     - "3493112693394137"
+#     - "4262884"
+#     - "3546957240862932"
+#     - "3690989176752257"
+#     - "3546914945501863"
+#     - "690151424"
 #   mikan_base_urls: ["https://mikanani.me"]
 #   quality: 1080p
 #   subtitle_preference: ["简繁", "简体"]
@@ -244,5 +250,12 @@ anime:                                   # spica 看番:Phase 4 端到端验收�
   enabled: true
   player_command: vlc
   stall_timeout_minutes: 10             # 连续无有效进度；进度增长会重新计时
+  bilibili_spaces:                      # 全站视频搜索后按数值 UID 严格过滤
+    - "3493112693394137"
+    - "4262884"
+    - "3546957240862932"
+    - "3690989176752257"
+    - "3546914945501863"
+    - "690151424"
 character:
   dialog_display_language: zh

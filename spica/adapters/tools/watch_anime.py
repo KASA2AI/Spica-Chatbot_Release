@@ -3,9 +3,9 @@
 Mirrors sing_song.py: the tool carries NO business logic. It parses/validates the
 call, forwards to the injected host closure (which holds all authority: config,
 sources, library, ports, event sink), and lets the closure's ``ScreenToolError``
-envelope propagate on failure. effect="act", chainable=False, intent_gated=False
-(state-supplied; supply is gated by the ``available`` predicate, not the router
-wordlist -- no router change). Qt-free (CLAUDE.md #1).
+envelope propagate on failure. effect="act", chainable=False, intent_gated=True:
+backend readiness is the state gate, while the router only supplies the schema
+for an actionable anime request. Qt-free (CLAUDE.md #1).
 """
 
 from __future__ import annotations

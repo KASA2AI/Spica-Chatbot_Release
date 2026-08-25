@@ -476,14 +476,19 @@ def install(
     host.registry.register_tool(
         tool.schema(), tool.run,
         available=lambda: _available(host),
-        intent_gated=False,          # state supply -- no router wordlist (review)
+        # An available anime backend is only the state gate.  The router also
+        # requires an actionable episode/play request so ordinary chat never
+        # pays for a source lookup + second model round.
+        intent_gated=True,
         effect="act",
     )
     cancel_tool = CancelAnimeDownloadTool(build_request_anime_cancel(host))
     host.registry.register_tool(
         cancel_tool.schema(), cancel_tool.run,
         available=lambda: _cancel_available(host, cancel_tool),
-        intent_gated=False,
+        # Even while a download is active, unrelated chat must not expose a
+        # destructive stop action to the model.
+        intent_gated=True,
         chainable=False,
         effect="act",
     )

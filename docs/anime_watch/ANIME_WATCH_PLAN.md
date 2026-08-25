@@ -143,7 +143,7 @@ ui/
 | `data/config/app.yaml` | 新增 `anime:` 节（app 级第 11 键）；**`enabled` 默认 false**（P1-12：Phase 4 端到端过后翻 true） |
 | `spica/config/secrets.py`（名册侧） | 新增 B 站 cookie + qbt 密码 secret 名（Phase 3 定名） |
 | `spica/host/app_host.py` | **仅** ≤15 行：调用 `assemblies/anime.py::install(self)` + 薄委托（P0-2；不新增 per-domain 方法体） |
-| `agent_tools/function_tools/router.py` | **仅当选词表路线才改**（P0-1）；本计划选 `intent_gated=False` 状态供给路线 → **不改 router.py**（见 §5.7） |
+| `agent_tools/function_tools/router.py` | 2026-08-26 增加看番/取消下载的本地保守供给门；不增加 LLM 或网络判断（见 §5.7） |
 | `ui/qt_overlay.py` | `AnimeRequestEvent`/`AnimeReadyEvent`/`AnimeCancelRequestEvent` 桥接 → controller；停止按钮在 `pressed` 捕获 request ID，`clicked` 携带该 ID |
 | 守门 | `tests/test_resolved_config_equivalence.py` 基线更新 + 新增 §10 测试文件 |
 
@@ -273,9 +273,9 @@ watch_anime 返回 {"candidates": ["无职转生II 第2クール(01起)", "无�
 
 ### 5.7 工具注册（watch_anime）——供给路线（P0-1 收口）
 
-- **选定 `intent_gated=False`（状态供给路线，仿 `watch_game_screen`）**：供给纯靠 `available` 谓词（`enabled` 且 controller 已附着），「调不调」是 LLM 按 description 的结构化决策。
-- **理由（实测 router.py）**：`_tool_names_for_text` 硬编码只认 `inspect_screen`/`sing_song`；若 `intent_gated=True` 而不改 router.py，工具永远不被供给（一次都触发不了）。更关键：词表只扫当前 user_text，「放吧」「嗯」「好啊」这类纯确认词无「看/番」词命中 → 词表路线下「放吧」闭环必挂。状态供给绕开整个词表脆弱面（这正是 watch_game_screen 走此路的原因）。
-- **因此不改 `router.py`**（§3.2 已标注）。
+- **2026-08-26 现场修订：改为 `intent_gated=True`。** `available` 仍只判断后端就绪状态；`router.py` 另以本地、确定性的保守规则判断当前话语是否已经是可执行的集数请求。普通聊天、剧情讨论和「我想看动漫」这类信息不足的话语不再向模型供给工具，由主对话自然追问。
+- 明确片名/集数、单独的集数续答，以及「放吧」等现有确认短句仍可供给；具体动漫请求会压掉同轮因「播放」命中的 `sing_song`。这是 schema 供给过滤，不取代主模型的语义判断，也不增加一次模型或网络调用。
+- `cancel_anime_download` 同样只在有活跃下载且用户明确要求停止时供给，避免普通聊天期间向模型暴露停止动作。
 - `available` 谓词 **live-read 且容忍 config 未加载**（P2-15：注册在 assembly 装配期，谓词异常会被 registry 吞掉隐藏工具——不靠碰巧，显式写 try 容错）。
 - description 采 CONFIRM_FIRST 风格（仿 sing_song）：用户没给具体片名时不调工具、先问清；参数 `query`（片名+季）+ `episode`（**optional**，含 `"latest"` 取值，P1-11）。
 - `chainable=False`；`effect="act"`。
@@ -367,7 +367,7 @@ anime:
 - `MemoryPort` / `MemoryScope` / recent memory：零改动，无新记忆类型。
 - galgame 全域：零改动（auto-play 只**读** galgame 活跃状态做忙态判定，不改其状态）。
 - registry 机制本身：只调 `register_tool`，不改注册表。
-- `router.py`：零改动（P0-1：走状态供给路线，§5.7）。
+- `router.py`：仅包含 schema 供给门；不放业务、下载或播放逻辑（§5.7）。
 - 冻结链 `sync_chain.py`、v1 `LLMPort`、`domain_router.py`：不碰。
 
 ---
@@ -379,8 +379,8 @@ anime:
 - `test_anime_resolver`：标题解析 golden cases（中文数字含十一以上/罗马数字/S3E1/「第x话」/**「最新一集」LATEST**/剧场版·OVA·SP/总集篇 x.5/cour 集数偏移/绝对话数 vs 季内话数/v2 修正版后缀/第0话·前传）+ 来源条目模糊匹配 golden（真实风格发布名样本）+ 歧义→候选列表 + **置信不足不静默选**（P2-13 全清单）。
 - `test_anime_library`：去重、已完成命中→播放分支、磁盘统计与上限、**崩溃对账纯逻辑**（mock qbt 状态；对账函数归 Phase 1，P2-17）、**对账补登记项只登记不 auto-play**（P1-9）。
 - `test_anime_source_fallback`：主源失败→备源、**网络全挂→SOURCE_ERROR（非 NOT_FOUND）**、真没有→NOT_FOUND、base_url 轮询、**batch 条目被过滤**（D11）、每源超时+总预算（P1-8）。
-- `test_watch_anime_tool`：注册元数据（effect="act"/chainable=False/**intent_gated=False**）、**available 谓词容忍 config 未加载不抛**（P2-15）、ToolError 各错误码、BUSY 单飞带进度、垫片纯转发、**episode optional**（P1-11）。
-- `test_watch_anime_supply`：**状态供给路线**——enabled 且 controller 附着才供给；「放吧」纯确认词也能供给（P0-1 核心回归）。
+- `test_watch_anime_tool`：注册元数据（effect="act"/chainable=False/**intent_gated=True**）、**available 谓词容忍 config 未加载不抛**（P2-15）、ToolError 各错误码、BUSY 单飞带进度、垫片纯转发、**episode optional**（P1-11）。
+- `test_watch_anime_supply`：状态就绪且当前话语为明确看番请求才供给；普通聊天/提及/否定不供给，「放吧」确认词仍可供给（P0-1 核心回归）。
 - `test_media_player_port`：路径白名单（download_dir 内/外、**前缀无分隔符绕过 `SpicaAnimeEvil`**、软链 realpath、**非媒体扩展名 `.desktop/.sh` 拒绝**、`.part` 拒绝）（P0-4）。
 - `test_torrent_qbittorrent_adapter`：**add_magnet 拒非 magnet（含 http torrent URL）**；`add_torrent_bytes` 在上传前二次校验 bencode/hash/tracker/辅助网络字段并保持原 payload；status 强制类别过滤。取消矩阵覆盖 v4.1–4.6 pause / 5.x stop / 未知版本零 mutation、有界 freeze、UP/progress 完成优先、stable error、ambiguous/非法 progress fail closed、pre-delete completion、exact hash owner、200/204、delayed disappearance 与 persistent `UNCONFIRMED`；全程 mock HTTP，不连真实 qBT。
 - `test_anime_playback_policy`：**consent 阈值纯函数**（`50.0` 自动 / `50.001` 确认 / 未知与非法耗时确认）；busy / galgame 不进入纯策略（P1-7）。
@@ -449,7 +449,7 @@ pip install yt-dlp                             # 装进现行 gptsovits 环境
 
 | 发现 | 落点 |
 | --- | --- |
-| P0-1 供给机制断裂 + router.py 缺失 | §5.7（选 intent_gated=False 状态供给，不改 router.py）+ §10 test_watch_anime_supply |
+| P0-1 供给机制断裂 + router.py 缺失 | §5.7（2026-08-26 改为状态门 + 本地保守意图门）+ §10 test_watch_anime_supply |
 | P0-2 照抄废止的 host 装配形制 + 漏铁律#5 | §2（补 #5 行）+ §3.1（assemblies/anime.py + coordinator.py）+ §3.2（app_host ≤15 行） |
 | P0-3 torrent 动作面泄漏 save_dir/任意 URL | §3.1 torrent_client（save_dir 移出面 + 严格 magnet / 已验证内存 payload 双入口）+ §10 test_torrent_client |
 | P0-4 play_file 三洞（前缀/扩展名/绕校验） | §5.6（is_relative_to + 扩展名白名单 + adapter 唯一执行点）+ §10 test_media_player_port |

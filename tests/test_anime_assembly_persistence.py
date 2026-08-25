@@ -392,7 +392,7 @@ def test_cancel_tool_submits_trusted_active_request_even_when_anime_disabled(tmp
     assert h.sunk == [AnimeCancelRequestEvent(request_id="REQ1")]
     assert h.registry.tool_effect("cancel_anime_download") == "act"
     assert h.registry.tool_chainable("cancel_anime_download") is False
-    assert h.registry.tool_intent_gated("cancel_anime_download") is False
+    assert h.registry.tool_intent_gated("cancel_anime_download") is True
 
 
 @pytest.mark.parametrize(

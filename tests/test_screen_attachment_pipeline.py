@@ -133,9 +133,14 @@ def test_empty_input_with_pending_screenshot_uses_default_question_and_injects_o
         assert calls[0]["question"] == "请查看这张截图并概括内容。"
         assert calls[0]["attachment"]["target"] == "selected_region"
         assert "tools" not in llm.responses.calls[0]
-        assert "[SCREEN_OBSERVATION]" in llm.responses.calls[0]["input"]
-        assert "png-bytes" not in llm.responses.calls[0]["input"]
-        assert "FULL OCR SHOULD NOT ENTER PROMPT" not in llm.responses.calls[0]["input"]
+        prompt_input = llm.responses.calls[0]["input"]
+        assert "[SCREEN_OBSERVATION]" in prompt_input
+        assert prompt_input.index("[SCREEN_OBSERVATION]") < prompt_input.index(
+            "[RUNTIME_CAPABILITY_REMINDER]"
+        )
+        assert prompt_input.rstrip().endswith("否则只提供步骤。")
+        assert "png-bytes" not in prompt_input
+        assert "FULL OCR SHOULD NOT ENTER PROMPT" not in prompt_input
         assert state.response_payload["answer"] == "スクリーンショットにはブラウザが見えます。"
         assert state.tools[0]["name"] == "screen_analyzer"
         assert state.tools[0]["ok"] is True

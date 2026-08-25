@@ -18,7 +18,10 @@ import logging
 from typing import Any, Iterator
 
 from spica.runtime.stages import _compact_tool_history_for_prompt, record_screen_tool_result
-from spica.conversation.prompt_builder import bilingual_output_reminder
+from spica.conversation.prompt_builder import (
+    RUNTIME_CAPABILITY_REMINDER,
+    bilingual_output_reminder,
+)
 from common.timing import elapsed_ms, now_ms
 from spica.runtime.context import TurnContext, is_turn_cancelled
 from spica.runtime.llm_stream import record_usage
@@ -319,8 +322,14 @@ def build_tool_followup_prompt(
     force_final: bool = False,
     dialog_display_language: str = "ja",
 ) -> str:
+    prompt_text = str(prompt_input).rstrip()
+    format_reminder = bilingual_output_reminder(dialog_display_language)
+    if format_reminder and prompt_text.endswith(format_reminder):
+        prompt_text = prompt_text[:-len(format_reminder)].rstrip()
+    if prompt_text.endswith(RUNTIME_CAPABILITY_REMINDER):
+        prompt_text = prompt_text[:-len(RUNTIME_CAPABILITY_REMINDER)].rstrip()
     sections = [
-        str(prompt_input),
+        prompt_text,
         "[TOOL_RESULTS]",
         json.dumps(
             _compact_tool_history_for_prompt(tool_history, compact_lookup), ensure_ascii=False
@@ -332,10 +341,10 @@ def build_tool_followup_prompt(
         # Loop-budget exceeded (P1): the graceful forced final -- streamed, no
         # tools offered, and the prompt says so explicitly.
         sections.append("不要再调用工具，基于已有结果回答。")
+    sections.append(RUNTIME_CAPABILITY_REMINDER)
     # zh mode: re-anchor the per-sentence ⟦中文⟧ format LAST -- [TOOL_RESULTS] /
     # [NEXT_STEP] pushed the system-prompt rule far up, so the followup answer would
     # otherwise regress to pure Japanese. "" in ja mode keeps this byte-identical.
-    reminder = bilingual_output_reminder(dialog_display_language)
-    if reminder:
-        sections.append(reminder)
+    if format_reminder:
+        sections.append(format_reminder)
     return "\n\n".join(sections)

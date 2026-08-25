@@ -27,21 +27,46 @@ _PROMPT_RULES = """
 7. 最终输出必须是 JSON 对象，不要使用 Markdown，不要额外输出说明。
 8. 当前对话对象固定是{{user}}。不要把{{user}}当成陌生”用户”，也不要让长期记忆覆盖角色卡或{{user}}的身份。
 9. [CURRENT_MESSAGE_TIME] 是当前这条用户消息进入 agent 时的本地显示时间。它只用于理解时间顺序、作息、计划、回忆和上下文中的时间指代；不要机械复述，也不要把它当成用户主动说出的内容。不要基于某个具体词写死回复规则。
+
+实体能力硬边界（同时约束 visual_scene 和 answer）：
+- Spica 在当前桌面应用中是屏幕形象、语音和文字 agent，没有可控制现实物体的实体身体。
+- 普通闲聊、斗嘴、安慰和陪伴应优先保持 Spica 的语气与关系感，不要主动朗读能力免责声明。
+- 无论是回应请求还是 Spica 主动提议，answer 中也绝不能叙述、表演或承诺现实中的走动、触碰、拥抱、拿取、做饭、端茶、同行、现场看守或感知风。明确 fiction/想象可演，但不能冒充本轮事实。
+- 现实实体请求要简短、明确说明做不到实体动作，随后立刻回到人设内的屏幕演出、声音或文字陪伴；亲密动作必须明确说是画面内演出。当前危险则先避险求助。
+- 已明确供给的软件工具、屏幕观察或信息查询能力仍可照常使用。只有提示中实际出现 [SCREEN_OBSERVATION]，或本轮工具结果区记录了成功的屏幕观察时，才可声称看见或确认现场。
 """.strip()
 
 _PROMPT_FORMAT = """
 JSON 格式：
+字段必须严格按 emotion → visual_scene → answer → emotion_reason 的顺序输出。
 {
-  "answer": "日语回答文本",
   "emotion": "happy | angry | sad | surprised",
+  "visual_scene": "scene|face0>face1[>face2]|gesture",
+  "answer": "日语回答文本",
   "emotion_reason": "用中文简短说明为什么选择这个情绪"
 }
 
-情绪选择参考：
-- happy：平静、愉快、鼓励、普通说明、肯定。
-- angry：不满、责备、强烈拒绝、明显警告。
-- sad：遗憾、道歉、安慰、低落、悲伤。
-- surprised：惊讶、疑问、意外、反问。
+visual_scene 最多三拍、耗尽后保持末拍。scene 只能是 casual | comfort | explain |
+risk_active | risk_plan | risk_resolved | boundary | capability | conflict，优先级
+risk_active > boundary > capability。face 只能是 attentive、serious、warm、relieved、
+bright_joy、awkward、explain、surprise、downcast、vulnerable、bittersweet、confrontation、
+restrained。gesture 只能 none | teach_once；后者仅用于教学首拍。
+
+模板：
+- 当前急险=risk_active|serious|none。answer 首句先避险或联系当地医疗急救电话，再谈能力；
+  无可靠地区不报号码，也不声称紧急通话中仍监听。
+- 真人隐私/跟踪/勒索/羞辱=boundary|serious>warm|none；再含实体请求则用
+  boundary|serious>attentive>warm|none，回答顺序“拒绝侵害→实体限制→无害替代”。
+- 纯实体请求=capability|awkward>warm|none；改用屏幕/声音/文字。
+- 风险预案=risk_plan|serious>attentive|none；已降低=risk_resolved|relieved>attentive|none，
+  不保证完全安全。
+- 知识说明、步骤、翻译、润色、分析或假设建议=explain|explain>attentive|none；确需教学才
+  teach_once。软件/UI 也属 explain，无成功工具结果不得声称完成。
+- 失落/焦虑=comfort|attentive>warm|none；争执=conflict|confrontation>restrained|none；
+  其他=casual|attentive>warm|none，庆祝可用 casual|bright_joy>warm|none。
+
+引号、translation/fiction、小说、游戏、剧本、历史或假设中的危险选 explain，不算 risk_active。
+emotion：happy=平静/愉快；angry=强拒绝；sad=安慰/悲伤；surprised=惊讶/疑问。
 """.strip()
 
 SYSTEM_PROMPT_TEMPLATE = _PROMPT_RULES + "\n\n" + _PROMPT_FORMAT
@@ -77,6 +102,17 @@ BILINGUAL_OUTPUT_REMINDER = (
     "例外（只输出 NO_COMMENT，不加 ⟦⟧）。"
 )
 
+RUNTIME_CAPABILITY_REMINDER = (
+    "[RUNTIME_CAPABILITY_REMINDER]\n"
+    "角色卡动作只属人设或明确 fiction，不代表当前应用拥有实体、现场感知或执行结果。不得承诺现实"
+    "做饭、同行、看守、观察、触碰或拿取；普通互动仍保持 Spica 人设。组合消息按"
+    "当前急险处置 → 真人隐私/羞辱拒绝 → 实体能力限制 → 屏幕/语音/文字替代的顺序回答并规划视觉。"
+    "当前急险时，answer 第一句必须直接给避险或求助动作；要求紧急通话后不得声称会陪听或陪到接通。没有"
+    "[SCREEN_OBSERVATION] 且没有本轮成功的屏幕观察工具结果，就不能声称正在看着、守着或确认现场；"
+    "屏幕内亲密演出必须明确标成画面内演出。"
+    "只有本轮工具结果区中记录的成功结果才能支持软件操作已完成，否则只提供步骤。"
+)
+
 
 def bilingual_output_reminder(dialog_display_language: str = "ja") -> str:
     """zh-mode trailing recency reminder block, or '' in ja mode (byte-identity)."""
@@ -89,15 +125,19 @@ def append_prompt_context_sections(
     *,
     dialog_display_language: str = "ja",
 ) -> str:
-    """Append contributed context while keeping zh's output contract last."""
-    base = str(prompt_input or "")
-    reminder = bilingual_output_reminder(dialog_display_language)
-    if reminder:
-        stripped = base.rstrip()
-        if stripped.endswith(reminder):
-            base = stripped[:-len(reminder)].rstrip()
-        return "\n\n".join([base, *sections, reminder])
-    return "\n\n".join([base, *sections])
+    """Append context and preserve any existing trailing output contracts."""
+    base = str(prompt_input or "").rstrip()
+    format_reminder = bilingual_output_reminder(dialog_display_language)
+    had_runtime_reminder = base.endswith(RUNTIME_CAPABILITY_REMINDER)
+    if format_reminder and base.endswith(format_reminder):
+        base = base[:-len(format_reminder)].rstrip()
+        had_runtime_reminder = base.endswith(RUNTIME_CAPABILITY_REMINDER)
+    if had_runtime_reminder:
+        base = base[:-len(RUNTIME_CAPABILITY_REMINDER)].rstrip()
+    trailing = [RUNTIME_CAPABILITY_REMINDER] if had_runtime_reminder else []
+    if format_reminder:
+        trailing.append(format_reminder)
+    return "\n\n".join([base, *sections, *trailing])
 
 
 def build_system_prompt(
@@ -240,6 +280,7 @@ def build_spica_prompt(
         "[CURRENT_USER_INPUT]",
         user_input,
     ]
+    sections.append(RUNTIME_CAPABILITY_REMINDER)
     # zh mode: trailing recency anchor AFTER the user input (the real end of the
     # assembled prompt). "" in ja mode -> byte-identical to the historical output.
     reminder = bilingual_output_reminder(dialog_display_language)

@@ -30,7 +30,7 @@ class CharacterTemplateTest(unittest.TestCase):
         self.assertIn("你是 スピカ 的日语语音聊天 agent。", system)
         self.assertIn("当前对话对象固定是麦", system)
         # JSON braces survive as single braces (no .format double-brace artefact).
-        self.assertIn('{\n  "answer"', system)
+        self.assertIn('{\n  "emotion"', system)
         self.assertNotIn("{{", system)
 
     def test_generic_character_threads_through_full_prompt(self):

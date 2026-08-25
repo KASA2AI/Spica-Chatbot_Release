@@ -462,6 +462,8 @@ class ChatStreamController(QObject):
             visual_error=unit.timeline.visual_error,
         )
         self._apply_unit_visual_if_current(unit, reason="unit_visual_ready")
+        self._log_unit_queued(unit)
+        self._pump_stream_playback()
 
     def _handle_stream_unit_ready(self, data: dict[str, Any]) -> None:
         index = self._stream_unit_index_from_data(data)

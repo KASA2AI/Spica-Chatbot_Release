@@ -695,6 +695,7 @@ class BilingualPromptHardeningTests(unittest.TestCase):
         prompt = build_system_prompt("麦", dialog_display_language="zh")
         self.assertIn("日语台词。⟦中文翻译。⟧", prompt)          # the JSON answer example
         self.assertNotIn('"answer": "日语回答文本"', prompt)     # pure-JP example is gone
+        self.assertLess(prompt.index('"emotion"'), prompt.index('"answer"'))
 
     def test_ja_json_example_is_unchanged(self):
         prompt = build_system_prompt("麦")
@@ -724,6 +725,7 @@ class BilingualPromptHardeningTests(unittest.TestCase):
             character_profile="profile",
         )
         self.assertNotIn("[OUTPUT_FORMAT_REMINDER]", prompt)
+        self.assertIn("[RUNTIME_CAPABILITY_REMINDER]", prompt)
 
     def test_reminder_helper_gates_on_language(self):
         self.assertEqual(bilingual_output_reminder("zh"), BILINGUAL_OUTPUT_REMINDER)
@@ -738,13 +740,19 @@ class BilingualToolFollowupTests(unittest.TestCase):
     def test_zh_followup_reanchors_bilingual_format_after_tool_sections(self):
         prompt = build_tool_followup_prompt("[SYSTEM] ...", [], dialog_display_language="zh")
         self.assertIn("[OUTPUT_FORMAT_REMINDER]", prompt)
+        self.assertIn("[RUNTIME_CAPABILITY_REMINDER]", prompt)
         self.assertLess(prompt.index("[NEXT_STEP]"), prompt.index("[OUTPUT_FORMAT_REMINDER]"))
+        self.assertLess(
+            prompt.index("[RUNTIME_CAPABILITY_REMINDER]"),
+            prompt.index("[OUTPUT_FORMAT_REMINDER]"),
+        )
         self.assertTrue(prompt.rstrip().endswith(BILINGUAL_OUTPUT_REMINDER))
 
-    def test_ja_followup_is_unchanged(self):
+    def test_ja_followup_reanchors_runtime_capability_contract(self):
         prompt = build_tool_followup_prompt("[SYSTEM] ...", [])
         self.assertNotIn("[OUTPUT_FORMAT_REMINDER]", prompt)
-        self.assertTrue(prompt.rstrip().endswith("不要解释工具链。"))
+        self.assertIn("[RUNTIME_CAPABILITY_REMINDER]", prompt)
+        self.assertLess(prompt.index("[NEXT_STEP]"), prompt.index("[RUNTIME_CAPABILITY_REMINDER]"))
 
 
 if __name__ == "__main__":

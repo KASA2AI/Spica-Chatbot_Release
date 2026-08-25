@@ -118,5 +118,52 @@ class NoCommentChunkedTest(unittest.TestCase):
         self.assertFalse(may_become_no_comment(extractor.answer))  # diverged -> play it
 
 
+class JsonAnswerEmotionPriorTest(unittest.TestCase):
+    def test_complete_top_level_emotion_is_available_before_answer_finishes(self):
+        extractor = JsonAnswerExtractor()
+
+        delta = extractor.feed('{"emotion":"sad","answer":"まだ話して')
+
+        self.assertEqual(extractor.emotion, "sad")
+        self.assertEqual(delta, "まだ話して")
+
+    def test_partial_emotion_is_not_published(self):
+        extractor = JsonAnswerExtractor()
+
+        extractor.feed('{"emotion":"sa')
+
+        self.assertEqual(extractor.emotion, "")
+
+    def test_nested_or_answer_text_emotion_does_not_override_top_level_value(self):
+        extractor = JsonAnswerExtractor()
+        raw = (
+            '{"meta":{"emotion":"angry"},'
+            '"answer":"\\\"emotion\\\":\\\"surprised\\\"",'
+            '"emotion":"sad"}'
+        )
+
+        extractor.feed(raw)
+
+        self.assertEqual(extractor.emotion, "sad")
+
+    def test_complete_visual_scene_is_available_before_answer_finishes(self):
+        extractor = JsonAnswerExtractor()
+
+        delta = extractor.feed(
+            '{"emotion":"angry","visual_scene":"safety",'
+            '"answer":"今すぐ離れて'
+        )
+
+        self.assertEqual(extractor.visual_scene, "safety")
+        self.assertEqual(delta, "今すぐ離れて")
+
+    def test_legacy_reply_without_visual_scene_keeps_empty_hint(self):
+        extractor = JsonAnswerExtractor()
+
+        extractor.feed('{"emotion":"happy","answer":"こんにちは。"}')
+
+        self.assertEqual(extractor.visual_scene, "")
+
+
 if __name__ == "__main__":
     unittest.main()

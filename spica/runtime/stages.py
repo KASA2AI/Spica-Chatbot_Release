@@ -295,7 +295,13 @@ def build_prompt_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
         dialog_display_language=str(deps.config.character.dialog_display_language or "ja"),
     )
     if ctx.screen_observation:
-        prompt_input = _inject_screen_observation(prompt_input, ctx.screen_observation)
+        prompt_input = _inject_screen_observation(
+            prompt_input,
+            ctx.screen_observation,
+            dialog_display_language=str(
+                deps.config.character.dialog_display_language or "ja"
+            ),
+        )
     ctx.prompt = PromptBundle(prompt_input=prompt_input)
     ctx.metadata["prompt_input_chars"] = len(str(prompt_input))
     return ctx
@@ -874,11 +880,16 @@ def _compact_screen_tool_output(output: str) -> str:
     return json.dumps(parsed, ensure_ascii=False)
 
 
-def _inject_screen_observation(prompt_input: Any, observation: dict[str, Any]) -> str:
+def _inject_screen_observation(
+    prompt_input: Any,
+    observation: dict[str, Any],
+    *,
+    dialog_display_language: str = "ja",
+) -> str:
     safe_observation = compact_screen_observation_for_prompt(observation)
-    return "\n\n".join(
+    return append_prompt_context_sections(
+        str(prompt_input),
         [
-            str(prompt_input),
             "[SCREEN_OBSERVATION]",
             json.dumps(safe_observation, ensure_ascii=False),
             "[SCREEN_OBSERVATION_INSTRUCTIONS]",
@@ -888,7 +899,8 @@ def _inject_screen_observation(prompt_input: Any, observation: dict[str, Any]) -
                 "如果 observation 表示不确定、低置信度或有 ambiguity，请明确说明不确定，不要编造确定答案。"
                 "如果是任务栏、标签页或数量统计类问题，请说明这是基于截图的估计，并带上限制。"
             ),
-        ]
+        ],
+        dialog_display_language=dialog_display_language,
     )
 
 

@@ -121,6 +121,33 @@ class FakeVisual:
         }
 
 
+class FakeOrderedVisual(FakeVisual):
+    def __init__(self):
+        super().__init__()
+        self.prepared = []
+
+    def prepare_unit_visual_direction(
+        self,
+        current_unit_text,
+        emotion,
+        runtime_context,
+        turn_user_text=None,
+    ):
+        direction = {
+            "sequence": len(self.prepared),
+            "text": current_unit_text,
+            "emotion": emotion,
+            "turn_user_text": turn_user_text,
+            "visual_scene": (
+                runtime_context.get("turn_visual_scene")
+                if isinstance(runtime_context, dict)
+                else None
+            ),
+        }
+        self.prepared.append(direction)
+        return direction
+
+
 class FakeTTS:
     name = "fake_tts"
 
@@ -291,6 +318,81 @@ class StreamingPipelineTests(unittest.TestCase):
         self.assertIn("first_tts_start_ms", done["timing"])
         self.assertIn("first_tts_done_ms", done["timing"])
         self.assertEqual(done["timing"]["llm_stream_max_retries"], 0)
+
+    def test_visual_director_prepares_in_producer_order_with_early_model_emotion(self):
+        answer = (
+            "今日は窓辺の本を整理して、順番を確認するわ。"
+            "そのあとで温かい飲み物を用意して、ゆっくり話しましょう。"
+        )
+        raw = json.dumps(
+            {
+                "emotion": "sad",
+                "visual_scene": "comfort",
+                "answer": answer,
+                "emotion_reason": "静かな語り。",
+            },
+            ensure_ascii=False,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            services = make_services(tmpdir, answer)
+            services.llm_client = FakeLLMClient(raw)
+            services.visual_tool = FakeOrderedVisual()
+
+            list(
+                stream_voice_events(
+                    TurnContext(TurnRequest(conversation_id="director-prior", user_input="話して")),
+                    services,
+                    exec_strategy=Inline(),
+                )
+            )
+
+        self.assertEqual(
+            [item["sequence"] for item in services.visual_tool.prepared],
+            [0, 1],
+        )
+        self.assertTrue(all(item["emotion"] == "sad" for item in services.visual_tool.prepared))
+        self.assertTrue(
+            all(item["turn_user_text"] == "話して" for item in services.visual_tool.prepared)
+        )
+        self.assertTrue(
+            all(item["visual_scene"] == "comfort" for item in services.visual_tool.prepared)
+        )
+        self.assertEqual(
+            [call["prepared_direction"] for call in services.visual_tool.calls],
+            services.visual_tool.prepared,
+        )
+        self.assertTrue(all(call["emotion"] == "sad" for call in services.visual_tool.calls))
+        self.assertTrue(all(call["emotion"] == "happy" for call in services.tts_adapter.calls))
+
+    def test_system_directive_is_not_treated_as_user_risk_prior(self):
+        answer = "了解したわ。"
+        raw = json.dumps(
+            {"emotion": "happy", "answer": answer, "emotion_reason": "確認。"},
+            ensure_ascii=False,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            services = make_services(tmpdir, answer)
+            services.llm_client = FakeLLMClient(raw)
+            services.visual_tool = FakeOrderedVisual()
+
+            list(
+                stream_voice_events(
+                    TurnContext(
+                        TurnRequest(
+                            conversation_id="director-system-prior",
+                            user_input="胸が痛いという台詞を読み上げる。",
+                            interaction_mode="system",
+                        )
+                    ),
+                    services,
+                    exec_strategy=Inline(),
+                )
+            )
+
+        self.assertTrue(services.visual_tool.prepared)
+        self.assertTrue(
+            all(item["turn_user_text"] == "" for item in services.visual_tool.prepared)
+        )
 
     def test_deepseek_client_uses_chat_completions_stream(self):
         answer = "もちろん。Chat Completions の経路で応答します。"

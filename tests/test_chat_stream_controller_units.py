@@ -86,13 +86,13 @@ def test_merge_stream_unit_state_accepts_non_empty_compat_unit_payload() -> None
 @pytest.mark.parametrize(
     ("text_ready", "audio_ready", "visual_ready", "expected"),
     [
-        (True, True, False, True),
+        (True, True, False, False),
         (True, False, True, False),
         (False, True, True, False),
         (True, True, True, True),
     ],
 )
-def test_stream_unit_playback_ready_only_depends_on_text_and_audio(
+def test_stream_unit_playback_waits_for_text_audio_and_visual(
     text_ready: bool,
     audio_ready: bool,
     visual_ready: bool,
@@ -113,7 +113,7 @@ def test_stream_unit_playback_ready_ignores_audio_and_visual_errors_when_ready_f
         index=0,
         text_ready=True,
         audio_ready=True,
-        visual_ready=False,
+        visual_ready=True,
     )
     unit.timeline.audio_error = "tts failed"
     unit.timeline.visual_error = "visual failed"

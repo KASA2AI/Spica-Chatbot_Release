@@ -10,6 +10,9 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 
+TURN_VISUAL_SCENE_CONTEXT_KEY = "turn_visual_scene"
+
+
 @runtime_checkable
 class VisualPort(Protocol):
     def build_visual_payload(

@@ -26,13 +26,124 @@ _TRANSLATION_SPAN_RE = re.compile(
 )
 
 
+def _decode_complete_json_string(raw_text: str, start: int) -> tuple[str, int] | None:
+    if start >= len(raw_text) or raw_text[start] != '"':
+        return None
+    chars: list[str] = []
+    index = start + 1
+    while index < len(raw_text):
+        char = raw_text[index]
+        if char == '"':
+            return "".join(chars), index + 1
+        if char != "\\":
+            chars.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(raw_text):
+            return None
+        escape = raw_text[index + 1]
+        if escape == "u":
+            hex_value = raw_text[index + 2:index + 6]
+            if len(hex_value) < 4 or not re.fullmatch(r"[0-9a-fA-F]{4}", hex_value):
+                return None
+            chars.append(chr(int(hex_value, 16)))
+            index += 6
+            continue
+        chars.append(
+            {
+                '"': '"',
+                "\\": "\\",
+                "/": "/",
+                "b": "\b",
+                "f": "\f",
+                "n": "\n",
+                "r": "\r",
+                "t": "\t",
+            }.get(escape, escape)
+        )
+        index += 2
+    return None
+
+
+def _skip_json_value(raw_text: str, start: int) -> int | None:
+    if start >= len(raw_text):
+        return None
+    if raw_text[start] == '"':
+        decoded = _decode_complete_json_string(raw_text, start)
+        return decoded[1] if decoded is not None else None
+    if raw_text[start] not in "{[":
+        index = start
+        while index < len(raw_text) and raw_text[index] not in ",}":
+            index += 1
+        return index if index < len(raw_text) else None
+
+    closers = ["}" if raw_text[start] == "{" else "]"]
+    index = start + 1
+    while index < len(raw_text):
+        char = raw_text[index]
+        if char == '"':
+            decoded = _decode_complete_json_string(raw_text, index)
+            if decoded is None:
+                return None
+            index = decoded[1]
+            continue
+        if char in "{[":
+            closers.append("}" if char == "{" else "]")
+        elif char == closers[-1]:
+            closers.pop()
+            if not closers:
+                return index + 1
+        index += 1
+    return None
+
+
+def _extract_top_level_string(raw_text: str, field_name: str) -> str:
+    """Read one complete direct member of a streamed root JSON object."""
+
+    raw_text = raw_text or ""
+    index = 0
+    while index < len(raw_text) and raw_text[index].isspace():
+        index += 1
+    if index >= len(raw_text) or raw_text[index] != "{":
+        return ""
+    index += 1
+    while index < len(raw_text):
+        while index < len(raw_text) and (raw_text[index].isspace() or raw_text[index] == ","):
+            index += 1
+        if index >= len(raw_text) or raw_text[index] == "}":
+            return ""
+        decoded_key = _decode_complete_json_string(raw_text, index)
+        if decoded_key is None:
+            return ""
+        key, index = decoded_key
+        while index < len(raw_text) and raw_text[index].isspace():
+            index += 1
+        if index >= len(raw_text) or raw_text[index] != ":":
+            return ""
+        index += 1
+        while index < len(raw_text) and raw_text[index].isspace():
+            index += 1
+        if key == field_name:
+            decoded_value = _decode_complete_json_string(raw_text, index)
+            return decoded_value[0] if decoded_value is not None else ""
+        next_index = _skip_json_value(raw_text, index)
+        if next_index is None:
+            return ""
+        index = next_index
+    return ""
+
+
 class JsonAnswerExtractor:
     """Incrementally extracts the JSON answer string from a partial model reply."""
 
     def __init__(self) -> None:
         self.answer = ""
+        self.emotion = ""
+        self.visual_scene = ""
 
     def feed(self, raw_text: str) -> str:
+        self.emotion = _extract_top_level_string(raw_text, "emotion")
+        self.visual_scene = _extract_top_level_string(raw_text, "visual_scene")
         current = self._extract_answer(raw_text)
         if current.startswith(self.answer):
             delta = current[len(self.answer):]

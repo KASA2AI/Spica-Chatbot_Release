@@ -58,15 +58,21 @@ def _build_unit_visual(
     try:
         if services.visual_tool is None:
             raise RuntimeError("visual tool is not configured")
+        build_kwargs = {
+            "current_unit_text": unit["display_text"],
+            "emotion": unit.get("visual_emotion") or unit["emotion"],
+            "unit_index": unit_index,
+            "previous_units": unit["previous_units"],
+            "full_answer_so_far": unit["full_answer_so_far"],
+            "runtime_context": ctx.metadata.get("stream_visual_context"),
+            "requested_costume": ctx.request.visual_overrides.get("costume_set"),
+            "requested_mode": ctx.request.visual_overrides.get("costume_mode"),
+        }
+        prepared_direction = unit.get("prepared_visual_direction")
+        if prepared_direction is not None:
+            build_kwargs["prepared_direction"] = prepared_direction
         payload = services.visual_tool.build_unit_visual_payload(
-            current_unit_text=unit["display_text"],
-            emotion=unit["emotion"],
-            unit_index=unit_index,
-            previous_units=unit["previous_units"],
-            full_answer_so_far=unit["full_answer_so_far"],
-            runtime_context=ctx.metadata.get("stream_visual_context"),
-            requested_costume=ctx.request.visual_overrides.get("costume_set"),
-            requested_mode=ctx.request.visual_overrides.get("costume_mode"),
+            **build_kwargs,
         )
         classifier = payload.get("classifier") if isinstance(payload.get("classifier"), dict) else {}
         duration_ms = classifier.get("duration_ms")

@@ -98,11 +98,11 @@ def test_advance_defers_next_segment_play_out_of_finished_callback(qapp, tmp_pat
 
     unit0 = StreamUnitState(
         index=0, display_text="seg0", audio_path=str(wav0),
-        text_ready=True, audio_ready=True, visual_ready=False,
+        text_ready=True, audio_ready=True, visual_ready=True,
     )
     unit1 = StreamUnitState(
         index=1, display_text="seg1", audio_path=str(wav1),
-        text_ready=True, audio_ready=True, visual_ready=False,
+        text_ready=True, audio_ready=True, visual_ready=True,
     )
 
     # Enter streaming mode with two pending, ready segments.
@@ -139,3 +139,33 @@ def test_advance_defers_next_segment_play_out_of_finished_callback(qapp, tmp_pat
     assert len(audio.play_calls) == 2
     assert controller.next_stream_index == 2
     assert controller.current_unit is unit1
+
+
+def test_visual_ready_as_last_lane_starts_playback_immediately(qapp, tmp_path) -> None:
+    audio = _FakeAudioController()
+    controller = _make_controller(audio)
+    wav = tmp_path / "visual-last.wav"
+    wav.write_bytes(b"RIFF")
+    unit = StreamUnitState(
+        index=0,
+        display_text="visual last",
+        audio_path=str(wav),
+        text_ready=True,
+        audio_ready=True,
+        visual_ready=False,
+    )
+    controller.streaming_mode = True
+    controller.stream_pending_units = {0: unit}
+    controller.next_stream_index = 0
+
+    controller._handle_stream_unit_visual_ready(
+        {
+            "index": 0,
+            "visual": {"expression_id": "002"},
+            "cue": {"image_path": "/tmp/face001_002.png"},
+        }
+    )
+
+    assert unit.visual_ready is True
+    assert len(audio.play_calls) == 1
+    assert controller.current_unit is unit

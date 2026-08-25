@@ -60,4 +60,4 @@ def merge_stream_unit_state(target: StreamUnitState, source: StreamUnitState) ->
 
 
 def is_stream_unit_ready_for_playback(unit: StreamUnitState) -> bool:
-    return bool(unit.text_ready and unit.audio_ready)
+    return bool(unit.text_ready and unit.audio_ready and unit.visual_ready)

@@ -54,7 +54,6 @@ from spica.core.proactive import (
 )
 from spica.runtime.memory_commit import save_stream_memory
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
-from spica.ports.visual import TURN_VISUAL_SCENE_CONTEXT_KEY
 from spica.runtime.sequencer import Sequencer
 from spica.runtime.tool_round import STREAM_RESET, prepare_prompt_for_streaming
 from spica.runtime.tts_job import synthesize_unit_audio
@@ -227,36 +226,6 @@ def _produce_stream_events(
                 first_unit_event.set()
 
             tts_text = build_tts_text(display_text)
-            prepared_visual_direction = None
-            prepare_visual_direction = getattr(
-                deps.visual,
-                "prepare_unit_visual_direction",
-                None,
-            )
-            if callable(prepare_visual_direction):
-                try:
-                    visual_runtime_context = ctx.metadata.get(
-                        "stream_visual_context"
-                    )
-                    if isinstance(visual_runtime_context, dict):
-                        visual_runtime_context[TURN_VISUAL_SCENE_CONTEXT_KEY] = (
-                            extractor.visual_scene
-                        )
-                    prepared_visual_direction = prepare_visual_direction(
-                        current_unit_text=display_text,
-                        emotion=visual_emotion,
-                        runtime_context=visual_runtime_context,
-                        turn_user_text=(
-                            ctx.user_input
-                            if ctx.request.interaction_mode == "chat"
-                            else ""
-                        ),
-                    )
-                except Exception as exc:
-                    # Visual direction is an optional enhancement. Preserve the
-                    # existing worker-side classifier and the TTS/chat lanes if
-                    # a character package supplies a broken implementation.
-                    unit_timing["visual_director_error"] = str(exc)
             unit = {
                 "index": index,
                 "display_text": display_text,
@@ -264,7 +233,6 @@ def _produce_stream_events(
                 "tts_text": tts_text,
                 "emotion": emotion,
                 "visual_emotion": visual_emotion,
-                "prepared_visual_direction": prepared_visual_direction,
                 "previous_units": previous_units,
                 "full_answer_so_far": full_answer_so_far,
                 "timing": unit_timing,
@@ -408,9 +376,6 @@ def _produce_stream_events(
             raw_model_parts.clear()
             answer.raw_model_output = ""
             extractor = JsonAnswerExtractor()
-            visual_runtime_context = ctx.metadata.get("stream_visual_context")
-            if isinstance(visual_runtime_context, dict):
-                visual_runtime_context.pop(TURN_VISUAL_SCENE_CONTEXT_KEY, None)
             splitter = PlayUnitSplitter(
                 min_chars=deps.config.stream.play_unit_min_chars,
                 max_chars=deps.config.stream.play_unit_max_chars,

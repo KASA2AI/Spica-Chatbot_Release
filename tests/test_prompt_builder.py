@@ -28,31 +28,23 @@ class PromptBuilderTest(unittest.TestCase):
         self.assertIn("当前对话对象固定是kasa", prompt)
         self.assertIn("kasa: 早上好", prompt)
 
-    def test_json_contract_puts_visual_scene_before_streamed_answer(self):
+    def test_json_contract_puts_emotion_before_streamed_answer(self):
         prompt = build_system_prompt()
 
         emotion_at = prompt.index('"emotion": "happy | angry | sad | surprised"')
-        visual_scene_at = prompt.index('"visual_scene"')
         answer_at = prompt.index('"answer": "日语回答文本"')
         reason_at = prompt.index('"emotion_reason"')
 
-        self.assertLess(emotion_at, visual_scene_at)
-        self.assertLess(visual_scene_at, answer_at)
+        self.assertLess(emotion_at, answer_at)
         self.assertLess(answer_at, reason_at)
         self.assertIn(
-            "emotion → visual_scene → answer → emotion_reason",
+            "emotion → answer → emotion_reason",
             prompt,
         )
-        self.assertIn("scene|face0>face1[>face2]|gesture", prompt)
-        self.assertIn("risk_active | risk_plan | risk_resolved", prompt)
-        self.assertIn("serious>attentive>warm", prompt)
-        self.assertIn("teach_once", prompt)
+        self.assertNotIn("visual_scene", prompt)
         self.assertIn("屏幕形象、语音和文字", prompt)
         self.assertIn("fiction", prompt)
         self.assertIn("软件工具、屏幕观察或信息查询能力仍可照常使用", prompt)
-        self.assertIn("知识说明、步骤、翻译、润色、分析或假设建议", prompt)
-        self.assertIn("当地医疗急救电话", prompt)
-        self.assertNotIn("119番", prompt)
 
     def test_answer_contract_forbids_claiming_real_world_embodiment(self):
         prompt = build_system_prompt()

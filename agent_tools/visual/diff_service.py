@@ -4,17 +4,11 @@ import random
 import re
 import threading
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import quote
 
 from agent_tools.config_io import read_config_file, write_config_file
-from agent_tools.visual.director import (
-    VisualDirection,
-    VisualDirectorSession,
-    default_director_policy,
-)
 from common.timing import elapsed_ms, now_ms
-from spica.ports.visual import TURN_VISUAL_SCENE_CONTEXT_KEY
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -48,7 +42,6 @@ FALLBACK_BY_EMOTION = {
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 VISUAL_CLASSIFIER_VERSION = "local_vote_v1"
-DIRECTOR_CLASSIFIER_VERSION = "galgame_director_v3"
 
 SIGNAL_LEXICON = {
     "explain": (
@@ -257,28 +250,10 @@ class VisualDiffService:
         dialog = copy.deepcopy(config.get("dialog", {}))
 
         selection_error = None
-        director_policy = self.director_policy_for_rules(rules)
-        selection_source = "galgame_director" if director_policy is not None else "local_vote_classifier"
-        classifier_version = (
-            DIRECTOR_CLASSIFIER_VERSION if director_policy is not None else VISUAL_CLASSIFIER_VERSION
-        )
+        selection_source = "local_vote_classifier"
+        classifier_version = VISUAL_CLASSIFIER_VERSION
         classifier_start_ms = now_ms()
-        if director_policy is not None:
-            director = VisualDirectorSession(director_policy)
-            selections = [
-                {
-                    "index": index,
-                    "expression_id": direction.expression_id,
-                    "hand_pose": direction.hand_pose,
-                    "reason": direction.reason,
-                    "confidence": 1.0,
-                    "signals": list(direction.signals),
-                }
-                for index, text in enumerate(segments)
-                for direction in (director.direct(text, emotion),)
-            ]
-        else:
-            selections = self.local_vote_classifier(segments, emotion, rules=rules)
+        selections = self.local_vote_classifier(segments, emotion, rules=rules)
         classifier_ms = elapsed_ms(classifier_start_ms)
 
         raw_selections_by_index = {
@@ -296,16 +271,12 @@ class VisualDiffService:
                 selection_error,
                 f"local_classifier_missing_indexes={missing_indexes}",
             )
-        selections_by_index = (
-            raw_selections_by_index
-            if director_policy is not None
-            else self.smooth_selections(
-                raw_selections_by_index,
-                len(segments),
-                emotion,
-                config=config,
-                rules=rules,
-            )
+        selections_by_index = self.smooth_selections(
+            raw_selections_by_index,
+            len(segments),
+            emotion,
+            config=config,
+            rules=rules,
         )
 
         cues = []
@@ -318,25 +289,16 @@ class VisualDiffService:
                     selection_error,
                     f"missing_image:index={index},expression_id={expression_id},hand_pose={hand_pose}",
                 )
-                if director_policy is not None:
-                    image_path, expression_id, hand_pose = self.resolve_directed_asset_fallback(
-                        costume,
-                        expression_id,
-                        config=config,
-                        rules=rules,
-                    )
-                    reason = f"{reason} 导演目标资产缺失，仅降级图片姿势。"
-                else:
-                    fallback = self.rule_classifier([text], emotion, rules=rules)[0]
-                    expression_id, hand_pose, reason = self.normalize_selection(fallback, emotion, rules=rules)
-                    reason = "图片不存在，已切换到规则兜底差分。"
-                    image_path = self.resolve_expression_image(
-                        costume,
-                        hand_pose,
-                        expression_id,
-                        config=config,
-                        rules=rules,
-                    )
+                fallback = self.rule_classifier([text], emotion, rules=rules)[0]
+                expression_id, hand_pose, reason = self.normalize_selection(fallback, emotion, rules=rules)
+                reason = "图片不存在，已切换到规则兜底差分。"
+                image_path = self.resolve_expression_image(
+                    costume,
+                    hand_pose,
+                    expression_id,
+                    config=config,
+                    rules=rules,
+                )
 
             cues.append(
                 {
@@ -409,40 +371,7 @@ class VisualDiffService:
             "character": copy.deepcopy(config.get("character", {})),
             "classifier_version": VISUAL_CLASSIFIER_VERSION,
         }
-        director_policy = self.director_policy_for_rules(rules)
-        if director_policy is not None:
-            # The producer lazily creates this per-turn session when the first
-            # unit arrives, so it can seed the director with the current user
-            # turn without changing the stable VisualPort context signature.
-            context["_director_policy"] = director_policy
-            context["classifier_version"] = DIRECTOR_CLASSIFIER_VERSION
         return context
-
-    def prepare_unit_visual_direction(
-        self,
-        current_unit_text: str,
-        emotion: str,
-        runtime_context: dict[str, Any] | None = None,
-        turn_user_text: str | None = None,
-    ) -> VisualDirection | None:
-        """Advance the optional director in caller order and freeze one beat."""
-
-        if not isinstance(runtime_context, dict):
-            return None
-        session = runtime_context.get("_director_session")
-        if not isinstance(session, VisualDirectorSession):
-            policy = runtime_context.get("_director_policy")
-            if not isinstance(policy, Mapping):
-                return None
-            session = VisualDirectorSession(
-                policy,
-                user_text=turn_user_text or "",
-                scene_hint=str(
-                    runtime_context.get(TURN_VISUAL_SCENE_CONTEXT_KEY) or ""
-                ),
-            )
-            runtime_context["_director_session"] = session
-        return session.direct((current_unit_text or "").strip(), emotion)
 
     def build_unit_visual_payload(
         self,
@@ -454,7 +383,6 @@ class VisualDiffService:
         runtime_context: dict[str, Any] | None = None,
         requested_costume: str | None = None,
         requested_mode: str | None = None,
-        prepared_direction: VisualDirection | Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         context = runtime_context or self.prepare_stream_context(
             requested_costume=requested_costume,
@@ -468,19 +396,7 @@ class VisualDiffService:
         selection_source = "local_vote_classifier"
         classifier_version = VISUAL_CLASSIFIER_VERSION
         classifier_start_ms = now_ms()
-        direction = self.coerce_visual_direction(prepared_direction)
-        if direction is not None:
-            selection_source = "galgame_director"
-            classifier_version = DIRECTOR_CLASSIFIER_VERSION
-            selection = {
-                "expression_id": direction.expression_id,
-                "hand_pose": direction.hand_pose,
-                "reason": direction.reason,
-                "confidence": 1.0,
-                "signals": list(direction.signals),
-            }
-        else:
-            selection = self.local_vote_selection_for_text(unit_text, emotion, rules=rules)
+        selection = self.local_vote_selection_for_text(unit_text, emotion, rules=rules)
         classifier_ms = elapsed_ms(classifier_start_ms)
 
         raw_selections_by_index = {
@@ -501,25 +417,16 @@ class VisualDiffService:
                 selection_error,
                 f"missing_image:index={unit_index},expression_id={expression_id},hand_pose={hand_pose}",
             )
-            if direction is not None:
-                image_path, expression_id, hand_pose = self.resolve_directed_asset_fallback(
-                    costume,
-                    expression_id,
-                    config=config,
-                    rules=rules,
-                )
-                reason = f"{reason} 导演目标资产缺失，仅降级图片姿势。"
-            else:
-                fallback = self.rule_classifier([unit_text], emotion, rules=rules)[0]
-                expression_id, hand_pose, reason = self.normalize_selection(fallback, emotion, rules=rules)
-                reason = "图片不存在，已切换到规则兜底差分。"
-                image_path = self.resolve_expression_image(
-                    costume,
-                    hand_pose,
-                    expression_id,
-                    config=config,
-                    rules=rules,
-                )
+            fallback = self.rule_classifier([unit_text], emotion, rules=rules)[0]
+            expression_id, hand_pose, reason = self.normalize_selection(fallback, emotion, rules=rules)
+            reason = "图片不存在，已切换到规则兜底差分。"
+            image_path = self.resolve_expression_image(
+                costume,
+                hand_pose,
+                expression_id,
+                config=config,
+                rules=rules,
+            )
 
         cue = {
             "index": int(unit_index),
@@ -557,45 +464,6 @@ class VisualDiffService:
             "cue": cue,
             "cues": [cue],
         }
-
-    @staticmethod
-    def director_policy_for_rules(rules: Mapping[str, Any] | None) -> dict[str, Any] | None:
-        if not isinstance(rules, Mapping):
-            return None
-        policy = rules.get("director_policy")
-        # The proven local-vote selector remains the production default.  The
-        # bounded v3 director is retained as an explicit experiment only; old,
-        # missing, or malformed asset metadata must never enable it implicitly.
-        if not isinstance(policy, Mapping) or policy.get("enabled") is not True:
-            return None
-        merged = default_director_policy()
-        configured_archetypes = policy.get("archetypes")
-        if isinstance(configured_archetypes, Mapping):
-            merged["archetypes"].update(configured_archetypes)
-        return merged
-
-    @staticmethod
-    def coerce_visual_direction(
-        value: VisualDirection | Mapping[str, Any] | None,
-    ) -> VisualDirection | None:
-        if isinstance(value, VisualDirection):
-            return value
-        if not isinstance(value, Mapping):
-            return None
-        expression_id = str(value.get("expression_id") or "").strip()
-        hand_pose = str(value.get("hand_pose") or "").strip()
-        if not expression_id or not hand_pose:
-            return None
-        raw_signals = value.get("signals")
-        signals = tuple(str(item) for item in raw_signals) if isinstance(raw_signals, (list, tuple)) else ()
-        return VisualDirection(
-            expression_id=expression_id.zfill(3),
-            hand_pose=hand_pose,
-            face_archetype=str(value.get("face_archetype") or ""),
-            pose_arc=str(value.get("pose_arc") or ""),
-            reason=str(value.get("reason") or "ordered visual direction"),
-            signals=signals,
-        )
 
     def split_segments(self, text: str, config: dict[str, Any] | None = None) -> list[str]:
         config = config if isinstance(config, dict) else self.config
@@ -1198,41 +1066,6 @@ class VisualDiffService:
         if matches:
             return matches[0].resolve()
         return None
-
-    def resolve_directed_asset_fallback(
-        self,
-        costume: str,
-        expression_id: str,
-        *,
-        config: dict[str, Any],
-        rules: dict[str, Any],
-    ) -> tuple[Path | None, str, str]:
-        """Resolve missing directed art without semantically reclassifying text."""
-
-        character = config.get("character") if isinstance(config.get("character"), dict) else {}
-        default_expression = str(character.get("default_expression_id") or "000").zfill(3)
-        default_pose = self.normalize_hand_pose(character.get("default_hand_pose") or "normal")
-        candidates = (
-            (expression_id, "normal"),
-            (default_expression, default_pose),
-            ("000", "normal"),
-        )
-        visited: set[tuple[str, str]] = set()
-        for candidate_expression, candidate_pose in candidates:
-            key = (candidate_expression, candidate_pose)
-            if key in visited:
-                continue
-            visited.add(key)
-            image_path = self.resolve_expression_image(
-                costume,
-                candidate_pose,
-                candidate_expression,
-                config=config,
-                rules=rules,
-            )
-            if image_path is not None:
-                return image_path, candidate_expression, candidate_pose
-        return None, expression_id, "normal"
 
     def list_costume_sets(
         self,

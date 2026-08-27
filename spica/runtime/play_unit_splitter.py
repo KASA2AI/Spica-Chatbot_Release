@@ -139,11 +139,9 @@ class JsonAnswerExtractor:
     def __init__(self) -> None:
         self.answer = ""
         self.emotion = ""
-        self.visual_scene = ""
 
     def feed(self, raw_text: str) -> str:
         self.emotion = _extract_top_level_string(raw_text, "emotion")
-        self.visual_scene = _extract_top_level_string(raw_text, "visual_scene")
         current = self._extract_answer(raw_text)
         if current.startswith(self.answer):
             delta = current[len(self.answer):]

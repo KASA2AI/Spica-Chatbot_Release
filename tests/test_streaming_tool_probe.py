@@ -146,24 +146,5 @@ class JsonAnswerEmotionPriorTest(unittest.TestCase):
 
         self.assertEqual(extractor.emotion, "sad")
 
-    def test_complete_visual_scene_is_available_before_answer_finishes(self):
-        extractor = JsonAnswerExtractor()
-
-        delta = extractor.feed(
-            '{"emotion":"angry","visual_scene":"safety",'
-            '"answer":"今すぐ離れて'
-        )
-
-        self.assertEqual(extractor.visual_scene, "safety")
-        self.assertEqual(delta, "今すぐ離れて")
-
-    def test_legacy_reply_without_visual_scene_keeps_empty_hint(self):
-        extractor = JsonAnswerExtractor()
-
-        extractor.feed('{"emotion":"happy","answer":"こんにちは。"}')
-
-        self.assertEqual(extractor.visual_scene, "")
-
-
 if __name__ == "__main__":
     unittest.main()

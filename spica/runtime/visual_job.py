@@ -68,9 +68,6 @@ def _build_unit_visual(
             "requested_costume": ctx.request.visual_overrides.get("costume_set"),
             "requested_mode": ctx.request.visual_overrides.get("costume_mode"),
         }
-        prepared_direction = unit.get("prepared_visual_direction")
-        if prepared_direction is not None:
-            build_kwargs["prepared_direction"] = prepared_direction
         payload = services.visual_tool.build_unit_visual_payload(
             **build_kwargs,
         )

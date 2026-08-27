@@ -35,6 +35,7 @@ from ui.controllers.interaction_controller import InteractionController
 from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.controllers.voice_input_controller import ReactionVoiceDuckGate, VoiceInputController
+from ui.layered_sprite_store import LocalSpriteStore, PixmapByteCache
 from ui.overlay_config import OverlayConfig, load_overlay_config, save_overlay_config_value
 from ui.widgets.window_picker_dialog import WindowPickerDialog
 from ui.workers.companion_action_worker import CompanionActionWorker
@@ -53,6 +54,7 @@ DEBUG_NORMAL_WINDOW = False
 MIN_WINDOW_SIZE = QSize(460, 360)
 CHARACTER_HIT_ALPHA_THRESHOLD = 8
 CHARACTER_HIT_MARGIN = 7
+SCALED_PIXMAP_CACHE_BYTES = 48 * 1024 * 1024
 # Voice-mode visualisation (display-only): how long the recognized whole sentence
 # lingers in the input box before it is cleared. The turn auto-submits immediately
 # regardless, so this governs ONLY when the box returns to normal -- long enough to
@@ -117,8 +119,10 @@ class OverlayWindow(QWidget):
         self.resize_origin_ui_scale = 1.0
         self.current_pixmap: QPixmap | None = None
         self.current_pixmap_cache_key: str | None = None
-        self.pixmap_cache: dict[str, QPixmap] = {}
-        self.scaled_pixmap_cache: dict[tuple[str, int, int, float, float], QPixmap] = {}
+        self.sprite_store = LocalSpriteStore()
+        self.scaled_pixmap_cache = PixmapByteCache(
+            max_bytes=SCALED_PIXMAP_CACHE_BYTES,
+        )
         self.available_costumes: list[str] = []
         self.selected_costume: str | None = None
         self.interlocutor_name = DEFAULT_INTERLOCUTOR_NAME
@@ -894,7 +898,7 @@ class OverlayWindow(QWidget):
             scaled_size=f"{scaled.width()}x{scaled.height()}",
         )
         if scaled_cache_key is not None and not scaled.isNull():
-            self.scaled_pixmap_cache[scaled_cache_key] = scaled
+            self.scaled_pixmap_cache.put(scaled_cache_key, scaled)
         label_started_at_ms = self._now_ms()
         self._log_character_image_event("label_update_start")
         self.character_label.setPixmap(scaled)
@@ -907,31 +911,29 @@ class OverlayWindow(QWidget):
         if not path:
             return
         started_at_ms = self._now_ms()
-        cache_key = str(Path(path).resolve())
+        cache_key = str(Path(path).absolute())
         self._log_character_image_event("set_character_image_start", path=cache_key)
-        raw_pixmap = self.pixmap_cache.get(cache_key)
-        if raw_pixmap is not None and not raw_pixmap.isNull():
-            self._log_character_image_event("cache_hit", path=cache_key, cache_size=len(self.pixmap_cache))
-            self._log_character_image_event("raw_cache_hit", path=cache_key, cache_size=len(self.pixmap_cache))
-            self.current_pixmap = raw_pixmap
-            self.current_pixmap_cache_key = cache_key
-            self._layout_overlay()
-            duration_ms = self._duration_ms(started_at_ms)
-            self._log_character_image_event("set_character_image_done", path=cache_key, duration_ms=duration_ms)
-            if duration_ms > 100:
-                logger.warning("event=set_character_image_slow monotonic_ms=%s path=%r duration_ms=%s", self._now_ms(), cache_key, duration_ms)
-            return
-
-        self._log_character_image_event("cache_miss", path=cache_key, cache_size=len(self.pixmap_cache))
-        self._log_character_image_event("raw_cache_miss", path=cache_key, cache_size=len(self.pixmap_cache))
         load_started_at_ms = self._now_ms()
         self._log_character_image_event("image_load_start", path=cache_key)
-        pixmap = QPixmap(str(path))
+        resolved = self.sprite_store.resolve(path, identity=cache_key)
+        pixmap = resolved.pixmap if resolved is not None else QPixmap()
         self._log_character_image_event(
             "image_load_done",
             path=cache_key,
             duration_ms=self._duration_ms(load_started_at_ms),
             is_null=pixmap.isNull(),
+            layered=resolved.layered if resolved is not None else False,
+        )
+        cache_event = "cache_hit" if resolved is not None and resolved.cache_hit else "cache_miss"
+        self._log_character_image_event(
+            cache_event,
+            path=cache_key,
+            cache_size=self.sprite_store.entry_count,
+        )
+        self._log_character_image_event(
+            f"raw_{cache_event}",
+            path=cache_key,
+            cache_size=self.sprite_store.entry_count,
         )
         if pixmap.isNull():
             duration_ms = self._duration_ms(started_at_ms)
@@ -939,9 +941,9 @@ class OverlayWindow(QWidget):
             if duration_ms > 100:
                 logger.warning("event=set_character_image_slow monotonic_ms=%s path=%r duration_ms=%s", self._now_ms(), cache_key, duration_ms)
             return
+        assert resolved is not None
         self.current_pixmap = pixmap
-        self.current_pixmap_cache_key = cache_key
-        self.pixmap_cache[cache_key] = self.current_pixmap
+        self.current_pixmap_cache_key = resolved.cache_key
         self._layout_overlay()
         duration_ms = self._duration_ms(started_at_ms)
         self._log_character_image_event("set_character_image_done", path=cache_key, duration_ms=duration_ms, loaded=True)

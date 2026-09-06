@@ -45,17 +45,17 @@ VISUAL_CLASSIFIER_VERSION = "local_vote_v1"
 
 SIGNAL_LEXICON = {
     "explain": (
-        "つまり", "だから", "まず", "例えば", "たとえば", "説明", "解説", "意味", "仕組み",
-        "使います", "できます", "分解", "積分", "離散", "変換", "周波数", "基底", "式",
-        "具体例", "必要なら", "ポイント", "注意", "要するに", "说明", "解释", "比如",
-        "例如", "公式", "模型", "函数", "分类", "回归", "预测", "学习",
+        "例えば", "たとえば", "説明", "解説", "という意味", "って意味", "意味は", "仕組み",
+        "分解", "積分", "離散", "変換", "周波数", "基底", "数式", "方程式",
+        "具体例", "要するに", "说明", "解释", "比如",
+        "例如", "公式", "模型", "函数", "分类", "回归", "预测", "机器学习", "分類", "機械学習", "関数",
     ),
     "remind": (
-        "覚えて", "忘れない", "注意", "気をつけ", "大事", "重要", "ポイント", "建议",
-        "提醒", "记住", "注意して", "確認",
+        "覚えておいて", "覚えてね", "覚えていてね", "忘れないで", "気をつけ",
+        "大事なのは", "重要なのは", "ポイント", "建议", "提醒", "记住", "注意して", "確認して", "確認しなさい",
     ),
     "question": (
-        "?", "？", "えっ", "え？", "本当", "まさか", "どうして", "なぜ", "なんで",
+        "?", "？", "えっ", "え？", "まさか", "どうして", "なぜ", "なんで",
         "真的吗", "不会吧", "为什么", "怎么会", "吗", "呢",
     ),
     "greeting": (
@@ -67,11 +67,11 @@ SIGNAL_LEXICON = {
     ),
     "affection": (
         "好き", "大好き", "愛して", "喜欢", "喜歡", "爱你", "可愛い", "かわいい",
-        "幸せ", "安心",
+        "幸せ", "安心", "大丈夫",
     ),
     "positive": (
-        "いい", "よかった", "楽しい", "嬉しい", "开心", "高兴", "期待", "すごい",
-        "素敵", "できた", "大丈夫",
+        "いいね", "いいわね", "いいじゃない", "いい感じ", "よかった", "楽しい", "嬉しい", "开心", "高兴", "期待", "すごい",
+        "素敵", "できた",
     ),
     "apology": (
         "ごめん", "すみません", "申し訳", "抱歉", "对不起", "道歉",
@@ -89,7 +89,7 @@ SIGNAL_LEXICON = {
         "讨厌", "生气", "不爽", "烦", "ふざけ", "いい加減",
     ),
     "cold": (
-        "別に", "知らない", "勝手", "どうでも", "冷淡", "嫌弃", "警惕", "怀疑",
+        "別に", "知らない", "勝手にして", "勝手にすれば", "どうでも", "冷淡", "嫌弃", "警惕", "怀疑",
         "质疑", "压迫感", "不想理",
     ),
     "tease": (
@@ -97,17 +97,51 @@ SIGNAL_LEXICON = {
         "からか", "冗談",
     ),
     "awkward": (
-        "えっと", "その", "まあ", "苦笑", "尴尬", "无奈", "心虚", "勉强",
+        "えっと", "その…", "その、", "まあ…", "苦笑", "尴尬", "无奈", "心虚", "勉强",
         "逞强", "被戳穿",
     ),
     "tired": (
-        "疲れ", "眠い", "困", "无语", "敷衍", "懒得", "低能量", "冷场",
+        "疲れ", "眠い", "困了", "好困", "犯困", "无语", "敷衍", "懒得", "低能量", "冷场",
     ),
     "shout": (
         "！！", "!!", "!", "！", "怒鳴", "叫", "喊", "爆发", "抓狂", "崩溃",
         "忍无可忍",
     ),
 }
+
+# Longest, non-overlapping matches: 大好き is not also 好き, いい加減 is
+# not positive いい, and case variants such as spica/Spica are one vote.
+_SIGNALS_BY_TERM: dict[str, list[str]] = {}
+for _signal, _terms in SIGNAL_LEXICON.items():
+    for _term in dict.fromkeys(term.lower() for term in _terms):
+        _SIGNALS_BY_TERM.setdefault(_term, []).append(_signal)
+_SIGNAL_PATTERN = re.compile(
+    "|".join(re.escape(term) for term in sorted(_SIGNALS_BY_TERM, key=len, reverse=True)),
+    re.IGNORECASE,
+)
+
+# Abstain only on a locally negated feeling, not on an entire sentence. Do not
+# invert arbitrary negatives: 許せない is anger; double negation is not denial.
+_NEGATED_FEELING_PATTERN = re.compile(
+    r"(?:大?好き|嫌い|不安|心配|大丈夫)(?:なんか)?(?:じゃ|では|でも)(?:ない|ありません)"
+    r"(?!わけ(?:じゃ|では)ない)"
+    r"|心配(?:しないで|して(?:い)?ない|しなくて(?:も)?(?:いい|大丈夫)|(?:は)?(?:いらない|要らない|無用)|する必要(?:は|が)?ない)"
+    r"|不安(?:に)?(?:ならなくて(?:も)?いい|なる必要(?:は|が)?ない)"
+    r"|安心(?:できない|できません)"
+    r"|(?:大?好き|嫌い)(?:には?)?なれない"
+    r"|(?:大?好き|嫌い)(?:になる|な)(?:わけ|はず)(?:が)?ない"
+    r"|嫌(?:う(?:わけ|はず)(?:が)?ない|いになったりしない)"
+    r"|(?:好き|嫌い|嬉しい|うれしい|悲しい|寂しい|心配)(?:とか|なんて)"
+    r"(?:[、，,\s…]*(?:そういうの|思ったり))*[、，,\s…]*(?:全然)?(?:ない|しない)"
+    r"|無理(?:に)?[^。！？!?、,\n]{0,12}(?:なくて(?:も)?いい|ないで)"
+    r"|(?<!不是)(?<!不能)(?<!并非)(?:不(?:是|再|会|用|要|必)?|没(?:有)?|别)"
+    r"(?:那么|太|很|再|真的?)?(?:讨厌|喜欢|喜歡|爱你|开心|高兴|担心|害怕|紧张|生气|难过|伤心)"
+)
+_MENTIONED_QUOTE_PATTERN = re.compile(
+    r"(?:「[^「」\n]*」|『[^『』\n]*』|“[^“”\n]*”|\"[^\"\n]*\")"
+    r"(?=(?:ね|は)?[。\s]*(?:文字どおり|字のまま)|"
+    r"[^。！？!?\n]{0,32}(?:という意味|って意味|意味は|という言葉|という単語|英語で|日本語で|的意思|这个词|一词))"
+)
 
 SIGNAL_TO_GROUP = {
     "explain": {"neutral": 5, "joy": 3},
@@ -599,22 +633,19 @@ class VisualDiffService:
 
     def analyze_visual_text(self, text: str, emotion: str) -> dict[str, Any]:
         raw_text = text or ""
-        normalized = raw_text.lower()
+        # Spaces preserve boundaries: removing a quoted/negated phrase must not
+        # join its neighbours into a new keyword. Reuse this text for JSON rule
+        # bonuses too, otherwise those can reintroduce the suppressed feeling.
+        cue_text = _MENTIONED_QUOTE_PATTERN.sub(lambda match: " " * len(match[0]), raw_text)
+        cue_text = _NEGATED_FEELING_PATTERN.sub(lambda match: " " * len(match[0]), cue_text)
         signal_scores: dict[str, float] = {}
         matched_terms: dict[str, list[str]] = {}
-        for signal, terms in SIGNAL_LEXICON.items():
-            score = 0.0
-            matches = []
-            for term in terms:
-                term_text = str(term)
-                if not term_text:
-                    continue
-                if term_text.lower() in normalized or term_text in raw_text:
-                    matches.append(term_text)
-                    score += self.term_weight(term_text)
-            if matches:
-                signal_scores[signal] = score
-                matched_terms[signal] = matches[:4]
+        # As before, repeating the same word does not multiply its vote.
+        for term in dict.fromkeys(match[0].lower() for match in _SIGNAL_PATTERN.finditer(cue_text)):
+            for signal in _SIGNALS_BY_TERM[term]:
+                signal_scores[signal] = signal_scores.get(signal, 0.0) + self.term_weight(term)
+                matched_terms.setdefault(signal, []).append(term)
+        matched_terms = {signal: terms[:4] for signal, terms in matched_terms.items()}
 
         group_scores = dict(EMOTION_GROUP_PRIORS.get(emotion, EMOTION_GROUP_PRIORS["happy"]))
         for signal, score in signal_scores.items():
@@ -636,7 +667,7 @@ class VisualDiffService:
         if not signal_scores:
             action_scores["normal"] += 4.0
 
-        target_intensity = self.target_intensity(emotion, signal_scores, raw_text)
+        target_intensity = self.target_intensity(emotion, signal_scores, cue_text)
         return {
             "signal_scores": signal_scores,
             "matched_terms": matched_terms,
@@ -644,9 +675,11 @@ class VisualDiffService:
             "action_scores": action_scores,
             "target_intensity": target_intensity,
             "text": raw_text,
+            "cue_text": cue_text,
         }
 
     def score_expression(self, expression: dict[str, Any], text: str, analysis: dict[str, Any]) -> float:
+        text = analysis.get("cue_text", text)
         score = 0.0
         group = str(expression.get("emotion_group") or "")
         subtype = str(expression.get("emotion_subtype") or "")
@@ -688,6 +721,7 @@ class VisualDiffService:
         analysis: dict[str, Any],
         rules: dict[str, Any] | None = None,
     ) -> tuple[str, float]:
+        text = analysis.get("cue_text", text)
         rules = rules if isinstance(rules, dict) else self.rules
         hand_pose_ids = self.hand_pose_ids_for_rules(rules)
         if not hand_pose_ids:
@@ -696,8 +730,7 @@ class VisualDiffService:
         compatible = {self.normalize_hand_pose(item) for item in expression.get("compatible_hand_poses", [])}
         avoid = {self.normalize_hand_pose(item) for item in expression.get("avoid_hand_poses", [])}
         recommended = self.normalize_hand_pose(expression.get("recommended_hand_pose") or "normal")
-        intensity = self.safe_int(expression.get("intensity"), 2)
-        group = str(expression.get("emotion_group") or "")
+        explicit_pointing = analysis["signal_scores"].get("explain") or analysis["signal_scores"].get("remind")
 
         scored = []
         for pose in sorted(hand_pose_ids):
@@ -721,9 +754,10 @@ class VisualDiffService:
                     if self.term_matches(term, text):
                         score -= 8.0
 
-            negative_high = intensity >= 4 and group in {"anger", "sad", "fear"}
-            explicit_correction = analysis["signal_scores"].get("explain") or analysis["signal_scores"].get("remind")
-            if negative_high and pose == "index_finger" and not explicit_correction:
+            # A talking face's default pose is not itself an instruction to
+            # lecture. Still allow pointing when the line actually explains or
+            # reminds; do not add a turn-level cap or a persistent pose lock.
+            if pose == "index_finger" and not explicit_pointing:
                 score -= 24.0
             if pose == "arms_crossed" and (
                 analysis["signal_scores"].get("thanks") or analysis["signal_scores"].get("affection")
@@ -780,6 +814,10 @@ class VisualDiffService:
         if not value:
             return False
         text = text or ""
+        if value == "困":
+            # The legacy Chinese metadata also contains this single character.
+            # Japanese 困った / Chinese 困难 are trouble, not sleepiness.
+            return re.search(r"困(?![らりるれろっ惑難难境])", text) is not None
         return value in text or value.lower() in text.lower()
 
     def term_weight(self, term: str) -> float:

@@ -489,6 +489,11 @@ def _iter_chat_completion_text(
                 continue
             full_text += content
             yield content
+        if not full_text.strip():
+            # A provider can finish after reasoning-only chunks. Those are not
+            # an answer and must never be spoken or silently parsed as an apology.
+            # Reuse the existing single fallback; healthy streams add no calls.
+            raise RuntimeError("LLM returned no answer content (empty chat stream).")
         return
     except Exception as exc:
         state.timing["llm_chat_stream_error"] = str(exc)
@@ -512,6 +517,8 @@ def _iter_chat_completion_text(
         message = _get_attr(choices[0], "message")
         full_text = str(_get_attr(message, "content", "") or "")
     _record_usage(state, response)
+    if not full_text.strip():
+        raise RuntimeError("LLM returned no answer content after stream fallback.")
     if streamed and full_text.startswith(streamed):
         yield full_text[len(streamed):]
     else:

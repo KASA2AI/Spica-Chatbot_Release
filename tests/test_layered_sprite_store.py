@@ -144,6 +144,43 @@ def test_local_sprite_store_evicts_decoded_pixmaps_by_byte_budget(
     assert reloaded_first is not None and reloaded_first.cache_hit is False
 
 
+def test_face_changes_reuse_layers_without_retaining_every_full_frame(
+    qapp, tmp_path: Path, monkeypatch,
+) -> None:
+    del qapp
+    source = tmp_path / "diffs"
+    group = source / "校服spica" / "普通动作"
+    group.mkdir(parents=True)
+    paths = []
+    for index, color in enumerate(((250, 220, 180, 255), (230, 20, 40, 255), (20, 230, 40, 255))):
+        image = Image.new("RGBA", (8, 8), (20, 40, 80, 255))
+        image.paste(color, (3, 2, 5, 5))
+        path = group / f"uniform_face001_{index:03d}.png"
+        image.save(path, "PNG")
+        paths.append(path)
+    bundle = build_layered_bundle(source, tmp_path / "bundles", px=8)
+    # One body + three 2x3 faces + one composite, all within the same budget.
+    budget = 2 * 8 * 8 * 4 + 3 * 2 * 3 * 4
+    store = LocalSpriteStore(bundle_root=bundle, max_bytes=budget)
+    decoded_paths = []
+
+    def load_pixmap(value):
+        if isinstance(value, str):
+            decoded_paths.append(value)
+        return QPixmap(value)
+
+    monkeypatch.setattr("ui.layered_sprite_store.QPixmap", load_pixmap)
+    first = store.resolve(paths[0])
+    for path in paths[1:] + paths:
+        resolved = store.resolve(path)
+        assert resolved is not None and resolved.layered
+        assert store.cached_bytes <= budget
+
+    assert len(decoded_paths) == 4  # each shared layer decoded only once
+    assert first.pixmap.toImage().pixelColor(3, 2).getRgb() == (250, 220, 180, 255)
+    assert store.resolve(paths[-1]).cache_hit is True
+
+
 def test_pixmap_byte_cache_bounds_scaled_and_raw_pixmaps(qapp) -> None:
     del qapp
     cache = PixmapByteCache(max_bytes=4 * 4 * 4)

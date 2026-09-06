@@ -43,6 +43,10 @@ class PixmapByteCache:
     def __len__(self) -> int:
         return len(self._entries)
 
+    @property
+    def cached_bytes(self) -> int:
+        return self._cached_bytes
+
     def get(self, key: Hashable) -> QPixmap | None:
         cached = self._entries.pop(key, None)
         if cached is None:
@@ -82,10 +86,15 @@ class LocalSpriteStore:
             raise ValueError("sprite cache byte limit must be positive")
         self._cache = PixmapByteCache(max_bytes=max_bytes)
         self._manifest = self._load_manifest(bundle_root)
+        self._composed_identity: str | None = None
 
     @property
     def entry_count(self) -> int:
         return len(self._cache)
+
+    @property
+    def cached_bytes(self) -> int:
+        return self._cache.cached_bytes
 
     def resolve(
         self,
@@ -95,18 +104,15 @@ class LocalSpriteStore:
     ) -> ResolvedSprite | None:
         path = Path(logical_path)
         cache_identity = identity or str(path.absolute())
-        final_key = f"sprite:{cache_identity}"
-        cached = self._take(final_key)
-        if cached is not None:
-            return ResolvedSprite(
-                cached,
-                cache_identity,
-                True,
-                self._has_recipe(path.stem),
-            )
-
         recipe = self._manifest.resolve(path.stem) if self._manifest is not None else None
         if recipe is not None:
+            # One native-size composite is enough for repeated cues/relayout.
+            # Keeping one per expression evicts the reusable body/face layers;
+            # the overlay already caches the much smaller display-size images.
+            if self._composed_identity == cache_identity:
+                cached = self._take("composed")
+                if cached is not None:
+                    return ResolvedSprite(cached, cache_identity, True, True)
             body = self._load_layer(recipe.body_path)
             face = self._load_layer(recipe.face_path)
             if body is not None and face is not None:
@@ -115,17 +121,19 @@ class LocalSpriteStore:
                 painter.drawPixmap(recipe.x, recipe.y, face)
                 painter.end()
                 if not composed.isNull():
-                    self._remember(final_key, composed)
+                    self._remember("composed", composed)
+                    self._composed_identity = cache_identity
                     return ResolvedSprite(composed, cache_identity, False, True)
 
+        final_key = f"sprite:{cache_identity}"
+        cached = self._take(final_key)
+        if cached is not None:
+            return ResolvedSprite(cached, cache_identity, True, False)
         legacy = QPixmap(str(path))
         if legacy.isNull():
             return None
         self._remember(final_key, legacy)
         return ResolvedSprite(legacy, cache_identity, False, False)
-
-    def _has_recipe(self, sprite_id: str) -> bool:
-        return self._manifest is not None and self._manifest.resolve(sprite_id) is not None
 
     def _load_layer(self, relative_path: str) -> QPixmap | None:
         if self._manifest is None:

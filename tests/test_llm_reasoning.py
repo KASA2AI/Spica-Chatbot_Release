@@ -57,6 +57,8 @@ class _RecordingChat:
 
     def create(self, **kwargs):
         self._sink.append(kwargs)
+        if kwargs.get("stream"):
+            return iter([SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="ok"))])])
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))], usage=None)
 
@@ -109,6 +111,53 @@ class AdapterInjectionTest(unittest.TestCase):
             "deepseek-v4-flash", "hi", SimpleNamespace(timing={}))
         self.assertNotIn("extra_body", client.calls[0])
         self.assertNotIn("reasoning_effort", client.calls[0])
+
+
+class EmptyChatStreamTest(unittest.TestCase):
+    def client(self, fallback_text):
+        client = _RecordingClient()
+
+        def create(**kwargs):
+            client.calls.append(kwargs)
+            if kwargs.get("stream"):
+                return iter([SimpleNamespace(choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content=None, reasoning_content="not a final answer"),
+                    finish_reason="stop",
+                )])])
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content=fallback_text)
+            )], usage=None)
+
+        client.chat.create = create
+        return client
+
+    def test_reasoning_only_stream_uses_one_existing_answer_fallback(self):
+        client = self.client("valid answer")
+        result = list(OpenAICompatibleAdapter(client).stream(
+            "prompt", model="deepseek-v4-flash", state=_stream_state()
+        ))
+        self.assertEqual("".join(result), "valid answer")
+        self.assertEqual([call["stream"] for call in client.calls], [True, False])
+
+    def test_empty_stream_and_empty_fallback_are_not_a_successful_reply(self):
+        client = self.client("")
+        with self.assertRaisesRegex(RuntimeError, "no answer content"):
+            list(OpenAICompatibleAdapter(client).stream(
+                "prompt", model="deepseek-v4-flash", state=_stream_state()
+            ))
+        self.assertEqual(len(client.calls), 2)
+
+    def test_healthy_stream_needs_no_extra_request(self):
+        client = _RecordingClient()
+        result = list(OpenAICompatibleAdapter(client).stream(
+            "prompt", model="deepseek-v4-flash", state=_stream_state()
+        ))
+        self.assertEqual(result, ["ok"])
+        self.assertEqual(len(client.calls), 1)
+
+
+def _stream_state():
+    return SimpleNamespace(timing={}, response_id=None)
 
 
 if __name__ == "__main__":

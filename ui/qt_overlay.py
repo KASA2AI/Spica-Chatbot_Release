@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QSize, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
+from PySide6.QtCore import QAbstractAnimation, QEvent, QObject, QPoint, QRect, QSize, QThread, QTimer, Qt, Signal
+from PySide6.QtGui import QBitmap, QPainter, QColor, QGuiApplication, QImage, QMouseEvent, QPixmap, QRegion
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsDropShadowEffect,
@@ -36,17 +36,21 @@ from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.controllers.voice_input_controller import ReactionVoiceDuckGate, VoiceInputController
 from ui.layered_sprite_store import LocalSpriteStore, PixmapByteCache
-from ui.overlay_config import OverlayConfig, load_overlay_config, save_overlay_config_value
+from ui.overlay_config import (
+    OverlayConfig, load_overlay_config, save_overlay_config_value,
+    load_dialogue_box_visible, save_dialogue_box_visible,
+    load_dialogue_opacity, save_dialogue_opacity,
+)
 from ui.widgets.window_picker_dialog import WindowPickerDialog
 from ui.workers.companion_action_worker import CompanionActionWorker
 from ui.workers.screenshot_worker import ScreenshotWorker
 from ui.workers.startup_warmup_worker import StartupWarmupWorker
-from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, scaled_px
+from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, MIN_DIALOGUE_OPACITY, MAX_DIALOGUE_OPACITY, scaled_px
 from ui.widgets.dialogue_box import TintedDialogueBox
 from ui.widgets.input_panel import InputPanel
 from ui.widgets.resize_handle import CornerResizeHandle
 from ui.widgets.screenshot_selector import ScreenshotSelectionOverlay
-from ui.widgets.settings_panel import SettingsPanel
+from ui.widgets.settings_panel import PANEL_SLIDE_PX, SettingsPanel
 from ui.widgets.window_controls import WindowControls
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -92,6 +96,8 @@ class OverlayWindow(QWidget):
         self.setStyleSheet("OverlayWindow { background: transparent; }")
 
         self.overlay_config: OverlayConfig = load_overlay_config()
+        self.dialogue_box_visible = load_dialogue_box_visible()
+        self.dialogue_opacity = load_dialogue_opacity()
         self.host: AppHost | None = None
         self.visual_tool: Any | None = None
         self.tts_tool: Any | None = None
@@ -114,6 +120,7 @@ class OverlayWindow(QWidget):
         # run_voice/remember/§27①/the play-history card -- the persistent silo.
         self.conversation_id = "default"
         self.drag_offset: QPoint | None = None
+        self._drag_press_pos: QPoint | None = None
         self.resize_origin_geometry: QRect | None = None
         self.resize_origin_pos: QPoint | None = None
         self.resize_origin_ui_scale = 1.0
@@ -136,6 +143,13 @@ class OverlayWindow(QWidget):
         self._voice_volume_save_timer.setSingleShot(True)
         self._voice_volume_save_timer.setInterval(600)
         self._voice_volume_save_timer.timeout.connect(self.persist_spica_voice_volume)
+        self._opacity_save_timer = QTimer(self)
+        self._opacity_save_timer.setSingleShot(True)
+        self._opacity_save_timer.setInterval(600)
+        self._opacity_save_timer.timeout.connect(self.persist_dialogue_opacity)
+        self._character_region_key = None
+        self._character_region = QRegion()
+        self._applied_visual_scale: float | None = None
         self._last_layout_log_state: tuple[Any, ...] | None = None
         self.settings_panel: SettingsPanel | None = None
         self.screenshot_selector: ScreenshotSelectionOverlay | None = None
@@ -164,25 +178,31 @@ class OverlayWindow(QWidget):
 
         try:
             shadow = QGraphicsDropShadowEffect(self.character_label)
-            shadow.setBlurRadius(28)
-            shadow.setOffset(0, 18)
-            shadow.setColor(QColor(12, 18, 24, 86))
+            shadow.setBlurRadius(2)
+            shadow.setOffset(0, 1)
+            shadow.setColor(QColor(57, 76, 93, 28))
             self.character_label.setGraphicsEffect(shadow)
         except Exception:
             pass
 
         self.dialogue = TintedDialogueBox(self)
+        self.dialogue.set_opacity(self.dialogue_opacity)
+        self.dialogue.setVisible(self.dialogue_box_visible)
         self.dialogue.installEventFilter(self)
+        self.dialogue.speaker_label.installEventFilter(self)
         self.typewriter_controller = TypewriterController(
             self,
             self.dialogue.set_dialogue_text,
             default_speed=self.overlay_config.default_typewriter_speed,
         )
+        self.typewriter_controller.active_changed.connect(self.dialogue.set_typing_active)
+        self.typewriter_controller.completed.connect(self.dialogue.show_tail)
         self.audio_controller = AudioController(self)
         # Apply the persisted her-voice volume at startup (default 0.86 == unchanged).
         self.audio_controller.set_chat_volume(self.spica_voice_volume)
 
         self.input_panel = InputPanel(self)
+        self.input_panel.set_opacity(self.dialogue_opacity)
         self.input_panel.send_requested.connect(self.send_message)
         self.input_panel.voice_requested.connect(self.toggle_voice)
         self.input_panel.screenshot_requested.connect(self.toggle_screenshot_selection)
@@ -641,15 +661,15 @@ class OverlayWindow(QWidget):
             self.resize(760, 620)
             return
 
-        available = screen.availableGeometry()
-        width = min(max(720, int(available.width() * 0.48)), int(available.width() * 0.78))
-        base_height = min(max(560, int(available.height() * 0.70)), int(available.height() * 0.82))
+        available = screen.availableGeometry().intersected(screen.geometry())
+        width = min(scaled_px(824, self.ui_scale), int(available.width() * 0.90))
+        base_height = min(scaled_px(720, self.ui_scale), int(available.height() * 0.90))
         height = min(
             available.height(),
             max(MIN_WINDOW_SIZE.height(), int(base_height * self.overlay_initial_height_scale)),
         )
-        x = available.x() + (available.width() - width) // 2
-        y = available.y() + available.height() - height
+        x = max(available.x(), available.right() + 1 - width - 32)
+        y = max(available.y(), available.bottom() + 1 - height - 24)
         self.setGeometry(x, y, width, height)
 
     def _load_default_character(self) -> None:
@@ -665,7 +685,7 @@ class OverlayWindow(QWidget):
             self._set_default_character_for_costume(costume)
 
             dialog = config.get("dialog", {})
-            self.dialogue.speaker_label.setText(str(dialog.get("speaker") or "spica").lower())
+            self.dialogue.speaker_label.setText(str(dialog.get("speaker") or "Spica"))
         except Exception as exc:
             self.dialogue.set_dialogue_text(f"载入差分失败：{exc}")
 
@@ -694,89 +714,95 @@ class OverlayWindow(QWidget):
         )
 
     def _layout_overlay(self) -> None:
-        width = self.width()
-        height = self.height()
-        scale = self.ui_scale
+        width, height = self.width(), self.height()
+        scale = self._visual_scale()
+        if scale != self._applied_visual_scale:
+            self._applied_visual_scale = scale
+            self.typewriter_controller.set_scale(scale)
+            self.dialogue.apply_scale(scale)
+            self.input_panel.apply_scale(scale)
+            self.window_controls.apply_scale(scale)
+            self.resize_handle.apply_scale(scale)
+            if self.settings_panel is not None:
+                self.settings_panel.apply_scale(scale)
+
+        horizontal_margin = scaled_px(12, scale)
+        frame_width = min(width - horizontal_margin * 2, scaled_px(800, scale))
+        frame_x = (width - frame_width) // 2
+        frame_right = frame_x + frame_width
+        # Keep the character's available height independent of UI text scale.
+        bottom_margin = max(8, round(height / 90))
+        input_height = scaled_px(67, scale)
+        input_y = height - bottom_margin - input_height
+        self.input_panel.setGeometry(frame_x, input_y, frame_width, input_height)
+        dialogue_height = scaled_px(153, scale)
+        dialogue_y = input_y - dialogue_height
+        # Header controls leave the full, stable reading width available.
+        # The typewriter must not change line lengths.
+        margins = self.dialogue.layout().contentsMargins()
+        self.dialogue.text_label.setFixedWidth(max(1, frame_width - margins.left() - margins.right()))
+        self.dialogue.setGeometry(frame_x, dialogue_y, frame_width, dialogue_height)
+        self.dialogue.layout().activate()
 
         controls_width = self.window_controls.sizeHint().width()
         controls_height = self.window_controls.sizeHint().height()
-        top_margin = scaled_px(14, scale)
-        self.window_controls.setGeometry(width - controls_width - top_margin, top_margin, controls_width, controls_height)
-
-        chip_right_edge = width - controls_width - top_margin - scaled_px(8, scale)
-        if self.companion_status_label.isVisible():
-            chip_hint = self.companion_status_label.sizeHint()
-            chip_width = min(chip_hint.width(), max(120, int(width * 0.5)))
-            chip_x = max(0, chip_right_edge - chip_width)
-            self.companion_status_label.setGeometry(chip_x, top_margin, chip_width, controls_height)
-            self.companion_status_label.raise_()
-            chip_right_edge = chip_x - scaled_px(8, scale)
-        if self.song_status_label.isVisible():
-            song_hint = self.song_status_label.sizeHint()
-            song_width = min(song_hint.width(), max(120, int(width * 0.4)))
-            song_x = max(0, chip_right_edge - song_width)
-            self.song_status_label.setGeometry(song_x, top_margin, song_width, controls_height)
-            self.song_status_label.raise_()
-            chip_right_edge = song_x - scaled_px(8, scale)
-        if self.anime_cancel_button.isVisible():
-            cancel_hint = self.anime_cancel_button.sizeHint()
-            cancel_width = max(
-                scaled_px(76, scale), cancel_hint.width())
-            cancel_x = max(0, chip_right_edge - cancel_width)
-            self.anime_cancel_button.setGeometry(
-                cancel_x, top_margin, cancel_width, controls_height)
-            self.anime_cancel_button.raise_()
-            chip_right_edge = cancel_x - scaled_px(6, scale)
-        if self.anime_status_label.isVisible():
-            anime_hint = self.anime_status_label.sizeHint()
-            anime_width = min(anime_hint.width(), max(120, int(width * 0.4)))
-            anime_x = max(0, chip_right_edge - anime_width)
-            self.anime_status_label.setGeometry(anime_x, top_margin, anime_width, controls_height)
-            self.anime_status_label.raise_()
-
-        horizontal_margin = max(scaled_px(18, scale), int(width * 0.055))
-        input_height = scaled_px(58, scale)
-        input_width = min(width - horizontal_margin * 2, scaled_px(760, scale))
-        bottom_margin = max(scaled_px(16, scale), int(height * 0.022))
-        input_x = (width - input_width) // 2
-        input_y = height - bottom_margin - input_height
-        self.input_panel.setGeometry(input_x, input_y, input_width, input_height)
-
-        dialogue_width = min(width - horizontal_margin * 2, scaled_px(930, scale))
-        dialogue_height = max(scaled_px(164, scale), min(scaled_px(250, scale), int(height * 0.24 * scale)))
-        dialogue_x = (width - dialogue_width) // 2
-        dialogue_y = input_y - scaled_px(14, scale) - dialogue_height
-        self.dialogue.setGeometry(dialogue_x, dialogue_y, dialogue_width, dialogue_height)
-
-        base_character_height = min(int(height * 0.86), dialogue_y + int(dialogue_height * 0.68))
-        raw_character_height = int(
-            base_character_height
-            * self.character_scale
-            * self.character_label_height_scale
-            * scale
+        self.window_controls.setGeometry(
+            frame_right - controls_width - scaled_px(90, scale),
+            dialogue_y + scaled_px(21, scale), controls_width, controls_height,
         )
-        max_character_height = int(height * self.character_max_height_ratio)
-        character_height = max(scaled_px(280, scale), min(raw_character_height, max_character_height))
-        character_width = self._character_width_for_height(character_height)
-        character_width = min(character_width, int(width * 0.94))
-        character_x = (width - character_width) // 2
-        character_bottom = min(height - 8, input_y + int(input_height * 0.28))
-        character_y = max(0, character_bottom - character_height)
+
+        # Real operation status stays outside the dialogue; no fake spoken lines.
+        chip_height = scaled_px(28, scale)
+        chip_y = max(0, dialogue_y - chip_height - scaled_px(10, scale))
+        chip_right_edge = frame_right
+        for chip, fraction in (
+            (self.anime_cancel_button, 0.25),
+            (self.anime_status_label, 0.4),
+            (self.song_status_label, 0.4),
+            (self.companion_status_label, 0.5),
+        ):
+            if chip.isVisible():
+                available = max(0, chip_right_edge - frame_x)
+                chip_width = min(chip.sizeHint().width(), max(120, int(width * fraction)), available)
+                chip.setGeometry(chip_right_edge - chip_width, chip_y, chip_width, chip_height)
+                chip.raise_()
+                chip_right_edge -= chip_width + scaled_px(8, scale)
+
+        # Both the sprite and its shadow terminate at the shared frame bottom.
+        character_bottom = input_y + input_height
+        # Character size remains independent of the dialogue/control scale.
+        raw_character_height = int(height * (516 / 720) * self.character_scale * self.character_label_height_scale)
+        max_character_height = min(character_bottom, int(height * self.character_max_height_ratio))
+        character_height = min(max_character_height, max(1, raw_character_height))
+        character_width = min(self._character_width_for_height(character_height), int(width * 0.94))
+        character_center = frame_x + frame_width // 2
+        character_x = max(0, min(width - character_width, character_center - character_width // 2))
+        character_y = character_bottom - character_height
         self.character_label.setGeometry(character_x, character_y, character_width, character_height)
         self._log_overlay_layout_config()
         self._rescale_character()
-
         self.character_label.lower()
         self.dialogue.raise_()
         self.input_panel.raise_()
-        if self.settings_panel and self.settings_panel.isVisible():
-            panel_width = min(scaled_px(356, scale), max(scaled_px(318, scale), int(width * 0.34)))
-            panel_room = max(scaled_px(230, scale), height - controls_height - scaled_px(46, scale) - top_margin)
-            panel_height = min(scaled_px(326, scale), panel_room)
-            self.settings_panel.setGeometry(width - panel_width - top_margin, controls_height + scaled_px(22, scale), panel_width, panel_height)
+
+        if self.settings_panel is not None:
+            self.settings_panel.stop_motion_for_layout()
+        if self.settings_panel is not None and self.settings_panel.isVisible():
+            panel_width = min(scaled_px(360, scale), frame_width - controls_width - scaled_px(28, scale))
+            top_margin = scaled_px(14, scale)
+            panel_bottom = input_y - scaled_px(10, scale)
+            panel_height = min(scaled_px(560, scale), panel_bottom - top_margin)
+            self.settings_panel.setGeometry(
+                frame_x + scaled_px(12, scale),
+                panel_bottom - panel_height, panel_width, panel_height,
+            )
             self.settings_panel.raise_()
+
         handle_size = self.resize_handle.width()
-        self.resize_handle.setGeometry(width - handle_size, height - handle_size, handle_size, handle_size)
+        self.resize_handle.setGeometry(
+            min(width - handle_size, frame_right + scaled_px(3, scale)),
+            character_bottom - handle_size, handle_size, handle_size,
+        )
         self.resize_handle.raise_()
         self.window_controls.raise_()
         self._update_click_through_mask()
@@ -838,7 +864,7 @@ class OverlayWindow(QWidget):
         self.scaled_pixmap_cache.clear()
         self._log_character_image_event("scaled_cache_clear", reason=reason, cache_size=cache_size)
 
-    def _scaled_pixmap_cache_key(self) -> tuple[str, int, int, float, float] | None:
+    def _scaled_pixmap_cache_key(self) -> tuple[Any, ...] | None:
         if not self.current_pixmap_cache_key:
             return None
         size = self.character_label.size()
@@ -850,6 +876,7 @@ class OverlayWindow(QWidget):
             size.height(),
             round(float(self.ui_scale), 4),
             round(float(self.character_scale), 4),
+            self.devicePixelRatioF(),
         )
 
     def _rescale_character(self) -> None:
@@ -887,11 +914,13 @@ class OverlayWindow(QWidget):
             label_size=f"{self.character_label.width()}x{self.character_label.height()}",
             pixmap_size=f"{self.current_pixmap.width()}x{self.current_pixmap.height()}",
         )
+        dpr = self.devicePixelRatioF()
         scaled = self.current_pixmap.scaled(
-            self.character_label.size(),
+            self.character_label.size() * dpr,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        scaled.setDevicePixelRatio(dpr)
         self._log_character_image_event(
             "pixmap_scale_done",
             duration_ms=self._duration_ms(scale_started_at_ms),
@@ -942,7 +971,11 @@ class OverlayWindow(QWidget):
                 logger.warning("event=set_character_image_slow monotonic_ms=%s path=%r duration_ms=%s", self._now_ms(), cache_key, duration_ms)
             return
         assert resolved is not None
-        self.current_pixmap = pixmap
+        if self.current_pixmap_cache_key != resolved.cache_key or self.current_pixmap is None:
+            # Trim the asset's transparent canvas once so visible artwork, not
+            # its file padding, determines the character/dialogue proportions.
+            bounds = QRegion(pixmap.mask()).boundingRect()
+            self.current_pixmap = pixmap.copy(bounds) if not bounds.isEmpty() else pixmap
         self.current_pixmap_cache_key = resolved.cache_key
         self._layout_overlay()
         duration_ms = self._duration_ms(started_at_ms)
@@ -983,13 +1016,7 @@ class OverlayWindow(QWidget):
 
     def _apply_ui_scale(self) -> None:
         self._clear_scaled_pixmap_cache("ui_scale")
-        self.typewriter_controller.set_scale(self.ui_scale)
-        self.dialogue.apply_scale(self.ui_scale)
-        self.input_panel.apply_scale(self.ui_scale)
-        self.window_controls.apply_scale(self.ui_scale)
-        self.resize_handle.apply_scale(self.ui_scale)
-        if self.settings_panel is not None:
-            self.settings_panel.apply_scale(self.ui_scale)
+        self._applied_visual_scale = None
         self._layout_overlay()
 
     def send_message(self) -> None:
@@ -1140,6 +1167,14 @@ class OverlayWindow(QWidget):
         return bool(self.song_controller is not None and self.song_controller.is_busy())
 
     def _focus_input(self) -> None:
+        # A completed reply must not take focus from a setting or another app.
+        if not self.isActiveWindow():
+            return
+        if self.settings_panel is not None and self.settings_panel.isVisible():
+            return
+        focused = QApplication.focusWidget()
+        if focused is not None and focused not in (self, self.input_panel.input):
+            return
         self.input_panel.input.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _handle_chat_stream_done(self) -> None:
@@ -1163,7 +1198,7 @@ class OverlayWindow(QWidget):
 
     def _apply_visual(self, visual: dict[str, Any]) -> None:
         dialog = visual.get("dialog") if isinstance(visual.get("dialog"), dict) else {}
-        speaker = str(dialog.get("speaker") or "spica").lower()
+        speaker = str(dialog.get("speaker") or "Spica")
         self.dialogue.speaker_label.setText(speaker)
 
     def toggle_voice(self, checked: bool = False) -> None:
@@ -1265,6 +1300,8 @@ class OverlayWindow(QWidget):
         does NOT call on_chat_done, voice mode resumes mic monitoring here, mirroring
         _handle_chat_stream_done. The stop itself touches no microphone/recording
         state (no VAD, no SpeechWorker) -- the resume is the standard turn-done rearm."""
+        self.typewriter_controller.stop()
+        self.dialogue.hide_tail()
         if self.chat_stream_controller is not None:
             self.chat_stream_controller.stop_current()
         if self._is_voice_mode_active():
@@ -1300,8 +1337,16 @@ class OverlayWindow(QWidget):
             self.input_panel.screenshot_button.setEnabled(False)
 
     def open_settings_panel(self) -> None:
+        if self.settings_panel is not None and self.settings_panel.isVisible():
+            self._close_settings_panel()
+            return
         if self.settings_panel is None:
             self.settings_panel = SettingsPanel(self)
+            self.settings_panel.close_requested.connect(self._close_settings_panel)
+            self.settings_panel.exit_requested.connect(self.close)
+            self.settings_panel.opacity_changed.connect(self.set_dialogue_opacity)
+            self.settings_panel.opacity_commit_requested.connect(self.persist_dialogue_opacity)
+            self.settings_panel.motion_animation.finished.connect(self._update_click_through_mask)
             self.settings_panel.costume_changed.connect(self.set_costume)
             self.settings_panel.interlocutor_name_changed.connect(self.set_interlocutor_name)
             self.settings_panel.scale_changed.connect(self.set_character_scale)
@@ -1311,7 +1356,10 @@ class OverlayWindow(QWidget):
             self.settings_panel.voice_volume_commit_requested.connect(
                 self.persist_spica_voice_volume
             )
-            self.settings_panel.apply_scale(self.ui_scale)
+            self.settings_panel.dialogue_visibility_changed.connect(
+                self.set_dialogue_box_visible
+            )
+            self.settings_panel.apply_scale(self._visual_scale())
             self.settings_panel.hide()
 
         if self.visual_tool is not None:
@@ -1322,8 +1370,15 @@ class OverlayWindow(QWidget):
         self.settings_panel.set_overall_scale(self.ui_scale)
         self.settings_panel.set_typing_speed(self.typewriter_controller.typewriter_speed)
         self.settings_panel.set_voice_volume(self.spica_voice_volume)
-        self.settings_panel.setVisible(not self.settings_panel.isVisible())
+        self.settings_panel.set_opacity(self.dialogue_opacity)
+        self.settings_panel.set_dialogue_box_visible(
+            self.dialogue_box_visible
+        )
+        self.settings_panel.setVisible(True)
         self._layout_overlay()
+        self.settings_panel.play_open_motion()
+        self._update_click_through_mask()
+        self.settings_panel.close_button.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def minimize_overlay(self) -> None:
         self.showMinimized()
@@ -1370,6 +1425,7 @@ class OverlayWindow(QWidget):
 
     def _start_corner_resize(self, event: QMouseEvent) -> None:
         self.drag_offset = None
+        self._drag_press_pos = None
         self.resize_origin_geometry = self.geometry()
         self.resize_origin_pos = event.globalPosition().toPoint()
         self.resize_origin_ui_scale = self.ui_scale
@@ -1434,13 +1490,13 @@ class OverlayWindow(QWidget):
         if self.width() <= 1 or self.height() <= 1:
             return
 
-        region = QRegion(self._controls_drag_rect())
-        region = region.united(self._character_hit_region())
+        region = self._character_hit_region()
         for widget, margin in (
             (self.dialogue, 1),
             (self.input_panel, 1),
             (self.window_controls, 2),
             (self.companion_status_label, 1),  # setMask clips RENDERING too -- must be in
+            (self.song_status_label, 1),
             (self.anime_status_label, 1),
             (self.anime_cancel_button, 1),
             (self.settings_panel, 1),
@@ -1451,20 +1507,26 @@ class OverlayWindow(QWidget):
         if region.isEmpty():
             self.clearMask()
             return
-        self.setMask(region.intersected(QRegion(self.rect())))
+        # The shared bottom edge clips the sprite's legacy drop shadow as well.
+        frame_bounds = QRect(0, 0, self.width(), self.input_panel.geometry().bottom() + 1)
+        self.setMask(region.intersected(QRegion(self.rect().intersected(frame_bounds))))
 
     def _controls_drag_rect(self) -> QRect:
-        controls_rect = self.window_controls.geometry()
-        if controls_rect.isEmpty():
+        if self.dialogue.isHidden():
             return QRect()
-        top_margin = max(1, controls_rect.y())
-        height = controls_rect.height() + top_margin * 2
-        return QRect(0, 0, self.width(), min(self.height(), height))
+        return self.dialogue.drag_rect().translated(self.dialogue.pos())
 
     def _widget_hit_region(self, widget: QWidget | None, margin: int = 0) -> QRegion:
         if widget is None or widget.isHidden():
             return QRegion()
+        if widget is self.dialogue:
+            return self.dialogue.hit_region().translated(self.dialogue.pos())
+        if widget is self.input_panel:
+            return self.input_panel.hit_region().translated(self.input_panel.pos())
         rect = widget.geometry().adjusted(-margin, -margin, margin, margin).intersected(self.rect())
+        if widget is self.settings_panel and self.settings_panel.motion_animation.state() != QAbstractAnimation.State.Stopped:
+            # Reserve the small slide travel during the fade, then remove it.
+            rect = rect.adjusted(-PANEL_SLIDE_PX, 0, PANEL_SLIDE_PX, 0).intersected(self.rect())
         if rect.isEmpty():
             return QRegion()
         return QRegion(rect)
@@ -1489,16 +1551,23 @@ class OverlayWindow(QWidget):
                 ).intersected(self.rect())
             )
 
-        image = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
-        region = self._alpha_hit_region(image, pixmap_rect.topLeft())
+        key = (pixmap.cacheKey(), pixmap_rect.x(), pixmap_rect.y())
+        if key != self._character_region_key:
+            image = pixmap.toImage().scaled(pixmap_rect.size(), Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            image = image.convertToFormat(QImage.Format.Format_ARGB32)
+            image.setDevicePixelRatio(1.0)
+            self._character_region = self._alpha_hit_region(image, pixmap_rect.topLeft())
+            self._character_region_key = key
+        region = self._character_region
         if region.isEmpty():
             return QRegion(pixmap_rect.intersected(self.rect()))
         return region.intersected(QRegion(self.rect()))
 
     def _character_pixmap_rect(self, pixmap: QPixmap) -> QRect:
         label_rect = self.character_label.geometry()
-        pixmap_width = pixmap.width()
-        pixmap_height = pixmap.height()
+        logical_size = pixmap.deviceIndependentSize().toSize()
+        pixmap_width = logical_size.width()
+        pixmap_height = logical_size.height()
         alignment = self.character_label.alignment()
 
         x = label_rect.x()
@@ -1522,76 +1591,122 @@ class OverlayWindow(QWidget):
         width = image.width()
         height = image.height()
         margin = CHARACTER_HIT_MARGIN
-        region = QRegion()
+        # QImage.createAlphaMask uses a fixed 128 alpha cutoff. Drawing the
+        # source 15 times with additive composition maps our historical
+        # ``alpha > 8`` rule exactly onto that cutoff: 8*15=120 stays out,
+        # 9*15=135 enters. All pixel traversal and run construction then stay
+        # inside Qt/C++ instead of blocking the GUI thread in Python.
+        amplified = QImage(
+            image.size(),
+            QImage.Format.Format_ARGB32_Premultiplied,
+        )
+        amplified.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(amplified)
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Plus
+        )
+        for _ in range(15):
+            painter.drawImage(0, 0, image)
+        painter.end()
 
-        def add_run(start: int, stop: int, y: int) -> None:
-            nonlocal region
-            left = max(0, start - margin)
-            right = min(width, stop + margin)
-            top = max(0, y - margin)
-            bottom = min(height, y + margin + 1)
-            if right <= left or bottom <= top:
-                return
-            region = region.united(
-                QRegion(QRect(origin.x() + left, origin.y() + top, right - left, bottom - top))
-            )
+        opaque = QRegion(QBitmap.fromImage(amplified.createAlphaMask()))
+        if opaque.isEmpty():
+            return QRegion()
 
-        for y in range(height):
-            run_start = -1
-            for x in range(width):
-                if image.pixelColor(x, y).alpha() > CHARACTER_HIT_ALPHA_THRESHOLD:
-                    if run_start < 0:
-                        run_start = x
-                elif run_start >= 0:
-                    add_run(run_start, x, y)
-                    run_start = -1
-            if run_start >= 0:
-                add_run(run_start, width, y)
-
-        return region
+        horizontal = QRegion()
+        for dx in range(-margin, margin + 1):
+            horizontal = horizontal.united(opaque.translated(dx, 0))
+        expanded = QRegion()
+        for dy in range(-margin, margin + 1):
+            expanded = expanded.united(horizontal.translated(0, dy))
+        clipped = expanded.intersected(QRegion(QRect(0, 0, width, height)))
+        return clipped.translated(origin)
 
     def eventFilter(self, watched: QObject, event) -> bool:  # noqa: N802 - Qt override
-        draggable_widgets = (
-            getattr(self, "character_label", None),
-            getattr(self, "dialogue", None),
-            getattr(self, "window_controls", None),
-        )
-        if watched in draggable_widgets:
+        dialogue = getattr(self, "dialogue", None)
+        if dialogue is not None and watched in (dialogue, dialogue.speaker_label, self.character_label):
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 self._start_drag(event)
-                return False
-            if event.type() == QEvent.Type.MouseMove and self.drag_offset is not None:
+                watched.setCursor(Qt.CursorShape.ClosedHandCursor)
+                return True
+            if event.type() == QEvent.Type.MouseMove and self._drag_press_pos is not None:
                 self._drag_to(event)
                 return True
             if event.type() == QEvent.Type.MouseButtonRelease:
                 self.drag_offset = None
-                return False
+                self._drag_press_pos = None
+                watched.setCursor(Qt.CursorShape.OpenHandCursor)
+                return True
         return super().eventFilter(watched, event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and self._controls_drag_rect().contains(event.position().toPoint()):
             self._start_drag(event)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
-        if self.drag_offset is not None:
+        if self._drag_press_pos is not None:
             self._drag_to(event)
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         self.drag_offset = None
+        self._drag_press_pos = None
         super().mouseReleaseEvent(event)
 
     def _start_drag(self, event: QMouseEvent) -> None:
+        self._drag_press_pos = event.globalPosition().toPoint()
         self.drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def _drag_to(self, event: QMouseEvent) -> None:
-        self.move(event.globalPosition().toPoint() - self.drag_offset)
+        if self._drag_press_pos is None or self.drag_offset is None:
+            return
+        point = event.globalPosition().toPoint()
+        if (point - self._drag_press_pos).manhattanLength() < QApplication.startDragDistance():
+            return
+        target = point - self.drag_offset
+        screen = QGuiApplication.screenAt(point) or self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            target.setX(max(available.left(), min(target.x(), max(available.left(), available.right() + 1 - self.width()))))
+            target.setY(max(available.top(), min(target.y(), max(available.top(), available.bottom() + 1 - self.height()))))
+        self.move(target)
+
+    def _visual_scale(self) -> float:
+        # Keep targets legible but fitted when the window is resized independently
+        # of the saved UI preference (small displays / restored geometry).
+        return min(self.ui_scale, max(0.65, self.width() / 824), max(0.65, self.height() / 538))
+
+    def _close_settings_panel(self) -> None:
+        if self.settings_panel is not None:
+            self.settings_panel.play_close_motion(on_hidden=self._update_click_through_mask)
+            self._update_click_through_mask()
+
+    def set_dialogue_opacity(self, opacity: float) -> None:
+        self.dialogue_opacity = max(MIN_DIALOGUE_OPACITY, min(MAX_DIALOGUE_OPACITY, float(opacity)))
+        self.dialogue.set_opacity(self.dialogue_opacity)
+        self.input_panel.set_opacity(self.dialogue_opacity)
+        self._update_click_through_mask()
+        self._opacity_save_timer.start()
+
+    def persist_dialogue_opacity(self) -> None:
+        self._opacity_save_timer.stop()
+        save_dialogue_opacity(self.dialogue_opacity)
+
+    def set_dialogue_box_visible(self, visible: bool) -> None:
+        self.dialogue_box_visible = bool(visible)
+        self.dialogue.setVisible(self.dialogue_box_visible)
+        if self.settings_panel is not None:
+            self.settings_panel.set_dialogue_box_visible(self.dialogue_box_visible)
+        self._update_click_through_mask()
+        save_dialogue_box_visible(self.dialogue_box_visible)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         if self._voice_volume_save_timer.isActive():
             self.persist_spica_voice_volume()
+        if self._opacity_save_timer.isActive():
+            self.persist_dialogue_opacity()
         self.typewriter_controller.stop()
         self.audio_controller.stop_all()
         if self.galgame_controller is not None:

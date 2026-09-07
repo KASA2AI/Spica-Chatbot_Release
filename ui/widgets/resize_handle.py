@@ -50,7 +50,7 @@ class CornerResizeHandle(QWidget):
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(QColor(22, 143, 197, 170))
+        painter.setPen(QColor(190, 211, 233, 150))
         width = self.width()
         height = self.height()
         for offset in (7, 13, 19):
@@ -59,4 +59,3 @@ class CornerResizeHandle(QWidget):
             x2 = width - 4
             y2 = max(3, height - offset)
             painter.drawLine(x1, y1, x2, y2)
-

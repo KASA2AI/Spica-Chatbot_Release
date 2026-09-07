@@ -1,24 +1,53 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt
+from collections.abc import Callable
+
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEvent,
+    QEasingCurve,
+    QPoint,
+    QRectF,
+    QSize,
+    QVariantAnimation,
+    Signal,
+    Qt,
+)
+from PySide6.QtGui import QColor, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QSlider,
+    QScrollArea,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
-from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, scaled_px
+from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, DEFAULT_DIALOGUE_OPACITY, scaled_px
+from ui.widgets.icons import line_icon
+
+# Shared motion language (2026-07-22): panel slides in from the right while
+# fading, InOutCubic. Aesthetic constants, deliberately NOT configuration.
+PANEL_OPEN_MS = 240
+PANEL_CLOSE_MS = 200
+PANEL_SLIDE_PX = 24
 
 
 class SettingsPanel(QFrame):
+    close_requested = Signal()
+    exit_requested = Signal()
+    opacity_changed = Signal(float)
+    opacity_commit_requested = Signal()
     costume_changed = Signal(str)
     interlocutor_name_changed = Signal(str)
     scale_changed = Signal(float)
@@ -26,69 +55,80 @@ class SettingsPanel(QFrame):
     typing_speed_changed = Signal(float)
     voice_volume_changed = Signal(float)  # linear 0.0-1.0 (slider shows 0-100%)
     voice_volume_commit_requested = Signal()
+    dialogue_visibility_changed = Signal(bool)  # persisted value: visible
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("settingsPanel")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
-        self.setStyleSheet(
-            """
-            QFrame#settingsPanel {
-                background-color: rgba(238, 250, 255, 206);
-                border: 1px solid rgba(25, 151, 181, 82);
-                border-radius: 14px;
-            }
-            QLabel {
-                background: transparent;
-                color: #253744;
-                font-size: 13px;
-                font-weight: 600;
-            }
-            QComboBox,
-            QLineEdit,
-            QDoubleSpinBox {
-                min-height: 28px;
-                border: 1px solid rgba(25, 151, 181, 88);
-                border-radius: 8px;
-                background-color: rgba(255, 255, 255, 178);
-                color: #253744;
-                padding: 2px 8px;
-            }
-            QSlider::groove:horizontal {
-                height: 5px;
-                border-radius: 2px;
-                background: rgba(25, 151, 181, 72);
-            }
-            QSlider::handle:horizontal {
-                width: 16px;
-                margin: -6px 0;
-                border-radius: 8px;
-                background: #168FC5;
-            }
-            """
-        )
+        self._scale = 1.0
+
+        # The ONLY QGraphicsEffect in this subtree lives on the panel root
+        # (children stay effect-free); it carries the open/close fade.
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._motion = QVariantAnimation(self)
+        self._motion.setStartValue(0.0)
+        self._motion.setEndValue(1.0)
+        self._motion.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._motion.valueChanged.connect(self._on_motion_tick)
+        self._motion.finished.connect(self._settle_motion_terminal)
+        self._motion_direction: str | None = None
+        self._motion_base_pos: QPoint | None = None
+        self._motion_offset_from = 0.0
+        self._motion_opacity_from = 1.0
+        self._on_hidden: Callable[[], None] | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(12)
 
         title = QLabel("设置", self)
         title.setObjectName("settingsTitle")
-        layout.addWidget(title)
+        header = QHBoxLayout()
+        header.addWidget(title, 1)
+        self.close_button = QPushButton(self)
+        self.close_button.setObjectName("settingsCloseButton")
+        self.close_button.setIcon(line_icon("close"))
+        self.close_button.setToolTip("收起设置（Esc）")
+        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_button.clicked.connect(self.close_requested.emit)
+        header.addWidget(self.close_button)
+        layout.addLayout(header)
+        self._escape_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self._escape_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._escape_shortcut.activated.connect(self.close_requested.emit)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setObjectName("settingsScroll")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName("settingsBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 8, 0)
+        body_layout.setSpacing(10)
+        self.scroll_area.setWidget(body)
+        layout.addWidget(self.scroll_area, 1)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
         form.setHorizontalSpacing(10)
-        form.setVerticalSpacing(10)
+        form.setVerticalSpacing(11)
+        self._form = form
 
         self.name_input = QLineEdit(self)
         self.name_input.setPlaceholderText(DEFAULT_INTERLOCUTOR_NAME)
         self.name_input.editingFinished.connect(self._emit_interlocutor_name)
 
         self.costume_box = QComboBox(self)
-        self.costume_box.currentTextChanged.connect(self.costume_changed.emit)
+        self.costume_box.activated.connect(
+            lambda _index: self.costume_changed.emit(self.costume_box.currentText())
+        )
 
         scale_row = QWidget(self)
         scale_row.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -189,14 +229,149 @@ class SettingsPanel(QFrame):
         volume_layout.addWidget(self.voice_volume_slider, 1)
         volume_layout.addWidget(self.voice_volume_spin)
 
-        form.addRow("用户名", self.name_input)
+        self.hide_dialogue_checkbox = QCheckBox("隐藏对话框", self)
+        self.hide_dialogue_checkbox.toggled.connect(
+            self._dialogue_hidden_changed
+        )
+
+        opacity_row = QWidget(self)
+        opacity_layout = QHBoxLayout(opacity_row)
+        opacity_layout.setContentsMargins(0, 0, 0, 0)
+        opacity_layout.setSpacing(8)
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal, opacity_row)
+        self.opacity_slider.setRange(0, 80)
+        self.opacity_spin = QDoubleSpinBox(opacity_row)
+        self.opacity_spin.setRange(0, 80)
+        self.opacity_spin.setDecimals(0)
+        self.opacity_spin.setSuffix("%")
+        self.opacity_slider.setToolTip("数值越大，框体越通透；文字和按钮保持清晰")
+        self.opacity_slider.valueChanged.connect(self._opacity_slider_changed)
+        self.opacity_spin.valueChanged.connect(self._opacity_spin_changed)
+        self.opacity_slider.sliderReleased.connect(self.opacity_commit_requested.emit)
+        self.opacity_spin.editingFinished.connect(self.opacity_commit_requested.emit)
+        opacity_layout.addWidget(self.opacity_slider, 1)
+        opacity_layout.addWidget(self.opacity_spin)
+        self.set_opacity(DEFAULT_DIALOGUE_OPACITY)
+
+        dialogue_form = QFormLayout()
+        name_form = QFormLayout()
+        self._forms = (form, dialogue_form, name_form)
+        for heading, section in (("外观", form), ("对话与声音", dialogue_form), ("你的称呼", name_form)):
+            label = QLabel(heading, self)
+            label.setObjectName("settingsSection")
+            body_layout.addWidget(label)
+            body_layout.addLayout(section)
+            section.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow("服装", self.costume_box)
-        form.addRow("立绘缩放", scale_row)
-        form.addRow("整体缩放", overall_row)
-        form.addRow("文字速度", typing_row)
-        form.addRow("Spica 语音音量", volume_row)
-        layout.addLayout(form)
+        form.addRow("立绘大小", scale_row)
+        form.addRow("界面大小", overall_row)
+        form.addRow("框体透明度", opacity_row)
+        dialogue_form.addRow("文字出现速度", typing_row)
+        dialogue_form.addRow("Spica 音量", volume_row)
+        dialogue_form.addRow("台词显示", self.hide_dialogue_checkbox)
+        name_form.addRow("如何称呼你", self.name_input)
+        body_layout.addStretch(1)
+
+        separator = QFrame(self)
+        separator.setObjectName("settingsSeparator")
+        separator.setFixedHeight(1)
+        layout.addWidget(separator)
+        self.exit_button = QPushButton("退出 Spica", self)
+        self.exit_button.setObjectName("exitSpicaButton")
+        self.exit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.exit_button.setToolTip("结束桌面端程序；仅需暂时隐藏时请使用最小化")
+        self.exit_button.clicked.connect(self.exit_requested.emit)
+        layout.addWidget(self.exit_button, 0, Qt.AlignmentFlag.AlignRight)
+        for editor in self.findChildren(QSlider) + self.findChildren(QDoubleSpinBox) + [self.costume_box]:
+            editor.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            editor.installEventFilter(self)
+        for spin in self.findChildren(QDoubleSpinBox):
+            spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.apply_scale(1.0)
+
+    # -- open/close motion ----------------------------------------------------
+
+    @property
+    def motion_animation(self) -> QVariantAnimation:
+        return self._motion
+
+    def play_open_motion(self) -> None:
+        """Fade + slide in from the right of the already-laid-out geometry."""
+        was_midflight = self._motion_base_pos is not None
+        self._motion.stop()
+        if not was_midflight:
+            self._motion_base_pos = self.pos()
+            self._opacity_effect.setOpacity(0.0)
+            self.move(self._motion_base_pos + QPoint(PANEL_SLIDE_PX, 0))
+        self._begin_motion("open", PANEL_OPEN_MS, None)
+
+    def play_close_motion(self, on_hidden: Callable[[], None] | None = None) -> None:
+        if self.isHidden():
+            if on_hidden is not None:
+                on_hidden()
+            return
+        self._motion.stop()
+        if self._motion_base_pos is None:
+            self._motion_base_pos = self.pos()
+        self._begin_motion("close", PANEL_CLOSE_MS, on_hidden)
+
+    def stop_motion_for_layout(self) -> None:
+        """Layout wins: snap any in-flight open/close to its terminal state."""
+        if self._motion.state() != QAbstractAnimation.State.Stopped:
+            self._motion.stop()
+            self._settle_motion_terminal()
+
+    def _begin_motion(
+        self,
+        direction: str,
+        duration_ms: int,
+        on_hidden: Callable[[], None] | None,
+    ) -> None:
+        self._motion_direction = direction
+        self._on_hidden = on_hidden
+        base = self._motion_base_pos
+        self._motion_offset_from = float(self.pos().x() - (base.x() if base else 0))
+        self._motion_opacity_from = float(self._opacity_effect.opacity())
+        self._motion.setDuration(max(1, int(duration_ms)))
+        self._motion.start()
+
+    def _on_motion_tick(self, value) -> None:
+        base = self._motion_base_pos
+        if base is None or self._motion_direction is None:
+            return
+        progress = max(0.0, min(1.0, float(value)))
+        if self._motion_direction == "open":
+            target_offset, target_opacity = 0.0, 1.0
+        else:
+            target_offset, target_opacity = float(PANEL_SLIDE_PX), 0.0
+        offset = (
+            self._motion_offset_from
+            + (target_offset - self._motion_offset_from) * progress
+        )
+        opacity = (
+            self._motion_opacity_from
+            + (target_opacity - self._motion_opacity_from) * progress
+        )
+        self._opacity_effect.setOpacity(opacity)
+        self.move(base.x() + round(offset), base.y())
+
+    def _settle_motion_terminal(self) -> None:
+        """Fail-open terminal: whatever interrupted us, land on a clean state."""
+        direction = self._motion_direction
+        base = self._motion_base_pos
+        on_hidden = self._on_hidden
+        self._motion_direction = None
+        self._motion_base_pos = None
+        self._on_hidden = None
+        if base is not None:
+            self.move(base)
+        self._opacity_effect.setOpacity(1.0)
+        if direction == "close":
+            self.hide()
+            if on_hidden is not None:
+                on_hidden()
+
+    # -- values ---------------------------------------------------------------
 
     def set_costumes(self, costumes: list[str], selected: str | None) -> None:
         self.costume_box.blockSignals(True)
@@ -306,53 +481,153 @@ class SettingsPanel(QFrame):
         self.voice_volume_slider.blockSignals(False)
         self.voice_volume_changed.emit(value / 100)
 
-    def apply_scale(self, scale: float) -> None:
-        radius = scaled_px(14, scale)
-        label_font = scaled_px(13, scale)
-        title_font = scaled_px(15, scale)
-        editor_height = scaled_px(28, scale)
-        self.setStyleSheet(
-            f"""
-            QFrame#settingsPanel {{
-                background-color: rgba(238, 250, 255, 206);
-                border: 1px solid rgba(25, 151, 181, 82);
-                border-radius: {radius}px;
+    def set_dialogue_box_visible(self, visible: bool) -> None:
+        """Seed from the visible key; the checkbox label expresses its inverse."""
+
+        self.hide_dialogue_checkbox.blockSignals(True)
+        self.hide_dialogue_checkbox.setChecked(not bool(visible))
+        self.hide_dialogue_checkbox.blockSignals(False)
+
+    def _dialogue_hidden_changed(self, hidden: bool) -> None:
+        self.dialogue_visibility_changed.emit(not bool(hidden))
+
+    def set_opacity(self, opacity: float) -> None:
+        transparency = round((1 - float(opacity)) * 100)
+        self.opacity_slider.blockSignals(True)
+        self.opacity_spin.blockSignals(True)
+        self.opacity_slider.setValue(transparency)
+        self.opacity_spin.setValue(transparency)
+        self.opacity_slider.blockSignals(False)
+        self.opacity_spin.blockSignals(False)
+
+    def _opacity_slider_changed(self, value: int) -> None:
+        self.opacity_spin.blockSignals(True)
+        self.opacity_spin.setValue(value)
+        self.opacity_spin.blockSignals(False)
+        self.opacity_changed.emit(1 - value / 100)
+
+    def _opacity_spin_changed(self, value: float) -> None:
+        self.opacity_slider.blockSignals(True)
+        self.opacity_slider.setValue(round(value))
+        self.opacity_slider.blockSignals(False)
+        self.opacity_changed.emit(1 - value / 100)
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Wheel:
+            # Scrolling a settings page must not silently change clothes/volume.
+            bar = self.scroll_area.verticalScrollBar()
+            delta = event.pixelDelta().y()
+            if not delta:
+                delta = round(event.angleDelta().y() / 120 * bar.singleStep() * 3)
+            bar.setValue(bar.value() - delta)
+            event.accept()
+            return True
+        return super().eventFilter(watched, event)
+
+    # -- appearance -----------------------------------------------------------
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        # Paint explicitly: translucent child frames under an opacity effect do
+        # not reliably draw the stylesheet's panel background on every platform.
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0, QColor(46, 70, 103, 248))
+        gradient.setColorAt(1, QColor(37, 56, 83, 252))
+        path = QPainterPath()
+        radius = scaled_px(8, self._scale)
+        path.addRoundedRect(QRectF(self.rect()), radius, radius)
+        painter.fillPath(path, gradient)
+        painter.setPen(QPen(QColor(220, 235, 250, 50), 0.7 * self._scale))
+        inset = scaled_px(16, self._scale)
+        painter.drawLine(inset, 1, self.width() - inset, 1)
+
+    def _build_stylesheet(self, scale: float) -> str:
+        font = scaled_px(13, scale)
+        return f"""
+            QFrame#settingsPanel, QWidget#settingsBody, QScrollArea#settingsScroll {{
+                background: transparent; border: none;
             }}
-            QLabel {{
-                background: transparent;
-                color: #253744;
-                font-size: {label_font}px;
-                font-weight: 600;
+            QLabel {{ background: transparent; color: #E4EDF7; font-size: {font}px; }}
+            QLabel#settingsTitle {{ color: #F1F5FA; font-size: {scaled_px(17, scale)}px; }}
+            QLabel#settingsSection {{
+                color: #AEC4DF; font-size: {scaled_px(12, scale)}px;
+                padding-top: {scaled_px(8, scale)}px;
+                padding-bottom: {scaled_px(3, scale)}px;
             }}
-            QLabel#settingsTitle {{
-                font-size: {title_font}px;
-                font-weight: 800;
-                color: #1997B5;
-                background: transparent;
+            QComboBox, QLineEdit, QDoubleSpinBox {{
+                min-height: {scaled_px(28, scale)}px;
+                border: 1px solid rgba(185, 211, 238, 65);
+                border-radius: {scaled_px(5, scale)}px;
+                background: rgba(16, 31, 51, 80);
+                color: #E7EFF8;
+                padding: 2px {scaled_px(6, scale)}px;
+                font-size: {scaled_px(12, scale)}px;
+                selection-background-color: #486A93;
+                selection-color: #F4F8FC;
             }}
-            QComboBox,
-            QLineEdit,
-            QDoubleSpinBox {{
-                min-height: {editor_height}px;
-                border: 1px solid rgba(25, 151, 181, 88);
-                border-radius: {scaled_px(8, scale)}px;
-                background-color: rgba(255, 255, 255, 178);
-                color: #253744;
-                padding: {scaled_px(2, scale)}px {scaled_px(8, scale)}px;
-                font-size: {label_font}px;
+            QComboBox:focus, QLineEdit:focus, QDoubleSpinBox:focus {{
+                border-color: #A4C4E7;
             }}
+            QComboBox QAbstractItemView {{
+                background: #2E4667; color: #E7EFF8;
+                selection-background-color: #486A93;
+                selection-color: #F4F8FC;
+                border: 1px solid #91ABC9;
+            }}
+            QCheckBox {{ background: transparent; color: #E4EDF7; font-size: {font}px; spacing: 6px; }}
+            QCheckBox::indicator {{
+                width: {scaled_px(14, scale)}px; height: {scaled_px(14, scale)}px;
+                border: 1px solid #91ABC9; border-radius: 3px;
+                background: rgba(16, 31, 51, 80);
+            }}
+            QCheckBox::indicator:checked {{ background: #81ACDB; }}
+            QCheckBox:focus {{ color: #F4F8FC; }}
             QSlider::groove:horizontal {{
-                height: {scaled_px(5, scale)}px;
-                border-radius: {scaled_px(2, scale)}px;
-                background: rgba(25, 151, 181, 72);
+                height: 3px; background: #4B6482; border-radius: 1px;
             }}
+            QSlider::sub-page:horizontal {{ background: #92B9DF; }}
             QSlider::handle:horizontal {{
-                width: {scaled_px(16, scale)}px;
-                margin: -{scaled_px(6, scale)}px 0;
-                border-radius: {scaled_px(8, scale)}px;
-                background: #168FC5;
+                width: {scaled_px(11, scale)}px; margin: -4px 0;
+                border-radius: {scaled_px(6, scale)}px; background: #E8F2FC;
+                border: 1px solid #A4C4E7;
             }}
-            """
-        )
-        self.layout().setContentsMargins(scaled_px(14, scale), scaled_px(12, scale), scaled_px(14, scale), scaled_px(14, scale))
-        self.layout().setSpacing(scaled_px(10, scale))
+            QPushButton {{
+                min-height: {scaled_px(32, scale)}px; color: #E4EDF7;
+                background: transparent; border: 1px solid transparent;
+                border-radius: {scaled_px(8, scale)}px; padding: 0 8px; font-size: {font}px;
+            }}
+            QPushButton:hover, QPushButton:focus {{
+                background: rgba(220, 236, 255, 28);
+                border-color: rgba(220, 236, 255, 70);
+            }}
+            QPushButton:pressed {{ background: rgba(220, 236, 255, 50); }}
+            QPushButton#exitSpicaButton {{ color: #F4D7DD; }}
+            QPushButton#exitSpicaButton:hover {{ background: rgba(181, 127, 146, 36); }}
+            QFrame#settingsSeparator {{ background: rgba(201, 219, 239, 35); border: none; }}
+            QScrollBar:vertical {{
+                width: {scaled_px(5, scale)}px; background: transparent; margin: 0;
+            }}
+            QScrollBar::handle:vertical {{ background: #7C97B7; min-height: 22px; border-radius: 2px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+        """
+
+    def apply_scale(self, scale: float) -> None:
+        self._scale = scale
+        self.setStyleSheet(self._build_stylesheet(scale))
+        self.layout().setContentsMargins(scaled_px(16, scale), scaled_px(12, scale), scaled_px(16, scale), scaled_px(12, scale))
+        self.layout().setSpacing(scaled_px(8, scale))
+        self.close_button.setFixedSize(scaled_px(36, scale), scaled_px(36, scale))
+        self.close_button.setIcon(line_icon("close", color="#DCE8F5"))
+        self.close_button.setIconSize(QSize(scaled_px(18, scale), scaled_px(18, scale)))
+        for form in self._forms:
+            form.setHorizontalSpacing(scaled_px(12, scale))
+            form.setVerticalSpacing(scaled_px(10, scale))
+            for row in range(form.rowCount()):
+                label = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
+                if label is not None:
+                    label.widget().setFixedWidth(scaled_px(86, scale))
+        for spin in self.findChildren(QDoubleSpinBox):
+            spin.setFixedWidth(scaled_px(68, scale))

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from ui.widgets.common import scaled_px
 
 
 class TypewriterController(QObject):
+    active_changed = Signal(bool)
+    completed = Signal()
+
     def __init__(self, parent: QObject, set_text: Callable[[str], None], default_speed: float = 1.0) -> None:
         super().__init__(parent)
         self._set_text = set_text
@@ -27,16 +30,19 @@ class TypewriterController(QObject):
         self.typing_timer = QTimer(self)
         self.typing_timer.timeout.connect(self._type_next_character)
         self.typing_timer.start(interval_ms or self._typewriter_delay(""))
+        self.active_changed.emit(True)
         self._type_next_character()
 
     def stop(self) -> None:
         if self.typing_timer is None:
             self.typing_finished_callback = None
+            self.active_changed.emit(False)
             return
         self.typing_timer.stop()
         self.typing_timer.deleteLater()
         self.typing_timer = None
         self.typing_finished_callback = None
+        self.active_changed.emit(False)
 
     def set_speed(self, speed: float) -> None:
         self.typewriter_speed = max(0.5, min(3.0, float(speed)))
@@ -78,5 +84,7 @@ class TypewriterController(QObject):
             self.typing_timer = None
         callback = self.typing_finished_callback
         self.typing_finished_callback = None
+        self.active_changed.emit(False)
+        self.completed.emit()
         if callback:
             callback()

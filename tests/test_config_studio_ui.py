@@ -290,7 +290,7 @@ def test_runtime_messages_use_the_same_three_locale_projection():
     assert "replaceAll" not in formatter
 
 
-def test_all_readmes_document_config_studio_launch_and_language_switch():
+def test_all_readmes_link_to_guides_with_config_studio_launch_and_language_switch():
     expectations = {
         "README.md": (
             "本地配置中心",
@@ -310,9 +310,10 @@ def test_all_readmes_document_config_studio_launch_and_language_switch():
     }
 
     for filename, localized_copy in expectations.items():
-        readme = (ROOT / filename).read_text(encoding="utf-8")
+        assert f"(docs/{filename})" in (ROOT / filename).read_text(encoding="utf-8")
+        readme = (ROOT / "docs" / filename).read_text(encoding="utf-8")
         for exact in (
-            "python -m pip install -r requirements-config-studio.txt",
+            "python -m pip install -r docs/requirements/requirements-config-studio.txt",
             "python scripts/config_studio.py",
             "--port 8765",
             "--no-open-browser",

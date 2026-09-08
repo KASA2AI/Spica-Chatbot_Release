@@ -11,7 +11,7 @@ substitution is ``webrtcvad.Vad.is_speech(frame, 16000)`` for the ReSpeaker's
 hardware loop derives from ``vad_poll_seconds=0.02``).
 
 IMPORT DISCIPLINE (W3 ruling): ``webrtcvad`` MAY be imported at module level
-(requirements-stt.txt ships the -wheels fork on both platforms); **PyAudio must
+(docs/requirements/requirements-stt.txt ships the -wheels fork on both platforms); **PyAudio must
 stay lazy** -- it is only touched inside the real open path, so importing this
 module never requires an audio stack.
 

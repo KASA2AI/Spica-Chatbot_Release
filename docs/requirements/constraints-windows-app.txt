@@ -14,8 +14,7 @@
 #   - pyopenjtalk                         -> replaced by pyopenjtalk-plus (Windows wheel; same import name)
 #   - `@ file://` / `@ https://` direct refs (PyAudio conda build, pyncm) -- pip rejects them in -c
 #
-# Regenerate: strip those from `<gptsovits>/bin/pip freeze`. See README.md section
-# 2.2; native Windows synthesis/song still need verification on the target machine.
+# Regenerate: strip those from `<gptsovits>/bin/pip freeze`. See docs/README.md#voice; native Windows synthesis/song still need verification on the target machine.
 absl-py==2.4.0
 accelerate==1.13.0
 addict==2.4.0

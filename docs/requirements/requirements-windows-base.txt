@@ -41,10 +41,10 @@ webrtcvad-wheels>=2.0.14,<3
 # source/torrent adapters (lazy-imported; also already pulled transitively by
 # huggingface_hub). `yt-dlp` is the bilibili downloader (invoked as a subprocess,
 # not imported): kept as a FLOOR not an exact pin -- bilibili's extractor breaks
-# monthly, so yt-dlp is a rolling upgrade (ANIME_WATCH_PLAN §12). Both are pure
+# as sites change, so update yt-dlp when downloads break. Both are pure
 # Python (universal wheels). EXTERNAL tools the feature also needs on the machine
 # -- qBittorrent (WebUI), ffmpeg (yt-dlp stream merge), a player (VLC) -- are NOT
-# pip; see README.md sections 2.2 and 12.3.
+# pip; see docs/README.md#voice.
 requests>=2.32,<3
 yt-dlp>=2026.7
 

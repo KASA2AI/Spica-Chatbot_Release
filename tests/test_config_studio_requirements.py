@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_config_studio_direct_dependencies_are_in_windows_install_contract():
     direct = {
         line.strip()
-        for line in (ROOT / "requirements-config-studio.txt").read_text(
+        for line in (ROOT / "docs/requirements/requirements-config-studio.txt").read_text(
             encoding="utf-8"
         ).splitlines()
         if line.strip() and not line.lstrip().startswith("#")
@@ -21,7 +21,7 @@ def test_config_studio_direct_dependencies_are_in_windows_install_contract():
         "ruamel.yaml>=0.18.6,<0.19",
     }
 
-    windows_base = (ROOT / "requirements-windows-base.txt").read_text(encoding="utf-8")
+    windows_base = (ROOT / "docs/requirements/requirements-windows-base.txt").read_text(encoding="utf-8")
     assert "-r requirements-config-studio.txt" in windows_base
 
     smoke_tree = ast.parse(

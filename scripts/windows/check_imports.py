@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """W2-a import smoke for the Windows base environment.
 
-Checks that every package in requirements-windows-base.txt imports and prints
+Checks every package in docs/requirements/requirements-windows-base.txt imports and prints
 its version. Pure Python, runnable on Linux and Windows alike:
 
   - no Windows API usage (no ctypes/windll/pywin32),
@@ -26,7 +26,7 @@ import sys
 # (pip distribution name, import module name, alternate distributions that
 #  may provide the same module — for version lookup only)
 REQUIRED = [
-    # Local Config Studio sidecar (requirements-config-studio.txt).
+    # Local Config Studio sidecar (docs/requirements/requirements-config-studio.txt).
     ("fastapi", "fastapi", ()),
     ("uvicorn", "uvicorn", ()),
     ("ruamel.yaml", "ruamel.yaml", ()),

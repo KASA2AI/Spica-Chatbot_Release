@@ -4,10 +4,10 @@
 #
 # INSTALL with the constraints lock so numpy stays 1.26.4 and transitives match
 # gptsovits (order matters -- torch trio + base + heavy FIRST; see
-# README.md section 2.2):
+# docs/README.md#voice):
 #
-#   python -m pip install -c constraints-windows-app.txt -r requirements-windows-app.txt
-#   python -m pip install -c constraints-windows-app.txt --no-deps audio-separator==0.44.2
+#   python -m pip install -c docs/requirements/constraints-windows-app.txt -r docs/requirements/requirements-windows-app.txt
+#   python -m pip install -c docs/requirements/constraints-windows-app.txt --no-deps audio-separator==0.44.2
 #
 # Two Windows-specific substitutions vs the Linux env (both drop-in, same import name):
 #   - pyopenjtalk  -> pyopenjtalk-plus (Linux 0.4.1 has NO Windows wheel; the -plus

@@ -2,8 +2,8 @@
 #
 # This is the numpy-2.x SIDE. It is for the RVC/separator worker env ONLY.
 # DO NOT install into the GPT-SoVITS / TTS env -- that env needs numpy<2 and this
-# would break it (audio-separator forces numpy>=2). See the conflict analysis in
-# docs/LOCAL_RUNTIME_RVC_ENV_REALITY.md and the spike in docs/LOCAL_RUNTIME_CLEAN_ENV_SPIKE.md.
+# would break it (audio-separator forces numpy>=2). For the main desktop
+# environment, use the install sequence in docs/README.md#voice instead.
 #
 # NOT Applio's full requirements.txt -- that pulls webui/training (gradio 5.x /
 # numpy 2.4.4 / transformers 5.x) the RVC INFERENCE path never imports. This list is
@@ -13,7 +13,7 @@
 # torch trio is installed SEPARATELY (CUDA wheel index) BEFORE this file:
 #   pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 \
 #       --index-url https://download.pytorch.org/whl/cu124
-# Full steps + smoke tests: docs/LOCAL_RUNTIME_RVC_INSTALL.md
+# Only use this list when explicitly configuring a separate RVC worker environment.
 
 # --- core numerics / audio (numpy 2.x: audio-separator requires >=2) ---
 numpy==2.4.6

@@ -17,7 +17,7 @@
 #
 #   1) swap the CPU onnxruntime for the GPU build (the two dists conflict):
 #        python -m pip uninstall -y onnxruntime
-#        python -m pip install -r requirements-windows-heavy.txt
+#        python -m pip install -r docs/requirements/requirements-windows-heavy.txt
 #   2) torch + torchaudio come from the cu124 index, NOT default PyPI (a bare
 #      `pip install torch` would fetch the wrong build) -- install SEPARATELY:
 #        python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
@@ -51,5 +51,5 @@ einops
 # NOT listed here: the audio + Japanese-g2p + RVC closure is deep and numpy-fragile
 # (unpinned it bumps numpy to 2.x). It is produced as ONE pinned single-env manifest
 # from the Linux gptsovits working env (numpy==1.26.4 held), now tracked in
-# requirements-windows-app.txt. See README.md section 2.2 for the install order;
+# requirements-windows-app.txt. See docs/README.md#voice for the install order;
 # native Windows synthesis/song still need verification on the target machine.

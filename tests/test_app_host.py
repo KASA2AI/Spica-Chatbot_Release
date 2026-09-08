@@ -13,6 +13,20 @@ from spica.host.app_host import AppHost
 
 
 class AppHostSmokeTest(unittest.TestCase):
+    def test_standalone_settings_cannot_enable_remote_interfaces(self):
+        from spica.config.schema import AppConfig
+
+        config = AppConfig.model_validate({
+            "hub": {"enabled": True}, "body": {"enabled": True},
+            "dialogue_style": {"package_dir": None},
+        })
+        self.assertNotIn("hub", config.model_dump())
+        self.assertNotIn("body", config.model_dump())
+        host = AppHost()
+        self.assertFalse(hasattr(host, "hub_runtime"))
+        self.assertFalse(hasattr(host, "body_runtime"))
+        self.assertNotIn("switch_endpoint", host.registry.list_adapters("tool"))
+
     def test_package_root_imports_with_empty_services(self):
         host = AppHost()
         self.assertIsNone(host.chat_engine)

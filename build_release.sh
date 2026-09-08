@@ -22,7 +22,8 @@ SOURCE_DIRS=(
   agent_tools
   common
   config
-  examples
+  Desktop-Packs/Characters/Examples
+  Desktop-Packs/Dialogue-Styles
   memory
   static
   templates
@@ -32,6 +33,8 @@ SOURCE_DIRS=(
 
 SOURCE_FILES=(
   .gitignore
+  Desktop-Packs/README.md
+  Desktop-Packs/Characters/README.md
   README.md
   build_release.sh
   run_ibus.sh

@@ -28,6 +28,8 @@ from spica.runtime.services import AgentServices
 from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from common.timing import log_timing
 from memory.recent import RecentMemory
+from spica.adapters.memory.sqlite import character_memory_prefix
+from spica.core.character_memory import restore_character_save
 from memory.store import SQLiteMemoryStore
 from spica.adapters.game_memory import GameMemorySqliteAdapter
 from spica.adapters.game_launcher import LinuxDesktopGameLauncher
@@ -271,12 +273,17 @@ def build_agent_services(
         getattr(screen_capture, "name", type(screen_capture).__name__),
         getattr(game_launcher, "name", type(game_launcher).__name__),
     )
-    return AgentServices(
+    state_dir = getattr(character_package, "state_dir", None)
+    services = AgentServices(
         llm_client=client,
         tts_adapter=tts_adapter,
         visual_tool=visual_tool,
         memory_store=SQLiteMemoryStore(data_dir / "memory.sqlite3"),
-        recent_memory=RecentMemory(max_turns=config.memory.recent_memory_turns),
+        recent_memory=RecentMemory(
+            max_turns=config.memory.recent_memory_turns,
+            path=Path(state_dir) / "recent.json" if state_dir else None,
+            key_prefix=character_memory_prefix(character_id),
+        ),
         game_memory_adapter=GameMemorySqliteAdapter(data_dir / "galgame.sqlite3"),
         # Phase 5 / W1: galgame launch + window-binding adapters, now selected by
         # the platform-lane factories above (linux lane == the former hardcoded
@@ -315,3 +322,6 @@ def build_agent_services(
         # writes the real fold result, never relying on the dataclass default.
         effective_platform=effective_platform,
     )
+    if character_package is not None:
+        restore_character_save(character_package, services)
+    return services

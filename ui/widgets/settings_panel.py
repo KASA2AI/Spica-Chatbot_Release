@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, DEFAULT_DIALOGUE_OPACITY, scaled_px
 from ui.widgets.icons import line_icon
+from ui.widgets.package_combo_box import PackageComboBox
 
 # Shared motion language (2026-07-22): panel slides in from the right while
 # fading, InOutCubic. Aesthetic constants, deliberately NOT configuration.
@@ -46,6 +47,7 @@ PANEL_SLIDE_PX = 24
 class SettingsPanel(QFrame):
     close_requested = Signal()
     exit_requested = Signal()
+    restart_requested = Signal()
     opacity_changed = Signal(float)
     opacity_commit_requested = Signal()
     costume_changed = Signal(str)
@@ -56,6 +58,13 @@ class SettingsPanel(QFrame):
     voice_volume_changed = Signal(float)  # linear 0.0-1.0 (slider shows 0-100%)
     voice_volume_commit_requested = Signal()
     dialogue_visibility_changed = Signal(bool)  # persisted value: visible
+    character_import_requested = Signal()
+    character_remove_requested = Signal(str)
+    dialogue_style_import_requested = Signal()
+    dialogue_style_remove_requested = Signal(str)
+    dialogue_style_changed = Signal(object)
+    character_changed = Signal(str)
+    character_export_requested = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -114,6 +123,39 @@ class SettingsPanel(QFrame):
         self.scroll_area.setWidget(body)
         layout.addWidget(self.scroll_area, 1)
 
+        self.character_box = PackageComboBox(self)
+        self.character_box.removal_requested.connect(self.character_remove_requested.emit)
+        self.character_box.activated.connect(lambda index: self.character_changed.emit(str(self.character_box.itemData(index))))
+        self.character_import_button = QPushButton("导入角色文件夹", self)
+        self.character_import_button.clicked.connect(self.character_import_requested.emit)
+        self.character_share_button = QPushButton("导出分享包", self)
+        self.character_share_button.clicked.connect(lambda: self.character_export_requested.emit(False))
+        self.character_save_button = QPushButton("导出个人存档", self)
+        self.character_save_button.clicked.connect(lambda: self.character_export_requested.emit(True))
+        self.character_status = QLabel("选择角色后重启桌宠生效。", self)
+        self.character_status.setWordWrap(True)
+        body_layout.addWidget(QLabel("角色", self))
+        body_layout.addWidget(self.character_box)
+        body_layout.addWidget(self.character_import_button)
+        export_row = QHBoxLayout()
+        export_row.addWidget(self.character_share_button)
+        export_row.addWidget(self.character_save_button)
+        body_layout.addLayout(export_row)
+        body_layout.addWidget(self.character_status)
+        body_layout.addWidget(QLabel("对话框样式", self))
+        self.dialogue_style_box = PackageComboBox(self)
+        self.dialogue_style_box.removal_requested.connect(self.dialogue_style_remove_requested.emit)
+        self.dialogue_style_box.activated.connect(
+            lambda index: self.dialogue_style_changed.emit(self.dialogue_style_box.itemData(index))
+        )
+        self.dialogue_style_import_button = QPushButton("导入样式文件夹", self)
+        self.dialogue_style_import_button.clicked.connect(self.dialogue_style_import_requested.emit)
+        self.dialogue_style_status = QLabel("独立选择对话框；重启桌宠后生效。", self)
+        self.dialogue_style_status.setWordWrap(True)
+        body_layout.addWidget(self.dialogue_style_box)
+        body_layout.addWidget(self.dialogue_style_import_button)
+        body_layout.addWidget(self.dialogue_style_status)
+
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
@@ -123,7 +165,10 @@ class SettingsPanel(QFrame):
 
         self.name_input = QLineEdit(self)
         self.name_input.setPlaceholderText(DEFAULT_INTERLOCUTOR_NAME)
+        self.name_input.setToolTip("按回车或离开输入框时保存，重启桌宠后生效。")
         self.name_input.editingFinished.connect(self._emit_interlocutor_name)
+        self.interlocutor_name_status = QLabel("修改称呼后需重启桌宠。", self)
+        self.interlocutor_name_status.setWordWrap(True)
 
         self.costume_box = QComboBox(self)
         self.costume_box.activated.connect(
@@ -267,21 +312,31 @@ class SettingsPanel(QFrame):
         form.addRow("界面大小", overall_row)
         form.addRow("框体透明度", opacity_row)
         dialogue_form.addRow("文字出现速度", typing_row)
-        dialogue_form.addRow("Spica 音量", volume_row)
+        dialogue_form.addRow("角色音量", volume_row)
         dialogue_form.addRow("台词显示", self.hide_dialogue_checkbox)
         name_form.addRow("如何称呼你", self.name_input)
+        name_form.addRow(self.interlocutor_name_status)
         body_layout.addStretch(1)
 
         separator = QFrame(self)
         separator.setObjectName("settingsSeparator")
         separator.setFixedHeight(1)
         layout.addWidget(separator)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.restart_button = QPushButton("重启程序", self)
+        self.restart_button.setObjectName("restartSpicaButton")
+        self.restart_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.restart_button.setToolTip("重启桌面并载入已保存的角色、称呼和对话框样式")
+        self.restart_button.clicked.connect(self.restart_requested.emit)
+        actions.addWidget(self.restart_button)
         self.exit_button = QPushButton("退出 Spica", self)
         self.exit_button.setObjectName("exitSpicaButton")
         self.exit_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.exit_button.setToolTip("结束桌面端程序；仅需暂时隐藏时请使用最小化")
         self.exit_button.clicked.connect(self.exit_requested.emit)
-        layout.addWidget(self.exit_button, 0, Qt.AlignmentFlag.AlignRight)
+        actions.addWidget(self.exit_button)
+        layout.addLayout(actions)
         for editor in self.findChildren(QSlider) + self.findChildren(QDoubleSpinBox) + [self.costume_box]:
             editor.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             editor.installEventFilter(self)
@@ -290,6 +345,35 @@ class SettingsPanel(QFrame):
         self.apply_scale(1.0)
 
     # -- open/close motion ----------------------------------------------------
+
+    def set_characters(self, characters: list[dict], selected: str | None) -> None:
+        self.character_box.blockSignals(True)
+        self.character_box.clear()
+        for character in characters:
+            label = character["name"] or character["character_id"]
+            if character.get("version"):
+                label += " · " + character["version"]
+            self.character_box.add_package(label, character["dir"], removable=character.get("removable", False))
+        index = self.character_box.findData(selected)
+        self.character_box.setCurrentIndex(max(0, index))
+        self.character_box.blockSignals(False)
+
+    def set_character_busy(self, busy: bool) -> None:
+        self.name_input.setEnabled(not busy)
+        self.restart_button.setEnabled(not busy)
+        self.dialogue_style_box.setEnabled(not busy)
+        self.dialogue_style_import_button.setEnabled(not busy)
+        for widget in (self.character_box, self.character_import_button,
+                       self.character_share_button, self.character_save_button):
+            widget.setEnabled(not busy)
+
+    def set_dialogue_styles(self, styles: list[dict], selected: str | None) -> None:
+        self.dialogue_style_box.blockSignals(True)
+        self.dialogue_style_box.clear()
+        for style in styles:
+            self.dialogue_style_box.add_package(style["name"], style["dir"], removable=style.get("removable", False))
+        self.dialogue_style_box.setCurrentIndex(max(0, self.dialogue_style_box.findData(selected)))
+        self.dialogue_style_box.blockSignals(False)
 
     @property
     def motion_animation(self) -> QVariantAnimation:
@@ -372,6 +456,10 @@ class SettingsPanel(QFrame):
                 on_hidden()
 
     # -- values ---------------------------------------------------------------
+
+    def set_costume_enabled(self, enabled: bool) -> None:
+        self.costume_box.setEnabled(enabled)
+        self.costume_box.setToolTip("" if enabled else "请等本轮回复和语音结束后再切换服装。")
 
     def set_costumes(self, costumes: list[str], selected: str | None) -> None:
         self.costume_box.blockSignals(True)
@@ -603,6 +691,9 @@ class SettingsPanel(QFrame):
                 border-color: rgba(220, 236, 255, 70);
             }}
             QPushButton:pressed {{ background: rgba(220, 236, 255, 50); }}
+            QPushButton#restartSpicaButton {{ color: #F6A3C5; border-color: rgba(233, 78, 139, 85); }}
+            QPushButton#restartSpicaButton:hover {{ background: rgba(233, 78, 139, 35); }}
+            QPushButton#restartSpicaButton:disabled {{ color: #8E8591; border-color: transparent; }}
             QPushButton#exitSpicaButton {{ color: #F4D7DD; }}
             QPushButton#exitSpicaButton:hover {{ background: rgba(181, 127, 146, 36); }}
             QFrame#settingsSeparator {{ background: rgba(201, 219, 239, 35); border: none; }}

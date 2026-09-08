@@ -1,0 +1,93 @@
+{
+  "format": "spica-eye-rig",
+  "version": 1,
+  "description": "Original geometric demo; recalibrate for your own artwork.",
+  "canvas": {
+    "width": 200,
+    "height": 200
+  },
+  "textures": {
+    "open": "open.png",
+    "closed": "closed.png"
+  },
+  "gaze": {
+    "origin": [
+      100,
+      82
+    ],
+    "maximum_offset": [
+      6,
+      3
+    ],
+    "strength": 0.7,
+    "smoothing_ms": 95
+  },
+  "blink": {
+    "duration_ms": 210,
+    "initial_delay_ms": 1600,
+    "interval_ms": [
+      2700,
+      5200
+    ]
+  },
+  "eyes": [
+    {
+      "bounds": [
+        60,
+        60,
+        80,
+        50
+      ],
+      "iris": [
+        86,
+        110
+      ],
+      "closedLine": [
+        [
+          62,
+          85
+        ],
+        [
+          100,
+          88
+        ],
+        [
+          138,
+          85
+        ]
+      ],
+      "contour": [
+        [
+          62,
+          80,
+          84,
+          78
+        ],
+        [
+          70,
+          70,
+          95,
+          66
+        ],
+        [
+          100,
+          70,
+          96,
+          66
+        ],
+        [
+          130,
+          70,
+          95,
+          66
+        ],
+        [
+          138,
+          80,
+          84,
+          78
+        ]
+      ]
+    }
+  ]
+}

@@ -43,6 +43,7 @@ class InputPanel(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self._opacity = DEFAULT_DIALOGUE_OPACITY
+        self.style_art = None
         self._surface_key = None
         self._surface = QPixmap()
         self._hit_region = QRegion()
@@ -53,7 +54,7 @@ class InputPanel(QFrame):
 
         self.input = MessageInput(self)
         self.input.setObjectName("messageInput")
-        self.input.setPlaceholderText("对 Spica 说点什么…")
+        self.input.setPlaceholderText("说点什么…")
         self.input.setMinimumWidth(40)
         self.input.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
         self.input.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -99,6 +100,11 @@ class InputPanel(QFrame):
         self.stop_button.hide()
         self.stop_button.clicked.connect(lambda _checked=False: self.stop_requested.emit())
 
+        self._busy = False
+        self._voice_enabled = True
+        self._input_enabled: bool | None = None
+        self._turn_active = False
+
         layout.addWidget(self.input, 1)
         layout.addWidget(self.screenshot_button)
         layout.addWidget(self.voice_button)
@@ -119,18 +125,32 @@ class InputPanel(QFrame):
         # turn. Default None falls back to `not busy` (pre-A behaviour), so bare
         # callers -- including test_screenshot_ui -- are byte-identical. screenshot
         # stays `not busy` (test-pinned); voice stays voice_enabled.
-        text_enabled = (not busy) if input_enabled is None else input_enabled
-        self.input.setEnabled(text_enabled)
-        self.send_button.setEnabled(text_enabled)
-        self.screenshot_button.setEnabled(not busy)
-        self.voice_button.setEnabled(voice_enabled)
+        self._busy = bool(busy)
+        self._voice_enabled = bool(voice_enabled)
+        self._input_enabled = input_enabled
+        self._apply_control_state()
 
     def set_turn_active(self, active: bool) -> None:
         """B: show the stop button exactly while a chat/reaction turn is in flight.
         Visibility is the ONLY gate, and it tracks the chat-stream busy state -- never
         the input mode -- so the button is reachable in voice mode too (where she
         cannot be interrupted by voice). Cross-mode by construction."""
-        self.stop_button.setVisible(active)
+        self._turn_active = bool(active)
+        self._apply_control_state()
+
+
+    def _apply_control_state(self) -> None:
+        text_enabled = (
+            not self._busy
+            if self._input_enabled is None
+            else bool(self._input_enabled)
+        )
+        self.input.setEnabled(text_enabled)
+        self.send_button.setEnabled(text_enabled)
+        self.screenshot_button.setEnabled(not self._busy)
+        self.voice_button.setEnabled(self._voice_enabled)
+        self.stop_button.setEnabled(True)
+        self.stop_button.setVisible(self._turn_active)
 
     def set_voice_active(self, active: bool) -> None:
         self.voice_button.blockSignals(True)
@@ -164,6 +184,10 @@ class InputPanel(QFrame):
         self._opacity = float(opacity)
         self.update()
 
+    def set_style(self, art) -> None:
+        self.style_art = art
+        self.apply_scale(self._scale)
+
     def paintEvent(self, event) -> None:  # noqa: N802
         del event
         self._ensure_surface()
@@ -174,7 +198,8 @@ class InputPanel(QFrame):
         key = (self.width(), self.height(), self.devicePixelRatioF(), self._opacity, self._scale)
         if key == self._surface_key:
             return
-        self._surface = blue_veil(self.size(), self.devicePixelRatioF(), self._opacity, footer=True, scale=self._scale)
+        render = self.style_art.surface if self.style_art else blue_veil
+        self._surface = render(self.size(), self.devicePixelRatioF(), self._opacity, footer=True, scale=self._scale)
         logical_surface = self._surface.scaled(
             self.size(), Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation,
         )
@@ -263,5 +288,28 @@ class InputPanel(QFrame):
         self.stop_button.setText("停止")
         self.stop_button.setIcon(line_icon("stop", color="#F4D7DD"))
         self.stop_button.setIconSize(QSize(scaled_px(15, scale), scaled_px(15, scale)))
+        if self.style_art is not None:
+            style = self.style_art.style
+            self.layout().setContentsMargins(scaled_px(900 * style.layout.left, scale) - 3,
+                scaled_px(6, scale), scaled_px(900 * style.layout.right, scale), scaled_px(25, scale))
+            sheet = self.styleSheet().replace("#EDF2F8", style.colors.input).replace("#ECF2F8", style.colors.accent)
+            sheet = sheet.replace("#F4D7DD", style.colors.accent).replace("#A9C8E8", style.colors.accent)
+            accent = QColor(style.colors.accent)
+            rgb = f"{accent.red()}, {accent.green()}, {accent.blue()}"
+            sheet += f"""
+                QLineEdit#messageInput:focus {{ border-bottom: 1px solid rgba({rgb}, 125); }}
+                QFrame#inputPanel QPushButton:enabled {{ background: rgba({rgb}, 24); border-color: rgba({rgb}, 80); }}
+                QFrame#inputPanel QPushButton:enabled:hover, QFrame#inputPanel QPushButton:enabled:focus {{
+                    background: rgba({rgb}, 50); border-color: rgba({rgb}, 130);
+                }}
+                QFrame#inputPanel QPushButton:checked {{ background: rgba({rgb}, 70); border-color: rgba({rgb}, 150); }}
+                QFrame#inputPanel QPushButton:enabled:pressed {{ background: rgba({rgb}, 85); border-color: rgba({rgb}, 175); }}
+            """
+            self.setStyleSheet(sheet)
+            palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(style.colors.muted))
+            self.input.setPalette(palette)
+            for button, icon in ((self.screenshot_button, "screenshot"), (self.voice_button, "microphone"),
+                                 (self.send_button, "send"), (self.stop_button, "stop")):
+                button.setIcon(line_icon(icon, color=style.colors.accent))
         self._surface_key = None
         self.update()

@@ -1,0 +1,290 @@
+{
+  "$defs": {
+    "StyleColors": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "default": "#F1F5FA",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Text",
+          "type": "string"
+        },
+        "speaker": {
+          "default": "#E6EEF8",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Speaker",
+          "type": "string"
+        },
+        "outline": {
+          "default": "#1C2E46",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Outline",
+          "type": "string"
+        },
+        "accent": {
+          "default": "#DCE8F5",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Accent",
+          "type": "string"
+        },
+        "input": {
+          "default": "#EDF2F8",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Input",
+          "type": "string"
+        },
+        "muted": {
+          "default": "#C2D3E5",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Muted",
+          "type": "string"
+        }
+      },
+      "title": "StyleColors",
+      "type": "object"
+    },
+    "StyleLayout": {
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "default": 0.15555555555555556,
+          "maximum": 0.25,
+          "minimum": 0.02,
+          "title": "Left",
+          "type": "number"
+        },
+        "right": {
+          "default": 0.08666666666666667,
+          "maximum": 0.25,
+          "minimum": 0.02,
+          "title": "Right",
+          "type": "number"
+        },
+        "top": {
+          "default": 29,
+          "maximum": 32,
+          "minimum": 0,
+          "title": "Top",
+          "type": "number"
+        },
+        "name_width": {
+          "default": 110,
+          "maximum": 260,
+          "minimum": 80,
+          "title": "Name Width",
+          "type": "number"
+        },
+        "name_height": {
+          "default": 26,
+          "maximum": 38,
+          "minimum": 24,
+          "title": "Name Height",
+          "type": "number"
+        },
+        "name_inset": {
+          "default": 0,
+          "maximum": 30,
+          "minimum": 0,
+          "title": "Name Inset",
+          "type": "number"
+        },
+        "gap": {
+          "default": 10,
+          "maximum": 16,
+          "minimum": 2,
+          "title": "Gap",
+          "type": "number"
+        },
+        "surface_top": {
+          "default": 0,
+          "maximum": 40,
+          "minimum": 0,
+          "title": "Surface Top",
+          "type": "number"
+        },
+        "surface_opacity": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0.1,
+          "title": "Surface Opacity",
+          "type": "number"
+        },
+        "nameplate_opacity": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0.1,
+          "title": "Nameplate Opacity",
+          "type": "number"
+        }
+      },
+      "title": "StyleLayout",
+      "type": "object"
+    },
+    "StyleTail": {
+      "additionalProperties": false,
+      "properties": {
+        "placement": {
+          "default": "inline",
+          "enum": [
+            "inline",
+            "corner"
+          ],
+          "title": "Placement",
+          "type": "string"
+        },
+        "columns": {
+          "default": 17,
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Columns",
+          "type": "integer"
+        },
+        "rows": {
+          "default": 4,
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Rows",
+          "type": "integer"
+        },
+        "frames": {
+          "default": 68,
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Frames",
+          "type": "integer"
+        },
+        "frame_ms": {
+          "default": 40,
+          "maximum": 2000,
+          "minimum": 20,
+          "title": "Frame Ms",
+          "type": "integer"
+        },
+        "width": {
+          "default": 43,
+          "maximum": 60,
+          "minimum": 12,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "default": 24,
+          "maximum": 40,
+          "minimum": 12,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "title": "StyleTail",
+      "type": "object"
+    },
+    "StyleText": {
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "default": 18,
+          "maximum": 28,
+          "minimum": 12,
+          "title": "Size",
+          "type": "number"
+        },
+        "speaker_size": {
+          "default": 16,
+          "maximum": 26,
+          "minimum": 12,
+          "title": "Speaker Size",
+          "type": "number"
+        },
+        "line_height": {
+          "default": 29,
+          "maximum": 40,
+          "minimum": 22,
+          "title": "Line Height",
+          "type": "number"
+        },
+        "outline_width": {
+          "default": 0.85,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Outline Width",
+          "type": "number"
+        }
+      },
+      "title": "StyleText",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "spica-dialogue-style",
+      "default": "spica-dialogue-style",
+      "title": "Format",
+      "type": "string"
+    },
+    "format_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Format Version",
+      "type": "integer"
+    },
+    "style_id": {
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+      "title": "Style Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0.0",
+      "maxLength": 40,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "author": {
+      "default": "",
+      "maxLength": 120,
+      "title": "Author",
+      "type": "string"
+    },
+    "images": {
+      "additionalProperties": {
+        "pattern": "^images/[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\\.png$",
+        "type": "string"
+      },
+      "propertyNames": {
+        "enum": [
+          "surface",
+          "tail",
+          "nameplate"
+        ]
+      },
+      "title": "Images",
+      "type": "object"
+    },
+    "colors": {
+      "$ref": "#/$defs/StyleColors"
+    },
+    "text": {
+      "$ref": "#/$defs/StyleText"
+    },
+    "layout": {
+      "$ref": "#/$defs/StyleLayout"
+    },
+    "tail": {
+      "$ref": "#/$defs/StyleTail"
+    }
+  },
+  "required": [
+    "style_id",
+    "name",
+    "images"
+  ],
+  "title": "DialogueStyle",
+  "type": "object"
+}

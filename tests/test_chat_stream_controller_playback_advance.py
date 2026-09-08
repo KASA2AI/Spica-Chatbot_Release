@@ -169,3 +169,51 @@ def test_visual_ready_as_last_lane_starts_playback_immediately(qapp, tmp_path) -
     assert unit.visual_ready is True
     assert len(audio.play_calls) == 1
     assert controller.current_unit is unit
+
+
+@pytest.mark.parametrize("first_text,with_audio", [("第一句。", False), ("第一句！」", True)])
+def test_each_sentence_tail_animates_before_the_next_ready_unit(
+    qapp, tmp_path, isolated_runtime_config, first_text, with_audio,
+):
+    import time
+    from unittest.mock import patch
+    from PySide6.QtTest import QTest
+    from ui.qt_overlay import OverlayWindow
+
+    with patch.object(OverlayWindow, "_init_backend", lambda self: None):
+        window = OverlayWindow()
+    window.resize(1000, 800)
+    window.show()
+    qapp.processEvents()
+    audio = _FakeAudioController()
+    controller = _make_controller(audio)
+    controller.typewriter_controller = window.typewriter_controller
+    window.typewriter_controller.set_speed(3)
+    tail = window.dialogue.tail
+    tail.timer.setInterval(50)  # Sana's frame interval.
+    ticks = []
+    tail.timer.timeout.connect(lambda: ticks.append(window.dialogue.text_label.text()))
+    wav = tmp_path / "short.wav"
+    wav.write_bytes(b"RIFF")
+    units = [StreamUnitState(
+        index=index, display_text=text, audio_path=str(wav) if with_audio else None,
+        text_ready=True, audio_ready=True, visual_ready=True,
+    ) for index, text in enumerate((first_text, "第二句。"))]
+    controller.streaming_mode = True
+    controller.stream_done = True
+    controller.stream_pending_units = dict(enumerate(units))
+    controller.next_stream_index = 0
+    try:
+        controller._pump_stream_playback()
+        if with_audio:
+            controller._handle_chat_audio_finished(0)  # Audio ends before typing.
+        deadline = time.monotonic() + 2
+        while "第二句。" not in ticks and time.monotonic() < deadline:
+            QTest.qWait(10)
+        assert first_text in ticks, "first sentence disappeared before any animation tick"
+        assert "第二句。" in ticks
+    finally:
+        window.typewriter_controller.stop()
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()

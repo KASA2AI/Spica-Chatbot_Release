@@ -40,6 +40,8 @@ Sits between the host->UI bridge and the download worker:
 
 from __future__ import annotations
 
+import time
+
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -631,9 +633,10 @@ class AnimeController(QObject):
         self._set_cancel_state(
             True, request_id in self._cancelling_request_ids)
 
-    def shutdown(self, wait_ms: int = 1500) -> None:
+    def shutdown(self, wait_ms: int = 1500) -> bool:
         """P1-9 exit: stop retry timers; terminate yt-dlp keeping .part; stop
         qbt polling only (the external service keeps downloading)."""
+        deadline = time.monotonic() + max(0, int(wait_ms)) / 1000.0
         self._shutting_down = True
         self.notify_user_activity()
         self._completion_timer.stop()
@@ -645,12 +648,30 @@ class AnimeController(QObject):
                 worker.cancel()
             except Exception:  # noqa: BLE001
                 pass
+        retained_workers: list[Any] = []
         for worker in list(self._workers):
-            if worker.isRunning() and not worker.wait(wait_ms):
-                worker.force_kill()
-                worker.wait(max(1000, int(wait_ms)))
-        self._workers.clear()
-        self._terminal_worker_ids.clear()
+            if worker.isRunning():
+                remaining_ms = max(
+                    0,
+                    int((deadline - time.monotonic()) * 1000),
+                )
+                stopped = worker.wait(remaining_ms // 2)
+                if stopped is False or worker.isRunning():
+                    try:
+                        worker.force_kill()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    remaining_ms = max(
+                        0,
+                        int((deadline - time.monotonic()) * 1000),
+                    )
+                    stopped = worker.wait(remaining_ms)
+                    if stopped is False or worker.isRunning():
+                        retained_workers.append(worker)
+        self._workers = retained_workers
+        retained_ids = {id(worker) for worker in retained_workers}
+        self._terminal_worker_ids.intersection_update(retained_ids)
         self._cancelling_request_ids.clear()
         self._in_flight = None
         self._set_cancel_state(False, False)
+        return not retained_workers

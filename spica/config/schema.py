@@ -36,6 +36,9 @@ class LLMConfig(BaseModel):
     #   gpt-*    : reasoning_effort = none/low/medium/high (a real gradient).
     # Disabling deepseek thinking is a big latency cut (~halves first-token).
     reasoning_effort: str = "default"
+    # YAML-only override for proactive System turns. None inherits the main
+    # reasoning_effort; "default" explicitly delegates to the provider default.
+    system_turn_reasoning_effort: str | None = None
 
 
 class MemoryConfig(BaseModel):
@@ -88,6 +91,13 @@ class CharacterConfig(BaseModel):
     # displays that translation instead. yaml-only knob: NO env name (铁律 #4 --
     # nothing added to env_roster). A typo fails loud at startup (Literal).
     dialog_display_language: Literal["ja", "zh"] = "ja"
+
+
+class DialogueStyleConfig(BaseModel):
+    # Restart-effective presentation choice; independent of character/memory.
+    package_dir: str | None = Field(default=None, json_schema_extra={
+        "path_semantics": {"base": "launch_working_directory", "kind": "directory"},
+    })
 
 
 class StreamConfig(BaseModel):
@@ -520,6 +530,7 @@ class AnimeConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    dialogue_style: DialogueStyleConfig = Field(default_factory=DialogueStyleConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     character: CharacterConfig = Field(default_factory=CharacterConfig)

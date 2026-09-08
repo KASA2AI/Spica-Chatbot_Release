@@ -23,6 +23,8 @@ actions -- every failure path (bind_failed / picker cancel / calibration cancel
 from __future__ import annotations
 
 import logging
+import math
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -171,6 +173,7 @@ class GalgameController(QObject):
         self._calibrator: Any | None = None  # host.new_ocr_calibrator(), built lazily
         self._binder: Any | None = None  # per-flow GameBinder (selection-only mode)
         self._workers: list[CompanionActionWorker] = []
+        self._shutdown_requested = False
         # One flow/action in flight at a time; cleared on completion or any reset.
         self._busy = False
         self._calibrating = False
@@ -185,7 +188,7 @@ class GalgameController(QObject):
 
     # -- entry ------------------------------------------------------------------
     def on_companion_clicked(self) -> None:
-        if self._host is None:
+        if self._host is None or self._shutdown_requested:
             return
         if self._busy:
             self._toast("陪玩操作进行中，请稍候…")
@@ -201,21 +204,45 @@ class GalgameController(QObject):
             return
         self._begin_bind_flow()
 
-    def shutdown(self, timeout_ms: int = 3000) -> None:
-        """Close-during-play (designed crash-equivalent path): run stop() off the
-        UI thread and wait briefly; on timeout ABANDON the wait -- the dangling
-        PlaySession is silently 補總結'd by recover_dangling on next startup."""
+    def shutdown(self, *, deadline: float) -> bool:
+        """Close action ingress and drain every UI worker under one deadline."""
+
+        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)):
+            raise TypeError("galgame UI deadline must be a monotonic timestamp")
+        deadline = float(deadline)
+        if not math.isfinite(deadline):
+            raise ValueError("galgame UI deadline must be finite")
+        self._shutdown_requested = True
         for worker in list(self._workers):
             if worker.isRunning():
-                worker.wait(timeout_ms)
-        if self._host is None:
-            return
-        controller = getattr(self._host, "_companion_controller", None)
-        if controller is None or not controller.is_active:
-            return
-        worker = CompanionActionWorker(controller.stop, self)
-        worker.start()
-        worker.wait(timeout_ms)
+                remaining_ms = max(
+                    0,
+                    int((deadline - time.monotonic()) * 1000),
+                )
+                if not worker.wait(remaining_ms):
+                    return False
+        host = self._host
+        controller = (
+            getattr(host, "_companion_controller", None)
+            if host is not None
+            else None
+        )
+        if controller is not None and controller.is_active:
+            worker = CompanionActionWorker(controller.stop, self)
+            self._workers.append(worker)
+            worker.start()
+            remaining_ms = max(
+                0,
+                int((deadline - time.monotonic()) * 1000),
+            )
+            if not worker.wait(remaining_ms):
+                return False
+        for worker in list(self._workers):
+            if worker.isRunning():
+                return False
+            self._workers.remove(worker)
+            worker.deleteLater()
+        return True
 
     def _begin_switch_flow(self) -> None:
         """M2 (stage 4): switch from playing A to playing B. A stays LIVE through
@@ -456,6 +483,8 @@ class GalgameController(QObject):
         on_ok: Callable[[Any], None] | None = None,
         on_fail: Callable[[str], None] | None = None,
     ) -> None:
+        if self._shutdown_requested:
+            return
         # THREADING: never connect bare closures to worker signals -- a closure has
         # no QObject thread affinity, so AutoConnection degrades to DIRECT and the
         # callback runs ON THE WORKER THREAD (stage-3 latent defect, exposed by the

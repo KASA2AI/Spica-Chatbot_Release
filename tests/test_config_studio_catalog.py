@@ -498,6 +498,7 @@ def test_catalog_only_treats_explicit_owner_path_fields_as_paths(tmp_path: Path)
     assert declared_paths == {
         "character.skill_dir",
         "character.package_dir",
+        "dialogue_style.package_dir",
         "stt.download_root",
         "ocr.trt.engine_cache_dir",
         "anime.download_dir",

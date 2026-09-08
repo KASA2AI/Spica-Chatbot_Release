@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -30,16 +31,16 @@ def qapp():
 
 
 @pytest.fixture
-def window(qapp, tmp_path):
-    with patch.object(OverlayWindow, "_init_backend", lambda self: None), patch("ui.overlay_config.CONFIG_PATH", tmp_path / "overlay.json"):
+def window(qapp, isolated_runtime_config):
+    with patch.object(OverlayWindow, "_init_backend", lambda self: None):
         overlay = OverlayWindow()
-        overlay.resize(1000, 800)
-        overlay.show()
-        qapp.processEvents()
-        yield overlay
-        overlay.close()
-        overlay.deleteLater()
-        qapp.processEvents()
+    overlay.resize(1000, 800)
+    overlay.show()
+    qapp.processEvents()
+    yield overlay
+    overlay.close()
+    overlay.deleteLater()
+    qapp.processEvents()
 
 
 def test_opacity_persistence_preserves_other_preferences_and_corrupt_file(tmp_path):
@@ -57,6 +58,304 @@ def test_opacity_persistence_preserves_other_preferences_and_corrupt_file(tmp_pa
     path.write_text("broken", encoding="utf-8")
     assert not save_dialogue_opacity(0.5, path)
     assert path.read_text() == "broken"
+
+
+def test_costume_controls_wait_for_the_whole_reply_before_changing(window, qapp):
+    window.open_settings_panel()
+    writes = []
+    window.visual_tool = SimpleNamespace(set_costume=lambda value: writes.append(value) or value)
+    window.available_costumes = ["school", "summer"]
+    window.selected_costume = "school"
+    with patch.object(window, "_set_default_character_for_costume"), patch.object(window, "_is_conversation_busy", return_value=True):
+        window.set_busy(True)
+        assert not window.settings_panel.costume_box.isEnabled()
+        window.set_costume("summer")
+        assert writes == [] and window.selected_costume == "school"
+    with patch.object(window, "_set_default_character_for_costume"), patch.object(window, "_is_conversation_busy", return_value=False):
+        window.set_busy(False)
+        assert window.settings_panel.costume_box.isEnabled()
+        window.set_costume("summer")
+    assert writes == ["summer"] and window.selected_costume == "summer"
+
+
+def test_interlocutor_edit_does_not_change_the_running_conversation(window, qapp, tmp_path):
+    from spica.config.manager import ConfigManager
+    from spica.host.management import ManagementSurface
+    window.host = SimpleNamespace(management_surface=ManagementSurface(
+        registry=None, plugin_host=None, config_manager=ConfigManager(tmp_path / "app.yaml"), characters_root=tmp_path))
+    names = []
+    window.interlocutor_name = "kasa"
+    window.agent = SimpleNamespace(
+        set_interlocutor_name=lambda name: names.append(name) or name,
+    )
+    window.open_settings_panel()
+    field = window.settings_panel.name_input
+    field.setFocus()
+    qapp.processEvents()
+    field.selectAll()
+    QTest.keyClicks(field, "Ren")
+    assert field.hasFocus()
+    assert window.interlocutor_name == "kasa"
+
+    assert names == []
+
+    # Editing within a name must preserve spaces and the caret; an empty draft
+    # must remain editable rather than being replaced with the default name.
+    QTest.keyClicks(field, " San")
+    assert field.text() == "Ren San"
+    assert window.interlocutor_name == "kasa"
+    field.selectAll()
+    QTest.keyClick(field, Qt.Key.Key_Backspace)
+    assert field.text() == ""
+    QTest.keyClicks(field, "Haru")
+    assert window.interlocutor_name == "kasa"
+    window.host = None
+
+
+def test_interlocutor_edit_is_saved_for_restart(window, qapp, tmp_path, monkeypatch):
+    from spica.config.manager import ConfigManager
+    from spica.host.management import ManagementSurface
+
+    monkeypatch.setattr(ConfigManager, "_ensure_env_loaded", lambda self: None)
+    monkeypatch.delenv("SPICA_USER_NAME", raising=False)
+    manager = ConfigManager(tmp_path / "app.yaml")
+    surface = ManagementSurface(
+        registry=None, config_manager=manager, plugin_host=None,
+        characters_root=tmp_path / "characters",
+    )
+    surface.write_config({"character": {"package_dir": "selected-role"}})
+    window.host = SimpleNamespace(management_surface=surface)
+    window.interlocutor_name = "kasa"
+    window.open_settings_panel()
+    field = window.settings_panel.name_input
+    field.setFocus()
+    qapp.processEvents()
+    field.selectAll()
+    QTest.keyClicks(field, "Ren")
+    QTest.keyClick(field, Qt.Key.Key_Return)
+    restarted = ConfigManager(manager.config_path).load()
+    assert restarted.character.interlocutor_name == "Ren"
+    assert restarted.character.package_dir == "selected-role"
+    assert window.interlocutor_name == "kasa"
+    assert "重启" in window.settings_panel.interlocutor_name_status.text()
+
+    field.selectAll()
+    commit = QInputMethodEvent()
+    commit.setCommitString("伞")
+    QApplication.sendEvent(field, commit)
+    window._close_settings_panel()
+    window.settings_panel.motion_animation.setCurrentTime(
+        window.settings_panel.motion_animation.duration()
+    )
+    qapp.processEvents()
+    window.open_settings_panel()
+    assert field.text() == "伞"
+    assert ConfigManager(manager.config_path).load().character.interlocutor_name == "伞"
+    assert window.interlocutor_name == "kasa"
+    window.host = None
+
+
+@pytest.mark.parametrize("save_fails", [False, True])
+def test_restart_saves_pending_name_and_keeps_window_open_on_save_failure(window, qapp, tmp_path, monkeypatch, save_fails):
+    from spica.config.manager import ConfigManager
+    from spica.host.management import ManagementSurface
+
+    monkeypatch.setattr(ConfigManager, "_ensure_env_loaded", lambda self: None)
+    monkeypatch.delenv("SPICA_USER_NAME", raising=False)
+    manager = ConfigManager(tmp_path / "app.yaml")
+    surface = ManagementSurface(registry=None, config_manager=manager, plugin_host=None,
+                                characters_root=tmp_path / "characters")
+    window.host = SimpleNamespace(management_surface=surface)
+    window.open_settings_panel()
+    panel = window.settings_panel
+    panel.name_input.setText("伞")
+    if save_fails:
+        monkeypatch.setattr(surface, "write_config", Mock(side_effect=OSError("read-only config")))
+    QTest.mouseClick(panel.restart_button, Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert window._restart_requested is not save_fails
+    assert window.isVisible() is save_fails
+    if save_fails:
+        assert "保存失败" in panel.interlocutor_name_status.text()
+        assert panel.restart_button.isEnabled()
+    else:
+        assert ConfigManager(manager.config_path).load().character.interlocutor_name == "伞"
+        assert panel.restart_button.text() == "正在重启…"
+    window.host = None
+
+
+def test_restart_waits_for_package_operation(window, qapp):
+    window.open_settings_panel()
+    controller = window.character_settings_controller
+    controller.worker = object()
+    window.settings_panel.set_character_busy(True)
+    assert not window.settings_panel.restart_button.isEnabled()
+    assert not window.settings_panel.name_input.isEnabled()
+    with patch.object(window, "close") as close:
+        window.settings_panel.restart_button.click()
+        window.restart_application()
+        close.assert_not_called()
+    assert not window._restart_requested
+    controller.worker = None
+    window.settings_panel.set_character_busy(False)
+    assert window.settings_panel.restart_button.isEnabled()
+    assert window.settings_panel.name_input.isEnabled()
+
+
+@pytest.mark.parametrize("owner", ["chat", "startup_warmup"])
+def test_restart_button_finishes_after_a_busy_worker_exits(window, qapp, tmp_path, monkeypatch, owner):
+    import threading
+    import time
+    from PySide6.QtCore import QThread
+    from spica.config.manager import ConfigManager
+    from spica.host.management import ManagementSurface
+
+    release = threading.Event()
+
+    class Worker(QThread):
+        def run(self):
+            release.wait(10)
+
+    worker = Worker(window)
+    worker.start()
+    monkeypatch.setattr(ConfigManager, "_ensure_env_loaded", lambda self: None)
+    monkeypatch.delenv("SPICA_USER_NAME", raising=False)
+    window.host = SimpleNamespace(management_surface=ManagementSurface(
+        registry=None, plugin_host=None, config_manager=ConfigManager(tmp_path / "app.yaml"),
+        characters_root=tmp_path / "characters"))
+    if owner == "chat":
+        window.chat_stream_controller = SimpleNamespace(
+            shutdown=lambda wait_ms: worker.wait(wait_ms), is_busy=worker.isRunning)
+    else:
+        window.startup_warmup_worker = worker
+    try:
+        window.open_settings_panel()
+        panel = window.settings_panel
+        with patch("ui.qt_overlay._force_process_exit") as force_exit:
+            QTest.mouseClick(panel.restart_button, Qt.MouseButton.LeftButton)
+            assert window.isVisible()
+            assert window._restart_requested, "busy shutdown discarded the restart request"
+            assert not window._forced_close_armed
+            assert "等待" in panel.restart_button.text()
+            release.set()
+            deadline = time.monotonic() + 2
+            while window.isVisible() and time.monotonic() < deadline:
+                QTest.qWait(20)
+            assert not window.isVisible(), "restart must continue automatically after the worker exits"
+            assert window._restart_requested
+            force_exit.assert_not_called()
+    finally:
+        release.set()
+        worker.wait(1000)
+        window.chat_stream_controller = None
+        window.startup_warmup_worker = None
+        window.host = None
+        window._forced_close_armed = False
+
+
+def test_name_save_does_not_claim_success_when_environment_wins(window, qapp, tmp_path, monkeypatch):
+    from spica.config.manager import ConfigManager
+    from spica.host.management import ManagementSurface
+    monkeypatch.setattr(ConfigManager, "_ensure_env_loaded", lambda self: None)
+    monkeypatch.setenv("SPICA_USER_NAME", "OldAlias")
+    manager = ConfigManager(tmp_path / "app.yaml")
+    window.host = SimpleNamespace(management_surface=ManagementSurface(
+        registry=None, plugin_host=None, config_manager=manager, characters_root=tmp_path / "characters"))
+    window.open_settings_panel()
+    assert not window.character_settings_controller.save_interlocutor_name("NewAlias")
+    assert "SPICA_USER_NAME" in window.settings_panel.interlocutor_name_status.text()
+    assert not manager.config_path.exists()
+    window.host = None
+
+
+def test_restart_does_not_relaunch_or_force_exit_while_shutdown_is_pending(window):
+    window.chat_stream_controller = SimpleNamespace(shutdown=lambda _wait_ms: False)
+    try:
+        with patch("ui.qt_overlay._force_process_exit") as force_exit:
+            window.restart_application()
+            assert window._restart_requested
+            assert window.isVisible() and not window._forced_close_armed
+            assert window._restart_timer.isActive()
+            window.restart_application()
+            QTest.qWait(300)
+            assert window.isVisible() and window._restart_requested
+            force_exit.assert_not_called()
+    finally:
+        window.chat_stream_controller = None
+        window._restart_timer.stop()
+        window._forced_close_armed = False
+
+
+def test_pending_restart_rejects_a_queued_system_turn(window):
+    start = Mock(return_value=None)
+    window.chat_stream_controller = SimpleNamespace(start_system_turn=start)
+    window._restart_requested = True
+    try:
+        window._start_system_turn_gui(object())
+        start.assert_not_called()
+    finally:
+        window.chat_stream_controller = None
+        window._restart_requested = False
+
+
+@pytest.fixture
+def desktop_main(monkeypatch):
+    from ui import qt_overlay
+
+    app = Mock()
+    app.exec.return_value = 0
+    overlay = SimpleNamespace(_restart_requested=False, show=lambda: None)
+    monkeypatch.setattr(qt_overlay, "load_secrets", lambda: None)
+    monkeypatch.setattr(qt_overlay, "QApplication", lambda _argv: app)
+    monkeypatch.setattr(qt_overlay, "OverlayWindow", lambda: overlay)
+    change_dir, execute, error = Mock(), Mock(), Mock()
+    monkeypatch.setattr(qt_overlay.os, "chdir", change_dir)
+    monkeypatch.setattr(qt_overlay.os, "execv", execute)
+    monkeypatch.setattr(qt_overlay.QMessageBox, "critical", error)
+    return SimpleNamespace(module=qt_overlay, app=app, window=overlay, change_dir=change_dir, execute=execute, error=error)
+
+
+@pytest.mark.parametrize("frozen,original,current,expected", [
+    (False, ["python", "-u", "/project with spaces/webui_qt.py"], ["webui_qt.py"], ["-u", "/project with spaces/webui_qt.py"]),
+    (False, ["python", "-m", "ui.qt_overlay"], ["ui/qt_overlay.py"], ["-m", "ui.qt_overlay"]),
+    (True, ["Spica.exe"], ["Spica.exe", "-style", "Fusion"], ["-style", "Fusion"]),
+])
+def test_restart_reexecutes_same_launch_only_after_event_loop_stops(desktop_main, monkeypatch, frozen, original, current, expected):
+    from pathlib import Path
+    import sys
+
+    monkeypatch.setattr(sys, "orig_argv", original)
+    monkeypatch.setattr(sys, "argv", current.copy())
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    desktop_main.window._restart_requested = True
+
+    def stop_loop():
+        desktop_main.execute.assert_not_called()
+        sys.argv[:] = ["Qt consumed the arguments"]
+        return 0
+
+    desktop_main.app.exec.side_effect = stop_loop
+    assert desktop_main.module.main() == 0
+    desktop_main.change_dir.assert_called_once_with(Path.cwd())
+    desktop_main.execute.assert_called_once_with(sys.executable, [sys.executable, *expected])
+    desktop_main.error.assert_not_called()
+
+
+@pytest.mark.parametrize("requested,exit_code", [(False, 0), (True, 1)])
+def test_normal_exit_and_failed_event_loop_do_not_restart(desktop_main, requested, exit_code):
+    desktop_main.window._restart_requested = requested
+    desktop_main.app.exec.return_value = exit_code
+    assert desktop_main.module.main() == exit_code
+    desktop_main.execute.assert_not_called()
+
+
+def test_relaunch_failure_reports_manual_start_without_retry_loop(desktop_main):
+    desktop_main.window._restart_requested = True
+    desktop_main.execute.side_effect = OSError("executable unavailable")
+    assert desktop_main.module.main() == 1
+    desktop_main.execute.assert_called_once()
+    desktop_main.error.assert_called_once()
+    assert "手动启动" in desktop_main.error.call_args.args[2]
 
 
 def test_stop_does_not_shift_send_or_input(qapp):
@@ -217,7 +516,11 @@ def test_intuitive_drag_surfaces_move_the_window(window, qapp, target):
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton)
 
 
-def test_reply_focus_and_settings_close_preserve_draft(window, qapp):
+def test_reply_focus_and_settings_close_preserve_draft(window, qapp, tmp_path):
+    from spica.config.manager import ConfigManager
+    from spica.host.management import ManagementSurface
+    window.host = SimpleNamespace(management_surface=ManagementSurface(
+        registry=None, plugin_host=None, config_manager=ConfigManager(tmp_path / "app.yaml"), characters_root=tmp_path))
     window.input_panel.input.setText("还没写完的消息")
     window.open_settings_panel()
     panel = window.settings_panel
@@ -242,6 +545,7 @@ def test_reply_focus_and_settings_close_preserve_draft(window, qapp):
     with patch.object(window, "isActiveWindow", return_value=False), patch.object(window.input_panel.input, "setFocus") as focus:
         window._focus_input()
     focus.assert_not_called()
+    window.host = None
 
 
 def test_opacity_preview_reuses_surface_and_commits_at_end(window):
@@ -261,6 +565,14 @@ def test_opacity_preview_reuses_surface_and_commits_at_end(window):
         assert not window._opacity_save_timer.isActive()
 
 
+def test_opacity_change_keeps_newly_visible_edges_inside_window_mask(window):
+    window.set_dialogue_opacity(0.2)
+    window.set_dialogue_opacity(1.0)
+    for widget in (window.dialogue, window.input_panel):
+        visible = widget.hit_region().translated(widget.pos())
+        assert visible.subtracted(window.mask()).isEmpty()
+
+
 def test_reading_band_is_denser_than_its_edges_and_obeys_opacity(qapp):
     surface = blue_veil(QSize(600, 140), 2.0, DEFAULT_DIALOGUE_OPACITY).toImage()
     center = surface.pixelColor(600, 140).alpha()
@@ -270,23 +582,20 @@ def test_reading_band_is_denser_than_its_edges_and_obeys_opacity(qapp):
     assert stronger.pixelColor(600, 140).alpha() > center
 
 
-def test_dialogue_visibility_never_covers_open_settings(window, qapp):
+def test_async_status_never_covers_open_settings(window, qapp):
+    settings_button = window.window_controls.settings_button
+    assert window.childAt(settings_button.mapTo(window, settings_button.rect().center())) is settings_button
     window.open_settings_panel()
     panel = window.settings_panel
     panel.stop_motion_for_layout()
     overlap = panel.geometry().intersected(window.dialogue.geometry()).center()
-    for visible in (False, True):
-        window.set_dialogue_box_visible(visible)
+    for update in (
+        lambda: window.dialogue_visibility_controller.show_system_message("状态已更新"),
+    ):
+        update()
         qapp.processEvents()
         topmost = window.childAt(overlap)
         assert topmost is panel or panel.isAncestorOf(topmost)
-    assert window.dialogue_box_visible
-    window.set_dialogue_box_visible(False)
-    window.dialogue.set_dialogue_text("系统状态更新")
-    window.typewriter_controller.start("新的聊天回复")
-    qapp.processEvents()
-    assert window.dialogue.isHidden()
-    assert not window.dialogue.tail.timer.isActive()
 
 
 def test_sentence_tail_obeys_completion_stop_and_window_visibility(window, qapp):
@@ -364,30 +673,3 @@ def test_typing_more_text_keeps_existing_wrapped_lines_in_place(window, qapp):
     before = text._text_layout.lineAt(1).textLength()
     window.dialogue.set_dialogue_text("啊" * 85)
     assert text._text_layout.lineAt(1).textLength() == before
-
-
-def test_character_padding_does_not_shrink_the_visible_artwork(window, tmp_path):
-    pixmap = QPixmap(400, 400)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    from PySide6.QtGui import QPainter
-    painter = QPainter(pixmap)
-    painter.fillRect(100, 100, 200, 300, Qt.GlobalColor.white)
-    painter.end()
-    path = tmp_path / "padded-sprite.png"
-    assert pixmap.save(str(path))
-    window.set_character_image(path)
-    assert window.current_pixmap.size() == QSize(200, 300)
-    rendered = window.character_label.pixmap()
-    assert rendered.deviceIndependentSize().height() == window.character_label.height()
-    window.set_character_image(path)
-    assert window.character_label.pixmap().cacheKey() == rendered.cacheKey()
-
-
-def test_opacity_changes_refresh_visible_edge_hit_regions(window):
-    window.set_dialogue_opacity(0.2)
-    faint = window.mask()
-    window.set_dialogue_opacity(1.0)
-    strong = window.mask()
-    assert not strong.subtracted(faint).isEmpty()
-    window.set_dialogue_opacity(0.2)
-    assert window.mask() == faint

@@ -1,0 +1,28 @@
+{
+  "pack_format": 2,
+  "slug": "demo-eyes",
+  "version": "1.0.0",
+  "name": "眼部动态示例",
+  "char_name": "小星",
+  "user_aliases": [
+    "旅人"
+  ],
+  "worldbook_file": "worldbook.md",
+  "visuals": {
+    "renderer": "eye-rig",
+    "sprites": {
+      "idle": "model/open.png"
+    },
+    "eye_rigs": {
+      "idle": "model/character.eyerig.json"
+    },
+    "default_costume": "casual",
+    "costumes": [
+      {
+        "id": "casual",
+        "label": "示例 · 动态",
+        "default_sprite": "idle"
+      }
+    ]
+  }
+}

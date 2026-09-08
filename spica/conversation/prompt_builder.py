@@ -127,6 +127,8 @@ def build_system_prompt(
     template = SYSTEM_PROMPT_TEMPLATE
     if dialog_display_language == "zh":
         template = "\n\n".join([_PROMPT_RULES, BILINGUAL_DISPLAY_RULES, _PROMPT_FORMAT_ZH])
+    if character_name and character_name != DEFAULT_CHARACTER_NAME:
+        template = template.replace("Spica", character_name)
     return render_character_template(
         template,
         char=character_name or DEFAULT_CHARACTER_NAME,
@@ -256,6 +258,13 @@ def build_spica_prompt(
         ),
         "[CURRENT_MESSAGE_TIME]",
         format_local_time_for_prompt(user_local_time),
+        "[CURRENT_INTERLOCUTOR]",
+        (
+            f"当前设置中的对话者称呼是「{name}」。这是本轮唯一生效的称呼，优先于上面的"
+            "角色卡原作姓名、长期记忆和近期对话。历史回复里的其他称呼可能是改名前的旧名字，"
+            f"不能沿用它们覆盖当前设置。需要称呼对方或回答对方姓名时，使用「{name}」。"
+            "改名不代表换了一个人，既有关系和共同经历仍然保留。"
+        ),
         "[CURRENT_USER_INPUT]",
         user_input,
     ]

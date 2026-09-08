@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import quote
 
 from agent_tools.config_io import read_config_file, write_config_file
+from agent_tools.visual.costume_writer import write_costume_selection
 from common.timing import elapsed_ms, now_ms
 
 
@@ -264,6 +265,63 @@ class VisualDiffService:
             write_config_file(self.config_path, new_config)
             self.reload_config(force=True)
             return self.public_config()
+
+    def set_costume(self, name: str) -> str:
+        """Persist one valid costume as the global fixed selection."""
+
+        if not isinstance(name, str):
+            raise ValueError("服装名称必须是字符串。")
+        canonical = name.strip()
+        if not canonical:
+            raise ValueError("服装名称不能为空。")
+
+        with self._lock:
+            self.reload_config()
+            valid_costumes = set(self.list_costume_sets())
+            valid_costumes.discard("ui")
+            if canonical not in valid_costumes:
+                raise ValueError(f"未知服装：{canonical}")
+            write_costume_selection(self.config_path, canonical)
+            self.reload_config(force=True)
+            return canonical
+
+    def current_costume(self, *, force_reload: bool = False) -> str | None:
+        """Return the configured selection from one lock-protected snapshot."""
+
+        with self._lock:
+            self.reload_config(force=force_reload)
+            selected = str(self.config.get("selected_costume") or "").strip()
+            return selected or None
+
+    def current_default_sprite_id(self) -> str | None:
+        """Resolve the current costume's exact default sprite file stem."""
+
+        with self._lock:
+            self.reload_config()
+            self.reload_rules()
+            selected = str(self.config.get("selected_costume") or "").strip()
+            if not selected:
+                return None
+            character = self.config.get("character", {})
+            if not isinstance(character, dict):
+                return None
+            expression_id = str(
+                character.get("default_expression_id") or "000"
+            ).zfill(3)
+            hand_pose = self.normalize_hand_pose(
+                character.get("default_hand_pose") or "normal"
+            )
+            image_path = self.resolve_expression_image(
+                selected,
+                hand_pose,
+                expression_id,
+                config=self.config,
+                rules=self.rules,
+            )
+            if image_path is None:
+                return None
+            stem = image_path.stem.strip()
+            return stem or None
 
     def build_visual_payload(
         self,
@@ -1094,9 +1152,25 @@ class VisualDiffService:
         if not costume:
             return None
 
+        config = config if isinstance(config, dict) else self.config
+        sprite_map = config.get("sprite_map")
+        if isinstance(sprite_map, dict):
+            expressions = sprite_map.get(costume, {})
+            choices = (
+                expressions.get(f"{hand_pose}:{expression_id}")
+                or expressions.get(expression_id)
+                or expressions.get("000")
+                or []
+            )
+            if not choices:
+                return None
+            path = self._resolve_path(random.choice(choices))
+            return path if path.is_file() else None
+
         diff_root = self.diff_root_for_config(config)
         folder = self.hand_pose_folder(hand_pose, rules=rules) or hand_pose
-        search_dir = diff_root / costume / folder
+        directories = config.get("costume_directories") or {}
+        search_dir = diff_root / directories.get(costume, costume) / folder
         if not search_dir.exists():
             return None
 
@@ -1110,6 +1184,9 @@ class VisualDiffService:
         config: dict[str, Any] | None = None,
         rules: dict[str, Any] | None = None,
     ) -> list[str]:
+        config = config if isinstance(config, dict) else self.config
+        if isinstance(config.get("sprite_map"), dict):
+            return list(config["sprite_map"])
         rules = rules if isinstance(rules, dict) else self.rules
         diff_root = self.diff_root_for_config(config)
         if not diff_root.exists():
@@ -1120,13 +1197,20 @@ class VisualDiffService:
             for item in rules.get("hand_poses", {}).values()
             if isinstance(item, dict) and item.get("folder")
         }
+        # Builtin clients retain their costume IDs when source folders move.
+        directories = config.get("costume_directories")
+        candidates = (
+            [(name, diff_root / directory) for name, directory in sorted(directories.items())]
+            if isinstance(directories, dict)
+            else [(path.name, path) for path in sorted(diff_root.iterdir())]
+        )
         costumes = []
-        for path in sorted(diff_root.iterdir(), key=lambda item: item.name):
+        for name, path in candidates:
             if not path.is_dir():
                 continue
             if required_folders and not all((path / folder).is_dir() for folder in required_folders):
                 continue
-            costumes.append(path.name)
+            costumes.append(name)
         return costumes
 
     def choose_costume(

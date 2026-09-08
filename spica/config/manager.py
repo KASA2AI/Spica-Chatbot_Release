@@ -14,6 +14,9 @@ in this phase.
 from __future__ import annotations
 
 import os
+import stat
+import tempfile
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,18 +106,38 @@ def respeaker_env_overrides() -> dict[str, str | None]:
 
 
 class ConfigManager:
+    # Settings writes are rare. One process-wide lock also covers separate
+    # managers targeting the same file, without a second lock registry.
+    _update_lock = threading.RLock()
+
     def __init__(self, config_path: str | Path | None = None) -> None:
         self.config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
 
     def load(self) -> AppConfig:
         """defaults -> optional yaml file -> env overrides -> validate."""
+        with self._update_lock:
+            return self.resolve_snapshot(self._read_yaml(self.config_path), self._current_snapshot()).to_app_config()
+
+    def _current_snapshot(self) -> EnvironmentSnapshot:
         self._ensure_env_loaded()
         names = set(APP_ENV_MAP.values()) | set(SCREEN_ENV_MAP.values())
-        snapshot = EnvironmentSnapshot.from_mapping(
+        return EnvironmentSnapshot.from_mapping(
             {name: value for name in names if (value := os.getenv(name)) is not None},
             layer="process",
         )
-        return self.resolve_snapshot(self._read_yaml(self.config_path), snapshot).to_app_config()
+
+    def update(self, patch: dict[str, Any]) -> AppConfig:
+        """Serialize settings read/merge/write and reject a shadowed name edit."""
+        with self._update_lock:
+            snapshot = self._current_snapshot()
+            current = self.resolve_snapshot(self._read_yaml(self.config_path), snapshot).to_app_config()
+            candidate = self.validate(self.merge(current.model_dump(), patch))
+            effective = self.resolve_snapshot(candidate.model_dump(), snapshot).to_app_config()
+            if ("interlocutor_name" in patch.get("character", {})
+                    and candidate.character.interlocutor_name != effective.character.interlocutor_name):
+                raise ValueError("称呼被 SPICA_USER_NAME 覆盖。请在启动环境或 dotenv 中移除该项，重启应用后再保存称呼。")
+            self.save(candidate)
+            return candidate
 
     def resolve_snapshot(
         self,
@@ -269,11 +292,19 @@ class ConfigManager:
 
     def save(self, config: AppConfig, path: str | Path | None = None) -> None:
         target = Path(path) if path else self.config_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            yaml.safe_dump(config.model_dump(), allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
+        with self._update_lock:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else 0o600
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=".app-", dir=target.parent, delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(yaml.safe_dump(config.model_dump(), allow_unicode=True, sort_keys=False))
+                temporary.chmod(mode)
+                temporary.replace(target)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
 
 
 def _screen_env_config_overrides_from_snapshot(

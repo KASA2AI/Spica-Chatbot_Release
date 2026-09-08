@@ -1,0 +1,11 @@
+{
+  "format": "spica-dialogue-style",
+  "format_version": 1,
+  "style_id": "spica",
+  "name": "Spica · 蓝色对话框",
+  "version": "1.0.0",
+  "images": {
+    "surface": "images/surface.png",
+    "tail": "images/tail.png"
+  }
+}

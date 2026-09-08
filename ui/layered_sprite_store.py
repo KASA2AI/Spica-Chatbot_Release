@@ -79,13 +79,13 @@ class LocalSpriteStore:
     def __init__(
         self,
         *,
-        bundle_root: Path = DEFAULT_BUNDLE_ROOT,
+        bundle_root: Path | None = DEFAULT_BUNDLE_ROOT,
         max_bytes: int = DEFAULT_CACHE_BYTES,
     ) -> None:
         if type(max_bytes) is not int or max_bytes <= 0:
             raise ValueError("sprite cache byte limit must be positive")
         self._cache = PixmapByteCache(max_bytes=max_bytes)
-        self._manifest = self._load_manifest(bundle_root)
+        self._manifest = self._load_manifest(bundle_root) if bundle_root is not None else None
         self._composed_identity: str | None = None
 
     @property

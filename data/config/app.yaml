@@ -270,3 +270,8 @@ anime:                                   # spica 看番:Phase 4 端到端验收�
     PLANNOSAURUS 认真古生物部: ["PLANNOSAURUS 真古生遗物部", "真古生遗物部", "プラノサウルス ガチコセイブツ部"]
 character:
   dialog_display_language: zh
+
+# Desktop voice latency: main and proactive replies disable optional thinking.
+llm:
+  reasoning_effort: none
+  system_turn_reasoning_effort: none

@@ -14,6 +14,8 @@ from spica.adapters.llm.openai_compatible import (
     _reasoning_chat_kwargs,
     _reasoning_responses_kwargs,
 )
+from spica.host.builtins import register_core_capability_catalogue
+from spica.plugins.registry import CapabilityRegistry
 
 
 class ReasoningKwargsTest(unittest.TestCase):
@@ -134,7 +136,7 @@ class EmptyChatStreamTest(unittest.TestCase):
     def test_reasoning_only_stream_uses_one_existing_answer_fallback(self):
         client = self.client("valid answer")
         result = list(OpenAICompatibleAdapter(client).stream(
-            "prompt", model="deepseek-v4-flash", state=_stream_state()
+            "prompt", model="deepseek-v4-flash", state=_stream_state("chat")
         ))
         self.assertEqual("".join(result), "valid answer")
         self.assertEqual([call["stream"] for call in client.calls], [True, False])
@@ -143,21 +145,148 @@ class EmptyChatStreamTest(unittest.TestCase):
         client = self.client("")
         with self.assertRaisesRegex(RuntimeError, "no answer content"):
             list(OpenAICompatibleAdapter(client).stream(
-                "prompt", model="deepseek-v4-flash", state=_stream_state()
+                "prompt", model="deepseek-v4-flash", state=_stream_state("chat")
             ))
         self.assertEqual(len(client.calls), 2)
 
     def test_healthy_stream_needs_no_extra_request(self):
         client = _RecordingClient()
         result = list(OpenAICompatibleAdapter(client).stream(
-            "prompt", model="deepseek-v4-flash", state=_stream_state()
+            "prompt", model="deepseek-v4-flash", state=_stream_state("chat")
         ))
         self.assertEqual(result, ["ok"])
         self.assertEqual(len(client.calls), 1)
 
 
-def _stream_state():
-    return SimpleNamespace(timing={}, response_id=None)
+def _stream_state(interaction_mode=None, *, source=None):
+    request = None
+    if interaction_mode is not None:
+        request = SimpleNamespace(interaction_mode=interaction_mode, source=source)
+    return SimpleNamespace(timing={}, response_id=None, request=request)
+
+
+class SystemTurnReasoningLaneTest(unittest.TestCase):
+    def _adapter(self, client, *, main="default", system="none"):
+        return OpenAICompatibleAdapter(
+            client,
+            reasoning_effort=main,
+            system_turn_reasoning_effort=system,
+        )
+
+    def test_system_stream_uses_dedicated_deepseek_none(self):
+        client = _RecordingClient()
+        adapter = self._adapter(client)
+
+        list(adapter.stream(
+            "system prompt",
+            model="deepseek-v4-flash",
+            state=_stream_state("system", source="song"),
+        ))
+
+        self.assertEqual(
+            client.calls[0]["extra_body"],
+            {"thinking": {"type": "disabled"}},
+        )
+
+    def test_chat_stream_uses_main_default_even_for_system_like_source_and_prompt(self):
+        client = _RecordingClient()
+        adapter = self._adapter(client)
+
+        list(adapter.stream(
+            "system proactive prompt",
+            model="deepseek-v4-flash",
+            state=_stream_state("chat", source="song"),
+        ))
+
+        self.assertNotIn("extra_body", client.calls[0])
+
+    def test_missing_request_falls_back_to_main_reasoning(self):
+        client = _RecordingClient()
+        adapter = self._adapter(client)
+
+        list(adapter.stream(
+            "system-looking prompt",
+            model="deepseek-v4-flash",
+            state=SimpleNamespace(timing={}, response_id=None),
+        ))
+
+        self.assertNotIn("extra_body", client.calls[0])
+
+    def test_tool_probe_streaming_probe_and_complete_ignore_the_system_lane(self):
+        client = _RecordingClient()
+        adapter = self._adapter(client)
+
+        adapter.probe(
+            "probe",
+            [],
+            model="deepseek-v4-flash",
+            state=_stream_state("system"),
+        )
+        streamed_probe = adapter.probe_stream(
+            "streaming probe",
+            [],
+            model="deepseek-v4-flash",
+            state=_stream_state("system"),
+        )
+        self.assertIsNotNone(streamed_probe)
+        list(streamed_probe.deltas)
+        adapter.complete("summary", model="deepseek-v4-flash")
+
+        self.assertEqual(len(client.calls), 3)
+        for call in client.calls:
+            self.assertNotIn("extra_body", call)
+
+    def test_none_dedicated_value_inherits_the_main_reasoning(self):
+        client = _RecordingClient()
+        adapter = self._adapter(client, main="none", system=None)
+
+        list(adapter.stream(
+            "system prompt",
+            model="deepseek-v4-flash",
+            state=_stream_state("system"),
+        ))
+
+        self.assertEqual(
+            client.calls[0]["extra_body"],
+            {"thinking": {"type": "disabled"}},
+        )
+
+    def test_per_request_selection_does_not_mutate_adapter_configuration(self):
+        client = _RecordingClient()
+        adapter = self._adapter(client)
+        before = (adapter._reasoning_effort, adapter._system_turn_reasoning_effort)
+
+        list(adapter.stream(
+            "system prompt",
+            model="deepseek-v4-flash",
+            state=_stream_state("system"),
+        ))
+        list(adapter.stream(
+            "chat prompt",
+            model="deepseek-v4-flash",
+            state=_stream_state("chat"),
+        ))
+
+        self.assertEqual(
+            (adapter._reasoning_effort, adapter._system_turn_reasoning_effort),
+            before,
+        )
+        self.assertIn("extra_body", client.calls[0])
+        self.assertNotIn("extra_body", client.calls[1])
+
+    def test_builtin_factory_forwards_both_reasoning_values(self):
+        registry = CapabilityRegistry()
+        register_core_capability_catalogue(registry)
+
+        adapter = registry.resolve_llm(
+            "openai_compatible",
+            client=_RecordingClient(),
+            reasoning_effort="default",
+            system_turn_reasoning_effort="none",
+        )
+
+        self.assertEqual(adapter._reasoning_effort, "default")
+        self.assertEqual(adapter._system_turn_reasoning_effort, "none")
 
 
 if __name__ == "__main__":

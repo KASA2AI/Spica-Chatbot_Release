@@ -1389,6 +1389,29 @@ class GameMemorySqliteAdapter:
         return [ChoiceEvent.from_dict(json.loads(row["data"])) for row in rows]
 
     # -- companion beats ------------------------------------------------------
+    def export_character_beats(self, character_id: str) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT data FROM companion_beats WHERE character_id = ? ORDER BY created_at, beat_id", (character_id,)).fetchall()
+        return [json.loads(row["data"]) for row in rows]
+
+    def import_character_beats(self, character_id: str, beats: list[CompanionBeat]) -> bool:
+        import uuid
+
+        if any(beat.scope.get("character_id") != character_id for beat in beats):
+            raise ValueError("companion memory character mismatch")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM companion_beats WHERE character_id = ? LIMIT 1", (character_id,)).fetchone():
+                return False
+            for beat in beats:
+                # Imported IDs cannot collide with another character's records.
+                data = beat.to_dict()
+                data["beat_id"] = uuid.uuid4().hex
+                conn.execute("INSERT INTO companion_beats (beat_id, game_id, user_id, character_id, created_at, data) VALUES (?, ?, ?, ?, ?, ?)",
+                             (data["beat_id"], beat.game_id, beat.scope.get("user_id"), character_id, beat.created_at,
+                              json.dumps(data, ensure_ascii=False)))
+        return True
+
     def add_companion_beat(self, beat: CompanionBeat) -> str:
         scope = beat.scope if isinstance(beat.scope, dict) else {}
         with self._connect() as conn:

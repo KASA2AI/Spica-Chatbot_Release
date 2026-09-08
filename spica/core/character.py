@@ -18,6 +18,11 @@ from typing import Any
 from pydantic import BaseModel
 
 from spica.conversation.character_compat import DEFAULT_CHARACTER_NAME
+from spica.core.character_manifest import CharacterManifest, ROLE_FILES, package_file
+
+
+def character_memory_prefix(character_id: str) -> str:
+    return f"{character_id}::"
 
 
 class CharacterPackage(BaseModel):
@@ -29,6 +34,10 @@ class CharacterPackage(BaseModel):
     # Asset references resolved by the engine in Phase 7b; relative to the package.
     visual_config_path: str | None = None
     tts_config_path: str | None = None
+    manifest: CharacterManifest | None = None
+    package_root: str | None = None
+    revision: str | None = None
+    state_dir: str | None = None
 
 
 def load_character_package(package_dir: str | Path) -> CharacterPackage:
@@ -40,6 +49,16 @@ def load_character_package(package_dir: str | Path) -> CharacterPackage:
     """
     root = Path(package_dir)
     meta = _read_json(root / "meta.json")
+    manifest = None
+    if "pack_format" in meta:
+        manifest = CharacterManifest.model_validate(meta)
+        for value in manifest.files(root):
+            package_file(root, value)
+        if not any((root / filename).is_file() for filename in ROLE_FILES):
+            raise ValueError("character package needs a role card")
+        for filename in ROLE_FILES:
+            if (root / filename).exists():
+                package_file(root, filename)
     character_id = str(meta.get("slug") or root.name)
     return CharacterPackage(
         character_id=character_id,
@@ -47,8 +66,10 @@ def load_character_package(package_dir: str | Path) -> CharacterPackage:
         char_name=str(meta.get("char_name") or DEFAULT_CHARACTER_NAME),
         skill_dir=str(root),
         worldbook=str(meta.get("worldbook") or ""),
-        visual_config_path=_resolve_path(root, meta.get("visual_config_path")),
-        tts_config_path=_resolve_path(root, meta.get("tts_config_path")),
+        visual_config_path=_resolve_path(root, meta.get("visual_config_path")) if manifest is None else None,
+        tts_config_path=_resolve_path(root, meta.get("tts_config_path")) if manifest is None else None,
+        manifest=manifest,
+        package_root=str(root.resolve()),
     )
 
 

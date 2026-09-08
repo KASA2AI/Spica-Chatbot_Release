@@ -43,8 +43,10 @@ def register_core_capability_catalogue(registry: CapabilityRegistry) -> None:
     slice (an unrelated builtin's failure must never read as a TTS failure)."""
     registry.register_llm(
         "openai_compatible",
-        lambda client=None, reasoning_effort="default": OpenAICompatibleAdapter(
-            client, reasoning_effort=reasoning_effort
+        lambda client=None, reasoning_effort="default", system_turn_reasoning_effort=None: OpenAICompatibleAdapter(
+            client,
+            reasoning_effort=reasoning_effort,
+            system_turn_reasoning_effort=system_turn_reasoning_effort,
         ),
     )
     register_tts_providers(registry)

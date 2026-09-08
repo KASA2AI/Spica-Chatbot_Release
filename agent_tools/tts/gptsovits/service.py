@@ -417,7 +417,7 @@ class GPTSoVITSTool:
 
         inp_refs = params.get("inp_refs")
         if inp_refs in (None, "", "{emotion.inp_refs_path}"):
-            inp_refs = sample.get("inp_refs_path")
+            inp_refs = sample.get("inp_refs") or sample.get("inp_refs_path")
         params["inp_refs"] = self._normalize_inp_refs(inp_refs)
         params["top_p"] = float(params["top_p"])
         params["temperature"] = float(params["temperature"])
@@ -430,6 +430,10 @@ class GPTSoVITSTool:
         return params
 
     def _normalize_tts_text(self, text: str) -> str:
+        # OpenJTalk drops the simplified character entirely. Use its Japanese
+        # spelling only for synthesis; the dialogue and stored name stay intact.
+        if self.config.get("target_language", "日文") == "日文":
+            text = text.replace("伞", "傘")
         text = self._normalize_square_brackets(text)
         text = self._clean_tts_punctuation(text.strip())
         text = re.sub(r"[、，,]+$", "。", text)

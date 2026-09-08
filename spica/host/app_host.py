@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -65,6 +66,7 @@ from spica.host.assemblies import anime as anime_assembly
 from spica.host.assemblies import reaction as reaction_assembly
 from spica.host.builtins import register_builtin_adapters
 from spica.host.management import ManagementSurface
+from spica.host.character_packages import prepare_character_package, character_song_config
 from spica.host.warmup import run_warmup
 from spica.plugins.host import PluginHost
 from spica.plugins.registry import CapabilityRegistry
@@ -137,6 +139,8 @@ class AppHost:
         self.effective_mic_backend: str = "respeaker"
         self.services: Any | None = None
         self.character_package: Any | None = None
+        self.dialogue_style: Any | None = None
+        self.dialogue_style_error: str | None = None
         self.chat_engine: Any | None = None
         # galgame companion event sink (Phase 4). The PUBLIC sink is a stable
         # dispatcher (P5 tee, D-P5-0): it forwards to the UI bridge and -- when
@@ -262,7 +266,8 @@ class AppHost:
             registry=self.registry,
             config_manager=ConfigManager(),
             plugin_host=self.plugin_host,
-            characters_root=DEFAULT_SPICA_SKILL_DIR.parent,
+            characters_root=Path(__file__).resolve().parents[2] / "data" / "runtime",
+            builtin_character_dir=DEFAULT_SPICA_SKILL_DIR,
         )
 
     @property
@@ -285,6 +290,16 @@ class AppHost:
         """
         try:
             self.config = ConfigManager().load()
+            from spica.host.dialogue_styles import selected_dialogue_style
+            try:
+                self.dialogue_style = selected_dialogue_style(
+                    self.config.dialogue_style.package_dir,
+                    self.management_surface.characters_root / "dialogue_styles",
+                )
+            except (OSError, ValueError) as exc:
+                self.dialogue_style = None
+                self.dialogue_style_error = str(exc)
+                logger.warning("Dialogue style unavailable; using built-in artwork: %s", exc)
             self.secrets = load_secrets()
             # Load external plugins so they can register adapters/tools into the
             # registry before capabilities are resolved by configured name (Phase 8).
@@ -295,6 +310,8 @@ class AppHost:
             self.character_package = load_character_package(
                 self.config.character.package_dir or DEFAULT_SPICA_SKILL_DIR
             )
+            self.character_package = prepare_character_package(self.character_package)
+            self.song_config = character_song_config(self.character_package, self.song_config)
             # Keep skill_dir in sync so ChatEngine.set_interlocutor_name reloads
             # the active package's persona.
             self.config.character.skill_dir = self.character_package.skill_dir
@@ -334,6 +351,9 @@ class AppHost:
             self.services.llm_adapter = self.registry.resolve_llm(
                 self.config.llm.provider, client=self.services.llm_client,
                 reasoning_effort=self.config.llm.reasoning_effort,
+                system_turn_reasoning_effort=(
+                    self.config.llm.system_turn_reasoning_effort
+                ),
             )
             self.services.memory_adapter = self.registry.resolve_memory(
                 self.config.memory.provider,
@@ -821,7 +841,11 @@ class AppHost:
             from agent_tools.tts.adapters import TextOnlyTTSAdapter
 
             return "text_only", None, TextOnlyTTSAdapter()
-        tool = GPTSoVITSTool() if provider in CURRENT_GPTSOVITS_PROVIDERS else None
+        config_path = tts_config.get("_config_path")
+        tool = (
+            (GPTSoVITSTool(config_path=config_path) if config_path else GPTSoVITSTool())
+            if provider in CURRENT_GPTSOVITS_PROVIDERS else None
+        )
         adapter = self.registry.resolve_tts(provider, config=tts_config, service=tool)
         return provider, tool, adapter
 

@@ -1,0 +1,68 @@
+{
+  "style": {
+    "format": "spica-dialogue-style",
+    "format_version": 1,
+    "style_id": "sana",
+    "name": "Sana · 纯白交响曲",
+    "version": "1.0.0",
+    "author": "Palette / 本地游戏素材提取",
+    "images": {
+      "surface": "images/surface.png",
+      "nameplate": "images/nameplate.png",
+      "tail": "images/tail.png"
+    },
+    "colors": {
+      "text": "#FFFFFF",
+      "speaker": "#FFFFFF",
+      "outline": "#3D393D",
+      "accent": "#F66FA3",
+      "input": "#645362",
+      "muted": "#987C91"
+    },
+    "text": {
+      "size": 18.0,
+      "speaker_size": 17.0,
+      "line_height": 29.0,
+      "outline_width": 1.2
+    },
+    "layout": {
+      "left": 0.18,
+      "right": 0.12,
+      "top": 6.0,
+      "name_width": 194.0,
+      "name_height": 32.0,
+      "name_inset": 16.0,
+      "gap": 13.0,
+      "surface_top": 24.0,
+      "surface_opacity": 0.36,
+      "nameplate_opacity": 0.48
+    },
+    "tail": {
+      "placement": "corner",
+      "columns": 5,
+      "rows": 4,
+      "frames": 20,
+      "frame_ms": 50,
+      "width": 28.0,
+      "height": 28.0
+    }
+  },
+  "revision": "5c0fcb1bb7719d5d2ea1503f88b5769ec19d6914d376a2570ca27b79164cbe7a",
+  "assets": {
+    "surface": {
+      "path": "images/surface.png",
+      "bytes": 90113,
+      "sha256": "19b46afb58434b78f95b698617229431dd54909fdc196eabb1d35dfe4bd2b241"
+    },
+    "nameplate": {
+      "path": "images/nameplate.png",
+      "bytes": 20456,
+      "sha256": "667c46c3065ce0cb9b42728f5d38e4d6ba9f660db74a2cbd0bf0ad282c350c47"
+    },
+    "tail": {
+      "path": "images/tail.png",
+      "bytes": 53937,
+      "sha256": "cfc3c2dff6f849b0a36ec3a71845d0a8d145fe85f5210cb3b4a27dbac39271b9"
+    }
+  }
+}

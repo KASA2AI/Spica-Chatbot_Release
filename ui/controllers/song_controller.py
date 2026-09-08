@@ -418,21 +418,30 @@ class SongController(QObject):
                 policy="drop_if_busy",
             ))
 
-    def shutdown(self, wait_ms: int = 1500) -> None:
+    def shutdown(self, wait_ms: int = 1500) -> bool:
+        deadline = time.monotonic() + max(0, int(wait_ms)) / 1000.0
         self.cancel()
         workers = [worker for worker in self.retired_song_workers if worker is not None]
         if self.song_worker is not None:
             workers.append(self.song_worker)
             self.song_worker = None
-        self.retired_song_workers = []
+        live_workers = []
         for worker in workers:
             if worker.isRunning():
                 worker.cancel()
-                worker.wait(wait_ms)
+                remaining_ms = max(
+                    0,
+                    int((deadline - time.monotonic()) * 1000),
+                )
+                if not worker.wait(remaining_ms):
+                    live_workers.append(worker)
+                    continue
             try:
                 worker.deleteLater()
             except Exception:
                 pass
+        self.retired_song_workers = live_workers
+        return not live_workers
 
     # -- audio plumbing --------------------------------------------------------------
     def _play_song_audio(self, audio_path: Any, job_id: int) -> None:

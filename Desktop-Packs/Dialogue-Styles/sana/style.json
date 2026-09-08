@@ -1,0 +1,48 @@
+{
+  "format": "spica-dialogue-style",
+  "format_version": 1,
+  "style_id": "sana",
+  "name": "Sana · 纯白交响曲",
+  "version": "1.0.0",
+  "author": "Palette / 本地游戏素材提取",
+  "images": {
+    "surface": "images/surface.png",
+    "nameplate": "images/nameplate.png",
+    "tail": "images/tail.png"
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "speaker": "#FFFFFF",
+    "outline": "#3D393D",
+    "accent": "#E94E8B",
+    "input": "#645362",
+    "muted": "#987C91"
+  },
+  "text": {
+    "size": 18,
+    "speaker_size": 17,
+    "line_height": 29,
+    "outline_width": 1.2
+  },
+  "layout": {
+    "left": 0.18,
+    "right": 0.12,
+    "top": 6,
+    "name_width": 194,
+    "name_height": 32,
+    "name_inset": 16,
+    "gap": 13,
+    "surface_top": 24,
+    "surface_opacity": 0.42,
+    "nameplate_opacity": 0.52
+  },
+  "tail": {
+    "columns": 5,
+    "rows": 4,
+    "frames": 20,
+    "frame_ms": 50,
+    "width": 28,
+    "height": 28,
+    "placement": "corner"
+  }
+}

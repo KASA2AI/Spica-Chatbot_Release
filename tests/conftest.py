@@ -24,6 +24,7 @@ the suite hermetic and independent of whatever the local ``xiaosan.env`` holds.
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -57,3 +58,17 @@ def _isolate_config_studio_environment(request):
         for name in names:
             os.environ.pop(name, None)
         os.environ.update(previous)
+
+
+@pytest.fixture
+def isolated_runtime_config(tmp_path, monkeypatch):
+    """Local UI regressions must not touch the user's config or models."""
+    root = tmp_path / "isolated-runtime-config"
+    root.mkdir()
+    app_path = root / "app.yaml"
+    app_path.write_text("screen:\n  provider: moondream_hf\n", encoding="utf-8")
+    overlay_path = root / "overlay_config.json"
+    overlay_path.write_text('{"dialogue_box_visible": true}\n', encoding="utf-8")
+    monkeypatch.setattr("spica.config.manager.DEFAULT_CONFIG_PATH", app_path)
+    monkeypatch.setattr("ui.overlay_config.CONFIG_PATH", overlay_path)
+    return SimpleNamespace(app_path=app_path, overlay_path=overlay_path)

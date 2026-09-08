@@ -14,7 +14,7 @@ _CJK_STOP_CHARS = set("我你他她它的是了啊吗呢吧么什么一个这个
 
 
 class SQLiteMemoryStore:
-    def __init__(self, db_path: str | Path = "spica_data/memory.sqlite3"):
+    def __init__(self, db_path: str | Path = "data/runtime/memory.sqlite3"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -28,6 +28,33 @@ class SQLiteMemoryStore:
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
+
+    def export_namespace(self, prefix: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memories WHERE substr(conversation_id, 1, ?) = ? ORDER BY id",
+                (len(prefix), prefix),
+            ).fetchall()
+        return [{key: row[key] for key in row.keys() if key != "id"} for row in rows]
+
+    def import_empty_namespace(self, prefix: str, rows: list[dict[str, Any]]) -> bool:
+        """Restore a new character only; never overwrite an existing relationship."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM memories WHERE substr(conversation_id, 1, ?) = ? LIMIT 1",
+                            (len(prefix), prefix)).fetchone():
+                return False
+            for row in rows:
+                if not str(row.get("conversation_id", "")).startswith(prefix):
+                    raise ValueError("memory scope mismatch")
+                columns = ("conversation_id", "scope", "content", "importance", "created_at",
+                           "updated_at", "last_used_at", "use_count", "memory_key", "memory_type",
+                           "source", "confidence", "pinned", "status")
+                conn.execute(
+                    "INSERT INTO memories (" + ",".join(columns) + ") VALUES (" + ",".join("?" for _ in columns) + ")",
+                    tuple(row[key] for key in columns),
+                )
+        return True
 
     def _init_db(self) -> None:
         with self._connect() as conn:

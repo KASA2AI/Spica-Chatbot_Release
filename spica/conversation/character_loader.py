@@ -89,6 +89,17 @@ def load_spica_character_profile(skill_dir: str | Path | None = None, interlocut
         if text:
             parts.append(f"# {title}\n{text}")
 
+    if meta.get("pack_format") in (1, 2):
+        from spica.core.character_manifest import CharacterManifest, package_file
+
+        manifest = CharacterManifest.model_validate(meta)
+        if manifest.worldbook_file:
+            parts.append("# Worldbook\n" + _read_text(package_file(root, manifest.worldbook_file)))
+        profile = "\n\n".join(parts).strip()
+        name = normalize_interlocutor_name(interlocutor_name)
+        for alias in sorted(manifest.user_aliases, key=len, reverse=True):
+            profile = profile.replace(alias, name)
+        return render_character_template(profile, char=manifest.char_name, user=name)
     return replace_mugi_references("\n\n".join(parts).strip(), interlocutor_name)
 
 
@@ -128,7 +139,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _format_meta(meta: dict[str, Any]) -> str:
     name = meta.get("name") or SPICA_META_DEFAULTS["name"]
-    source = meta.get("source") or SPICA_META_DEFAULTS["source"]
+    source = meta.get("source") or ("原创角色" if meta.get("pack_format") in (1, 2) else SPICA_META_DEFAULTS["source"])
     impression = meta.get("impression") or ""
     profile = meta.get("profile") if isinstance(meta.get("profile"), dict) else {}
     tags = meta.get("tags") if isinstance(meta.get("tags"), dict) else {}

@@ -1076,6 +1076,23 @@
         advice: "強度を上げると複雑な問題の品質が向上する場合がありますが、通常は最初の応答までの時間が延びます。不明な場合は現在の値を維持してください。",
       }),
     }),
+    "llm.system_turn_reasoning_effort": Object.freeze({
+      "zh-CN": Object.freeze({
+        title: "System 回合推理强度",
+        description: "控制主动 System 回合使用的推理强度；留空时继承主模型推理强度。普通聊天、工具调用和总结不受此项影响。",
+        advice: "none 可降低主动播报的等待时间；不确定时保持当前值或留空继承主模型设置。",
+      }),
+      en: Object.freeze({
+        title: "System turn reasoning effort",
+        description: "Controls reasoning effort for proactive System turns. When empty, it inherits the primary model setting. Regular chat, tool calls, and summaries are unaffected.",
+        advice: "Use none to reduce proactive-response latency. If unsure, keep the current value or leave it empty to inherit the primary model setting.",
+      }),
+      ja: Object.freeze({
+        title: "System ターンの推論強度",
+        description: "能動的な System ターンの推論強度を設定します。空欄の場合はメインモデルの設定を継承し、通常会話・ツール呼び出し・要約には影響しません。",
+        advice: "none にすると能動応答の待ち時間を短縮できます。不明な場合は現在の値を維持するか、空欄でメイン設定を継承してください。",
+      }),
+    }),
     "memory.provider": Object.freeze({
       "zh-CN": Object.freeze({
         title: "记忆存储方式",
@@ -1244,6 +1261,23 @@
         title: "キャラクタースキルのディレクトリ",
         description: "キャラクターの組み立て処理が次回起動時に読み込む、スキル資料のディレクトリを指定します。",
         advice: "実在する信頼済みのディレクトリだけを指定してください。Config Studio はパスの状態を確認しますが、ディレクトリ参照機能は提供しません。",
+      }),
+    }),
+    "dialogue_style.package_dir": Object.freeze({
+      "zh-CN": Object.freeze({
+        title: "对话框样式包目录",
+        description: "选择下次启动时使用的对话框样式；空值使用原有 Spica 外观。",
+        advice: "先在桌面设置中导入样式文件夹，再从列表选择。此设置独立于角色、语音和记忆。",
+      }),
+      en: Object.freeze({
+        title: "Dialogue style package directory",
+        description: "Selects the dialogue artwork for the next launch. An empty value uses the original Spica style.",
+        advice: "Import the style folder in desktop settings before selecting it. This choice is independent of character, voice and memory.",
+      }),
+      ja: Object.freeze({
+        title: "会話ウィンドウのスタイルパッケージ",
+        description: "次回起動時の会話ウィンドウを選択します。空欄の場合は Spica の既定スタイルを使用します。",
+        advice: "デスクトップ設定でスタイルフォルダーを読み込んでから選択してください。キャラクター、音声、記憶とは独立した設定です。",
       }),
     }),
     "character.package_dir": Object.freeze({

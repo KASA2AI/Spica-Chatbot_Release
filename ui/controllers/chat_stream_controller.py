@@ -143,18 +143,31 @@ class ChatStreamController(QObject):
         # Phase 6E: UI reads busy-ness from the state machine, not scattered bools.
         return bool(self.state_machine.is_busy or (self.chat_worker and self.chat_worker.isRunning()))
 
-    def shutdown(self, wait_ms: int = 1500) -> None:
+    def shutdown(self, wait_ms: int = 1500) -> bool:
+        deadline = time.monotonic() + max(0, int(wait_ms)) / 1000.0
         self.stop_current()
         workers = [worker for worker in self.retired_chat_workers if worker is not None]
-        self.retired_chat_workers = []
+        all_stopped = True
         for worker in workers:
             if worker.isRunning():
                 worker.requestInterruption()
-                worker.wait(wait_ms)
+                remaining_ms = max(
+                    0,
+                    int((deadline - time.monotonic()) * 1000),
+                )
+                if remaining_ms <= 0 or not worker.wait(remaining_ms):
+                    # Never queue deletion of a live QThread.  Keep both the Qt
+                    # parent and this strong reference; its existing ``finished``
+                    # connection performs normal cleanup when it really exits.
+                    all_stopped = False
+                    continue
+            if worker in self.retired_chat_workers:
+                self.retired_chat_workers.remove(worker)
             try:
                 worker.deleteLater()
             except Exception:
                 pass
+        return all_stopped
 
     def _start_stream(
         self,

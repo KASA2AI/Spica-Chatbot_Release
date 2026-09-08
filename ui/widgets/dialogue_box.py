@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from ui.widgets.common import DEFAULT_DIALOGUE_OPACITY, scaled_px
 from ui.widgets.dialogue_tail import DialogueTail
+from ui.widgets.dialogue_style_art import DialogueStyleArt, DialogueSpeakerLabel
 
 
 @lru_cache(maxsize=1)
@@ -37,6 +38,7 @@ class DialogueText(QLabel):
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self._scale = 1.0
+        self.style_art = None
         self._scroll_offset = 0.0
         self._text_height = 0.0
         self._text_layout = QTextLayout()
@@ -77,10 +79,11 @@ class DialogueText(QLabel):
         self._scale = scale
         font = QFont()
         font.setFamilies(["Noto Sans CJK SC", "Microsoft YaHei UI", "Microsoft YaHei", "Yu Gothic UI"])
-        font.setPixelSize(scaled_px(18, scale))
+        font.setPixelSize(scaled_px(self.style_art.style.text.size if self.style_art else 18, scale))
         font.setWeight(QFont.Weight.Medium)
         self.setFont(font)
-        self.setStyleSheet(f"color: #F1F5FA; background: transparent; font-size: {scaled_px(18, scale)}px; font-weight: 500;")
+        color = self.style_art.style.colors.text if self.style_art else "#F1F5FA"
+        self.setStyleSheet(f"color: {color}; background: transparent; font-size: {font.pixelSize()}px; font-weight: 500;")
         self.tail.apply_scale(scale)
         self._layout_text()
         self.update()
@@ -105,7 +108,7 @@ class DialogueText(QLabel):
         layout.setTextOption(option)
         layout.beginLayout()
         self._hanging_quote = self.fontMetrics().horizontalAdvance("「") if text.startswith("「") else 0
-        line_height = max(29 * self._scale, self.fontMetrics().lineSpacing())
+        line_height = max((self.style_art.style.text.line_height if self.style_art else 29) * self._scale, self.fontMetrics().lineSpacing())
         y = 0.0
         last = None
         while True:
@@ -133,6 +136,8 @@ class DialogueText(QLabel):
 
     def _position_tail(self) -> None:
         x, y = self._tail_position.x(), self._tail_position.y() - self._scroll_offset
+        if self.style_art is not None and self.style_art.style.tail.placement == "corner":
+            x, y = self.width() - self.tail.width(), self.height() - self.tail.height() - 4 * self._scale
         self.tail.move(round(x), round(y))
         visible = self._completed and bool(self.text()) and y >= 0 and y + self.tail.height() <= self.height() + 1
         self.tail.set_running(visible)
@@ -164,14 +169,17 @@ class DialogueText(QLabel):
 
     def draw_text(self, painter: QPainter, origin: QPointF) -> None:
         outline = QTextCharFormat()
-        outline.setForeground(QColor("#F1F5FA"))
-        outline.setTextOutline(QPen(QColor(28, 46, 70, 180), 0.85 * self._scale))
+        color = self.style_art.style.colors.text if self.style_art else "#F1F5FA"
+        edge = QColor(self.style_art.style.colors.outline) if self.style_art else QColor(28, 46, 70, 180)
+        width = self.style_art.style.text.outline_width if self.style_art else 0.85
+        outline.setForeground(QColor(color))
+        outline.setTextOutline(QPen(edge, width * self._scale))
         run = QTextLayout.FormatRange()
         run.start, run.length, run.format = 0, len(self.text()), outline
         self._text_layout.draw(painter, origin, [run])
         # Refill at the same position so the fine outline cannot hollow out
         # the glyph. No offset shadow or blur is applied to the text.
-        painter.setPen(QColor("#F1F5FA"))
+        painter.setPen(QColor(color))
         self._text_layout.draw(painter, origin)
 
 
@@ -184,11 +192,12 @@ class TintedDialogueBox(QFrame):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setToolTip("按住对话框空白处拖动窗口")
         self._opacity = DEFAULT_DIALOGUE_OPACITY
+        self.style_art = None
         self._surface_key = None
         self._surface = QPixmap()
         self._hit_region = QRegion()
         layout = QVBoxLayout(self)
-        self.speaker_label = QLabel("Spica", self)
+        self.speaker_label = DialogueSpeakerLabel("Spica", self)
         self.speaker_label.setObjectName("speakerLabel")
         self.speaker_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.speaker_label.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -204,6 +213,13 @@ class TintedDialogueBox(QFrame):
     def set_dialogue_text(self, text: str) -> None:
         self._home_text = text or "……"
         self.text_label.setText(self._home_text)
+
+    def set_style(self, art: DialogueStyleArt) -> None:
+        self.style_art = art
+        self.speaker_label.style_art = art
+        self.text_label.style_art = art
+        self.tail.set_style(art)
+        self.apply_scale(self._scale)
 
     def set_typing_active(self, active: bool) -> None:
         del active
@@ -224,6 +240,12 @@ class TintedDialogueBox(QFrame):
 
     def hit_region(self) -> QRegion:
         self._ensure_surface()
+        if self.style_art is not None:
+            # A community frame may leave its center transparent. Keep the
+            # visible speaker/text reachable for dragging and overflow reading.
+            return self._hit_region.united(QRegion(self.speaker_label.geometry())).united(
+                QRegion(self.text_label.geometry())
+            ).intersected(QRegion(self.rect()))
         return self._hit_region
 
     def apply_scale(self, scale: float) -> None:
@@ -239,6 +261,19 @@ class TintedDialogueBox(QFrame):
             "color: #E6EEF8; font-family: 'Noto Sans CJK SC', 'Microsoft YaHei UI', sans-serif; "
             f"font-size: {scaled_px(16, scale)}px; font-weight: 500; background: transparent;"
         )
+        if self.style_art is not None:
+            style = self.style_art.style
+            spec = style.layout
+            self.layout().setContentsMargins(scaled_px(900 * spec.left, scale), scaled_px(spec.top, scale),
+                                             scaled_px(900 * spec.right, scale), 0)
+            self.layout().setSpacing(scaled_px(spec.gap, scale))
+            self.speaker_label.setFixedSize(scaled_px(spec.name_width, scale), scaled_px(spec.name_height, scale))
+            self.speaker_label.setMargin(0)
+            self.speaker_label.setIndent(scaled_px(spec.name_inset, scale))
+            self.speaker_label.setStyleSheet(
+                f"color: {style.colors.speaker}; background: transparent; font-family: 'Noto Sans CJK SC', 'Microsoft YaHei UI'; "
+                f"font-size: {scaled_px(style.text.speaker_size, scale)}px; font-weight: 500;"
+            )
         self.text_label.apply_scale(scale)
         self._surface_key = None
         self.update()
@@ -248,7 +283,8 @@ class TintedDialogueBox(QFrame):
         key = (self.width(), self.height(), dpr, self._opacity, self._scale)
         if key == self._surface_key:
             return
-        self._surface = blue_veil(self.size(), dpr, self._opacity, scale=self._scale)
+        render = self.style_art.surface if self.style_art else blue_veil
+        self._surface = render(self.size(), dpr, self._opacity, scale=self._scale)
         logical_surface = self._surface.scaled(self.size(), Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
         logical_surface.setDevicePixelRatio(1.0)
         self._hit_region = QRegion(logical_surface.mask())

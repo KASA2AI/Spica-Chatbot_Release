@@ -24,6 +24,7 @@ class ConfigManagerTest(unittest.TestCase):
             cfg = ConfigManager(config_path=_MISSING_YAML).load()
         self.assertEqual(cfg.llm.model, "gpt-4.1-mini")
         self.assertIsNone(cfg.llm.base_url)
+        self.assertIsNone(cfg.llm.system_turn_reasoning_effort)
         self.assertEqual(cfg.memory.recent_memory_turns, 3)
         self.assertEqual(cfg.memory.recent_context_limit, 3)
         self.assertEqual(cfg.memory.long_term_memory_limit, 5)
@@ -63,15 +64,20 @@ class ConfigManagerTest(unittest.TestCase):
         self.assertEqual(cfg.memory.recent_memory_turns, 3)
 
     def test_env_overrides_yaml_overrides_defaults(self):
-        yaml_data = {"llm": {"model": "from-yaml"}, "max_tool_rounds": 9}
+        yaml_data = {
+            "llm": {"model": "from-yaml", "system_turn_reasoning_effort": "none"},
+            "max_tool_rounds": 9,
+        }
         with patch.object(ConfigManager, "_read_yaml", staticmethod(lambda path: yaml_data)):
             with patch.dict(os.environ, {}, clear=True):
                 cfg = ConfigManager().load()
                 self.assertEqual(cfg.llm.model, "from-yaml")
+                self.assertEqual(cfg.llm.system_turn_reasoning_effort, "none")
                 self.assertEqual(cfg.max_tool_rounds, 9)
             with patch.dict(os.environ, {"MODEL": "from-env"}, clear=True):
                 cfg = ConfigManager().load()
                 self.assertEqual(cfg.llm.model, "from-env")  # env wins over yaml
+                self.assertEqual(cfg.llm.system_turn_reasoning_effort, "none")
                 self.assertEqual(cfg.max_tool_rounds, 9)  # yaml still wins over default
 
     def test_merge_is_recursive_and_nonmutating(self):

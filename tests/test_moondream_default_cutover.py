@@ -76,6 +76,7 @@ def _fake_character_package():
         skill_dir=REPO_ROOT / "spica_data" / "Spica",
         visual_config_path=None,
         tts_config_path=None,
+        manifest=None,
     )
 
 
@@ -99,6 +100,7 @@ def _host_initialize_patches():
         patch.object(PluginHost, "load", lambda self: None),
         patch("spica.host.app_host.load_secrets", return_value=SimpleNamespace(openai_api_key="key")),
         patch("spica.host.app_host.load_character_package", return_value=_fake_character_package()),
+        patch("spica.host.app_host.prepare_character_package", side_effect=lambda package: package),
         patch("spica.host.app_host.load_tts_config", return_value={"provider": "fake_tts"}),
         patch.object(CapabilityRegistry, "resolve_visual", return_value=object()),
         patch.object(CapabilityRegistry, "resolve_tts", return_value=object()),

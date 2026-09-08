@@ -18,7 +18,7 @@ temp/
 .pytest_cache/
 
 # Runtime outputs (generated voice + song cache)
-static/
+/static/
 
 # Local SQLite memory DB
 spica_data/*.sqlite3
@@ -88,3 +88,18 @@ artifacts/rvc_slim/**
 *.timing.cache
 # ORT TensorRT EP subgraph dumps (trt_dump_subgraphs writes these to CWD during diagnostics)
 TensorrtExecutionProvider_*.onnx
+
+# Installed character/style packages, private saves and local generated data.
+/data/runtime/
+/data/cache/
+/data/generated/
+/data/logs/
+# User-supplied model/art packages stay outside the source distribution.
+/Desktop-Packs/Characters/*
+!/Desktop-Packs/Characters/README.md
+
+# Bundled tutorial examples stay in source; full resource ZIPs stay local.
+!/Desktop-Packs/Characters/Examples/
+!/Desktop-Packs/Characters/Examples/**
+/Desktop-Packs/*.zip
+/Desktop-Packs/*.zip.part

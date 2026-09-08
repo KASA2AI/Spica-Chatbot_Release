@@ -20,7 +20,9 @@ class DialogueTail(QWidget):
         self._frames: list[QPixmap] = []
         if not atlas.isNull():
             self._frames = [atlas.copy((i % 17) * 81, (i // 17) * 41, 81, 41) for i in range(68)]
+        self._default_frames = self._frames
         self._frame_index = 0
+        self._display_size = (43, 24)
         self._requested = False
         self.timer = QTimer(self)
         self.timer.setInterval(40)
@@ -30,8 +32,26 @@ class DialogueTail(QWidget):
 
     def apply_scale(self, scale: float) -> None:
         self._scale = scale
-        self.setFixedSize(scaled_px(43, scale), scaled_px(24, scale))
+        self.setFixedSize(scaled_px(self._display_size[0], scale), scaled_px(self._display_size[1], scale))
         self.update()
+
+    def set_style(self, art) -> None:
+        if art is None:
+            self._frames = self._default_frames
+            self._display_size = (43, 24)
+            self.timer.setInterval(40)
+            self._frame_index = 0
+            self.apply_scale(self._scale)
+            return
+        tail = art.style.tail
+        atlas = art.images["tail"]
+        width, height = atlas.width() // tail.columns, atlas.height() // tail.rows
+        self._frames = [atlas.copy((i % tail.columns) * width, (i // tail.columns) * height, width, height)
+                        for i in range(tail.frames)]
+        self._display_size = (tail.width, tail.height)
+        self.timer.setInterval(tail.frame_ms)
+        self._frame_index = 0
+        self.apply_scale(self._scale)
 
     def restart(self) -> None:
         self._frame_index = 0
@@ -65,7 +85,8 @@ class DialogueTail(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.drawPixmap(
-            QRect(scaled_px(1, self._scale), scaled_px(1, self._scale),
-                  scaled_px(41, self._scale), scaled_px(21, self._scale)),
+            (QRect(scaled_px(1, self._scale), scaled_px(1, self._scale),
+                   scaled_px(41, self._scale), scaled_px(21, self._scale))
+             if self._frames is self._default_frames else self.rect().adjusted(1, 1, -1, -1)),
             self._frames[self._frame_index],
         )

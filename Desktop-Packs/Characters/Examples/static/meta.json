@@ -1,0 +1,30 @@
+{
+  "pack_format": 1,
+  "slug": "demo-static",
+  "version": "1.0.0",
+  "name": "静态角色示例",
+  "char_name": "小星",
+  "user_aliases": [
+    "旅人"
+  ],
+  "worldbook_file": "worldbook.md",
+  "visuals": {
+    "sprites": {
+      "idle": "visuals/idle.png",
+      "happy": "visuals/happy.png"
+    },
+    "default_costume": "casual",
+    "costumes": [
+      {
+        "id": "casual",
+        "label": "示例 · 静态",
+        "default_sprite": "idle",
+        "emotions": {
+          "happy": [
+            "happy"
+          ]
+        }
+      }
+    ]
+  }
+}

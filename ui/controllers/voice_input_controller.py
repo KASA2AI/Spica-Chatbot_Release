@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QTimer
@@ -96,19 +98,22 @@ class VoiceInputController(QObject):
         session_id = self.voice_session_id
         QTimer.singleShot(delay_ms, lambda sid=session_id: self.maybe_start_recording(sid))
 
-    def shutdown(self, wait_ms: int = 1500) -> None:
+    def shutdown(self, wait_ms: int = 1500) -> bool:
         self.voice_mode_active = False
         self.voice_session_id += 1
-        if self.speech_worker and self.speech_worker.isRunning():
-            self.speech_worker.requestInterruption()
-            self.speech_worker.quit()
-            self.speech_worker.wait(wait_ms)
-        if self.speech_worker is not None:
+        worker = self.speech_worker
+        if worker and worker.isRunning():
+            worker.requestInterruption()
+            worker.quit()
+            if not worker.wait(max(0, int(wait_ms))):
+                return False
+        if worker is not None:
             try:
-                self.speech_worker.deleteLater()
+                worker.deleteLater()
             except Exception:
                 pass
             self.speech_worker = None
+        return True
 
     def interrupt_current_recording(self) -> None:
         self.voice_session_id += 1

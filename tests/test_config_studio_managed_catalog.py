@@ -775,7 +775,15 @@ def test_character_tab_renders_read_only_managed_document_cards() -> None:
     assert "catalog.managed_documents" in javascript
     assert "renderManagedDocuments" in javascript
     assert 'byId("character-documents")' in javascript
-    assert 'summary.textContent = "查看只读内容"' in javascript
+    assert 'summary.textContent = localizedMessage("runtime.062");' in javascript
+    assert (
+        '''    "runtime.062": Object.freeze({
+      "zh-CN": "查看只读内容",
+      "en": "View read-only content",
+      "ja": "読み取り専用の内容を表示",
+    }),'''
+        in javascript
+    )
     assert "documentInfo.fields" in javascript
 
 

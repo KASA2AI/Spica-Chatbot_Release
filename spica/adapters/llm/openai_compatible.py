@@ -15,8 +15,9 @@ adapter carries TWO surfaces over the same internals:
   through a ``BoundModel`` (``deps.model``) -- never through v1 methods
   (guarded by ``tests/test_no_v1_llm_in_runtime.py``).
 
-``state`` is typed ``Any`` to avoid a spica -> agent import; only its ``timing``
-dict / ``response_id`` attributes are touched.
+``state`` is typed ``Any`` to avoid a spica -> agent import; its ``timing`` /
+``response_id`` attributes are updated and ``request.interaction_mode`` is read
+to select the configured System Turn reasoning lane.
 """
 
 from __future__ import annotations
@@ -88,12 +89,18 @@ class OpenAICompatibleAdapter:
 
     name = "openai_compatible"
 
-    def __init__(self, client: Any, reasoning_effort: str = "default") -> None:
+    def __init__(
+        self,
+        client: Any,
+        reasoning_effort: str = "default",
+        system_turn_reasoning_effort: str | None = None,
+    ) -> None:
         self.client = client
-        # Reasoning/thinking control applied to EVERY request (deepseek thinking
-        # off / gpt effort). "default" -> no param sent (zero-diff). See
-        # _reasoning_chat_kwargs / _reasoning_responses_kwargs.
+        # Main reasoning control remains the value for chat, tools, summaries,
+        # and every legacy surface. System stream requests may use the dedicated
+        # YAML-only override; None inherits this main value.
         self._reasoning_effort = reasoning_effort
+        self._system_turn_reasoning_effort = system_turn_reasoning_effort
 
     def prefers_chat_completions(self) -> bool:
         return _prefers_chat_completions(self.client)
@@ -241,7 +248,19 @@ class OpenAICompatibleAdapter:
         return self.complete_text(prompt, model=model)
 
     def stream(self, prompt: str, *, model: str, state: Any) -> Iterator[str]:
-        return self.iter_response_text({"model": model, "input": prompt}, state)
+        request = getattr(state, "request", None)
+        effective_reasoning_effort = self._reasoning_effort
+        if (
+            getattr(request, "interaction_mode", None) == "system"
+            and self._system_turn_reasoning_effort is not None
+        ):
+            effective_reasoning_effort = self._system_turn_reasoning_effort
+        return _iter_response_text(
+            self.client,
+            {"model": model, "input": prompt},
+            state,
+            effective_reasoning_effort,
+        )
 
     # ------------------------------------------------------------------ #
     # ToolCallingModel v2 (Phase 7-c2). Same single-home rule as complete/

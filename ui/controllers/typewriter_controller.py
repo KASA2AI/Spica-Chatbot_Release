@@ -9,6 +9,7 @@ from ui.widgets.common import scaled_px
 
 class TypewriterController(QObject):
     active_changed = Signal(bool)
+    revealed = Signal()
     completed = Signal()
 
     def __init__(self, parent: QObject, set_text: Callable[[str], None], default_speed: float = 1.0) -> None:
@@ -47,12 +48,18 @@ class TypewriterController(QObject):
     def set_speed(self, speed: float) -> None:
         self.typewriter_speed = max(0.5, min(3.0, float(speed)))
         if self.typing_timer is not None:
-            self.typing_timer.setInterval(self._typewriter_delay(""))
+            self.typing_timer.setInterval(
+                max(120, self._typewriter_delay("。"))
+                if self.typing_index == len(self.typing_text) else self._typewriter_delay("")
+            )
 
     def set_scale(self, scale: float) -> None:
         self.ui_scale = float(scale)
         if self.typing_timer is not None:
-            self.typing_timer.setInterval(self._typewriter_delay(""))
+            self.typing_timer.setInterval(
+                max(120, self._typewriter_delay("。"))
+                if self.typing_index == len(self.typing_text) else self._typewriter_delay("")
+            )
 
     def is_active(self) -> bool:
         return self.typing_timer is not None
@@ -66,12 +73,21 @@ class TypewriterController(QObject):
         self.typing_index += 1
         self._set_text(self.typing_text[: self.typing_index])
         if self.typing_timer is not None:
-            self.typing_timer.setInterval(self._typewriter_delay(char))
+            delay = self._typewriter_delay(char)
+            if self.typing_index == len(self.typing_text):
+                # Show the marker during the sentence pause, before releasing
+                # the playback slot. Even fast typing leaves two Sana ticks.
+                self.revealed.emit()
+                delay = max(120, self._typewriter_delay("。"))
+            elif char in "。！？!?" and not self.typing_text[self.typing_index:].strip(" \n\t」』”’\"')）】》"):
+                # Reveal closing quotes before taking the final pause.
+                delay = self._typewriter_delay("")
+            self.typing_timer.setInterval(delay)
 
     def _typewriter_delay(self, char: str) -> int:
-        if char in "。！？!?":
+        if char and char in "。！？!?":
             delay = scaled_px(220, self.ui_scale)
-        elif char in "、，,；;：:":
+        elif char and char in "、，,；;：:":
             delay = scaled_px(92, self.ui_scale)
         else:
             delay = max(22, min(46, scaled_px(34, self.ui_scale)))

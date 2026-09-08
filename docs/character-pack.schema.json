@@ -1,0 +1,504 @@
+{
+  "$defs": {
+    "Costume": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "default_sprite": {
+          "title": "Default Sprite",
+          "type": "string"
+        },
+        "emotions": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "enum": [
+              "happy",
+              "angry",
+              "sad",
+              "surprised"
+            ]
+          },
+          "title": "Emotions",
+          "type": "object"
+        },
+        "expression_sprites": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "title": "Expression Sprites",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "default_sprite"
+      ],
+      "title": "Costume",
+      "type": "object"
+    },
+    "RvcVoice": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "const": "rvc_v2",
+          "default": "rvc_v2",
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "index": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Index"
+        },
+        "index_rate": {
+          "default": 0.5,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Index Rate",
+          "type": "number"
+        },
+        "transpose": {
+          "default": 0,
+          "maximum": 24,
+          "minimum": -24,
+          "title": "Transpose",
+          "type": "integer"
+        },
+        "protect": {
+          "default": 0.33,
+          "maximum": 0.5,
+          "minimum": 0,
+          "title": "Protect",
+          "type": "number"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "RvcVoice",
+      "type": "object"
+    },
+    "Scene": {
+      "additionalProperties": false,
+      "properties": {
+        "background": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Background"
+        },
+        "background_color": {
+          "default": "#233b55",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Background Color",
+          "type": "string"
+        },
+        "background_position": {
+          "default": [
+            0.5,
+            0.5
+          ],
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Background Position",
+          "type": "array"
+        }
+      },
+      "title": "Scene",
+      "type": "object"
+    },
+    "TtsParameters": {
+      "additionalProperties": false,
+      "properties": {
+        "top_k": {
+          "default": 5,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Top K",
+          "type": "integer"
+        },
+        "top_p": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Top P",
+          "type": "number"
+        },
+        "temperature": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "maximum": 2,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "speed": {
+          "default": 1.0,
+          "maximum": 2,
+          "minimum": 0.5,
+          "title": "Speed",
+          "type": "number"
+        }
+      },
+      "title": "TtsParameters",
+      "type": "object"
+    },
+    "TtsVoice": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "const": "gptsovits",
+          "default": "gptsovits",
+          "title": "Engine",
+          "type": "string"
+        },
+        "model_version": {
+          "default": "v2ProPlus",
+          "enum": [
+            "v2Pro",
+            "v2ProPlus"
+          ],
+          "title": "Model Version",
+          "type": "string"
+        },
+        "gpt": {
+          "title": "Gpt",
+          "type": "string"
+        },
+        "sovits": {
+          "title": "Sovits",
+          "type": "string"
+        },
+        "target_language": {
+          "default": "日文",
+          "enum": [
+            "日文",
+            "中文",
+            "英文"
+          ],
+          "title": "Target Language",
+          "type": "string"
+        },
+        "reference": {
+          "$ref": "#/$defs/VoiceReference"
+        },
+        "emotions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/VoiceReference"
+          },
+          "propertyNames": {
+            "enum": [
+              "happy",
+              "angry",
+              "sad",
+              "surprised"
+            ]
+          },
+          "title": "Emotions",
+          "type": "object"
+        },
+        "parameters": {
+          "$ref": "#/$defs/TtsParameters"
+        }
+      },
+      "required": [
+        "gpt",
+        "sovits",
+        "reference"
+      ],
+      "title": "TtsVoice",
+      "type": "object"
+    },
+    "Visuals": {
+      "additionalProperties": false,
+      "properties": {
+        "renderer": {
+          "default": "sprite",
+          "enum": [
+            "sprite",
+            "eye-rig"
+          ],
+          "title": "Renderer",
+          "type": "string"
+        },
+        "sprites": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 2048,
+          "minProperties": 1,
+          "title": "Sprites",
+          "type": "object"
+        },
+        "eye_rigs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 128,
+          "title": "Eye Rigs",
+          "type": "object"
+        },
+        "costumes": {
+          "items": {
+            "$ref": "#/$defs/Costume"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "title": "Costumes",
+          "type": "array"
+        },
+        "default_costume": {
+          "title": "Default Costume",
+          "type": "string"
+        },
+        "rules_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rules File"
+        }
+      },
+      "required": [
+        "sprites",
+        "costumes",
+        "default_costume"
+      ],
+      "title": "Visuals",
+      "type": "object"
+    },
+    "VoiceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "title": "Audio",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "language": {
+          "default": "日文",
+          "enum": [
+            "日文",
+            "中文",
+            "英文"
+          ],
+          "title": "Language",
+          "type": "string"
+        },
+        "additional_audio": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Additional Audio",
+          "type": "array"
+        }
+      },
+      "required": [
+        "audio",
+        "text"
+      ],
+      "title": "VoiceReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "pack_format": {
+      "enum": [
+        1,
+        2
+      ],
+      "title": "Pack Format",
+      "type": "integer"
+    },
+    "slug": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$",
+      "title": "Slug",
+      "type": "string"
+    },
+    "version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "char_name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Char Name",
+      "type": "string"
+    },
+    "user_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 24,
+      "title": "User Aliases",
+      "type": "array"
+    },
+    "visuals": {
+      "$ref": "#/$defs/Visuals"
+    },
+    "tts": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TtsVoice"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "rvc": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RvcVoice"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "backgrounds": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 128,
+      "title": "Backgrounds",
+      "type": "object"
+    },
+    "scenes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Scene"
+      },
+      "propertyNames": {
+        "enum": [
+          "mobile",
+          "robot"
+        ]
+      },
+      "title": "Scenes",
+      "type": "object"
+    },
+    "avatar": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Avatar"
+    },
+    "settings_background": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Settings Background"
+    },
+    "worldbook_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Worldbook File"
+    },
+    "memory_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Memory File"
+    }
+  },
+  "required": [
+    "pack_format",
+    "slug",
+    "version",
+    "name",
+    "char_name",
+    "visuals"
+  ],
+  "title": "CharacterManifest",
+  "type": "object"
+}

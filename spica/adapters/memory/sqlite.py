@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 from spica.conversation.character_compat import DEFAULT_INTERLOCUTOR_NAME
+from spica.core.character import character_memory_prefix
 from memory.control import save_extracted_memories
 from spica.ports.memory import MemoryItem, MemoryScope
 
@@ -27,7 +28,7 @@ def scoped_conversation_id(character_id: str, conversation_id: str | None) -> st
     # store key is namespaced by character_id so different characters never see
     # each other's memories. ChatEngine's manual remember/list/clear reuse this
     # instead of re-hardcoding the "::" format.
-    return f"{character_id}::{conversation_id or 'default'}"
+    return character_memory_prefix(character_id) + (conversation_id or "default")
 
 
 class SqliteMemoryAdapter:

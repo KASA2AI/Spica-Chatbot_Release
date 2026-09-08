@@ -360,11 +360,11 @@ def change_sovits_weights(sovits_path, prompt_language=None, text_language=None)
         {"__type__": "update", "visible": True if model_version == "v3" else False},
         {"__type__": "update", "value": i18n("合成语音"), "interactive": True},
     )
-    with open("./weight.json") as f:
+    with open("./weight.json", encoding="utf-8") as f:
         data = f.read()
         data = json.loads(data)
         data["SoVITS"][version] = sovits_path
-    with open("./weight.json", "w") as f:
+    with open("./weight.json", "w", encoding="utf-8") as f:
         f.write(json.dumps(data))
 
 
@@ -390,11 +390,11 @@ def change_gpt_weights(gpt_path):
     t2s_model.eval()
     # total = sum([param.nelement() for param in t2s_model.parameters()])
     # print("Number of parameter: %.2fM" % (total / 1e6))
-    with open("./weight.json") as f:
+    with open("./weight.json", encoding="utf-8") as f:
         data = f.read()
         data = json.loads(data)
         data["GPT"][version] = gpt_path
-    with open("./weight.json", "w") as f:
+    with open("./weight.json", "w", encoding="utf-8") as f:
         f.write(json.dumps(data))
 
 

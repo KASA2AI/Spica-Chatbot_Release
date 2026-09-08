@@ -69,7 +69,7 @@ The base Python dependency list is also used for desktop execution on Linux, des
 
 ### 2.2 Full NVIDIA GPU, speech, and singing dependencies
 
-Complete the base installation before running these commands in order. This follows the repository's existing Windows GPU recipe: Python 3.11, NumPy 1.26.x, and PyTorch CUDA 12.4 components. Windows needs the C++ tools from MSVC Build Tools for `jieba_fast`; Linux needs a compiler.
+Complete the base installation before running these commands in order. This follows the repository's existing Windows GPU recipe: 64-bit Python 3.11, NumPy 1.26.x, and PyTorch CUDA 12.4 components. Windows uses pure-Python `jieba` without requiring MSVC for Chinese segmentation; an existing `jieba_fast` installation still takes priority. Linux needs a compiler for `jieba_fast`. Japanese uses the pinned [pyopenjtalk-plus](https://github.com/tsukumijima/pyopenjtalk-plus), which provides Windows wheels and a bundled dictionary.
 
 ```bash
 python -m pip uninstall -y onnxruntime
@@ -161,10 +161,24 @@ Save the text-mode configuration above first. These commands install the tiny st
 
 ```bash
 python -c "from pathlib import Path; from spica.host.character_packages import import_character_folder; from spica.config.manager import ConfigManager; p = import_character_folder('Desktop-Packs/Characters/Examples/static', Path('data/runtime/characters')); ConfigManager().update({'character': {'package_dir': p.package_root, 'profile_override': None}}); print(p.name)"
-python webui_qt.py
+python -X utf8 webui_qt.py
 ```
 
 You should see the sample character and a dialogue box, ready for a typed message. Leave microphone input, screen recognition, and singing off during this first check. Example images are small original diagrams for learning the format, not the full Spica/Sana artwork.
+
+**Starting on Windows:** keep using the same Python 3.11 environment. After activating it, run `python -X utf8 webui_qt.py`, or use the existing PowerShell launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_spica.ps1
+```
+
+The default Conda environment is `spica`. Append `-CondaEnv your-environment-name` to select another environment. To use an existing interpreter directly, replace the following example path with its actual location:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_spica.ps1 -PythonExe "C:\Miniconda3\envs\spica\python.exe"
+```
+
+The launcher selects the project directory and enables UTF-8; paths may contain Chinese characters, spaces, and square brackets. Restart in settings preserves the interpreter and launch arguments. Character packs, dialogue styles, and eye animation use the same formats described below. In local YAML settings, write Windows absolute paths as `C:/Spica/models/file` or enclose backslash paths in single quotes. A player command with spaces can be written as `player_command: '"C:\Program Files\VideoLAN\VLC\vlc.exe" --play-and-exit'`.
 
 ### 4.2 Understand the directories before extracting assets
 
@@ -207,7 +221,7 @@ python -m pip install -r requirements-config-studio.txt
 python scripts/config_studio.py --port 8765
 ```
 
-This separate browser-based configuration tool binds only to `127.0.0.1:8765` by default. Add `--no-open-browser` to open it manually and use the one-time bootstrap grant printed by the terminal. Use `--port 8767` if the port is occupied. Choose **中文 / English / 日本語** in the page's language menu. The language switch changes presentation text only; it does not change configuration keys or values. Save, then restart the desktop pet; press `Ctrl+C` in the terminal to stop Config Studio when finished. The browser UI language does not select the character's speech language.
+This separate browser-based configuration tool binds only to `127.0.0.1:8765` by default. Add `--no-open-browser` to open it manually and use the one-time bootstrap grant printed by the terminal. Use `--port 8767` if the port is occupied. Choose **中文 / English / 日本語** in the page's language menu. The language switch changes presentation text only; it does not change configuration keys or values. On Linux, save and restart the desktop pet. **Config Studio is currently read-only on Windows**; document writes and isolated self-checks are not yet supported there. On Windows, import/select characters and styles and change your name in the desktop settings; edit other options in `data/config/app.yaml` / `xiaosan.env` and restart. Press `Ctrl+C` in the terminal to stop Config Studio when finished. The browser UI language does not select the character's speech language.
 
 ## 5. Create and fill in a character card
 

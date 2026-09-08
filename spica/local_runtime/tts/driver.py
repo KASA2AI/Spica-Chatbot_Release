@@ -93,8 +93,8 @@ class GptSovitsV2ProDriver:
         A3: NO pushd here -- the cwd-dependency audit found ``get_tts_wav`` has NO
         call-time cwd dependency on Linux: the sv/vocoder paths are frozen at
         import-pushd time (``sv.py``'s ``os.getcwd()`` / ``now_dir``), BERT + cnhubert
-        are resident in memory, the text frontend's cwd-relative code is Windows-only
-        (``os.name == "nt"``), and the gpt/sovits checkpoints are absolute. Dropping
+        are resident in memory, the Japanese frontend keeps absolute dictionary
+        paths on Windows too, and the gpt/sovits checkpoints are absolute. Dropping
         the per-chunk pushd decouples the hot path from cwd; it is gated by
         ``verify_tts_parity --mode driver`` (vendored-direct vs driver-backed must stay
         <= the A1/A2 noise floor, else revert this one line)."""

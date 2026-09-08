@@ -78,7 +78,12 @@ class SystemDefaultPlayer:
     def _open(self, path: str) -> None:
         if self._player_command:
             try:
-                self._run_argv([*shlex.split(self._player_command), path])
+                # CreateProcess parses Windows command lines. POSIX shlex would
+                # consume backslashes in executable paths and quoted arguments.
+                command = (self._player_command.rstrip() + " " + subprocess.list2cmdline([path])
+                           if self._platform.startswith("win")
+                           else [*shlex.split(self._player_command), path])
+                self._run_argv(command)
                 return
             except _OpenerNotFound:
                 # A configured player that isn't on PATH is a real error on Linux
@@ -99,7 +104,7 @@ class SystemDefaultPlayer:
         else:
             self._run_argv(["xdg-open", path])           # never shell=True
 
-    def _run_argv(self, argv: list[str]) -> None:
+    def _run_argv(self, argv: list[str] | str) -> None:
         try:
             proc = self._popen(argv)                     # fire-and-forget (F3)
         except FileNotFoundError as e:                   # opener not on PATH -> distinguishable

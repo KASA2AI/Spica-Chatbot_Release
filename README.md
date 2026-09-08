@@ -69,7 +69,7 @@ sudo apt-get install build-essential python3-dev portaudio19-dev ffmpeg
 
 ### 2.2 NVIDIA GPU、语音与唱歌的完整依赖
 
-先完成基础安装，再执行下面的顺序。此组合沿用仓库已有 Windows GPU 安装配方；它固定 Python 3.11、NumPy 1.26.x 与 PyTorch CUDA 12.4 组件，不要随意混装另一套 CUDA／NumPy 版本。Windows 的 `jieba_fast` 源码编译需要 MSVC Build Tools 的 C++ 工具；Linux 需要编译器。
+先完成基础安装，再执行下面的顺序。此组合沿用仓库已有 Windows GPU 安装配方；它固定 64 位 Python 3.11、NumPy 1.26.x 与 PyTorch CUDA 12.4 组件，不要随意混装另一套 CUDA／NumPy 版本。Windows 默认使用纯 Python 的 `jieba`，无需为中文分词安装 MSVC；已有环境安装了 `jieba_fast` 时仍优先使用它。Linux 安装 `jieba_fast` 需要编译器。日语使用清单锁定的 [pyopenjtalk-plus](https://github.com/tsukumijima/pyopenjtalk-plus)，它提供 Windows wheel 和随包词典。
 
 ```bash
 python -m pip uninstall -y onnxruntime
@@ -161,10 +161,24 @@ song:
 
 ```bash
 python -c "from pathlib import Path; from spica.host.character_packages import import_character_folder; from spica.config.manager import ConfigManager; p = import_character_folder('Desktop-Packs/Characters/Examples/static', Path('data/runtime/characters')); ConfigManager().update({'character': {'package_dir': p.package_root, 'profile_override': None}}); print(p.name)"
-python webui_qt.py
+python -X utf8 webui_qt.py
 ```
 
 成功后应看到示例角色和对话框，可以输入一句话。基础测试阶段不要打开麦克风、屏幕识别或唱歌。示例图是用于说明格式的小型原创示意图，不是完整 Spica／Sana 美术素材。
+
+**Windows 日常启动：**继续使用上面的 Python 3.11 环境。激活环境后可直接运行 `python -X utf8 webui_qt.py`；也可以用现有 PowerShell 启动脚本选择环境：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_spica.ps1
+```
+
+脚本默认使用 `spica` Conda 环境；环境名称不同就在末尾加 `-CondaEnv 你的环境名`。使用现有 Python 解释器时，改用下面的形式，并将路径替换为本机真实位置：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_spica.ps1 -PythonExe "C:\Miniconda3\envs\spica\python.exe"
+```
+
+启动时会定位项目目录并开启 UTF-8，支持中文、空格和方括号目录；设置中的“重启”会沿用同一解释器及启动参数。角色包、对话框样式和眼部动画继续使用本教程的同一格式。Windows 本机绝对路径在 YAML 中建议写为 `C:/Spica/模型/文件`，或用单引号包住反斜杠路径；带空格的播放器命令例如 `player_command: '"C:\Program Files\VideoLAN\VLC\vlc.exe" --play-and-exit'`。
 
 ### 4.2 认识目录，避免把模型解压错位置
 
@@ -207,7 +221,7 @@ python -m pip install -r requirements-config-studio.txt
 python scripts/config_studio.py --port 8765
 ```
 
-这是独立启动的本机浏览器设置工具，默认只监听 `127.0.0.1:8765`。需要手动打开时加 `--no-open-browser`，按终端提示使用一次性启动授权；端口被占用时改为 `--port 8767`。在页面语言菜单选择 **中文 / English / 日本語**。语言切换只改变界面说明，不改变配置键和值。保存后重启桌宠载入；使用完毕在终端按 `Ctrl+C` 关闭配置中心。配置中心的浏览器语言不会改变角色说话语言。
+这是独立启动的本机浏览器设置工具，默认只监听 `127.0.0.1:8765`。需要手动打开时加 `--no-open-browser`，按终端提示使用一次性启动授权；端口被占用时改为 `--port 8767`。在页面语言菜单选择 **中文 / English / 日本語**。语言切换只改变界面说明，不改变配置键和值。Linux 可保存后重启桌宠载入；**Windows 的浏览器配置中心目前只读**，配置写入和隔离自检尚未适配。Windows 用户在桌宠设置里导入／切换角色与样式、修改称呼，其余设置直接编辑 `data/config/app.yaml`／`xiaosan.env` 后重启。使用完毕在终端按 `Ctrl+C` 关闭配置中心。配置中心的浏览器语言不会改变角色说话语言。
 
 ## 5. 在哪里制作角色卡，怎样填写
 

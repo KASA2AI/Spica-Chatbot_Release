@@ -803,6 +803,14 @@ class OverlayWindow(QWidget):
         self._clear_scaled_pixmap_cache("resize")
         self._layout_overlay()
 
+    def event(self, event) -> bool:
+        handled = super().event(event)
+        if event.type() == QEvent.Type.DevicePixelRatioChange and hasattr(self, "resize_handle"):
+            # Windows can change monitor density without a logical resize.
+            # Reuse the DPR-keyed raster cache and preserve sprite/eye identity.
+            self._layout_overlay()
+        return handled
+
     def _visual_scale(self) -> float:
         # Keep targets legible but fitted when the window is resized independently
         # of the saved UI preference (small displays / restored geometry).
@@ -2120,6 +2128,12 @@ def main() -> int:
     # classifier in SongController) used to run before AppHost.initialize()'s
     # load_secrets(), read an un-primed environment, and stay disabled forever.
     load_secrets()
+    # Keep the caller's directory for relative script/module restart arguments,
+    # then anchor resources before loading app configuration or starting workers.
+    # load_secrets above already anchors its dotenv path to the repository.
+    restart_cwd = Path.cwd()
+    if not getattr(sys, "frozen", False):
+        os.chdir(Path(__file__).resolve().parents[1])
     # INFO baseline (log-cleanup pass): user-visible events (tool runs, companion
     # state, warmup/recover, WARN/ERROR) show by default; the verification
     # scaffolding ([TIMING], stream state machine, vendored TTS chatter) now sits
@@ -2128,8 +2142,7 @@ def main() -> int:
     # httpx logs one INFO "HTTP Request: ... 200 OK" per LLM call (a companion turn
     # is probe + streamed followup, >=2 lines) -- pure noise at INFO; reversible.
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    # Capture before Qt or model imports can consume arguments/change cwd.
-    restart_cwd = Path.cwd()
+    # Capture before Qt or model imports can consume arguments.
     restart_args = (
         [sys.executable, *sys.argv[1:]]
         if getattr(sys, "frozen", False)

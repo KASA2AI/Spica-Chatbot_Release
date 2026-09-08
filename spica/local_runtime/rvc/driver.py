@@ -141,9 +141,11 @@ def _run_subprocess(
     python = worker_python or sys.executable
     try:
         proc = subprocess.run(
-            [python, "-B", str(_WORKER), "--request", str(req_path)],
+            [python, "-X", "utf8", "-B", str(_WORKER), "--request", str(req_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:

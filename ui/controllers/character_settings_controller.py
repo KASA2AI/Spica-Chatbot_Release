@@ -70,9 +70,12 @@ class CharacterSettingsController(QObject):
         )
 
     def import_folder(self):
+        # Native Windows file dialogs can block Qt timers. Keep dialogue and
+        # eye animation running while the user browses character resources.
         source = QFileDialog.getExistingDirectory(
             self.window, "导入角色文件夹",
             str(Path(__file__).resolve().parents[2] / "Desktop-Packs" / "Characters"),
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontUseNativeDialog,
         )
         if source:
             surface = self.window.host.management_surface
@@ -86,6 +89,7 @@ class CharacterSettingsController(QObject):
         source = QFileDialog.getExistingDirectory(
             self.window, "导入对话框样式文件夹（包含 style.json）",
             str(Path(__file__).resolve().parents[2] / "Desktop-Packs" / "Dialogue-Styles"),
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontUseNativeDialog,
         )
         if source:
             self._start(lambda: self.window.host.management_surface.import_dialogue_style(source),
@@ -130,7 +134,8 @@ class CharacterSettingsController(QObject):
             self.panel.character_status.setText("请选择已导入的角色并重启后导出。")
             return
         destination, _ = QFileDialog.getSaveFileName(
-            self.window, "导出到新文件夹", package.character_id
+            self.window, "导出到新文件夹", package.character_id,
+            options=QFileDialog.Option.DontUseNativeDialog,
         )
         if not destination:
             return

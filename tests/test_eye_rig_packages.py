@@ -18,7 +18,7 @@ from spica.host.character_packages import (
 
 @pytest.fixture
 def eye_folder(tmp_path):
-    folder = tmp_path / "source"
+    folder = tmp_path / "角色包 眼部动画"
     model = folder / "model"
     model.mkdir(parents=True)
     opened = Image.new("RGBA", (200, 200))
@@ -108,6 +108,7 @@ def test_calibration_changes_package_revision(eye_folder, tmp_path):
 
 def test_desktop_loads_eye_animation_and_keeps_its_hit_pixmap(eye_folder, tmp_path, isolated_runtime_config):
     pytest.importorskip("PySide6")
+    from PySide6.QtCore import QEvent
     from PySide6.QtGui import QImage
     from PySide6.QtWidgets import QApplication
     from ui.qt_overlay import OverlayWindow
@@ -140,6 +141,20 @@ def test_desktop_loads_eye_animation_and_keeps_its_hit_pixmap(eye_folder, tmp_pa
         motion.openness = .5; half = pixels()
         assert closed != half and closed != right
         assert view.pixmap().cacheKey() == original_key
+        # A Windows monitor/DPI change need not resize the logical window.
+        # Refresh raster density while preserving the current eye animation.
+        original_geometry = view.geometry()
+        next_dpr = window.devicePixelRatioF() + .5
+        with patch.object(window, "devicePixelRatioF", return_value=next_dpr), patch.object(
+            view, "set_sprite", wraps=view.set_sprite,
+        ) as refresh:
+            app.sendEvent(window, QEvent(QEvent.Type.DevicePixelRatioChange))
+            # QLabel.pixmap() adapts to the real test monitor's DPR; inspect
+            # the new raster passed to it for the simulated monitor instead.
+            assert refresh.call_args.args[0].devicePixelRatioF() == next_dpr
+            assert view.geometry() == original_geometry
+            assert view._eye_motion is motion
+            assert motion.gaze == [1, 0] and motion.openness == .5
         # Resizing keeps the calibration bound to the same original and crop.
         window.resize(window.width() + 80, window.height() + 40)
         assert view._eye_motion is motion

@@ -49,7 +49,7 @@ REQUIRED = [
     ("webrtcvad-wheels", "webrtcvad", ()),
     # Anime-watch (看动漫): requests (adapters) + yt-dlp (bilibili downloader,
     # used via subprocess but importable). External tools (qBittorrent/ffmpeg/
-    # player) are checked by hand, not here -- see docs/windows_heavy_install.md.
+    # player) are checked by hand, not here -- see README.md section 2.2.
     ("requests", "requests", ()),
     ("yt-dlp", "yt_dlp", ()),
 ]

@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import os
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QSize, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QInputMethodEvent, QMouseEvent, QPixmap, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -318,15 +318,17 @@ def desktop_main(monkeypatch):
 @pytest.mark.parametrize("frozen,original,current,expected", [
     (False, ["python", "-u", "/project with spaces/webui_qt.py"], ["webui_qt.py"], ["-u", "/project with spaces/webui_qt.py"]),
     (False, ["python", "-m", "ui.qt_overlay"], ["ui/qt_overlay.py"], ["-m", "ui.qt_overlay"]),
+    (False, ["python", "-X", "utf8", "桌宠 程序/webui_qt.py"], ["桌宠 程序/webui_qt.py"], ["-X", "utf8", "桌宠 程序/webui_qt.py"]),
     (True, ["Spica.exe"], ["Spica.exe", "-style", "Fusion"], ["-style", "Fusion"]),
 ])
-def test_restart_reexecutes_same_launch_only_after_event_loop_stops(desktop_main, monkeypatch, frozen, original, current, expected):
+def test_restart_reexecutes_same_launch_only_after_event_loop_stops(desktop_main, monkeypatch, tmp_path, frozen, original, current, expected):
     from pathlib import Path
     import sys
 
     monkeypatch.setattr(sys, "orig_argv", original)
     monkeypatch.setattr(sys, "argv", current.copy())
     monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    monkeypatch.setattr(Path, "cwd", classmethod(lambda _cls: tmp_path))
     desktop_main.window._restart_requested = True
 
     def stop_loop():
@@ -336,7 +338,8 @@ def test_restart_reexecutes_same_launch_only_after_event_loop_stops(desktop_main
 
     desktop_main.app.exec.side_effect = stop_loop
     assert desktop_main.module.main() == 0
-    desktop_main.change_dir.assert_called_once_with(Path.cwd())
+    expected_directories = [] if frozen else [call(Path(desktop_main.module.__file__).resolve().parents[1])]
+    assert desktop_main.change_dir.call_args_list == [*expected_directories, call(tmp_path)]
     desktop_main.execute.assert_called_once_with(sys.executable, [sys.executable, *expected])
     desktop_main.error.assert_not_called()
 
@@ -494,10 +497,15 @@ def test_editors_and_buttons_do_not_drag_and_small_motion_is_ignored(window):
 
 
 @pytest.mark.parametrize("target", ["character", "name", "frame"])
-def test_intuitive_drag_surfaces_move_the_window(window, qapp, target):
+def test_intuitive_drag_surfaces_move_the_window(window, qapp, target, monkeypatch):
     window.resize(600, 500)
     window.move(50, 50)
     qapp.processEvents()
+    # This checks unconstrained dragging; don't accidentally hit the real
+    # monitor boundary on a high-DPI headless/Windows test desktop.
+    monkeypatch.setattr("ui.qt_overlay.QGuiApplication.screenAt", lambda _point: SimpleNamespace(
+        availableGeometry=lambda: QRect(0, 0, 1920, 1080),
+    ))
     widget = {
         "character": window.character_label,
         "name": window.dialogue.speaker_label,
@@ -514,6 +522,56 @@ def test_intuitive_drag_surfaces_move_the_window(window, qapp, target):
     QApplication.sendEvent(widget, move)
     assert window.pos() == before + QPoint(60, 25)
     QTest.mouseRelease(widget, Qt.MouseButton.LeftButton)
+
+
+@pytest.mark.parametrize("action", ["import_folder", "import_style_folder", "export_folder"])
+def test_package_picker_keeps_animation_running_and_cancel_keeps_selection(window, qapp, tmp_path, monkeypatch, action):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QFileDialog
+    from spica.config.manager import ConfigManager
+    from spica.host.management import ManagementSurface
+
+    surface = ManagementSurface(
+        registry=None, plugin_host=None, config_manager=ConfigManager(tmp_path / "app.yaml"), characters_root=tmp_path,
+    )
+    window.host = SimpleNamespace(
+        management_surface=surface, character_package=SimpleNamespace(manifest=True, character_id="test"),
+    )
+    window.open_settings_panel()
+    controller = window.character_settings_controller
+    before = surface.read_config()
+    window.dialogue.set_dialogue_text("选择文件夹时，动画继续。")
+    window.dialogue.show_tail()
+    ticks = []
+    window.dialogue.tail.timer.timeout.connect(lambda: ticks.append(True))
+    method = "getSaveFileName" if action == "export_folder" else "getExistingDirectory"
+    original = getattr(QFileDialog, method)
+
+    def choose(*args, **kwargs):
+        options = kwargs.get("options", args[3] if len(args) > 3 else QFileDialog.Option(0))
+        # Fail before entering a Windows native modal loop: its timers would
+        # also prevent this test's automatic cancel from firing.
+        assert options & QFileDialog.Option.DontUseNativeDialog
+        args = [*args]
+        args[2] = str(tmp_path)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(QFileDialog, method, choose)
+    closer = QTimer(window)
+    closer.setInterval(160)
+    closer.timeout.connect(lambda: qapp.activeModalWidget().reject() if isinstance(qapp.activeModalWidget(), QFileDialog) else None)
+    closer.start()
+    try:
+        if action == "export_folder":
+            controller.export_folder(False)
+        else:
+            getattr(controller, action)()
+        assert ticks, "the file picker suspended the dialogue animation"
+        assert controller.worker is None
+        assert surface.read_config() == before
+    finally:
+        closer.stop()
+        window.host = None
 
 
 def test_reply_focus_and_settings_close_preserve_draft(window, qapp, tmp_path):

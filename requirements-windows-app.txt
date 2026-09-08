@@ -4,7 +4,7 @@
 #
 # INSTALL with the constraints lock so numpy stays 1.26.4 and transitives match
 # gptsovits (order matters -- torch trio + base + heavy FIRST; see
-# docs/windows_heavy_install.md §3):
+# README.md section 2.2):
 #
 #   python -m pip install -c constraints-windows-app.txt -r requirements-windows-app.txt
 #   python -m pip install -c constraints-windows-app.txt --no-deps audio-separator==0.44.2
@@ -16,7 +16,7 @@
 #                     only -- runtime is green at 1.26.4, as the gptsovits env proves).
 #
 # Versions are the gptsovits set; the constraints lock re-pins them + every transitive.
-# DRAFT until the Windows single-env install validates C/G (docs/windows_w4b_smoke.md).
+# Native Windows synthesis/song still need verification on the target machine.
 
 # --- GPT-SoVITS text frontend + audio core ---
 soundfile==0.13.1
@@ -54,10 +54,9 @@ einx==0.4.3
 ml_dtypes==0.5.4
 peft==0.19.1
 jaconv==0.5.0
-# jieba_fast: tone_sandhi.py does `import jieba_fast` (hard, no fallback). It is a
-# Cython C-extension with NO win_amd64 wheel on PyPI -> Windows builds it from the
-# sdist and REQUIRES a C compiler (MSVC Build Tools). See docs/windows_heavy_install.md §3.
-jieba_fast==0.53
+# Windows uses the pure-Python jieba above; no MSVC build is needed. The bundled
+# Chinese frontend still prefers jieba_fast when present in an existing env.
+jieba_fast==0.53; sys_platform != "win32"
 # Applio (RVC core.py -> tensorboard/model_download):
 tensorboard==2.20.0
 beautifulsoup4==4.14.3

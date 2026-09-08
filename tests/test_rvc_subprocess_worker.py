@@ -120,7 +120,21 @@ def test_dispatch_subprocess_success_reads_result_json(tmp_path, monkeypatch):
     assert result == str(out) and out.exists()
     req = json.loads((tmp_path / "rvc.wav.rvc_request.json").read_text(encoding="utf-8"))
     assert req["seed"] == 1234 and req["params"]["f0_method"] == "rmvpe"
-    assert req["rvc_module_path"].endswith("agent_tools/function_tools/song/rvc.py")
+    assert Path(req["rvc_module_path"]).parts[-4:] == ("agent_tools", "function_tools", "song", "rvc.py")
+
+
+def test_real_worker_handles_unicode_paths_and_non_utf8_library_logs(tmp_path, monkeypatch):
+    work = tmp_path / "紗凪 唱歌"
+    work.mkdir()
+    core = work / "fake_rvc.py"
+    core.write_text(
+        "import sys\nprint('日语日志：紗凪 ❄')\nsys.stdout.buffer.write(b'\\xff\\n')\n" + _FAKE_RVC_OK,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rvc_driver, "_RVC_MODULE", core)
+    out = work / "歌声.wav"
+    assert run_rvc(execution_mode="subprocess", **_base_kwargs(out)) == str(out)
+    assert out.read_bytes() == b"RIFFfakewav"
 
 
 # -- unified subprocess error envelope (every failure path) -------------------------

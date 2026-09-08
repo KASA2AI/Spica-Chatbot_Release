@@ -6,6 +6,9 @@ window), never a blocking ``subprocess.run`` that waits for the player to exit.
 
 from __future__ import annotations
 
+import shlex
+import subprocess
+import sys
 import time
 
 import pytest
@@ -81,6 +84,22 @@ def test_windows_uses_startfile(tmp_path):
     assert opened == [str(f.resolve())]
 
 
+@pytest.mark.parametrize("command", [
+    r"C:\VLC\vlc.exe --fullscreen",
+    r'"C:\Program Files\VideoLAN\VLC\vlc.exe" --play-and-exit',
+    r'"C:\播放器\vlc.exe" --sub-file="C:\字幕\第一话.srt"',
+])
+def test_windows_player_preserves_native_command_and_quotes_media_path(tmp_path, command):
+    d = _dir(tmp_path)
+    media = _mkv(d, "第一话 with spaces.mkv")
+    run = Popen()
+    SystemDefaultPlayer(str(d), player_command=command,
+                        platform="win32", popen=run).play_file(str(media))
+    args, kwargs = run.calls[0]
+    assert args == command + " " + subprocess.list2cmdline([str(media.resolve())])
+    assert kwargs.get("shell") in (None, False)
+
+
 def test_rejects_outside_download_dir(tmp_path):
     d = _dir(tmp_path)
     run = Popen()
@@ -140,17 +159,28 @@ def test_rejects_missing_file(tmp_path):
 # -- F3: fire-and-forget -- a long-lived player must never block the turn -----
 
 def test_play_file_returns_while_real_player_still_running(tmp_path):
-    # behavioral repro with the REAL default popen: a player that sleeps 5s.
+    # A real Python process works on Windows and Linux and outlives the probe.
     # The old subprocess.run semantics blocked play_file for the full 5s.
     d = _dir(tmp_path)
     f = _mkv(d)
-    script = tmp_path / "slowplayer.sh"
-    script.write_text("#!/bin/sh\nsleep 5\n")
-    script.chmod(0o755)
-    t0 = time.monotonic()
-    SystemDefaultPlayer(str(d), player_command=str(script),
-                        platform="linux").play_file(str(f))
-    assert time.monotonic() - t0 < 2.0        # probe window only, not 5s
+    command = [sys.executable, "-c", "import time; time.sleep(5)"]
+    command_line = subprocess.list2cmdline(command) if sys.platform == "win32" else shlex.join(command)
+    children = []
+
+    def spawn(*args, **kwargs):
+        proc = subprocess.Popen(*args, **kwargs)
+        children.append(proc)
+        return proc
+
+    try:
+        t0 = time.monotonic()
+        SystemDefaultPlayer(str(d), player_command=command_line, popen=spawn).play_file(str(f))
+        assert time.monotonic() - t0 < 2.0
+        assert children[0].poll() is None
+    finally:
+        for proc in children:
+            proc.terminate()
+            proc.wait(timeout=5)
 
 
 def test_play_file_returns_immediately_with_injected_probe(tmp_path):

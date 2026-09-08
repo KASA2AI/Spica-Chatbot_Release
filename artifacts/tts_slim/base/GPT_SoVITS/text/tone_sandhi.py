@@ -14,7 +14,10 @@
 from typing import List
 from typing import Tuple
 
-import jieba_fast as jieba
+try:
+    import jieba_fast as jieba
+except ImportError:
+    import jieba
 from pypinyin import lazy_pinyin
 from pypinyin import Style
 

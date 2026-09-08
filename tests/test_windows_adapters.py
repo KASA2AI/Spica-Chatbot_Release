@@ -9,6 +9,7 @@ launcher's spawn seam (``runner=``) never starts a real process.
 """
 
 import unittest
+from unittest.mock import patch
 
 # Clean-import guard: importing + instantiating on Linux must just work.
 from spica.adapters.game_launcher.windows_native import WindowsNativeGameLauncher
@@ -88,8 +89,9 @@ class Win32LocatorEnumerationTest(unittest.TestCase):
         self.assertEqual(candidate.pid, 4242)
         self.assertTrue(candidate.visible)
 
-    def test_unavailable_on_linux_degrades_structurally(self):
-        # No injected api on a Linux host: the lazy real-api load fails ->
+    @patch("spica.adapters.window_locator.windows_win32._RealWin32Api", side_effect=OSError("unavailable"))
+    def test_unavailable_api_degrades_structurally(self, _api):
+        # An unavailable native API on either host: the lazy real-api load fails ->
         # available=False + reason_code, NEVER a raise / silent empty.
         result = WindowsWin32WindowLocator().enumerate_windows()
         self.assertEqual(result.windows, [])
@@ -112,11 +114,12 @@ class Win32LocatorGeometryTest(unittest.TestCase):
         # GetWindowRect gives (left, top, right, bottom) -> x/y/width/height.
         self.assertEqual((geometry.x, geometry.y, geometry.width, geometry.height), (100, 200, 640, 480))
 
-    def test_gone_window_and_bad_id_return_none(self):
+    @patch("spica.adapters.window_locator.windows_win32._RealWin32Api", side_effect=OSError("unavailable"))
+    def test_gone_window_and_bad_id_return_none(self, _api):
         locator = WindowsWin32WindowLocator(api=_game_api(rect=None))
         self.assertIsNone(locator.get_window_geometry(str(_GAME)))  # rect call failed -> gone
         self.assertIsNone(locator.get_window_geometry("not-a-hwnd"))
-        self.assertIsNone(WindowsWin32WindowLocator().get_window_geometry(str(_GAME)))  # no api on Linux
+        self.assertIsNone(WindowsWin32WindowLocator().get_window_geometry(str(_GAME)))  # API unavailable
 
 
 class Win32LocatorSafetyTest(unittest.TestCase):
@@ -137,7 +140,8 @@ class Win32LocatorSafetyTest(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.reason_code, "SAFETY_PROBE_FAILED")
 
-    def test_no_api_on_linux_is_probe_failure_not_gone(self):
+    @patch("spica.adapters.window_locator.windows_win32._RealWin32Api", side_effect=OSError("unavailable"))
+    def test_no_api_is_probe_failure_not_gone(self, _api):
         result = WindowsWin32WindowLocator().check_safety(str(_GAME), _RULE)
         self.assertFalse(result.ok)
         self.assertEqual(result.reason_code, "SAFETY_PROBE_FAILED")

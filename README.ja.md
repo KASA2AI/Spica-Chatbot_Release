@@ -69,7 +69,7 @@ sudo apt-get install build-essential python3-dev portaudio19-dev ffmpeg
 
 ### 2.2 NVIDIA GPU、音声、歌唱の追加依存
 
-基本環境の後に、次の順序で実行します。リポジトリ既存の Windows GPU 構成に合わせ、Python 3.11、NumPy 1.26.x、PyTorch CUDA 12.4 を使用します。Windows の `jieba_fast` ビルドには MSVC Build Tools の C++ ツール、Linux ではコンパイラーが必要です。
+基本環境の後に、次の順序で実行します。リポジトリ既存の Windows GPU 構成に合わせ、64 ビット Python 3.11、NumPy 1.26.x、PyTorch CUDA 12.4 を使用します。Windows は純 Python の `jieba` を使うため、中国語分かち書き用の MSVC は不要です。既に `jieba_fast` がある環境では引き続き優先します。Linux の `jieba_fast` インストールにはコンパイラーが必要です。日本語には固定バージョンの [pyopenjtalk-plus](https://github.com/tsukumijima/pyopenjtalk-plus) を使用し、Windows wheel と同梱辞書を利用します。
 
 ```bash
 python -m pip uninstall -y onnxruntime
@@ -163,10 +163,24 @@ song:
 
 ```bash
 python -c "from pathlib import Path; from spica.host.character_packages import import_character_folder; from spica.config.manager import ConfigManager; p = import_character_folder('Desktop-Packs/Characters/Examples/static', Path('data/runtime/characters')); ConfigManager().update({'character': {'package_dir': p.package_root, 'profile_override': None}}); print(p.name)"
-python webui_qt.py
+python -X utf8 webui_qt.py
 ```
 
 サンプルの立ち絵と会話ウィンドウが表示されたら、文字を入力して試します。この段階ではマイク、画面認識、歌唱を有効にしません。サンプル画像は形式説明用の小さなオリジナル図で、完全な Spica／Sana の美術素材ではありません。
+
+**Windows での通常起動：**同じ Python 3.11 環境を使います。有効化してから `python -X utf8 webui_qt.py` を実行するか、既存の PowerShell 起動スクリプトを使ってください。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_spica.ps1
+```
+
+既定の Conda 環境名は `spica` です。別の環境は末尾に `-CondaEnv 環境名` を付けます。既存の Python を直接指定する場合は、以下の例を実際のパスに置き換えてください。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_spica.ps1 -PythonExe "C:\Miniconda3\envs\spica\python.exe"
+```
+
+スクリプトはプロジェクトの作業ディレクトリと UTF-8 を設定します。日本語・中国語、空白、角括弧を含むフォルダー名に対応し、設定画面の「再起動」でも同じ Python と起動引数を引き継ぎます。キャラクターパック、会話スタイル、目のアニメーションは本書と同じ形式です。ローカル YAML の Windows 絶対パスは `C:/Spica/models/file` のように書くか、バックスラッシュのパスをシングルクォートで囲みます。空白を含むプレーヤーコマンドの例：`player_command: '"C:\Program Files\VideoLAN\VLC\vlc.exe" --play-and-exit'`。
 
 ### 4.2 展開先を理解する
 
@@ -209,7 +223,7 @@ python -m pip install -r requirements-config-studio.txt
 python scripts/config_studio.py --port 8765
 ```
 
-別途起動するブラウザー設定ツールで、既定では `127.0.0.1:8765` のみに接続を受け付けます。手動で開く場合は `--no-open-browser` を付け、ターミナルに表示された一度限りの起動認証を使います。ポート使用中なら `--port 8767` に変更してください。ページの言語メニューで **中文 / English / 日本語** を選べます。言語切り替えは画面の説明だけを変更し、設定キーや値は変更しません。保存後はデスクトップを再起動し、使い終えたらターミナルで `Ctrl+C` を押して設定スタジオを終了します。ブラウザーの表示言語はキャラクターの発話言語とは別です。
+別途起動するブラウザー設定ツールで、既定では `127.0.0.1:8765` のみに接続を受け付けます。手動で開く場合は `--no-open-browser` を付け、ターミナルに表示された一度限りの起動認証を使います。ポート使用中なら `--port 8767` に変更してください。ページの言語メニューで **中文 / English / 日本語** を選べます。言語切り替えは画面の説明だけを変更し、設定キーや値は変更しません。Linux では保存後にデスクトップを再起動します。**Windows のブラウザー設定スタジオは現在読み取り専用**で、設定ファイルの書き込みと分離セルフチェックは未対応です。Windows ではデスクトップ設定からキャラクター・スタイルのインポート／選択や呼び名の変更を行い、その他は `data/config/app.yaml`／`xiaosan.env` を直接編集して再起動してください。使い終えたらターミナルで `Ctrl+C` を押して設定スタジオを終了します。ブラウザーの表示言語はキャラクターの発話言語とは別です。
 
 ## 5. キャラクターカードを作成する
 

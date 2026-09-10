@@ -42,10 +42,12 @@ def _restore_os_environ():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_config_studio_environment(request):
-    """Config Studio tests must never observe real roster or legacy values."""
+def _isolate_config_snapshot_environment(request):
+    """Configuration snapshot and transaction tests never read real environment values."""
 
-    if not request.node.path.name.startswith("test_config_studio_"):
+    if request.node.path.name not in {
+        "test_config_platform.py", "test_document_transaction.py", "test_config_resolution.py",
+    }:
         yield
         return
     names = consumed_env_names() | frozenset(LEGACY_ENV_VARS)

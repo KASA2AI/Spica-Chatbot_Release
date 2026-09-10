@@ -1,4 +1,4 @@
-"""Byte-preserving transactions for Config Studio managed documents."""
+"""Byte-preserving transactions for local configuration documents."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from spica.ports.config_studio_platform import PlatformCapabilities
+from spica.ports.config_platform import PlatformCapabilities
 
 
 @dataclass(frozen=True, slots=True)
@@ -1169,7 +1169,7 @@ class ManagedDocumentTransaction:
     ) -> _PublicationResult:
         parent = self.document_path.parent
         descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{self.document_path.name}.config-studio-",
+            prefix=f".{self.document_path.name}.config-",
             dir=parent,
         )
         temporary_path = Path(temporary_name)

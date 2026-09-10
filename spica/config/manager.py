@@ -126,18 +126,30 @@ class ConfigManager:
             layer="process",
         )
 
-    def update(self, patch: dict[str, Any]) -> AppConfig:
+    def update(
+        self, patch: dict[str, Any], *,
+        environment_snapshot: EnvironmentSnapshot | None = None,
+        reject_overrides: bool = False,
+    ) -> AppConfig:
         """Serialize settings read/merge/write and reject a shadowed name edit."""
         with self._update_lock:
-            snapshot = self._current_snapshot()
-            current = self.resolve_snapshot(self._read_yaml(self.config_path), snapshot).to_app_config()
-            candidate = self.validate(self.merge(current.model_dump(), patch))
-            effective = self.resolve_snapshot(candidate.model_dump(), snapshot).to_app_config()
+            snapshot = environment_snapshot if environment_snapshot is not None else self._current_snapshot()
+            raw = self._read_yaml(self.config_path)
+            # Patch the document, never the environment-merged running config:
+            # saving a name/character must not restore stale API settings.
+            candidate = self.merge(raw, patch)
+            resolution = self.resolve_snapshot(candidate, snapshot)
+            effective = resolution.to_app_config()
+            if reject_overrides:
+                for path in _flatten_values(patch):
+                    leaf = resolution.resolved_at(path)
+                    if leaf.source.kind in {"env_override", "secret_tainted_env_override"}:
+                        raise ValueError(f"{'.'.join(path)} 由 {leaf.source.environment_variable} 覆盖，请先移除启动环境或 xiaosan.env 中的该项。")
             if ("interlocutor_name" in patch.get("character", {})
-                    and candidate.character.interlocutor_name != effective.character.interlocutor_name):
+                    and candidate["character"]["interlocutor_name"] != effective.character.interlocutor_name):
                 raise ValueError("称呼被 SPICA_USER_NAME 覆盖。请在启动环境或 dotenv 中移除该项，重启应用后再保存称呼。")
             self.save(candidate)
-            return candidate
+            return effective
 
     def resolve_snapshot(
         self,
@@ -146,8 +158,8 @@ class ConfigManager:
     ) -> "ConfigResolution":
         """Resolve one document using explicit environment values.
 
-        This is the production-owner seam used by both normal startup and the
-        Config Studio.  It does not read or mutate process environment state.
+        This production-owner seam serves startup and explicit configuration
+        inspection without reading or mutating process environment state.
         """
         _validate_document_graph(raw_document)
         environment_overrides = self._env_overrides_from_snapshot(environment_snapshot)
@@ -290,7 +302,13 @@ class ConfigManager:
     def validate(data: dict[str, Any]) -> AppConfig:
         return AppConfig.model_validate(data)
 
-    def save(self, config: AppConfig, path: str | Path | None = None) -> None:
+    def save(self, config: AppConfig | dict[str, Any], path: str | Path | None = None) -> None:
+        """Publish a typed config or a document already validated by update().
+
+        Documents retain file values even when environment overrides are needed
+        to make the effective configuration valid.
+        """
+        document = config.model_dump() if isinstance(config, AppConfig) else config
         target = Path(path) if path else self.config_path
         with self._update_lock:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -299,7 +317,7 @@ class ConfigManager:
             try:
                 with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=".app-", dir=target.parent, delete=False) as stream:
                     temporary = Path(stream.name)
-                    stream.write(yaml.safe_dump(config.model_dump(), allow_unicode=True, sort_keys=False))
+                    stream.write(yaml.safe_dump(document, allow_unicode=True, sort_keys=False))
                 temporary.chmod(mode)
                 temporary.replace(target)
             finally:

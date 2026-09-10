@@ -8,7 +8,6 @@
 | [requirements-windows-heavy.txt](requirements-windows-heavy.txt) | NVIDIA GPU runtime / GPU 运行依赖 |
 | [requirements-windows-app.txt](requirements-windows-app.txt) | TTS and singing in the main environment / 主环境语音与唱歌 |
 | [constraints-windows-app.txt](constraints-windows-app.txt) | Version constraints for the app list; use `-c` / 版本约束，不单独安装 |
-| [requirements-config-studio.txt](requirements-config-studio.txt) | Config Studio; already included by base / 配置中心，基础清单已包含 |
 | [requirements-stt.txt](requirements-stt.txt) | Optional STT dependency subset / 语音识别依赖子集 |
 | [requirements-screen.txt](requirements-screen.txt) | Optional screen-recognition subset / 屏幕识别依赖子集 |
 | [requirements-rvc.txt](requirements-rvc.txt) | Separate RVC worker environment only, NumPy 2.x / 仅限独立 RVC 环境 |

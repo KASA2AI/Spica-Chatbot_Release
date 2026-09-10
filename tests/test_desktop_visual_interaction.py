@@ -305,12 +305,13 @@ def desktop_main(monkeypatch):
     app = Mock()
     app.exec.return_value = 0
     overlay = SimpleNamespace(_restart_requested=False, show=lambda: None)
-    monkeypatch.setattr(qt_overlay, "load_secrets", lambda: None)
+    startup = SimpleNamespace(restart_environment=lambda: {"PATH": "original-path"})
+    monkeypatch.setattr(qt_overlay, "load_secrets", lambda **kwargs: startup)
     monkeypatch.setattr(qt_overlay, "QApplication", lambda _argv: app)
-    monkeypatch.setattr(qt_overlay, "OverlayWindow", lambda: overlay)
+    monkeypatch.setattr(qt_overlay, "OverlayWindow", lambda **kwargs: overlay)
     change_dir, execute, error = Mock(), Mock(), Mock()
     monkeypatch.setattr(qt_overlay.os, "chdir", change_dir)
-    monkeypatch.setattr(qt_overlay.os, "execv", execute)
+    monkeypatch.setattr(qt_overlay.os, "execve", execute)
     monkeypatch.setattr(qt_overlay.QMessageBox, "critical", error)
     return SimpleNamespace(module=qt_overlay, app=app, window=overlay, change_dir=change_dir, execute=execute, error=error)
 
@@ -340,7 +341,7 @@ def test_restart_reexecutes_same_launch_only_after_event_loop_stops(desktop_main
     assert desktop_main.module.main() == 0
     expected_directories = [] if frozen else [call(Path(desktop_main.module.__file__).resolve().parents[1])]
     assert desktop_main.change_dir.call_args_list == [*expected_directories, call(tmp_path)]
-    desktop_main.execute.assert_called_once_with(sys.executable, [sys.executable, *expected])
+    desktop_main.execute.assert_called_once_with(sys.executable, [sys.executable, *expected], {"PATH": "original-path"})
     desktop_main.error.assert_not_called()
 
 

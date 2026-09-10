@@ -37,12 +37,14 @@ class ManagementSurface:
         characters_root: str | Path,
         plugins_manifest_path: str | Path | None = None,
         builtin_character_dir: Path | None = None,
+        secrets_provider: Any = None,
     ) -> None:
         self.registry = registry
         self.config_manager = config_manager
         self.plugin_host = plugin_host
         self.characters_root = Path(characters_root)
         self.builtin_character_dir = builtin_character_dir
+        self._secrets_provider = secrets_provider
         self.plugins_manifest_path = Path(plugins_manifest_path) if plugins_manifest_path else DEFAULT_MANIFEST_PATH
 
     # -- listings -------------------------------------------------------------
@@ -196,6 +198,52 @@ class ManagementSurface:
 
     def write_config(self, patch: dict[str, Any]) -> dict[str, Any]:
         return self.config_manager.update(patch).model_dump()
+
+    def _settings_environment(self):
+        from spica.config.secrets import LoadedSecrets, load_secrets
+        owner = self._secrets_provider() if self._secrets_provider is not None else None
+        if not isinstance(owner, LoadedSecrets):
+            owner = load_secrets(with_environment_snapshot=True, prime_process=False)
+        return owner
+
+    def read_application_settings(self) -> dict[str, Any]:
+        from pydantic import ValidationError
+        from spica.config.application_settings import read_application_settings
+        try:
+            return read_application_settings(self.config_manager, self._settings_environment())
+        except ValidationError as exc:
+            # Reads also precede key writes and connection tests. Never expose
+            # validation input values through those operations' error messages.
+            fields = ", ".join(".".join(str(key) for key in error["loc"]) for error in exc.errors())
+            raise ValueError(f"配置格式有误，请检查：{fields}") from None
+
+    def write_application_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
+        from pydantic import ValidationError
+        from spica.config.application_settings import save_application_settings
+        try:
+            return save_application_settings(self.config_manager, self._settings_environment(), patch)
+        except ValidationError as exc:
+            fields = ", ".join(".".join(str(key) for key in error["loc"]) for error in exc.errors())
+            raise ValueError(f"配置格式有误，请检查：{fields}") from None
+
+    def write_application_secret(self, slot: str, value: str) -> dict[str, Any]:
+        with self.config_manager._update_lock:
+            self.read_application_settings()  # Fail before publication if config is invalid.
+            self._settings_environment().write_local_secret(slot, value)
+            return self.read_application_settings()
+
+    def test_application_connection(self, *, base_url: str | None, model: str, api_key: str = "") -> dict[str, Any]:
+        from spica.config.application_settings import validate_api_base_url
+        from spica.adapters.llm.openai_compatible import check_model_connection
+        validate_api_base_url(base_url)
+        if not self.read_application_settings()["connection_test_available"]:
+            raise ValueError("模型连接配置包含密钥插值，请先清理对应配置来源后重试。")
+        if not model.strip():
+            raise ValueError("请填写模型名称。")
+        key = api_key or self._settings_environment().refresh().secrets.openai_api_key
+        if not key:
+            raise ValueError("请先填写 API Key。")
+        return check_model_connection(base_url=base_url, model=model, api_key=key)
 
     # -- plugins (manifest edits take effect on restart) ----------------------
     def install_plugin(self, name: str) -> None:

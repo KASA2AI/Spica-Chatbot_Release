@@ -1,4 +1,4 @@
-"""System-boundary fault injection shared by Config Studio transaction tests."""
+"""System-boundary fault injection shared by configuration transaction tests."""
 
 from __future__ import annotations
 

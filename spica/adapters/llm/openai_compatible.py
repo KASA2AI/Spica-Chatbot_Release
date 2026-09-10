@@ -29,6 +29,36 @@ from common.timing import elapsed_ms, log_timing, now_ms
 from spica.ports.model import ToolProbeResult, ToolProbeStream
 
 
+def check_model_connection(*, base_url: str | None, model: str, api_key: str) -> dict[str, Any]:
+    """Bounded connectivity check, with no conversation, tools or generation."""
+    import httpx
+    from openai import OpenAI, APIStatusError, APITimeoutError, APIConnectionError
+
+    try:
+        # Match the chat client's network policy: ignore environment proxies
+        # and certificate overrides, so this checks the same connection.
+        with httpx.Client(trust_env=False, timeout=8.0) as http_client:
+            with OpenAI(api_key=api_key, base_url=base_url or "https://api.openai.com/v1",
+                        http_client=http_client, timeout=8.0, max_retries=0) as client:
+                models = client.models.list()
+                found = any(item.id == model for item in models.data)
+    except APIStatusError as exc:
+        if exc.status_code in {401, 403}:
+            raise ValueError("连接被拒绝，请检查密钥与服务权限。") from None
+        if exc.status_code in {404, 405}:
+            raise ValueError("服务未提供模型列表接口，请确认 API 地址；本次无法验证连接。") from None
+        raise ValueError(f"连接测试失败（HTTP {exc.status_code}），请检查服务状态。") from None
+    except APITimeoutError:
+        raise ValueError("连接超时，请检查 API 地址和网络。") from None
+    except APIConnectionError:
+        raise ValueError("无法连接，请检查 API 地址、网络和证书。") from None
+    except Exception:
+        # SDK/remote exceptions can contain credentials or request bodies.
+        raise ValueError("无法读取模型列表，请检查服务是否兼容。") from None
+    return {"message": ("连接成功，模型列表包含所填模型。生成效果请在重启后通过聊天验证。" if found
+                        else "连接成功，但模型列表未包含所填模型，请向服务商确认模型 ID。")}
+
+
 def to_chat_completions_tools(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert tool schemas to the Chat Completions nested format.
 

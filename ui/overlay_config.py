@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from spica.adapters.config_studio.platform import current_platform_capabilities
+from spica.adapters.config_platform import current_platform_capabilities
 from spica.config.document_transaction import (
     DocumentConflictError,
     DocumentTransactionError,
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).with_name("overlay_config.json")
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+# Keep backup/lock paths compatible with older desktop versions.
 _DEFAULT_BACKUP_ROOT = _REPO_ROOT / "spica_data" / "config_studio" / "backups"
 _DIALOGUE_BOX_VISIBLE_KEY = "dialogue_box_visible"
 _DIALOGUE_OPACITY_KEY = "dialogue_opacity"
@@ -77,7 +78,7 @@ def load_dialogue_box_visible(path: Path | None = None) -> bool:
 
 
 def load_dialogue_opacity(path: Path | None = None) -> float:
-    """UI-only appearance preference, like dialogue visibility; preserve Studio ownership."""
+    """UI-only appearance preference, stored alongside dialogue visibility."""
     _, raw = _load_overlay_document(path)
     value = raw.get(_DIALOGUE_OPACITY_KEY, DEFAULT_DIALOGUE_OPACITY)
     if type(value) not in (int, float) or not math.isfinite(value):
@@ -108,9 +109,8 @@ def save_overlay_config_value(
 ) -> bool:
     """Persist one overlay-config key through the shared transaction owner.
 
-    Existing desktop callers use this narrow merge-safe seam; Config Studio has
-    its own typed preview/commit seam over the same document transaction. Every
-    other hand-edited key is preserved. This function never raises: a missing
+    Desktop callers use this narrow merge-safe seam over the shared document
+    transaction. Every other hand-edited key is preserved. This function never raises: a missing
     file becomes a fresh object, an unreadable/corrupt file is left intact, and
     a failed write degrades to session-only. It returns True only when the value
     was actually persisted.
@@ -132,7 +132,7 @@ def save_dialogue_box_visible(
     *,
     backup_root: Path | None = None,
 ) -> bool:
-    """Persist the UI-only key without adding it to Config Studio ownership."""
+    """Persist the UI-only key independently of typed overlay fields."""
 
     if type(visible) is not bool:
         logger.warning("event=dialogue_visibility_save_skip reason=type_mismatch")

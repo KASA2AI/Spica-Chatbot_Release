@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from spica.config.manager import ConfigManager
 from spica.config.schema import AppConfig
-from spica.config.secrets import Secrets, load_secrets
+from spica.config.secrets import LoadedSecrets, Secrets, load_secrets
 from spica.core.chat_engine import ChatEngine
 from spica.core.companion_events import CompanionEventSink, noop_companion_sink
 from spica.conversation.character_loader import DEFAULT_SPICA_SKILL_DIR
@@ -126,8 +126,9 @@ def resolve_mic_backend(mic_backend_cfg: str, effective_platform: str) -> str:
 class AppHost:
     """Owns the backend services and wires them together at startup."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, loaded_secrets: LoadedSecrets | None = None) -> None:
         self.config: AppConfig | None = None
+        self.loaded_secrets = loaded_secrets
         self.secrets: Secrets | None = None
         self.visual_tool: Any | None = None
         self.tts_tool: Any | None = None
@@ -268,6 +269,7 @@ class AppHost:
             plugin_host=self.plugin_host,
             characters_root=Path(__file__).resolve().parents[2] / "data" / "runtime",
             builtin_character_dir=DEFAULT_SPICA_SKILL_DIR,
+            secrets_provider=lambda: self.loaded_secrets,
         )
 
     @property
@@ -300,7 +302,7 @@ class AppHost:
                 self.dialogue_style = None
                 self.dialogue_style_error = str(exc)
                 logger.warning("Dialogue style unavailable; using built-in artwork: %s", exc)
-            self.secrets = load_secrets()
+            self.secrets = self.loaded_secrets.secrets if self.loaded_secrets is not None else load_secrets()
             # Load external plugins so they can register adapters/tools into the
             # registry before capabilities are resolved by configured name (Phase 8).
             self.plugin_host.load()

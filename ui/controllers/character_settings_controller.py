@@ -31,8 +31,8 @@ class CharacterSettingsController(QObject):
         self.refresh()
 
     def save_interlocutor_name(self, name) -> bool:
-        if self.worker is not None:
-            self.panel.interlocutor_name_status.setText("角色或样式正在保存，请完成后再修改称呼。")
+        if self.panel.settings_busy:
+            self.panel.interlocutor_name_status.setText("设置正在保存，请完成后再修改称呼。")
             return False
         surface = getattr(self.window.host, "management_surface", None)
         if surface is None:
@@ -159,7 +159,7 @@ class CharacterSettingsController(QObject):
         self._start(operation, "正在导出角色…")
 
     def _start(self, operation, message, *, style=False):
-        if self.worker is not None:
+        if self.panel.settings_busy:
             return
         self.panel.set_character_busy(True)
         self._style_operation = style

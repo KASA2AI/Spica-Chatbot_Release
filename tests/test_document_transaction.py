@@ -20,8 +20,8 @@ from spica.config.document_transaction import (
     ManagedDocumentTransaction,
     RestorePointError,
 )
-from spica.adapters.config_studio.platform import platform_capabilities_for
-from support.config_studio_transactions import after_first_transaction_fsync
+from spica.adapters.config_platform import platform_capabilities_for
+from support.document_transactions import after_first_transaction_fsync
 
 
 def _transaction(document, *, backup_root, **kwargs):
@@ -767,7 +767,7 @@ def test_commit_callback_failure_removes_only_attempt_state(
 
     assert document.read_bytes() == original
     assert transaction.restore_points() == ()
-    assert not list(tmp_path.glob(".app.yaml.config-studio-*"))
+    assert not list(tmp_path.glob(".app.yaml.config-*"))
 
 
 def test_transactions_for_one_document_share_a_bounded_process_mutex(
@@ -832,7 +832,7 @@ import sys
 import time
 from pathlib import Path
 import spica.config.document_transaction as module
-from spica.adapters.config_studio.platform import current_platform_capabilities
+from spica.adapters.config_platform import current_platform_capabilities
 
 document, backup_root, marker, lock_root = map(Path, sys.argv[1:])
 real_replace = module.os.replace
@@ -926,7 +926,7 @@ def test_failed_publish_leaves_original_bytes_intact_and_removes_temp_file(
         )
 
     assert document.read_bytes() == b"safe: original\n"
-    assert not list(tmp_path.glob(".app.yaml.config-studio-*"))
+    assert not list(tmp_path.glob(".app.yaml.config-*"))
     assert transaction.restore_points() == ()
 
 
@@ -1653,7 +1653,7 @@ def test_rollback_callback_failure_keeps_selected_restore_point_only(
 
     assert document.read_bytes() == b"version: current\n"
     assert tuple(item.id for item in transaction.restore_points()) == restore_ids_before
-    assert not list(tmp_path.glob(".app.yaml.config-studio-*"))
+    assert not list(tmp_path.glob(".app.yaml.config-*"))
 
 
 def test_restore_snapshot_is_safe_for_backend_semantic_preview_only(tmp_path):

@@ -1,4 +1,4 @@
-"""Platform capability values consumed by Config Studio owners.
+"""Platform capability values consumed by local configuration owners.
 
 This port is deliberately free of host detection and operating-system APIs.
 Concrete file locking and capability detection live under ``spica.adapters``.
@@ -48,11 +48,10 @@ class PlatformCapabilities:
     file_identity: StableFileIdentityPort = field(repr=False, compare=False)
     posix_permissions: bool
     managed_document_writes: bool
-    sensitive_document_writes: bool
-    self_check_containment: bool
 
     @property
     def default_lock_root(self) -> Path:
+        # Keep the existing lock namespace compatible with older desktop processes.
         if self.posix_permissions and self.user_id is not None:
             return self.temp_directory / f"spica-config-studio-locks-{self.user_id}"
         return self.temp_directory / "spica-config-studio-locks"

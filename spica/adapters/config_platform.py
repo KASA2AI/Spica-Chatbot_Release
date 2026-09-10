@@ -1,4 +1,4 @@
-"""Host detection and cross-process locking for Config Studio."""
+"""Host detection and cross-process locking for local configuration files."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-from spica.ports.config_studio_platform import PlatformCapabilities
+from spica.ports.config_platform import PlatformCapabilities
 
 
 class _UnavailableFileLock:
@@ -132,8 +132,6 @@ def platform_capabilities_for(
         ),
         posix_permissions=valid_posix_user,
         managed_document_writes=verified_linux,
-        sensitive_document_writes=verified_linux,
-        self_check_containment=verified_linux,
     )
 
 
@@ -151,33 +149,7 @@ def current_platform_capabilities() -> PlatformCapabilities:
     )
 
 
-def linux_self_check_base_environment(
-    platform: PlatformCapabilities,
-) -> dict[str, str]:
-    """Build the fixed child-process base for the verified Linux adapter."""
-
-    import pwd
-
-    if not platform.self_check_containment or platform.user_id is None:
-        raise ValueError("self-check platform containment is unavailable")
-    home = pwd.getpwuid(platform.user_id).pw_dir
-    if not isinstance(home, str) or not Path(home).is_absolute():
-        raise ValueError("self-check account home is unavailable")
-    return {
-        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "HOME": home,
-        "TMPDIR": "/tmp",
-        "TMP": "/tmp",
-        "TEMP": "/tmp",
-        "LANG": "C.UTF-8",
-        "LC_ALL": "C.UTF-8",
-        "PYTHONUTF8": "1",
-        "PYTHONIOENCODING": "utf-8",
-    }
-
-
 __all__ = [
     "current_platform_capabilities",
-    "linux_self_check_base_environment",
     "platform_capabilities_for",
 ]

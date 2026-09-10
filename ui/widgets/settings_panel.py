@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QSlider,
     QScrollArea,
+    QSpinBox,
+    QTabWidget,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -36,6 +38,7 @@ from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, DEFAULT_DIALOGUE_OPACITY, scaled_px
 from ui.widgets.icons import line_icon
 from ui.widgets.package_combo_box import PackageComboBox
+from ui.widgets.application_settings_page import ApplicationSettingsPage
 
 # Shared motion language (2026-07-22): panel slides in from the right while
 # fading, InOutCubic. Aesthetic constants, deliberately NOT configuration.
@@ -72,6 +75,8 @@ class SettingsPanel(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self._scale = 1.0
+        self._character_busy = False
+        self._application_busy = False
 
         # The ONLY QGraphicsEffect in this subtree lives on the panel root
         # (children stay effect-free); it carries the open/close fade.
@@ -121,7 +126,12 @@ class SettingsPanel(QFrame):
         body_layout.setContentsMargins(0, 0, 8, 0)
         body_layout.setSpacing(10)
         self.scroll_area.setWidget(body)
-        layout.addWidget(self.scroll_area, 1)
+        self.tabs = QTabWidget(self)
+        self.tabs.setObjectName("settingsTabs")
+        self.tabs.addTab(self.scroll_area, "角色与外观")
+        self.application_page = ApplicationSettingsPage(self)
+        self.tabs.addTab(self.application_page, "应用设置")
+        layout.addWidget(self.tabs, 1)
 
         self.character_box = PackageComboBox(self)
         self.character_box.removal_requested.connect(self.character_remove_requested.emit)
@@ -337,10 +347,10 @@ class SettingsPanel(QFrame):
         self.exit_button.clicked.connect(self.exit_requested.emit)
         actions.addWidget(self.exit_button)
         layout.addLayout(actions)
-        for editor in self.findChildren(QSlider) + self.findChildren(QDoubleSpinBox) + [self.costume_box]:
+        for editor in self.findChildren(QSlider) + self.findChildren(QDoubleSpinBox) + self.findChildren(QComboBox) + self.findChildren(QSpinBox):
             editor.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             editor.installEventFilter(self)
-        for spin in self.findChildren(QDoubleSpinBox):
+        for spin in self.findChildren(QAbstractSpinBox):
             spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.apply_scale(1.0)
 
@@ -359,8 +369,23 @@ class SettingsPanel(QFrame):
         self.character_box.blockSignals(False)
 
     def set_character_busy(self, busy: bool) -> None:
+        self._character_busy = busy
+        self._update_settings_busy()
+
+    def set_application_busy(self, busy: bool) -> None:
+        self._application_busy = busy
+        self._update_settings_busy()
+
+    @property
+    def settings_busy(self) -> bool:
+        return self._character_busy or self._application_busy
+
+    def _update_settings_busy(self) -> None:
+        busy = self.settings_busy
+        self.application_page.set_busy(busy)
         self.name_input.setEnabled(not busy)
         self.restart_button.setEnabled(not busy)
+        self.exit_button.setEnabled(not busy)
         self.dialogue_style_box.setEnabled(not busy)
         self.dialogue_style_import_button.setEnabled(not busy)
         for widget in (self.character_box, self.character_import_button,
@@ -603,7 +628,8 @@ class SettingsPanel(QFrame):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if event.type() == QEvent.Type.Wheel:
             # Scrolling a settings page must not silently change clothes/volume.
-            bar = self.scroll_area.verticalScrollBar()
+            scroll = self.application_page.scroll_area if self.tabs.currentWidget() is self.application_page else self.scroll_area
+            bar = scroll.verticalScrollBar()
             delta = event.pixelDelta().y()
             if not delta:
                 delta = round(event.angleDelta().y() / 120 * bar.singleStep() * 3)
@@ -634,9 +660,17 @@ class SettingsPanel(QFrame):
     def _build_stylesheet(self, scale: float) -> str:
         font = scaled_px(13, scale)
         return f"""
-            QFrame#settingsPanel, QWidget#settingsBody, QScrollArea#settingsScroll {{
+            QFrame#settingsPanel, QWidget#settingsBody, QWidget#applicationSettings, QScrollArea#settingsScroll {{
                 background: transparent; border: none;
             }}
+            QTabWidget::pane {{ background: transparent; border: none; }}
+            QTabBar::tab {{
+                color: #AEC4DF; background: transparent;
+                padding: {scaled_px(8, scale)}px {scaled_px(12, scale)}px;
+                font-size: {font}px; border-bottom: 2px solid transparent;
+            }}
+            QTabBar::tab:selected {{ color: #F1F5FA; border-bottom-color: #F6A3C5; }}
+            QLabel#settingsHint {{ color: #AEC4DF; font-size: {scaled_px(11, scale)}px; }}
             QLabel {{ background: transparent; color: #E4EDF7; font-size: {font}px; }}
             QLabel#settingsTitle {{ color: #F1F5FA; font-size: {scaled_px(17, scale)}px; }}
             QLabel#settingsSection {{
@@ -644,7 +678,7 @@ class SettingsPanel(QFrame):
                 padding-top: {scaled_px(8, scale)}px;
                 padding-bottom: {scaled_px(3, scale)}px;
             }}
-            QComboBox, QLineEdit, QDoubleSpinBox {{
+            QComboBox, QLineEdit, QDoubleSpinBox, QSpinBox {{
                 min-height: {scaled_px(28, scale)}px;
                 border: 1px solid rgba(185, 211, 238, 65);
                 border-radius: {scaled_px(5, scale)}px;
@@ -695,6 +729,7 @@ class SettingsPanel(QFrame):
             QPushButton#restartSpicaButton:hover {{ background: rgba(233, 78, 139, 35); }}
             QPushButton#restartSpicaButton:disabled {{ color: #8E8591; border-color: transparent; }}
             QPushButton#exitSpicaButton {{ color: #F4D7DD; }}
+            QPushButton#saveApplicationButton {{ color: #F6A3C5; border-color: rgba(233, 78, 139, 85); }}
             QPushButton#exitSpicaButton:hover {{ background: rgba(181, 127, 146, 36); }}
             QFrame#settingsSeparator {{ background: rgba(201, 219, 239, 35); border: none; }}
             QScrollBar:vertical {{

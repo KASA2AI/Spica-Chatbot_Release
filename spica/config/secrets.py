@@ -677,6 +677,69 @@ class LoadedSecrets:
             raise EnvironmentRefreshError("environment refresh failed")
         return self._preserve_inherited_taint(refreshed)
 
+    def restart_environment(self) -> dict[str, str]:
+        """Environment for execve: exclude values primed from the old dotenv.
+
+        Contains credentials; pass directly to the process launcher, never log it.
+        The new process loads the current dotenv using normal precedence.
+        """
+        return self._inherited_environment()
+
+    def write_local_secret(self, slot: str, value: str) -> None:
+        """Update one local credential; keep the running process unchanged."""
+        import tempfile
+        from spica.config.manager import ConfigManager
+
+        if slot not in {"openai_api_key"}:
+            raise ValueError("此设置不支持编辑该密钥。")
+        if not value.strip() or any(char in value for char in "\r\n\0"):
+            raise ValueError("密钥不能为空，也不能包含换行。")
+        path = self._refresh_repo_env_path
+        if path is None:
+            raise ValueError("密钥来源不可用，请从桌面入口重新启动程序。")
+        with ConfigManager._update_lock:
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                raise ValueError("xiaosan.env 必须是本机普通文件。")
+            before = path.read_bytes() if path.exists() else b""
+            name = SECRETS_ENV_MAP[slot]
+            bindings = list(parse_stream(io.StringIO(before.decode("utf-8"))))
+            if any(binding.error for binding in bindings):
+                raise ValueError("xiaosan.env 格式有误，请先修正后再保存密钥。")
+            escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+            assignment = f"{name}='{escaped}'\n"
+            # dotenv interpolation is ordered. Replace at the first existing
+            # assignment so later references still resolve; drop duplicates.
+            parts = []
+            replaced = False
+            for binding in bindings:
+                if binding.key == name:
+                    if not replaced:
+                        parts.append(assignment)
+                        replaced = True
+                else:
+                    parts.append(binding.original.string)
+            if not replaced:
+                parts.insert(0, assignment)
+            candidate = "".join(parts).encode("utf-8")
+            after = self.resolve_repo_dotenv(candidate)
+            if not self.repo_secret_roundtrips(candidate, slot=slot, expected_value=value):
+                raise ValueError("密钥包含 dotenv 插值，无法原样保存。")
+            if after.secret_source(slot) != "repo_dotenv":
+                raise ValueError(f"{name} 由启动环境覆盖，请先移除该环境变量后重新启动程序。")
+            temporary = None
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".secret-", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(candidate)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary.chmod(0o600)
+                temporary.replace(path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+
     def _inherited_environment(self) -> dict[str, str]:
         return self._inherited_interpolation_base.copy_mapping()
 
@@ -735,7 +798,7 @@ def load_secrets(
     if not with_environment_snapshot:
         # Keep the long-standing zero-argument owner call intact.  Existing
         # entry points and tests replace this boundary with a no-argument
-        # function; explicit paths are a Config Studio-only opt-in.
+        # function; explicit paths are an opt-in for isolated configuration inspection.
         if repo_env_path is None and parent_env_path is None:
             _ensure_env_loaded()
         else:

@@ -26,11 +26,11 @@ def test_python_entry_anchors_resources_before_starting_ui(tmp_path, monkeypatch
     monkeypatch.setattr(webui_qt, "_configure_linux_alsa_plugins", lambda: None)
     monkeypatch.setattr(webui_qt, "_configure_linux_input_method", lambda: None)
     seen = []
-    monkeypatch.setattr(qt_overlay, "load_secrets", lambda: None)
+    monkeypatch.setattr(qt_overlay, "load_secrets", lambda **kwargs: None)
     monkeypatch.setattr(qt_overlay, "QApplication", lambda _args: seen.append(Path.cwd()) or SimpleNamespace(
         setQuitOnLastWindowClosed=lambda _value: None, exec=lambda: 7,
     ))
-    monkeypatch.setattr(qt_overlay, "OverlayWindow", lambda: SimpleNamespace(
+    monkeypatch.setattr(qt_overlay, "OverlayWindow", lambda **kwargs: SimpleNamespace(
         show=lambda: None, _restart_requested=False,
     ))
     assert webui_qt.main() == 7

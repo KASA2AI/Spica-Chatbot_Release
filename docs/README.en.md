@@ -4,7 +4,7 @@
 
 Start with text chat, then add characters, voices, and styles. Run commands from the **project root** in the activated `spica` environment. Install the base dependencies from the [main README](../README.en.md) first.
 
-[Startup](#setup) · [Import](#import) · [Cards & artwork](#character) · [Speech](#voice) · [Animation](#animation) · [Dialogue styles](#dialogue) · [Config Studio](#studio)
+[Startup](#setup) · [Import](#import) · [Cards & artwork](#character) · [Speech](#voice) · [Animation](#animation) · [Dialogue styles](#dialogue) · [Change local settings](#settings)
 
 <a id="setup"></a>
 ## 1. Start with text chat
@@ -194,15 +194,17 @@ Import this folder separately in settings and restart. Button behavior and setti
 
 **× → 确定移除** removes a list entry while preserving sources and memory; reimport it later to restore it. **导出分享包** exports without app-saved private memory; **导出个人存档** includes personal memory for migration. Export to a new folder, then ZIP it. Check for private text written into the card and credit asset sources before sharing. Restart after changing the user name, character, or style.
 
-<a id="studio"></a>
-## 8. Local Config Studio (optional)
+<a id="settings"></a>
+## 8. Change local settings
 
-```bash
-python -m pip install -r docs/requirements/requirements-config-studio.txt
-python scripts/config_studio.py --port 8765
-```
+The desktop settings window has two tabs:
 
-The default address is `127.0.0.1:8765`. Add `--no-open-browser` to open it manually using the terminal's one-time bootstrap grant; exit with `Ctrl+C`. Choose **中文 / English / 日本語**. The language switch changes presentation text only; it does not change configuration keys or values. Linux supports saving; Windows Config Studio is currently read-only. On Windows, use desktop settings for characters/styles/names, and edit YAML / `xiaosan.env` for other settings, then restart.
+- **角色与外观 (Character & appearance)**: characters, costumes, dialogue styles, your name, scale, transparency, and volume.
+- **应用设置 (Application)**: API address, model, reasoning effort, speech recognition, speech output, screen understanding, singing, anime, and companion reactions. Device, warmup, and defaults are under **高级选项 (Advanced)**.
+
+Enter an API key and click **保存密钥 (Save key)**. For other changes, use **保存应用设置 (Save application settings) → 重启程序 (Restart)**. An empty key field keeps the existing key. The connection test checks the model list without sending a chat message. With no API key configured, the application tab opens automatically on startup.
+
+Application preferences stay in local `data/config/app.yaml`, and keys stay in `xiaosan.env`. Switching characters preserves them; shared packs do not contain keys. Fields controlled by legacy environment variables or files show their source and reject conflicting saves; remove that override and restart. Restoring defaults only changes this page's draft and still requires saving; characters, memory, and keys are preserved. The browser configuration tool has been retired.
 
 ## Troubleshooting
 

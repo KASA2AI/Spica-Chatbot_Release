@@ -27,13 +27,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from spica.config.secrets import load_secrets
+from spica.config.secrets import LoadedSecrets, load_secrets
 from spica.conversation.character_loader import DEFAULT_INTERLOCUTOR_NAME
 from spica.core.proactive import NO_COMMENT_SENTINEL, ProactiveTurnArbiter
 from spica.host.app_host import AppHost
 from ui.controllers.anime_controller import AnimeController
 from ui.controllers.audio_controller import AudioController
 from ui.controllers.character_settings_controller import CharacterSettingsController
+from ui.controllers.application_settings_controller import ApplicationSettingsController
 from ui.controllers.chat_stream_controller import ChatStreamController
 from ui.controllers.companion_event_bridge import CompanionEventBridge
 from ui.controllers.dialogue_visibility_controller import (
@@ -111,8 +112,9 @@ class OverlayWindow(QWidget):
     # thread -- see _start_system_turn. Qt signals must be class attributes.
     _system_turn_requested = Signal(object)  # carries a ProactiveTurnRequest
 
-    def __init__(self) -> None:
+    def __init__(self, *, loaded_secrets: LoadedSecrets | None = None) -> None:
         super().__init__(None)
+        self._loaded_secrets = loaded_secrets
         self._restart_requested = False
         self._restart_timer = QTimer(self)
         self._restart_timer.setInterval(250)
@@ -385,12 +387,14 @@ class OverlayWindow(QWidget):
         self._load_default_character()
         self._size_to_screen()
         self._start_startup_warmup()
+        if loaded_secrets is not None and not loaded_secrets.secrets.openai_api_key:
+            QTimer.singleShot(0, self.open_application_settings)
 
     def _init_backend(self) -> None:
         # Composition root now lives in AppHost.initialize() (Phase 1). The UI no
         # longer constructs services; it reads them back from the host. Qt wiring
         # (chat stream controller, dialogue messages) stays here.
-        self.host = AppHost()
+        self.host = AppHost(loaded_secrets=self._loaded_secrets)
         # P0b 2b: the song controller was constructed before the host exists
         # (UI wiring order); hand it the host-resolved song config now.
         self.song_controller.song_config = self.host.song_config
@@ -1475,6 +1479,7 @@ class OverlayWindow(QWidget):
         if self.settings_panel is None:
             self.settings_panel = SettingsPanel(self)
             self.character_settings_controller = CharacterSettingsController(self, self.settings_panel)
+            self.application_settings_controller = ApplicationSettingsController(self, self.settings_panel)
             self.settings_panel.close_requested.connect(self._close_settings_panel)
             self.settings_panel.exit_requested.connect(self.close)
             self.settings_panel.restart_requested.connect(self.restart_application)
@@ -1500,6 +1505,7 @@ class OverlayWindow(QWidget):
         self.settings_panel.set_costumes(self.available_costumes, self.selected_costume)
         self.settings_panel.set_costume_enabled(not self._is_conversation_busy())
         self.character_settings_controller.refresh()
+        self.application_settings_controller.refresh()
         self.settings_panel.set_scale(self.character_scale)
         self.settings_panel.set_overall_scale(self.ui_scale)
         self.settings_panel.set_typing_speed(self.typewriter_controller.typewriter_speed)
@@ -1514,15 +1520,24 @@ class OverlayWindow(QWidget):
         self._update_click_through_mask()
         self.settings_panel.close_button.setFocus(Qt.FocusReason.OtherFocusReason)
 
+    def open_application_settings(self) -> None:
+        if self.settings_panel is None or not self.settings_panel.isVisible():
+            self.open_settings_panel()
+        self.settings_panel.tabs.setCurrentWidget(self.settings_panel.application_page)
+
     def restart_application(self) -> None:
         if self._restart_requested or self._forced_close_armed:
             return
         controller = getattr(self, "character_settings_controller", None)
         if controller is not None and controller.worker is not None:
             return  # Finish the package/config write before stopping its owner.
+        if self.settings_panel is not None:
+            QApplication.inputMethod().commit()
+        application = getattr(self, "application_settings_controller", None)
+        if application is not None and not application.prepare_restart():
+            return
         panel = self.settings_panel
         if panel is not None:
-            QApplication.inputMethod().commit()
             if controller is not None and not controller.save_interlocutor_name(panel.name_input.text()):
                 return
             panel.name_input.clearFocus()
@@ -1876,6 +1891,11 @@ class OverlayWindow(QWidget):
         self.move(target)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        application = getattr(self, "application_settings_controller", None)
+        if application is not None and application.worker is not None and application._operation in {"save", "secret"}:
+            application.page.status.setText("正在保存，请稍候再退出。")
+            event.ignore()
+            return
         if self._forced_close_armed:
             owners = ",".join(self._forced_close_owners) or "unknown"
             armed_at = self._forced_close_armed_at or 0.0
@@ -2127,7 +2147,7 @@ def main() -> int:
     # (CLAUDE.md #10, F19). Construction-time env readers (the song intent
     # classifier in SongController) used to run before AppHost.initialize()'s
     # load_secrets(), read an un-primed environment, and stay disabled forever.
-    load_secrets()
+    startup_secrets = load_secrets(with_environment_snapshot=True)
     # Keep the caller's directory for relative script/module restart arguments,
     # then anchor resources before loading app configuration or starting workers.
     # load_secrets above already anchors its dotenv path to the repository.
@@ -2150,15 +2170,15 @@ def main() -> int:
     )
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
-    window = OverlayWindow()
+    window = OverlayWindow(loaded_secrets=startup_secrets)
     window.show()
     exit_code = app.exec()
     if window._restart_requested and exit_code == 0:
         try:
             os.chdir(restart_cwd)
             # Replace this process, preserving the interpreter, launch mode,
-            # arguments and inherited environment. No second model owner.
-            os.execv(sys.executable, restart_args)
+            # arguments and original launch environment. Fresh dotenv on restart.
+            os.execve(sys.executable, restart_args, startup_secrets.restart_environment())
         except OSError as exc:
             logger.error("event=desktop_restart_failed exception_type=%s", type(exc).__name__)
             QMessageBox.critical(None, "重启失败", "桌面程序已停止，但未能重新启动。请从原入口手动启动。")

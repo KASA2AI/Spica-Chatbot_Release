@@ -134,7 +134,7 @@ def test_no_legacy_residue_loads_quietly(monkeypatch, caplog):
 
 
 def test_qt_overlay_main_primes_secrets_first():
-    """AST pin: the FIRST statement of qt_overlay.main() is load_secrets().
+    """AST pin: the FIRST statement primes secrets and retains the startup snapshot.
     Anything constructed before priming reads an un-primed environment and
     stays wrong forever (F19) -- this keeps the P0a fix from being hoisted away."""
     tree = ast.parse((REPO_ROOT / "ui" / "qt_overlay.py").read_text(encoding="utf-8"))
@@ -150,11 +150,14 @@ def test_qt_overlay_main_primes_secrets_first():
         statements = statements[1:]
     first = statements[0]
     assert (
-        isinstance(first, ast.Expr)
+        isinstance(first, ast.Assign)
         and isinstance(first.value, ast.Call)
         and isinstance(first.value.func, ast.Name)
         and first.value.func.id == "load_secrets"
-    ), "qt_overlay.main() must call load_secrets() as its FIRST statement (CLAUDE.md #10 / F19)"
+        and any(keyword.arg == "with_environment_snapshot" and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True for keyword in first.value.keywords)
+        and not any(keyword.arg == "prime_process" for keyword in first.value.keywords)
+    ), "qt_overlay.main() must first prime load_secrets(with_environment_snapshot=True), retaining its result for restart (CLAUDE.md #10 / F19)"
 
 
 if __name__ == "__main__":

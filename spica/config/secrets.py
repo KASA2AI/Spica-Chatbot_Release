@@ -693,6 +693,7 @@ class LoadedSecrets:
     def write_local_secret(self, slot: str, value: str) -> None:
         """Update one local credential; keep the running process unchanged."""
         import tempfile
+        from spica.adapters.config_platform import current_platform_capabilities
         from spica.config.manager import ConfigManager
 
         if slot not in {"openai_api_key", "dashscope_api_key"}:
@@ -736,12 +737,26 @@ class LoadedSecrets:
             temporary = None
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".secret-", delete=False) as stream:
+                native = current_platform_capabilities().native_files
+                if native is None:
+                    stream = tempfile.NamedTemporaryFile(dir=path.parent, prefix=".secret-", delete=False)
                     temporary = Path(stream.name)
+                else:
+                    # chmod only changes the read-only bit on Windows. Create
+                    # the credential with a private DACL before writing bytes.
+                    descriptor, name = native.create_temporary(path.parent, ".secret-")
+                    temporary = Path(name)
+                    try:
+                        stream = os.fdopen(descriptor, "wb")
+                    except BaseException:
+                        os.close(descriptor)
+                        raise
+                with stream:
                     stream.write(candidate)
                     stream.flush()
                     os.fsync(stream.fileno())
-                temporary.chmod(0o600)
+                if native is None:
+                    temporary.chmod(0o600)
                 temporary.replace(path)
             finally:
                 if temporary is not None:

@@ -7,6 +7,7 @@ the required/loud-failure guards, realpath containment, the gitignore gate, and 
 no-output-dir-created invariant.
 """
 
+from support.filesystem import symlink_or_skip
 import copy
 import hashlib
 import json
@@ -175,7 +176,7 @@ class RvcDryRunTest(_RvcFixture):
     def test_realpath_containment_aborts(self):
         # output that, after realpath, lands inside the source via a symlink -> abort.
         link = self.repo / "sneaky"
-        link.symlink_to(self.src)
+        symlink_or_skip(link, self.src)
         with self.assertRaises(BuildAbort):
             self._plan(output_dir=str(link / "slim"))
         # source inside output -> abort

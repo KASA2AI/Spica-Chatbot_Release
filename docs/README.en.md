@@ -110,10 +110,13 @@ Use pack-relative paths with `/`, without absolute paths or `..`; filenames must
 | Purpose | Required models |
 | --- | --- |
 | Speaking voice | A matching GPT-SoVITS **v2Pro / v2ProPlus** pair: GPT `.ckpt`, SoVITS `.pth`, reference WAV |
-| Microphone recognition | The complete CTranslate2 `large-v3-turbo` model directory |
+| Microphone recognition | The complete `Qwen3-ASR-1.7B` model directory |
 | Singing | RVC v2 `.pth`, optionally its matching `.index`; separate from TTS |
 
 **Install the local environment once.** After base installation, use this order for NVIDIA / Python 3.11. Keep NumPy 1.26.x; do not install the separate-worker `requirements-rvc.txt` into this environment.
+
+
+On Windows, use `python scripts/windows/setup_environment.py --profile full --install` in the existing app environment, then run it with `--check`. See the [Windows guide](WINDOWS.md). The manual commands below describe the Linux main environment; Linux keeps Qwen in a separate worker environment.
 
 ```bash
 python -m pip uninstall -y onnxruntime
@@ -215,9 +218,10 @@ Application preferences stay in local `data/config/app.yaml`, and keys stay in `
 
 ## Qwen3-ASR: local / cloud
 
-Local ASR uses **Qwen3-ASR-1.7B** in a separate Python environment; do not
-install its Transformers dependencies into the screen/RVC environment.
-Create a Python 3.11 environment, install a matching PyTorch build, then run:
+Local ASR uses **Qwen3-ASR-1.7B**. Windows reuses the single app environment
+prepared by the [Windows setup](WINDOWS.md); leave the ASR Python setting empty.
+Linux retains a separate Qwen worker environment. For Linux, prepare Python 3.11
+with matching PyTorch, then run:
 
 ```bash
 python -m pip install -r docs/requirements/requirements-qwen-asr.txt
@@ -226,7 +230,7 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwe
 
 In **设置 → 应用设置**, choose 本地 Qwen3-ASR-1.7B, set 本地模型目录 and
 本地识别 Python to the downloaded directory and that environment's Python
-executable (Windows: `Scripts/python.exe`; Linux: `bin/python`). CPU uses
+executable (Linux: `bin/python`; Windows uses the app Python). CPU uses
 `float32`; a supported NVIDIA GPU can use `bfloat16` or `float16`.
 Save and restart. The application does not download models while chatting.
 
@@ -236,7 +240,7 @@ region, save and restart. Valid utterances are uploaded to that service and
 may incur charges; startup/self-check does not upload audio or verify billing.
 There is no automatic fallback from local to cloud.
 
-旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新配置模型目录与独立 Python，
+旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新配置模型目录（Windows 使用当前 Python），
 或明确选择云端。密钥保存在本机 xiaosan.env，不放在 app.yaml 或角色包内。
 普通 USB/系统麦克风在两个平台均可使用；只有使用 ReSpeaker 硬件 VAD 时才选择该选项。
 

@@ -108,7 +108,7 @@ def platform_capabilities_for(
     user_id: int | None,
     temp_directory: str | Path,
 ) -> PlatformCapabilities:
-    """Build explicit capabilities; only the verified Linux lane may write."""
+    """Build platform operations without importing another OS's native APIs."""
 
     if not isinstance(os_family, str) or not isinstance(runtime_name, str):
         raise TypeError("platform names must be strings")
@@ -119,19 +119,27 @@ def platform_capabilities_for(
         and user_id >= 0
     )
     verified_linux = valid_posix_user and runtime_name == "linux"
+    verified_windows = os_family == "nt" and runtime_name == "win32"
+    native_files = None
+    file_lock = _FcntlFileLock() if verified_linux else _UnavailableFileLock()
+    if verified_windows:
+        from spica.adapters.windows_document_files import WindowsDocumentFiles, WindowsFileLock
+        native_files = WindowsDocumentFiles()
+        file_lock = WindowsFileLock()
     return PlatformCapabilities(
         os_family=os_family,
         runtime_name=runtime_name,
         user_id=user_id if valid_posix_user else None,
         temp_directory=Path(temp_directory),
-        file_lock=_FcntlFileLock() if verified_linux else _UnavailableFileLock(),
+        file_lock=file_lock,
         file_identity=(
             _PosixStableFileIdentity(user_id)
             if verified_linux
-            else _UnavailableStableFileIdentity()
+            else native_files if verified_windows else _UnavailableStableFileIdentity()
         ),
         posix_permissions=valid_posix_user,
-        managed_document_writes=verified_linux,
+        managed_document_writes=verified_linux or verified_windows,
+        native_files=native_files,
     )
 
 

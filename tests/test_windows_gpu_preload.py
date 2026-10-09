@@ -217,7 +217,7 @@ class TestBackendCudaPreloadWindows:
         assert mocks.loaded_dlls == [str(tmp_path / "ctranslate2" / "cudnn64_9.dll")]
 
     def test_linux_entrypoint_never_calls_windows_helper(self, monkeypatch, clean_state):
-        assert os.name != "nt", "this pin is meaningful on the Linux dev machine only"
+        monkeypatch.setitem(sys.modules, "os", SimpleNamespace(name="posix", path=os.path))
         calls = []
         monkeypatch.setattr(backend, "_preload_cuda_libraries_windows", lambda: calls.append(1))
         monkeypatch.setattr(backend, "_CUDA_PRELOADED", False)
@@ -256,7 +256,7 @@ class TestTrtRuntimePreloadWindows:
         assert not any(n.startswith("nvinfer") for n in names)
 
     def test_linux_entrypoint_never_calls_windows_helper(self, monkeypatch, clean_state):
-        assert os.name != "nt"
+        monkeypatch.setattr(trt_runtime, "os", SimpleNamespace(name="posix", path=os.path))
         calls = []
         monkeypatch.setattr(
             trt_runtime, "_preload_inference_libs_windows", lambda: calls.append(1)

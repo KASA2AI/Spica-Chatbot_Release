@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from support.filesystem import symlink_or_skip
 import asyncio
 import json
 from pathlib import Path
@@ -151,7 +152,7 @@ def test_invalid_style_never_changes_selection(style_folder, tmp_path, failure, 
     elif failure == "symlink":
         image = style_folder / "images/tail.png"
         image.rename(tmp_path / "outside.png")
-        image.symlink_to(tmp_path / "outside.png")
+        symlink_or_skip(image, tmp_path / "outside.png")
     elif failure == "corrupt":
         (style_folder / "images/tail.png").write_bytes(b"not png")
     elif failure == "grid":

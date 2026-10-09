@@ -135,6 +135,7 @@ class ManagedDocumentTransaction:
         ):
             raise ValueError("private POSIX documents must publish with mode 0600")
         self._platform = platform_capabilities
+        self._native_files = platform_capabilities.native_files
         self.document_path = Path(document_path)
         self.backup_root = Path(backup_root)
         self.retention = retention
@@ -172,7 +173,7 @@ class ManagedDocumentTransaction:
             candidate_unchanged = DocumentRevision.from_bytes(candidate) == current.revision
             mode_already_matches = (
                 self.publish_mode is None
-                or self._current_mode() == self.publish_mode
+                or self._mode_matches(self.document_path, self.publish_mode)
             )
             if candidate_unchanged and mode_already_matches:
                 return DocumentCommit(current, None)
@@ -220,8 +221,8 @@ class ManagedDocumentTransaction:
                 published,
                 restore_point,
                 publication_maintenance
-                or publication.maintenance_code
-                or retention_maintenance,
+                or retention_maintenance
+                or publication.maintenance_code,
             )
             return result
 
@@ -290,8 +291,8 @@ class ManagedDocumentTransaction:
                 published,
                 undo_restore_point,
                 publication_maintenance
-                or publication.maintenance_code
-                or retention_maintenance,
+                or retention_maintenance
+                or publication.maintenance_code,
             )
             return result
 
@@ -389,7 +390,10 @@ class ManagedDocumentTransaction:
     def _capture_file_identity(self, descriptor: int) -> object | None:
         if not self._platform.managed_document_writes:
             return None
-        return self._platform.file_identity.capture_descriptor(descriptor)
+        try:
+            return self._platform.file_identity.capture_descriptor(descriptor)
+        except OSError as exc:
+            raise DocumentSafetyError("managed document identity is unsafe") from exc
 
     def _same_identity(self, left: object | None, right: object | None) -> bool:
         if left is None or right is None:
@@ -462,7 +466,7 @@ class ManagedDocumentTransaction:
                 current_stat = current.lstat()
             except FileNotFoundError as exc:
                 raise DocumentSafetyError("managed document parent is missing") from exc
-            if not stat.S_ISDIR(current_stat.st_mode):
+            if not stat.S_ISDIR(current_stat.st_mode) or getattr(current_stat, "st_file_attributes", 0) & 0x400:
                 raise DocumentSafetyError("managed document parent is unsafe")
 
     def _read_verified_regular(
@@ -476,8 +480,10 @@ class ManagedDocumentTransaction:
     ) -> tuple[bytes, os.stat_result, object | None]:
         open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
         open_flags |= getattr(os, "O_NOFOLLOW", 0)
+        open_flags |= getattr(os, "O_BINARY", 0)
         try:
-            descriptor = os.open(path, open_flags)
+            descriptor = (self._native_files.open_read(path) if self._native_files is not None
+                          else os.open(path, open_flags))
         except OSError as exc:
             raise DocumentSafetyError("managed document changed during read") from exc
         try:
@@ -495,7 +501,9 @@ class ManagedDocumentTransaction:
             final_stat = os.fstat(descriptor)
             if not self._same_content_payload_facts(opened_stat, final_stat):
                 raise DocumentSafetyError("managed document changed during read")
-            if opened_stat.st_ctime_ns != final_stat.st_ctime_ns:
+            # Windows st_ctime is creation time, not POSIX metadata change time.
+            # Always reread there to catch a same-size edit with restored mtime.
+            if self._native_files is not None or opened_stat.st_ctime_ns != final_stat.st_ctime_ns:
                 os.lseek(descriptor, 0, os.SEEK_SET)
                 verified_chunks: list[bytes] = []
                 while chunk := os.read(descriptor, 64 * 1024):
@@ -571,6 +579,8 @@ class ManagedDocumentTransaction:
         )
 
     def _validate_managed_file_stat(self, file_stat: os.stat_result) -> None:
+        if getattr(file_stat, "st_file_attributes", 0) & 0x400:
+            raise DocumentSafetyError("managed file is a reparse point")
         if file_stat.st_nlink != 1:
             raise DocumentMultipleLinksError("managed file has multiple links")
         if (
@@ -580,8 +590,13 @@ class ManagedDocumentTransaction:
             raise DocumentWrongOwnerError("managed file owner is unsafe")
 
     def _validate_private_storage_file_stat(
-        self, file_stat: os.stat_result
+        self, file_stat: os.stat_result, path: Path | None = None
     ) -> None:
+        if self._native_files is not None:
+            if path is None:
+                raise DocumentSafetyError("private file identity is missing")
+            self._validate_native_private(path)
+            return
         if not self._platform.posix_permissions:
             return
         if (
@@ -592,6 +607,9 @@ class ManagedDocumentTransaction:
             raise DocumentSafetyError("private transaction file is unsafe")
 
     def _validate_private_directory(self, path: Path) -> None:
+        if self._native_files is not None:
+            self._validate_native_private(path, directory=True)
+            return
         if not self._platform.posix_permissions:
             return
         try:
@@ -606,10 +624,29 @@ class ManagedDocumentTransaction:
             raise DocumentSafetyError("private transaction directory is unsafe")
 
     def _current_mode(self) -> int:
+        if self._native_files is not None:
+            return 0o600  # Native publications use a private DACL, not CRT mode bits.
         try:
             return stat.S_IMODE(self.document_path.lstat().st_mode)
         except FileNotFoundError:
             return 0o600
+
+    def _validate_native_private(self, path: Path, *, directory=False) -> None:
+        try:
+            self._native_files.validate_private(path, directory=directory)
+        except OSError as exc:
+            raise DocumentSafetyError("private transaction object is unsafe") from exc
+
+    def _mode_matches(self, path: Path, mode: int) -> bool:
+        if self._native_files is not None:
+            return self._native_files.is_private(path)
+        return stat.S_IMODE(path.lstat().st_mode) == mode
+
+    def _set_descriptor_mode(self, descriptor: int, mode: int) -> None:
+        if self._native_files is not None:
+            self._native_files.harden_descriptor(descriptor, mode)
+        else:
+            os.fchmod(descriptor, mode)
 
     def _harden_current_mode(
         self,
@@ -627,8 +664,10 @@ class ManagedDocumentTransaction:
         self._validate_managed_file_stat(expected_stat)
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_BINARY", 0)
         try:
-            descriptor = os.open(self.document_path, flags)
+            descriptor = (self._native_files.open_read(self.document_path) if self._native_files is not None
+                          else os.open(self.document_path, flags))
         except OSError as exc:
             raise DocumentSafetyError("managed document changed") from exc
         try:
@@ -656,10 +695,10 @@ class ManagedDocumentTransaction:
                 != expected_snapshot.revision
             ):
                 raise DocumentConflictError("managed document changed")
-            os.fchmod(descriptor, mode)
+            self._set_descriptor_mode(descriptor, mode)
             hardened_stat = os.fstat(descriptor)
             self._validate_managed_file_stat(hardened_stat)
-            if stat.S_IMODE(hardened_stat.st_mode) != mode:
+            if not self._mode_matches(self.document_path, mode):
                 raise DocumentSafetyError("managed document mode is unsafe")
             if opened_identity is None or not self._platform.file_identity.path_matches_no_follow(
                 self.document_path,
@@ -681,7 +720,7 @@ class ManagedDocumentTransaction:
         if (
             published.revision.exists
             and self.publish_mode is not None
-            and self._current_mode() != self.publish_mode
+            and not self._mode_matches(self.document_path, self.publish_mode)
         ):
             return "DOCUMENT_PUBLICATION_PERMISSIONS_UNSAFE"
         return None
@@ -728,6 +767,8 @@ class ManagedDocumentTransaction:
                 ) != (lock_stat.st_dev, lock_stat.st_ino):
                     raise DocumentSafetyError("transaction lock is unsafe")
                 self._validate_lock_file_stat(opened_stat)
+                if self._native_files is not None:
+                    self._validate_native_private(lock_path)
                 while True:
                     if self._platform.file_lock.try_acquire(lock_descriptor):
                         break
@@ -749,8 +790,10 @@ class ManagedDocumentTransaction:
             directory_stat = path.lstat()
         except FileNotFoundError as exc:
             raise DocumentSafetyError("transaction lock directory is missing") from exc
-        if not stat.S_ISDIR(directory_stat.st_mode):
+        if not stat.S_ISDIR(directory_stat.st_mode) or getattr(directory_stat, "st_file_attributes", 0) & 0x400:
             raise DocumentSafetyError("transaction lock directory is unsafe")
+        if self._native_files is not None:
+            self._validate_native_private(path, directory=True)
         if self._platform.posix_permissions and (
             directory_stat.st_uid != self._platform.user_id
             or stat.S_IMODE(directory_stat.st_mode) != 0o700
@@ -782,6 +825,8 @@ class ManagedDocumentTransaction:
             try:
                 if self._platform.posix_permissions:
                     restore_dir.chmod(0o700)
+                if self._native_files is not None:
+                    self._native_files.prepare_directory(restore_dir)
                 self._validate_private_directory(restore_dir)
                 if snapshot.revision.exists:
                     self._write_exclusive_private(
@@ -865,6 +910,14 @@ class ManagedDocumentTransaction:
 
     def _delete_restore_point(self, restore_point_id: str) -> None:
         restore_dir = self._restore_point_directory(restore_point_id)
+        try:
+            restore_stat = restore_dir.lstat()
+        except FileNotFoundError:
+            # A pre-publication conflict may already have discarded this exact
+            # attempt. Outer cleanup must not turn it into a maintenance error.
+            return
+        if not stat.S_ISDIR(restore_stat.st_mode) or getattr(restore_stat, "st_file_attributes", 0) & 0x400:
+            raise DocumentSafetyError("restore point is unsafe")
         for filename in ("content", "metadata"):
             child = restore_dir / filename
             try:
@@ -873,18 +926,17 @@ class ManagedDocumentTransaction:
                 continue
             if not stat.S_ISREG(child_stat.st_mode):
                 raise DocumentSafetyError("restore point is unsafe")
-            self._validate_private_storage_file_stat(child_stat)
+            self._validate_private_storage_file_stat(child_stat, child)
             child.unlink()
         restore_dir.rmdir()
         self._fsync_directory(self._document_backup_root())
 
-    @staticmethod
-    def _write_exclusive_private(path: Path, content: bytes) -> None:
+    def _write_exclusive_private(self, path: Path, content: bytes) -> None:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags, 0o600)
         try:
-            os.fchmod(descriptor, 0o600)
+            self._set_descriptor_mode(descriptor, 0o600)
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise DocumentSafetyError("restore point is unsafe")
             with os.fdopen(descriptor, "wb") as restore_file:
@@ -896,8 +948,9 @@ class ManagedDocumentTransaction:
             if descriptor >= 0:
                 os.close(descriptor)
 
-    @staticmethod
-    def _fsync_directory(path: Path) -> None:
+    def _fsync_directory(self, path: Path) -> bool:
+        if self._native_files is not None:
+            return self._native_files.sync_directory(path)
         path_stat = path.lstat()
         if not stat.S_ISDIR(path_stat.st_mode):
             raise DocumentSafetyError("transaction directory is unsafe")
@@ -914,9 +967,9 @@ class ManagedDocumentTransaction:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+        return True
 
-    @staticmethod
-    def _ensure_directory_tree(path: Path) -> None:
+    def _ensure_directory_tree(self, path: Path) -> None:
         absolute = Path(os.path.abspath(path))
         current = Path(absolute.anchor)
         for part in absolute.parts[1:]:
@@ -926,10 +979,12 @@ class ManagedDocumentTransaction:
             except FileNotFoundError:
                 try:
                     current.mkdir(mode=0o700)
+                    if self._native_files is not None:
+                        self._native_files.prepare_directory(current)
                 except FileExistsError:
                     pass
                 current_stat = current.lstat()
-            if not stat.S_ISDIR(current_stat.st_mode):
+            if not stat.S_ISDIR(current_stat.st_mode) or getattr(current_stat, "st_file_attributes", 0) & 0x400:
                 raise DocumentSafetyError("transaction directory is unsafe")
 
     def _load_restore_point(self, restore_point_id: str) -> ManagedDocumentSnapshot:
@@ -950,7 +1005,7 @@ class ManagedDocumentTransaction:
             raise RestorePointError("restore point is invalid")
         try:
             self._validate_private_directory(restore_dir)
-            self._validate_private_storage_file_stat(metadata_stat)
+            self._validate_private_storage_file_stat(metadata_stat, restore_dir / "metadata")
         except DocumentSafetyError as exc:
             raise RestorePointError("restore point is invalid") from exc
         try:
@@ -985,7 +1040,7 @@ class ManagedDocumentTransaction:
             content_stat = content_path.lstat()
             if not stat.S_ISREG(content_stat.st_mode):
                 raise RestorePointError("restore point is invalid")
-            self._validate_private_storage_file_stat(content_stat)
+            self._validate_private_storage_file_stat(content_stat, content_path)
             content = self._read_verified_regular(content_path, content_stat)
         except (DocumentSafetyError, OSError) as exc:
             raise RestorePointError("restore point is invalid") from exc
@@ -1025,7 +1080,7 @@ class ManagedDocumentTransaction:
                     child_stat = child.lstat()
                     if not stat.S_ISREG(child_stat.st_mode):
                         raise DocumentSafetyError("restore point is unsafe")
-                    self._validate_private_storage_file_stat(child_stat)
+                    self._validate_private_storage_file_stat(child_stat, child)
                     child.unlink()
                 except FileNotFoundError:
                     pass
@@ -1073,7 +1128,7 @@ class ManagedDocumentTransaction:
                 metadata_stat = metadata_path.lstat()
                 if not stat.S_ISREG(metadata_stat.st_mode):
                     continue
-                self._validate_private_storage_file_stat(metadata_stat)
+                self._validate_private_storage_file_stat(metadata_stat, metadata_path)
                 metadata = self._read_verified_regular(
                     metadata_path,
                     metadata_stat,
@@ -1092,6 +1147,12 @@ class ManagedDocumentTransaction:
             restore_points.append((created_ns, candidate.name, candidate))
         return restore_points
 
+    def _temporary_file(self) -> tuple[int, str]:
+        prefix = f".{self.document_path.name}.config-"
+        if self._native_files is not None:
+            return self._native_files.create_temporary(self.document_path.parent, prefix)
+        return tempfile.mkstemp(prefix=prefix, dir=self.document_path.parent)
+
     def _atomic_publish(
         self,
         content: bytes,
@@ -1102,13 +1163,10 @@ class ManagedDocumentTransaction:
         before_publication: Callable[[], None] | None = None,
     ) -> _PublicationResult:
         parent = self.document_path.parent
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{self.document_path.name}.config-",
-            dir=parent,
-        )
+        descriptor, temporary_name = self._temporary_file()
         temporary_path = Path(temporary_name)
         try:
-            os.fchmod(descriptor, mode)
+            self._set_descriptor_mode(descriptor, mode)
             with os.fdopen(descriptor, "wb", closefd=False) as temporary_file:
                 temporary_file.write(content)
                 temporary_file.flush()
@@ -1116,7 +1174,7 @@ class ManagedDocumentTransaction:
             prepared_stat = os.fstat(descriptor)
             if (
                 not stat.S_ISREG(prepared_stat.st_mode)
-                or stat.S_IMODE(prepared_stat.st_mode) != mode
+                or not self._mode_matches(temporary_path, mode)
             ):
                 raise DocumentSafetyError("temporary document permissions are unsafe")
             self._validate_managed_file_stat(prepared_stat)
@@ -1136,6 +1194,14 @@ class ManagedDocumentTransaction:
                 expected_snapshot=expected_snapshot,
                 restore_point=restore_point,
             )
+            if self._native_files is not None:
+                # NTFS can reject replacement of a file still held open even
+                # with delete-sharing. Retain the captured identity and recheck
+                # the named temp object after closing; verify again after publish.
+                os.close(descriptor)
+                descriptor = -1
+                if not self._platform.file_identity.path_matches_no_follow(temporary_path, prepared_identity):
+                    raise DocumentSafetyError("temporary document identity changed")
             os.replace(temporary_path, self.document_path)
             if not self._platform.file_identity.path_matches_no_follow(
                 self.document_path,
@@ -1146,7 +1212,8 @@ class ManagedDocumentTransaction:
                 )
             maintenance_code = None
             try:
-                self._fsync_directory(parent)
+                if self._fsync_directory(parent) is False:
+                    maintenance_code = "DOCUMENT_DURABILITY_UNCONFIRMED"
             except (DocumentTransactionError, OSError):
                 maintenance_code = "DOCUMENT_DURABILITY_UNCONFIRMED"
             return _PublicationResult(maintenance_code, prepared_identity)
@@ -1186,7 +1253,8 @@ class ManagedDocumentTransaction:
         self.document_path.unlink()
         maintenance_code = None
         try:
-            self._fsync_directory(self.document_path.parent)
+            if self._fsync_directory(self.document_path.parent) is False:
+                maintenance_code = "DOCUMENT_DURABILITY_UNCONFIRMED"
         except (DocumentTransactionError, OSError):
             maintenance_code = "DOCUMENT_DURABILITY_UNCONFIRMED"
         return _PublicationResult(maintenance_code, None)

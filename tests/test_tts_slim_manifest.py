@@ -7,6 +7,7 @@ no-follow, the gitignore check, the relocatable character config, and the build
 report schema.
 """
 
+from support.filesystem import symlink_or_skip
 import hashlib
 import tempfile
 import unittest
@@ -186,11 +187,11 @@ class PathSafetyTest(unittest.TestCase):
             (root / "sub" / "a.py").write_text("p")
             outside_file = Path(d) / "outside.txt"
             outside_file.write_text("secret")
-            (root / "link.txt").symlink_to(outside_file)        # symlinked FILE
+            symlink_or_skip(root / "link.txt", outside_file)        # symlinked FILE
             outside_dir = Path(d) / "outdir"
             outside_dir.mkdir()
             (outside_dir / "b.txt").write_text("q")
-            (root / "linkdir").symlink_to(outside_dir)          # symlinked DIR
+            symlink_or_skip(root / "linkdir", outside_dir)          # symlinked DIR
 
             files = collect_files(str(root), follow_symlinks=False)
             self.assertIn("real.txt", files)

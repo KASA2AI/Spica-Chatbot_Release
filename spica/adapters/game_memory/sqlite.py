@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from common.sqlite import ClosingConnection
 import time
 from collections import Counter
 from collections.abc import Sequence
@@ -437,13 +438,17 @@ class GameMemorySqliteAdapter:
 
     # -- infra ----------------------------------------------------------------
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         # Review #6: OCR-loop line writes / background summaries / turn reads run
         # concurrently -- WAL keeps readers unblocked by writers; busy_timeout
         # pins Python's implicit 5s default as an explicit, testable contract.
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     # -- schema version dispatch (AR-C0) ---------------------------------------

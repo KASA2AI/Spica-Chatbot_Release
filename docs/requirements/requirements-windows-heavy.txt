@@ -20,7 +20,7 @@
 #        python -m pip install -r docs/requirements/requirements-windows-heavy.txt
 #   2) torch + torchaudio come from the cu124 index, NOT default PyPI (a bare
 #      `pip install torch` would fetch the wrong build) -- install SEPARATELY:
-#        python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+#        python -m pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
 #
 # KNOWN pip-check inconsistency (accepted + recorded, W4-a §4.E / gate-1 §4):
 # rapidocr-onnxruntime declares the "onnxruntime" DIST name;
@@ -43,8 +43,11 @@ tensorrt-cu12==10.16.1.11
 # transformers mirrors requirements-screen.txt's pin; accelerate (device_map) +
 # einops are the two extras moondream2 needs at from_pretrained that screen.txt
 # does not carry. All three hold numpy<2.
-transformers>=4.43,<=4.50
-accelerate
+transformers==4.57.6; sys_platform == "win32"
+tokenizers==0.22.2; sys_platform == "win32"
+accelerate==1.12.0; sys_platform == "win32"
+transformers>=4.43,<=4.50; sys_platform != "win32"
+accelerate; sys_platform != "win32"
 einops
 
 # --- TTS / GPT-SoVITS + RVC/song layer (items C/G) -> follow-on manifest ---

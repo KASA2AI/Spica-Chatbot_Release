@@ -2,7 +2,7 @@
 
 本桌面版支持 `pack_format: 3`，与静态和 eye-rig 包独立加载。默认角色不加载原生库。
 需要 Python 3.11、可用的 OpenGL 驱动、桌面会话和自己的 Cubism 3 角色资源。
-本轮只验证了软件边界；没有在此工作树运行真实原生 SDK 或 Windows 实机。
+2026-10-09 已在 Windows / Python 3.11 / live2d-py 0.7.0.4 验证真实原生渲染、换装与 Q 版切换；Linux 原生 SDK 不属于这次 Windows 实机验收。
 
 Windows x64 在现有桌面环境安装：
 

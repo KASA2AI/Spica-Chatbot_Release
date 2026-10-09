@@ -6,6 +6,7 @@ from threading import Lock
 from types import SimpleNamespace
 from unittest.mock import Mock
 import warnings
+import sys
 
 import pytest
 
@@ -91,3 +92,31 @@ def test_headless_import_has_no_eager_gradio_or_bert_load():
     ns, _ = _loading_functions()
     with pytest.warns(RuntimeWarning, match="missing reference"):
         ns["_warn"]("missing reference")
+
+
+def test_pipeline_defers_optional_super_resolution_until_requested(monkeypatch):
+    path = BASE / 'GPT_SoVITS/TTS_infer_pack/TTS.py'
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+
+    class ImportWork(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            pass
+
+        def visit_ClassDef(self, node):
+            pass
+
+        def visit_ImportFrom(self, node):
+            assert node.module != 'tools.audio_sr'
+
+    ImportWork().visit(tree)
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'TTS')
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == 'init_sr_model')
+    factory = Mock(return_value=object())
+    monkeypatch.setitem(sys.modules, 'tools.audio_sr', SimpleNamespace(AP_BWE=factory))
+    ns = {'DictToAttrRecursive': dict}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), 'exec'), ns)
+    owner = SimpleNamespace(sr_model=None, configs=SimpleNamespace(device='cuda'))
+    ns['init_sr_model'](owner)
+    ns['init_sr_model'](owner)
+    factory.assert_called_once_with('cuda', dict)
+    assert owner.sr_model is factory.return_value and not owner.sr_model_not_exist

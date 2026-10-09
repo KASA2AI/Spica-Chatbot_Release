@@ -30,7 +30,6 @@ from peft import LoraConfig, get_peft_model
 from process_ckpt import get_sovits_version_from_path_fast, load_sovits_new
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 
-from tools.audio_sr import AP_BWE
 from tools.i18n.i18n import I18nAuto, scan_language_list
 from TTS_infer_pack.text_segmentation_method import splits
 from TTS_infer_pack.TextPreprocessor import TextPreprocessor
@@ -422,7 +421,7 @@ class TTS:
         self.bert_model: AutoModelForMaskedLM = None
         self.cnhuhbert_model: CNHubert = None
         self.vocoder = None
-        self.sr_model: AP_BWE = None
+        self.sr_model: "AP_BWE" = None
         self.sv_model = None
         self.sr_model_not_exist: bool = False
 
@@ -662,6 +661,9 @@ class TTS:
     def init_sr_model(self):
         if self.sr_model is not None:
             return
+        # v2Pro/Plus inference does not need the optional v3 super-resolution
+        # tree, which is intentionally absent from the slim desktop runtime.
+        from tools.audio_sr import AP_BWE
         try:
             self.sr_model: AP_BWE = AP_BWE(self.configs.device, DictToAttrRecursive)
             self.sr_model_not_exist = False

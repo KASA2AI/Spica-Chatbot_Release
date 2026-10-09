@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import sys
 import unittest
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -549,7 +550,7 @@ class LegacyV1MigrationTest(MigrationTestBase):
         SQLite otherwise drops table-owned triggers together with the old table.
         """
         build_legacy_db(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute("CREATE TABLE relation_audit (relation_id TEXT NOT NULL)")
             conn.execute(
                 "CREATE TRIGGER keep_relation_audit "
@@ -559,7 +560,7 @@ class LegacyV1MigrationTest(MigrationTestBase):
         adapter = GameMemorySqliteAdapter(self.db_path)
         adapter.upsert_character_relation(make_relation("rel::A::B", "g1"))
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             trigger = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='trigger' AND name=?",
                 ("keep_relation_audit",)).fetchone()
@@ -571,7 +572,7 @@ class LegacyV1MigrationTest(MigrationTestBase):
 
     def test_relation_trigger_table_name_is_case_insensitive_during_migration(self):
         build_legacy_db(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute("CREATE TABLE relation_audit (value TEXT NOT NULL)")
             conn.execute(
                 "CREATE TRIGGER MixedCaseTrigger "
@@ -581,7 +582,7 @@ class LegacyV1MigrationTest(MigrationTestBase):
         adapter = GameMemorySqliteAdapter(self.db_path)
         adapter.upsert_character_relation(make_relation("rel::A::B", "g1"))
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             trigger = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='trigger' AND name=?",
                 ("MixedCaseTrigger",)).fetchone()
@@ -656,7 +657,7 @@ class VersionMatrixTest(MigrationTestBase):
 
     def test_user_table_named_like_migration_temp_is_preserved(self):
         build_legacy_db(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 "CREATE TABLE character_relations_v2 (precious TEXT NOT NULL)")
             conn.execute(
@@ -665,7 +666,7 @@ class VersionMatrixTest(MigrationTestBase):
         adapter = GameMemorySqliteAdapter(self.db_path)
         adapter.upsert_character_relation(make_relation("rel::A::B", "g1"))
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             user_row = conn.execute(
                 "SELECT precious FROM character_relations_v2").fetchone()
         self.assertEqual(adapter.schema_version(), SCHEMA_VERSION)
@@ -1501,6 +1502,7 @@ class BackupProtocolFaultTest(MigrationTestBase):
         def failing_close(conn, role):
             events.append(("close", role))
             if role == "backup_target_conn":
+                self.addCleanup(orig_close, conn, role)
                 raise RuntimeError("close boom")
             return orig_close(conn, role)
 
@@ -2477,6 +2479,7 @@ def plant_hot_journal(db_path: Path) -> None:
     journal.write_bytes(hot_journal)
 
 
+@unittest.skipUnless(sys.platform == 'linux', 'Linux Bash operator runbook; portable SQLite restore helpers remain covered')
 class RestoreRunbookDrillTest(MigrationTestBase):
     """§9 #21/#29/#30/#31/#39/#40/#43: the §10 unit end-to-end on temp DBs."""
 

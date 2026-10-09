@@ -185,8 +185,8 @@ def is_within(child: str, root: str) -> bool:
     alone does not resolve a symlink that points outside ``root``, so a symlinked
     output dir could escape. The build's ``test_source_target_realpath_containment``
     locks that the realpath is applied first."""
-    c = os.path.normpath(child)
-    r = os.path.normpath(root)
+    c = os.path.normcase(os.path.normpath(child))
+    r = os.path.normcase(os.path.normpath(root))
     return c == r or c.startswith(r + os.sep)
 
 
@@ -202,13 +202,17 @@ def collect_files(root: str, *, follow_symlinks: bool = False) -> list[str]:
     root = os.path.abspath(root)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
         if not follow_symlinks:
-            dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
+            dirnames[:] = [d for d in dirnames if not _is_link_or_reparse(os.path.join(dirpath, d))]
         for name in filenames:
             full = os.path.join(dirpath, name)
-            if os.path.islink(full):
+            if _is_link_or_reparse(full):
                 continue  # never copy a symlink
-            out.append(posixpath.relpath(full, root).replace("\\", "/"))
+            out.append(os.path.relpath(full, root).replace("\\", "/"))
     return sorted(out)
+
+
+def _is_link_or_reparse(path):
+    return os.path.islink(path) or bool(getattr(os.lstat(path), 'st_file_attributes', 0) & 0x400)
 
 
 def sha256_of(path: str | os.PathLike) -> str:
@@ -233,8 +237,8 @@ def build_character_config(pack_spec: dict[str, Any], tts_yaml: dict[str, Any]) 
     runs after relocation and never references dev-machine spica_data paths."""
     config: dict[str, Any] = {
         "version": pack_spec["version"],
-        "gpt_model_path": "GPT_weights/" + posixpath.basename(pack_spec["gpt_weight"]),
-        "sovits_model_path": "SoVITS_weights/" + posixpath.basename(pack_spec["sovits_weight"]),
+        "gpt_model_path": "GPT_weights/" + os.path.basename(pack_spec["gpt_weight"]),
+        "sovits_model_path": "SoVITS_weights/" + os.path.basename(pack_spec["sovits_weight"]),
         "ref_language": tts_yaml.get("ref_language", "日文"),
         "target_language": tts_yaml.get("target_language", "日文"),
         "emotions": {},
@@ -243,11 +247,11 @@ def build_character_config(pack_spec: dict[str, Any], tts_yaml: dict[str, Any]) 
         entry: dict[str, Any] = {}
         ref = spec.get("ref_audio_path")
         if ref:
-            entry["ref_audio_path"] = f"reference/{emotion}/" + posixpath.basename(ref)
+            entry["ref_audio_path"] = f"reference/{emotion}/" + os.path.basename(ref)
         if spec.get("prompt_text"):
             entry["prompt_text"] = spec["prompt_text"]
         elif spec.get("prompt_text_path"):
-            entry["prompt_text_path"] = f"reference/{emotion}/" + posixpath.basename(spec["prompt_text_path"])
+            entry["prompt_text_path"] = f"reference/{emotion}/" + os.path.basename(spec["prompt_text_path"])
         # inp_refs is a DECLARED + actively-used v2ProPlus dependency (glob'd +
         # fused via sv_emb). It lives in a DEDICATED refs/ subdir, kept separate
         # from the primary ref so the runtime's glob(refs/*.wav) matches only these.
@@ -272,7 +276,7 @@ def character_reference_files(tts_yaml: dict[str, Any]) -> list[dict[str, str]]:
             if src:
                 out.append({
                     "source": src,
-                    "target": f"reference/{emotion}/" + posixpath.basename(src),
+                    "target": f"reference/{emotion}/" + os.path.basename(src),
                     "category": "character_reference",
                 })
     return out
@@ -306,7 +310,7 @@ def inp_refs_entries(emotion: str, wav_paths: Iterable[str]) -> list[dict[str, s
     return [
         {
             "source": w,
-            "target": f"reference/{emotion}/refs/" + posixpath.basename(w),
+            "target": f"reference/{emotion}/refs/" + os.path.basename(w),
             "category": "character_inp_refs",
         }
         for w in wav_paths

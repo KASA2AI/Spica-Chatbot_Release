@@ -51,6 +51,7 @@ class WindowControls(QFrame):
         layout.addWidget(self.floating_button)
         layout.addWidget(self.minimize_button)
         for button in (self.settings_button, self.companion_button, self.alarm_button, self.floating_button, self.minimize_button):
+            button.setAccessibleName(button.toolTip())
             button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_scale(1.0)
@@ -68,6 +69,7 @@ class WindowControls(QFrame):
         self.companion_button.setChecked(self._companion_active)
         self.companion_button.blockSignals(False)
         self.companion_button.setToolTip("陪玩中（点击管理）" if active else "陪玩 galgame")
+        self.companion_button.setAccessibleName(self.companion_button.toolTip())
 
     def apply_scale(self, scale: float) -> None:
         self.setStyleSheet(

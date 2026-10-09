@@ -79,6 +79,13 @@ def main():
     args = parser.parse_args()
     wire_out = sys.stdout
     sys.stdout = sys.stderr  # Third-party prints cannot corrupt the reply stream.
+    # Initialize native math libraries before a thread blocks on piped stdin.
+    # NumPy/SciPy can deadlock during Windows initialization otherwise. This
+    # imports libraries only; model/CUDA loading still has the EOF monitor.
+    import numpy  # noqa: F401
+    import scipy.special  # noqa: F401
+    import qwen_asr  # noqa: F401
+    import silero_vad  # noqa: F401
     recognizer = QwenRecognizer(args.model, args.device, args.compute_type, args.language)
     requests = queue.Queue(maxsize=1)
 

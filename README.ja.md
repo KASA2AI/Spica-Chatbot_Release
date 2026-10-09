@@ -64,3 +64,5 @@ ZIP は先に展開します。キャラクターは `Desktop-Packs/Characters/`
 音声認識はローカル Qwen3-ASR-1.7B と百炼クラウドを切り替え可能です。任意の Home H1–H3、フローティングペット、ローカル文字通知を追加しました。スマートフォン・ロボット・QQ・Hub は不要です。
 
 [Current setup and behavior / 最新配置说明](docs/README.md) · [Home](docs/HOME.md) · [Cubism](docs/CUBISM_PACKS.md)
+
+Windows: [single-environment setup and model reuse](docs/WINDOWS.md).

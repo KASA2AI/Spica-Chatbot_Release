@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from support.filesystem import symlink_or_skip
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -97,7 +98,7 @@ def test_remove_rejects_builtin_source_and_symlink_escape(packages, tmp_path):
     outside = tmp_path / "outside" / installed.name
     outside.parent.mkdir()
     installed.rename(outside)
-    installed.symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(installed, outside, target_is_directory=True)
     with pytest.raises(ValueError):
         p.remove(installed)
     assert p.surface.read_config() == before
@@ -165,7 +166,8 @@ def test_popup_cross_confirms_without_selecting_and_manual_import_restores(packa
         deadline = time.monotonic() + 5
         while controller.worker is not None and time.monotonic() < deadline:
             app.processEvents()
-            QTest.qWait(10)
+            # Let the Python file-copy worker acquire the GIL on Windows too.
+            time.sleep(0.01)
         assert controller.worker is None
 
     def click_row(row, *, cross):
@@ -207,8 +209,7 @@ def test_popup_cross_confirms_without_selecting_and_manual_import_restores(packa
         assert p.surface.read_config()[p.kind]["package_dir"] == p.builtin
     finally:
         if controller.worker is not None:
-            controller.worker.wait(5000)
-            app.processEvents()
+            settle()
         window.close()
         window.deleteLater()
         app.processEvents()

@@ -16,6 +16,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ExitCode = 1
 $LocationPushed = $false
+$PreviousPythonUtf8 = $env:PYTHONUTF8
 
 try {
     # Resolve a relative interpreter path before moving to the project root.
@@ -27,6 +28,8 @@ try {
     $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
     Push-Location -LiteralPath $RepoRoot
     $LocationPushed = $true
+    # Child workers must use the same Unicode mode as the desktop process.
+    $env:PYTHONUTF8 = "1"
     if ($PythonExe) {
         & $PythonExe -X utf8 webui_qt.py @args
     } else {
@@ -36,6 +39,7 @@ try {
 } catch {
     [Console]::Error.WriteLine("Spica Chatbot could not start: " + $_.Exception.Message)
 } finally {
+    $env:PYTHONUTF8 = $PreviousPythonUtf8
     if ($LocationPushed) { Pop-Location }
 }
 exit $ExitCode

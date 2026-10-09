@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -44,7 +45,7 @@ def test_default_conda_matches_readme_and_propagates_failure(launcher, tmp_path)
     # Shadow Conda within this test process only; no environment is changed.
     quoted = str(script).replace("'", "''")
     result = subprocess.run(
-        [powershell, "-NoProfile", "-Command",
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
          "function conda { ConvertTo-Json -InputObject @($args) -Compress; $global:LASTEXITCODE = 9 }; "
          f"& '{quoted}'; exit $LASTEXITCODE"],
         cwd=tmp_path, capture_output=True, encoding="utf-8", timeout=30,
@@ -62,3 +63,20 @@ def test_missing_python_reports_failure(launcher, tmp_path):
     )
     assert result.returncode != 0
     assert "Spica Chatbot could not start" in result.stderr
+
+
+def test_launcher_enables_utf8_for_python_workers(launcher, tmp_path):
+    powershell, root, script = launcher
+    (root / "webui_qt.py").write_text(
+        "import subprocess, sys\n"
+        "raise SystemExit(subprocess.call([sys.executable, '-c', "
+        "'import sys; print(sys.flags.utf8_mode)']))\n", encoding="utf-8",
+    )
+    environment = {**os.environ, "PYTHONUTF8": "0"}
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+         "-PythonExe", sys.executable], cwd=tmp_path, env=environment,
+        capture_output=True, encoding="utf-8", timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "1"

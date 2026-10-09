@@ -134,7 +134,7 @@ def plan_build(
         src_abs = os.path.join(src_real, pack[key])
         if not os.path.isfile(src_abs):
             raise BuildAbort(f"character {key} missing: {src_abs}")
-        target = posixpath.join(pack_root, sub, posixpath.basename(pack[key]))
+        target = posixpath.join(pack_root, sub, os.path.basename(pack[key]))
         would.append(_entry(cat, src_abs, target, os.path.getsize(src_abs)))
 
     # ---- target safety + containment (defense in depth) ----------------------

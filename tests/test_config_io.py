@@ -39,14 +39,21 @@ class MigratedConfigTest(unittest.TestCase):
         self.assertTrue(cfg.get("gptsovits_root"))
         self.assertTrue(str(cfg.get("_config_path")).endswith("tts.yaml"))
 
-    def test_visual_config_default_is_yaml_and_rules_resolve(self):
+    def test_shipped_sample_visual_config_is_yaml_and_rules_resolve(self):
         from agent_tools.visual import VisualDiffService
+        from spica.host.character_packages import import_character_folder, prepare_character_package
 
-        visual = VisualDiffService()
-        self.assertTrue(str(visual.config_path).endswith("visual.yaml"))
-        self.assertTrue(visual.config.get("diff_root"))
-        # rules_path resolved relative to data/config/ and loaded.
-        self.assertTrue(visual.rules.get("expressions"))
+        # The release ships the sample, not the author's private diff artwork.
+        with tempfile.TemporaryDirectory() as directory:
+            sample = Path(__file__).resolve().parents[1] / "Desktop-Packs/Characters/Examples/static"
+            package = prepare_character_package(
+                import_character_folder(sample, Path(directory) / "characters"),
+                data_root=Path(directory) / "runtime",
+            )
+            visual = VisualDiffService(config_path=package.visual_config_path)
+            self.assertTrue(str(visual.config_path).endswith("visual.yaml"))
+            self.assertTrue(Path(visual.config["rules_path"]).is_file())
+            self.assertTrue(visual.rules.get("expressions"))
 
 
 if __name__ == "__main__":

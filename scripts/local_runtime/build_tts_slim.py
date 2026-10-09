@@ -190,9 +190,9 @@ def plan_build(
     # Weights live in the vendored tree but are EXCLUDED from base; the pack pulls
     # the specific character weight explicitly. Both are REQUIRED.
     _add_pack("character_gpt", os.path.join(src_real, pack["gpt_weight"]),
-              "GPT_weights/" + posixpath.basename(pack["gpt_weight"]), required=True)
+              "GPT_weights/" + os.path.basename(pack["gpt_weight"]), required=True)
     _add_pack("character_sovits", os.path.join(src_real, pack["sovits_weight"]),
-              "SoVITS_weights/" + posixpath.basename(pack["sovits_weight"]), required=True)
+              "SoVITS_weights/" + os.path.basename(pack["sovits_weight"]), required=True)
     # primary ref wav + prompt (one level under reference/<emotion>/). character_reference_files
     # yields ref_audio_path + prompt_text_path only (inline prompt_text -> no file). Both REQUIRED.
     for ref in character_reference_files(tts_yaml):

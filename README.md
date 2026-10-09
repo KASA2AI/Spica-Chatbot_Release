@@ -33,15 +33,15 @@ python -m pip install -r docs/requirements/requirements-windows-base.txt
 
 Linux 的 Ubuntu / Debian 用户先安装 `build-essential python3-dev portaudio19-dev ffmpeg`，再装 Python 依赖。基础清单同样适用于 Linux。
 
-也可让脚本安装独立基础环境并生成安全的首次文字配置（不覆盖已有配置）：
+也可让脚本安装独立基础环境，导入静态示例并配置首次文字聊天（会选择示例角色并关闭可选功能）：
 
 ```bash
-python scripts/setup_desktop.py --install --write-config --model YOUR_MODEL_ID --api-base https://YOUR_PROVIDER/v1
+python scripts/setup_desktop.py --install --configure-text --model YOUR_MODEL_ID --api-base https://YOUR_PROVIDER/v1
 ```
 
 Linux 用 `.venv-desktop/bin/python webui_qt.py`，Windows 用
 `.venv-desktop/Scripts/python.exe webui_qt.py` 启动；然后在设置中保存 API Key。
-已使用 Conda 安装依赖时，仅运行 `--write-config`，保留当前 Python 即可。
+已使用 Conda 安装依赖时，仅运行 `--configure-text`，保留当前 Python 即可。已有用户在设置中调整；`--write-config` 仅供 app.yaml 不存在时使用。
 脚本不会安装服务、下载大模型或启用 Home，参数作用见[安装配置](docs/README.md#setup)。
 
 首次使用按[启动配置](docs/README.md#setup)填写 API 与本机设置，先用小型示例跑通文字聊天；语音依赖和模型见[声音配置](docs/README.md#voice)。配置完成后，每次启动运行：
@@ -52,6 +52,8 @@ python -X utf8 webui_qt.py
 ```
 
 Windows 也可使用 `powershell -ExecutionPolicy Bypass -File .\scripts\windows\run_spica.ps1`；默认 Conda 环境为 `spica`。
+
+Windows 本地 Qwen / TTS / RVC 的单环境安装及复用已有模型，见 [Windows 原生指南](docs/WINDOWS.md)。
 
 ## 📦 角色与对话框下载
 

@@ -24,13 +24,22 @@ from spica.adapters.config_platform import platform_capabilities_for
 from support.document_transactions import after_first_transaction_fsync
 
 
+def _symlink(link, target, *, target_is_directory=False):
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows session lacks symlink privilege; junction rejection has a separate native test")
+        raise
+
+
 def _transaction(document, *, backup_root, **kwargs):
     kwargs.setdefault(
         "platform_capabilities",
         platform_capabilities_for(
-            os_family="posix",
-            runtime_name="linux",
-            user_id=os.getuid(),
+            os_family=os.name,
+            runtime_name=sys.platform,
+            user_id=os.getuid() if os.name == "posix" else None,
             temp_directory=Path(backup_root).parent / "platform-tmp",
         ),
     )
@@ -99,7 +108,7 @@ def test_preview_rejects_a_symlink_document(tmp_path):
     target = tmp_path / "actual.yaml"
     target.write_bytes(b"enabled: false\n")
     document = tmp_path / "app.yaml"
-    document.symlink_to(target)
+    _symlink(document, target)
     transaction = _transaction(
         document,
         backup_root=tmp_path / "backups",
@@ -142,11 +151,14 @@ def test_preview_rejects_an_ordinary_document_not_owned_by_the_platform_user(
     original = b'{"spica_voice_volume": 0.5}\n'
     document.write_bytes(original)
     wrong_owner_platform = platform_capabilities_for(
-        os_family="posix",
-        runtime_name="linux",
-        user_id=os.getuid() + 1,
+        os_family=os.name,
+        runtime_name=sys.platform,
+        user_id=os.getuid() + 1 if os.name == "posix" else None,
         temp_directory=tmp_path / "platform-tmp",
     )
+    if wrong_owner_platform.native_files is not None:
+        import win32security
+        wrong_owner_platform.native_files.__dict__["_user"] = win32security.CreateWellKnownSid(win32security.WinWorldSid)
     transaction = ManagedDocumentTransaction(
         document,
         backup_root=tmp_path / "backups",
@@ -181,7 +193,7 @@ def test_preview_does_not_follow_a_symlink_swapped_in_after_lstat(
         if path == document and not swapped:
             swapped = True
             document.unlink()
-            document.symlink_to(outside)
+            _symlink(document, outside)
         return result
 
     monkeypatch.setattr(Path, "lstat", swap_after_lstat)
@@ -198,7 +210,7 @@ def test_preview_rejects_a_document_beneath_a_symlinked_parent(tmp_path):
     outside.mkdir()
     (outside / "app.yaml").write_bytes(b"secret: outside\n")
     managed_parent = tmp_path / "managed"
-    managed_parent.symlink_to(outside, target_is_directory=True)
+    _symlink(managed_parent, outside, target_is_directory=True)
     transaction = _transaction(
         managed_parent / "app.yaml",
         backup_root=tmp_path / "backups",
@@ -217,7 +229,7 @@ def test_commit_rejects_a_symlinked_backup_root(tmp_path):
     outside = tmp_path / "outside-backups"
     outside.mkdir()
     backup_root = tmp_path / "backups"
-    backup_root.symlink_to(outside, target_is_directory=True)
+    _symlink(backup_root, outside, target_is_directory=True)
     transaction = _transaction(document, backup_root=backup_root)
     revision = transaction.preview(b"enabled: true\n").current.revision
 
@@ -248,7 +260,7 @@ def test_commit_rejects_a_symlink_substituted_for_the_stable_lock(tmp_path):
     lock_path.unlink()
     outside = tmp_path / "outside-lock"
     outside.write_bytes(b"do not lock me")
-    lock_path.symlink_to(outside)
+    _symlink(lock_path, outside)
 
     with pytest.raises(DocumentSafetyError) as caught:
         transaction.commit(
@@ -422,14 +434,14 @@ def test_commit_rechecks_revision_after_tempfile_is_prepared_before_replace(
         backup_root=tmp_path / "backups",
     )
     revision = transaction.preview(b"owner: candidate\n").current.revision
-    real_mkstemp = transaction_module.tempfile.mkstemp
+    real_mkstemp = transaction._temporary_file
 
     def prepare_temp_then_external_edit(*args, **kwargs):
         prepared = real_mkstemp(*args, **kwargs)
         document.write_bytes(b"owner: other-session\n")
         return prepared
 
-    monkeypatch.setattr(transaction_module.tempfile, "mkstemp", prepare_temp_then_external_edit)
+    monkeypatch.setattr(transaction, "_temporary_file", prepare_temp_then_external_edit)
 
     with pytest.raises(DocumentConflictError) as caught:
         transaction.commit(
@@ -502,7 +514,7 @@ def test_commit_rejects_path_replacement_after_final_snapshot_opens(
             original_stat.st_ino,
         ):
             document_reads += 1
-            if document_reads == 2:
+            if document_reads == (3 if os.name == "nt" else 2):
                 external = tmp_path / "external-writer.yaml"
                 external.write_bytes(external_bytes)
                 real_replace(external, document)
@@ -521,8 +533,12 @@ def test_commit_rejects_path_replacement_after_final_snapshot_opens(
         )
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
-    assert document_reads >= 2
-    assert document.read_bytes() == external_bytes
+    assert document_reads >= (3 if os.name == "nt" else 2)
+    if os.name == "nt":
+        assert isinstance(caught.value.__cause__, PermissionError)
+        assert document.read_bytes() == original
+    else:
+        assert document.read_bytes() == external_bytes
     assert transaction.restore_points() == ()
 
 
@@ -549,7 +565,7 @@ def test_commit_rejects_in_place_rewrite_after_final_snapshot_read(
         descriptor_stat = os.fstat(descriptor)
         if chunk and descriptor_stat.st_ino == original_inode:
             document_reads += 1
-            if document_reads == 2:
+            if document_reads == (3 if os.name == "nt" else 2):
                 document.write_bytes(external_bytes)
                 assert document.stat().st_ino == original_inode
         return chunk
@@ -567,7 +583,7 @@ def test_commit_rejects_in_place_rewrite_after_final_snapshot_read(
         )
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
-    assert document_reads >= 2
+    assert document_reads >= (3 if os.name == "nt" else 2)
     assert document.read_bytes() == external_bytes
     assert document.stat().st_ino == original_inode
     assert transaction.restore_points() == ()
@@ -597,7 +613,7 @@ def test_commit_rejects_same_size_rewrite_even_if_mtime_is_restored(
         descriptor_stat = os.fstat(descriptor)
         if chunk and descriptor_stat.st_ino == original_stat.st_ino:
             document_reads += 1
-            if document_reads == 2:
+            if document_reads == (3 if os.name == "nt" else 2):
                 document.write_bytes(external_bytes)
                 os.utime(
                     document,
@@ -618,7 +634,7 @@ def test_commit_rejects_same_size_rewrite_even_if_mtime_is_restored(
         )
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
-    assert document_reads >= 2
+    assert document_reads >= (3 if os.name == "nt" else 2)
     assert document.read_bytes() == external_bytes
     assert document.stat().st_ino == original_stat.st_ino
 
@@ -690,9 +706,9 @@ def test_commit_callback_runs_after_temp_fsync_and_before_final_target_cas(
     revision = transaction.preview(b"version: new\n").current.revision
     events: list[str] = []
     temporary_descriptor: int | None = None
-    real_mkstemp = transaction_module.tempfile.mkstemp
+    real_mkstemp = transaction._temporary_file
     real_fsync = transaction_module.os.fsync
-    real_open = transaction_module.os.open
+    real_open = transaction._read_verified_regular_with_stat
     real_replace = os.replace
     callback_completed = False
     target_cas_recorded = False
@@ -713,7 +729,7 @@ def test_commit_callback_runs_after_temp_fsync_and_before_final_target_cas(
         callback_completed = True
         events.append("callback")
 
-    def record_open(path, flags, mode=0o777):
+    def record_open(path, expected_stat):
         nonlocal target_cas_recorded
         if (
             callback_completed
@@ -722,16 +738,16 @@ def test_commit_callback_runs_after_temp_fsync_and_before_final_target_cas(
         ):
             target_cas_recorded = True
             events.append("target_cas")
-        return real_open(path, flags, mode)
+        return real_open(path, expected_stat)
 
     def record_replace(source, target):
         if Path(target) == document:
             events.append("replace")
         return real_replace(source, target)
 
-    monkeypatch.setattr(transaction_module.tempfile, "mkstemp", record_mkstemp)
+    monkeypatch.setattr(transaction, "_temporary_file", record_mkstemp)
     monkeypatch.setattr(transaction_module.os, "fsync", record_fsync)
-    monkeypatch.setattr(transaction_module.os, "open", record_open)
+    monkeypatch.setattr(transaction, "_read_verified_regular_with_stat", record_open)
     monkeypatch.setattr(transaction_module.os, "replace", record_replace)
 
     transaction.commit(
@@ -1065,7 +1081,7 @@ def test_commit_reports_conflict_if_target_becomes_a_symlink_after_publish(
     def replace_then_swap_to_symlink(source, target):
         real_replace(source, target)
         Path(target).unlink()
-        Path(target).symlink_to(outside)
+        _symlink(Path(target), outside)
 
     monkeypatch.setattr(
         "spica.config.document_transaction.os.replace",
@@ -1396,14 +1412,14 @@ def test_rollback_rechecks_revision_after_tempfile_is_prepared_before_replace(
         b"version: current\n",
         expected_revision=original_revision,
     )
-    real_mkstemp = transaction_module.tempfile.mkstemp
+    real_mkstemp = transaction._temporary_file
 
     def prepare_temp_then_external_edit(*args, **kwargs):
         prepared = real_mkstemp(*args, **kwargs)
         document.write_bytes(b"version: other-session\n")
         return prepared
 
-    monkeypatch.setattr(transaction_module.tempfile, "mkstemp", prepare_temp_then_external_edit)
+    monkeypatch.setattr(transaction, "_temporary_file", prepare_temp_then_external_edit)
 
     with pytest.raises(DocumentConflictError) as caught:
         transaction.rollback(
@@ -1481,7 +1497,7 @@ def test_rollback_rejects_path_replacement_after_final_snapshot_opens(
             current_stat.st_ino,
         ):
             document_reads += 1
-            if document_reads == 2:
+            if document_reads == (3 if os.name == "nt" else 2):
                 external = tmp_path / "external-writer.yaml"
                 external.write_bytes(external_bytes)
                 real_replace(external, document)
@@ -1500,8 +1516,12 @@ def test_rollback_rejects_path_replacement_after_final_snapshot_opens(
         )
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
-    assert document_reads >= 2
-    assert document.read_bytes() == external_bytes
+    assert document_reads >= (3 if os.name == "nt" else 2)
+    if os.name == "nt":
+        assert isinstance(caught.value.__cause__, PermissionError)
+        assert document.read_bytes() == current
+    else:
+        assert document.read_bytes() == external_bytes
     assert tuple(item.id for item in transaction.restore_points()) == restore_ids_before
 
 
@@ -1531,7 +1551,7 @@ def test_rollback_rejects_in_place_rewrite_after_final_snapshot_read(
         descriptor_stat = os.fstat(descriptor)
         if chunk and descriptor_stat.st_ino == current_inode:
             document_reads += 1
-            if document_reads == 2:
+            if document_reads == (3 if os.name == "nt" else 2):
                 document.write_bytes(external_bytes)
                 assert document.stat().st_ino == current_inode
         return chunk
@@ -1549,7 +1569,7 @@ def test_rollback_rejects_in_place_rewrite_after_final_snapshot_read(
         )
 
     assert caught.value.code == "DOCUMENT_CONFLICT"
-    assert document_reads >= 2
+    assert document_reads >= (3 if os.name == "nt" else 2)
     assert document.read_bytes() == external_bytes
     assert document.stat().st_ino == current_inode
     assert tuple(item.id for item in transaction.restore_points()) == restore_ids_before
@@ -1572,9 +1592,9 @@ def test_rollback_callback_runs_after_temp_fsync_and_before_final_target_cas(
     )
     events: list[str] = []
     temporary_descriptor: int | None = None
-    real_mkstemp = transaction_module.tempfile.mkstemp
+    real_mkstemp = transaction._temporary_file
     real_fsync = transaction_module.os.fsync
-    real_open = transaction_module.os.open
+    real_open = transaction._read_verified_regular_with_stat
     real_replace = os.replace
     callback_completed = False
     target_cas_recorded = False
@@ -1595,7 +1615,7 @@ def test_rollback_callback_runs_after_temp_fsync_and_before_final_target_cas(
         callback_completed = True
         events.append("callback")
 
-    def record_open(path, flags, mode=0o777):
+    def record_open(path, expected_stat):
         nonlocal target_cas_recorded
         if (
             callback_completed
@@ -1604,16 +1624,16 @@ def test_rollback_callback_runs_after_temp_fsync_and_before_final_target_cas(
         ):
             target_cas_recorded = True
             events.append("target_cas")
-        return real_open(path, flags, mode)
+        return real_open(path, expected_stat)
 
     def record_replace(source, target):
         if Path(target) == document:
             events.append("replace")
         return real_replace(source, target)
 
-    monkeypatch.setattr(transaction_module.tempfile, "mkstemp", record_mkstemp)
+    monkeypatch.setattr(transaction, "_temporary_file", record_mkstemp)
     monkeypatch.setattr(transaction_module.os, "fsync", record_fsync)
-    monkeypatch.setattr(transaction_module.os, "open", record_open)
+    monkeypatch.setattr(transaction, "_read_verified_regular_with_stat", record_open)
     monkeypatch.setattr(transaction_module.os, "replace", record_replace)
 
     transaction.rollback(
@@ -1937,7 +1957,7 @@ def test_rollback_does_not_follow_restore_content_swapped_after_lstat(
         if path == restore_content and not swapped:
             swapped = True
             restore_content.unlink()
-            restore_content.symlink_to(outside)
+            _symlink(restore_content, outside)
         return result
 
     monkeypatch.setattr(Path, "lstat", swap_after_lstat)
@@ -1953,7 +1973,7 @@ def test_rollback_does_not_follow_restore_content_swapped_after_lstat(
     assert outside.read_bytes() == b"version: outside\n"
 
 
-def test_windows_preview_is_available_but_writes_fail_closed_until_verified(
+def test_unknown_platform_preview_is_available_but_writes_fail_closed(
     tmp_path,
 ):
     document = tmp_path / "app.yaml"
@@ -1962,8 +1982,8 @@ def test_windows_preview_is_available_but_writes_fail_closed_until_verified(
         document,
         backup_root=tmp_path / "backups",
         platform_capabilities=platform_capabilities_for(
-            os_family="nt",
-            runtime_name="win32",
+            os_family="unknown",
+            runtime_name="unverified",
             user_id=None,
             temp_directory=tmp_path,
         ),

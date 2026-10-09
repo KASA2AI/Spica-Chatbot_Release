@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from support.filesystem import symlink_or_skip
 import json
 import os
 from dataclasses import asdict
@@ -386,7 +387,7 @@ def test_loaded_owner_refresh_rejects_a_swapped_dotenv_symlink(tmp_path: Path):
         prime_process=False,
     )
     repo_env.unlink()
-    repo_env.symlink_to(outside)
+    symlink_or_skip(repo_env, outside)
 
     with pytest.raises(EnvironmentRefreshError) as raised:
         loaded.refresh()

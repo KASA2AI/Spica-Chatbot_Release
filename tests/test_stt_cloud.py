@@ -100,7 +100,8 @@ def test_errors_do_not_echo_secrets_audio_or_retry(cloud, monkeypatch, status, f
 
 @pytest.mark.parametrize('reply', [b'not-json', b'{"choices":[]}',
     b'{"choices":[{"finish_reason":"length","message":{"content":"partial"}}]}',
-    b'{"choices":[{"finish_reason":"stop","message":{"content":null}}]}', b'x' * 65537])
+    b'{"choices":[{"finish_reason":"stop","message":{"content":null}}]}', b'x' * 65537],
+    ids=['not-json', 'empty-choices', 'truncated', 'null-content', 'oversized'])
 def test_malformed_truncated_and_oversized_reply_is_not_a_transcript(cloud, monkeypatch, reply):
     transport(monkeypatch, lambda request: httpx.Response(200, content=reply))
     with pytest.raises(RuntimeError, match='返回'): cloud.transcribe(PCM)

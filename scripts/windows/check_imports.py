@@ -4,7 +4,7 @@
 Checks every package in docs/requirements/requirements-windows-base.txt imports and prints
 its version. Pure Python, runnable on Linux and Windows alike:
 
-  - no Windows API usage (no ctypes/windll/pywin32),
+  - Windows-only dependencies are checked only on Windows,
   - no os.getenv / os.environ reads,
   - no spica imports or config loading (AppHost.initialize() is a W2 gate,
     not part of this script).
@@ -48,6 +48,8 @@ REQUIRED = [
     ("requests", "requests", ()),
     ("yt-dlp", "yt_dlp", ()),
 ]
+if sys.platform == "win32":
+    REQUIRED.append(("pywin32", "win32security", ()))
 
 PREFLIGHT: list[tuple[str, str, tuple[str, ...]]] = []
 

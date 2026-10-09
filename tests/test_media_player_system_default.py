@@ -6,6 +6,7 @@ window), never a blocking ``subprocess.run`` that waits for the player to exit.
 
 from __future__ import annotations
 
+from support.filesystem import symlink_or_skip
 import shlex
 import subprocess
 import sys
@@ -126,7 +127,7 @@ def test_rejects_symlink_escape(tmp_path):
     outside = tmp_path / "outside.mkv"
     outside.write_bytes(b"\x00")
     link = d / "ep.mkv"
-    link.symlink_to(outside)                          # inside dir, resolves outside
+    symlink_or_skip(link, outside)                          # inside dir, resolves outside
     run = Popen()
     with pytest.raises(MediaPlayerError) as ei:
         SystemDefaultPlayer(str(d), platform="linux", popen=run).play_file(str(link))

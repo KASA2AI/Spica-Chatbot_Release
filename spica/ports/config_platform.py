@@ -36,6 +36,18 @@ class StableFileIdentityPort(Protocol):
         ...
 
 
+class NativeDocumentFilesPort(Protocol):
+    """File primitives that cannot be expressed using POSIX mode bits."""
+
+    def create_temporary(self, parent: Path, prefix: str) -> tuple[int, str]: ...
+    def open_read(self, path: Path, *, private: bool = False) -> int: ...
+    def harden_descriptor(self, descriptor: int, mode: int) -> None: ...
+    def prepare_directory(self, path: Path) -> None: ...
+    def validate_private(self, path: Path, *, directory: bool = False) -> None: ...
+    def is_private(self, path: Path) -> bool: ...
+    def sync_directory(self, path: Path) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class PlatformCapabilities:
     """Immutable, injectable decisions for privileged local operations."""
@@ -48,6 +60,7 @@ class PlatformCapabilities:
     file_identity: StableFileIdentityPort = field(repr=False, compare=False)
     posix_permissions: bool
     managed_document_writes: bool
+    native_files: NativeDocumentFilesPort | None = field(default=None, repr=False, compare=False)
 
     @property
     def default_lock_root(self) -> Path:
@@ -61,4 +74,5 @@ __all__ = [
     "CrossProcessFileLockPort",
     "PlatformCapabilities",
     "StableFileIdentityPort",
+    "NativeDocumentFilesPort",
 ]

@@ -110,10 +110,13 @@ SillyTavern / CCEditor 的 PNG 卡或 V2/V3 JSON 需要提取上述文本，不�
 | 用途 | 所需模型 |
 | --- | --- |
 | 角色讲话 | 成套 GPT-SoVITS **v2Pro / v2ProPlus**：GPT `.ckpt`、SoVITS `.pth`、参考 WAV |
-| 麦克风识别 | CTranslate2 格式的 `large-v3-turbo`，整份模型目录 |
+| 麦克风识别 | `Qwen3-ASR-1.7B`，整份模型目录 |
 | 唱歌 | RVC v2 `.pth`，可附配套 `.index`；与讲话模型分开 |
 
 **本机环境只安装一次。** 完成基础安装后，NVIDIA / Python 3.11 使用以下顺序；保留 NumPy 1.26.x，不要把独立 RVC 环境的 `requirements-rvc.txt` 混装进来。
+
+
+Windows 完整语音环境使用同一个 Python，先执行 `python scripts/windows/setup_environment.py --profile full --install`，再用 `--check` 核对；详见 [Windows 原生指南](WINDOWS.md)。下面的手工安装顺序保留给 Linux 主环境；Linux 的 Qwen 仍使用独立工作环境。
 
 ```bash
 python -m pip uninstall -y onnxruntime
@@ -226,14 +229,13 @@ Sana 示例尾标是 **5 列 × 4 行、20 帧、每帧 50ms**，从左到右逐
 python scripts/setup_qwen_asr.py --device cuda --download --write-config
 ```
 
-该脚本在项目下创建 `.venv-qwen-asr`，复用主环境 PyTorch，并将 Qwen 的依赖安装到
-独立环境，避免较新的 Transformers 影响屏幕理解/RVC。`--download` 下载模型；
+Linux 上该脚本创建 `.venv-qwen-asr`，复用主环境 PyTorch，并将 Qwen 的依赖安装到
+独立环境。Windows 上先完成 [单环境安装](WINDOWS.md)，此脚本只检查并复用当前 Python，不创建另一个环境。`--download` 下载模型；
 `--write-config` 只更新 app.yaml 的本地 ASR 配置，不修改密钥和角色。两个参数均可省略。
 Windows 和 Linux 使用同一命令；不支持 CUDA 的设备可将 `cuda` 改为 `cpu`，CPU 使用 float32。
 
 如果已有模型，可加 `--model-dir "模型完整目录"` 并省略 `--download`。
-如果手动配置，填写“本地模型目录”和“本地识别 Python”；后者是独立环境的
-`Scripts/python.exe`（Windows）或 `bin/python`（Linux）。程序不会在聊天时自动下载模型。
+如果手动配置，填写“本地模型目录”；Windows 的“本地识别 Python”留空以使用当前解释器，Linux 填独立环境的 `bin/python`。程序不会在聊天时自动下载模型。
 
 ### 显存较小：云端识别
 
@@ -251,7 +253,7 @@ Windows 和 Linux 使用同一命令；不支持 CUDA 的设备可将 `cuda` 改
 “系统默认”跟随操作系统；指定设备断开则报错，不自动改用别的设备。
 普通 USB/系统麦克风在两个平台均可使用；只有使用 ReSpeaker 硬件 VAD 时才选择该选项。
 
-旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新填写模型目录与独立 Python，
+旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新填写模型目录及对应平台的 Python，
 或明确选择云端。密钥保存在本机 xiaosan.env，不放在 app.yaml 或角色包内。
 
 
@@ -260,7 +262,8 @@ Windows 和 Linux 使用同一命令；不支持 CUDA 的设备可将 `cuda` 改
 - `scripts/setup_desktop.py --install`：在 `.venv-desktop` 安装基础依赖；不下载语音模型。
 - `--write-config --model 模型ID [--api-base 服务地址]`：只在 app.yaml 不存在时写入初始文字配置，
   使用仓库小型示例角色；已有用户不运行这个选项。密钥在设置中保存。
-- `scripts/setup_qwen_asr.py`：独立 Qwen 环境；`--download` 才下载模型，`--write-config` 才改 ASR 配置。
+- `--configure-text --model 模型ID [--api-base 服务地址]`：导入静态示例、选择它并关闭可选功能，适用于仓库已有配置模板的首次安装。
+- `scripts/setup_qwen_asr.py`：Windows 复用当前环境，Linux 保留独立 Qwen 环境；`--download` 才下载模型，`--write-config` 才改 ASR 配置。
 - [语音唤醒](VOICE_WAKE.md)：可选小模型、呼叫后的短接话窗口、完全禁麦。
 - [Home](HOME.md)：相机/区域、专用音箱、传感器/灯、闹钟、平台电源配置与真实验收。
 - [Cubism](CUBISM_PACKS.md) 与 [Q版素材字段](CHARACTER_PACKS.md)：每个角色有自己的表现资源。

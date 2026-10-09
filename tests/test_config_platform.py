@@ -45,7 +45,9 @@ def test_platform_capabilities_are_explicit_and_fail_closed() -> None:
         "/synthetic-tmp/spica-config-studio-locks-1000"
     )
     assert windows.posix_permissions is False
-    assert windows.managed_document_writes is False
+    assert windows.managed_document_writes is True
+    assert windows.native_files is not None
+    assert linux.native_files is None
     assert windows.default_lock_root == Path(
         "C:/synthetic-temp/spica-config-studio-locks"
     )

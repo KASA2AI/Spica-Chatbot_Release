@@ -144,19 +144,26 @@ def _inline_comment_offset(value: str) -> int | None:
 
 
 def _atomic_replace(path: Path, payload: bytes) -> None:
+    from spica.adapters.config_platform import current_platform_capabilities
+    native = current_platform_capabilities().native_files
     original_mode = stat.S_IMODE(path.stat().st_mode)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
+    descriptor, temporary_name = (native.create_temporary(path.parent, f'.{path.name}.') if native is not None
+        else tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent))
     temporary_path = Path(temporary_name)
     try:
-        os.fchmod(descriptor, original_mode)
+        if native is None:
+            os.fchmod(descriptor, original_mode)
         with os.fdopen(descriptor, "wb") as handle:
             descriptor = -1
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
+        if native is not None:
+            # Native publication is atomic; Windows exposes no directory-fsync
+            # guarantee equivalent to the POSIX operation below.
+            native.sync_directory(path.parent)
+            return
         directory_descriptor = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(directory_descriptor)

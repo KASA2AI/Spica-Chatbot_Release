@@ -53,17 +53,18 @@ class CharacterPackageLoadTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "mina"
             root.mkdir()
+            absolute_tts = str(Path(tmp) / "absolute-tts.json")
             (root / "meta.json").write_text(
                 json.dumps(
                     {"slug": "mina", "visual_config_path": "visual.json",
-                     "tts_config_path": "/abs/tts.json"},
+                     "tts_config_path": absolute_tts},
                     ensure_ascii=False,
                 ),
                 encoding="utf-8",
             )
             pkg = load_character_package(root)
         self.assertEqual(pkg.visual_config_path, str(root / "visual.json"))  # relative -> package dir
-        self.assertEqual(pkg.tts_config_path, "/abs/tts.json")  # absolute kept
+        self.assertEqual(pkg.tts_config_path, absolute_tts)  # absolute kept
 
 
 class MemoryIsolationTest(unittest.TestCase):

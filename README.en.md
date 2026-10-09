@@ -64,3 +64,5 @@ Thanks to [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS), [Applio](https:/
 Local Qwen3-ASR-1.7B or DashScope cloud recognition, optional Home H1–H3, floating pets and local text notifications are now available. No phone, robot, QQ or Hub service is required.
 
 [Current setup and behavior / 最新配置说明](docs/README.md) · [Home](docs/HOME.md) · [Cubism](docs/CUBISM_PACKS.md)
+
+Windows: [single-environment setup and model reuse](docs/WINDOWS.md).

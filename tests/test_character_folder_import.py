@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from support.filesystem import symlink_or_skip
 import json
 import shutil
 from pathlib import Path
@@ -175,7 +176,7 @@ def test_failed_import_keeps_selection_and_source(folder, tmp_path, failure):
     elif failure == "settings_escape":
         meta["settings_background"] = "../outside.png"
     elif failure == "symlink":
-        (folder / "linked.png").symlink_to(folder / "sana.png")
+        symlink_or_skip(folder / "linked.png", folder / "sana.png")
         meta["visuals"]["sprites"]["sana"] = "linked.png"
     elif failure == "case_collision":
         (tmp_path / "data" / "characters" / "Sana").mkdir(parents=True)

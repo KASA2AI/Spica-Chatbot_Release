@@ -134,6 +134,7 @@ def test_save_is_merge_safe_and_preserves_hand_edited_keys(tmp_path):
 def test_overlay_save_uses_managed_document_restore_protocol(tmp_path):
     p = tmp_path / "overlay.json"
     p.write_text('{"spica_voice_volume": 0.5}\n', encoding="utf-8")
+    original_bytes = p.read_bytes()
     backup_root = tmp_path / "studio-state"
 
     assert save_overlay_config_value(
@@ -147,7 +148,7 @@ def test_overlay_save_uses_managed_document_restore_protocol(tmp_path):
     restore_content = list(backup_root.rglob("content"))
     assert len(restore_metadata) == 1
     assert len(restore_content) == 1
-    assert restore_content[0].read_bytes() == b'{"spica_voice_volume": 0.5}\n'
+    assert restore_content[0].read_bytes() == original_bytes
 
 
 def test_save_creates_file_when_absent(tmp_path):

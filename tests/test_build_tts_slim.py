@@ -8,6 +8,7 @@ the size cap, the gitignore gate, source/target realpath containment, target
 escape rejection, and the no-output-dir-created invariant.
 """
 
+from support.filesystem import symlink_or_skip
 import copy
 import hashlib
 import json
@@ -327,7 +328,7 @@ class DryRunPlanTest(_SlimFixture):
         # (a) output dir that, AFTER realpath, lands inside the source tree via a
         #     symlink -> must abort. normpath alone would not catch this; realpath does.
         link = self.repo / "sneaky"
-        link.symlink_to(self.src)            # sneaky -> vendored
+        symlink_or_skip(link, self.src)            # sneaky -> vendored
         with self.assertRaises(BuildAbort):
             self._plan(output_dir=str(link / "slim"))  # realpath -> vendored/slim
         # (b) source inside output -> must abort.

@@ -30,14 +30,14 @@ class BuildSpecsTest(unittest.TestCase):
         self.assertEqual(self.slim["side"], "slim")
 
     def test_original_points_at_applio(self):
-        self.assertTrue(self.original["applio_root"].endswith("song/Applio"))
-        self.assertIn("song/Applio/logs/spica/spica_200e_57000s.pth", self.original["model_path"])
-        self.assertIn("song/Applio/logs/spica/spica.index", self.original["index_path"])
+        self.assertTrue(Path(self.original["applio_root"]).as_posix().endswith("song/Applio"))
+        self.assertIn("song/Applio/logs/spica/spica_200e_57000s.pth", Path(self.original["model_path"]).as_posix())
+        self.assertIn("song/Applio/logs/spica/spica.index", Path(self.original["index_path"]).as_posix())
 
     def test_slim_points_at_artifact(self):
-        self.assertTrue(self.slim["applio_root"].endswith("artifacts/rvc_slim/base"))
-        self.assertIn("artifacts/rvc_slim/characters/spica/model/spica_200e_57000s.pth", self.slim["model_path"])
-        self.assertIn("artifacts/rvc_slim/characters/spica/index/spica.index", self.slim["index_path"])
+        self.assertTrue(Path(self.slim["applio_root"]).as_posix().endswith("artifacts/rvc_slim/base"))
+        self.assertIn("artifacts/rvc_slim/characters/spica/model/spica_200e_57000s.pth", Path(self.slim["model_path"]).as_posix())
+        self.assertIn("artifacts/rvc_slim/characters/spica/index/spica.index", Path(self.slim["index_path"]).as_posix())
 
     def test_same_input_and_params(self):
         self.assertEqual(self.original["input_vocal"], self.slim["input_vocal"])

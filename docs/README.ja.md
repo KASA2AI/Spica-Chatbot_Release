@@ -110,10 +110,13 @@ SillyTavern / CCEditor の PNG カードや V2/V3 JSON からは本文を取り�
 | 用途 | 必要なモデル |
 | --- | --- |
 | 会話の声 | GPT-SoVITS **v2Pro / v2ProPlus** の対応する GPT `.ckpt`、SoVITS `.pth`、参照 WAV |
-| マイク認識 | CTranslate2 形式の `large-v3-turbo` モデル一式 |
+| マイク認識 | `Qwen3-ASR-1.7B` モデル一式 |
 | 歌声 | RVC v2 `.pth`、任意で対応する `.index`。会話モデルとは別 |
 
 **実行環境は一度だけ準備します。** 基本依存の後、NVIDIA / Python 3.11 では以下の順に実行します。NumPy 1.26.x を維持し、別ワーカー用の `requirements-rvc.txt` は同じ環境へ入れないでください。
+
+
+Windows は既存のアプリ環境で `python scripts/windows/setup_environment.py --profile full --install` を実行し、`--check` で確認します。[Windows ガイド](WINDOWS.md)を参照してください。以下の手動コマンドは Linux の主環境用です。Linux の Qwen は別のワーカー環境を維持します。
 
 ```bash
 python -m pip uninstall -y onnxruntime
@@ -215,9 +218,10 @@ API キーを入力したら **保存密钥（キーを保存）**、その他�
 
 ## Qwen3-ASR: local / cloud
 
-Local ASR uses **Qwen3-ASR-1.7B** in a separate Python environment; do not
-install its Transformers dependencies into the screen/RVC environment.
-Create a Python 3.11 environment, install a matching PyTorch build, then run:
+Local ASR uses **Qwen3-ASR-1.7B**. Windows reuses the single app environment
+prepared by the [Windows setup](WINDOWS.md); leave the ASR Python setting empty.
+Linux retains a separate Qwen worker environment. For Linux, prepare Python 3.11
+with matching PyTorch, then run:
 
 ```bash
 python -m pip install -r docs/requirements/requirements-qwen-asr.txt
@@ -226,7 +230,7 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwe
 
 In **设置 → 应用设置**, choose 本地 Qwen3-ASR-1.7B, set 本地模型目录 and
 本地识别 Python to the downloaded directory and that environment's Python
-executable (Windows: `Scripts/python.exe`; Linux: `bin/python`). CPU uses
+executable (Linux: `bin/python`; Windows uses the app Python). CPU uses
 `float32`; a supported NVIDIA GPU can use `bfloat16` or `float16`.
 Save and restart. The application does not download models while chatting.
 
@@ -236,7 +240,7 @@ region, save and restart. Valid utterances are uploaded to that service and
 may incur charges; startup/self-check does not upload audio or verify billing.
 There is no automatic fallback from local to cloud.
 
-旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新配置模型目录与独立 Python，
+旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新配置模型目录（Windows 使用当前 Python），
 或明确选择云端。密钥保存在本机 xiaosan.env，不放在 app.yaml 或角色包内。
 普通 USB/系统麦克风在两个平台均可使用；只有使用 ReSpeaker 硬件 VAD 时才选择该选项。
 

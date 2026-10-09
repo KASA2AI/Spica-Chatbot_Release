@@ -1,6 +1,7 @@
-# Install ONLY in a separate Qwen Python environment with CUDA-enabled torch.
-# Screen/RVC still require transformers <=4.50 in the main application runtime.
+# Linux: install in the separate Qwen worker environment (main Transformers <=4.50).
+# Windows: use the single app environment, Transformers 4.57.6 / PyTorch 2.6.0.
 qwen-asr==0.0.6
 # Silero v6 matches the accepted speech boundaries (6.2 changes noise admission).
 silero-vad==6.0.0
-onnxruntime>=1.16.1,<2
+onnxruntime>=1.16.1,<2; sys_platform != "win32"
+onnxruntime-gpu==1.26.0; sys_platform == "win32"

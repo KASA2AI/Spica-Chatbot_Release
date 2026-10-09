@@ -31,6 +31,7 @@ import json
 import tempfile
 import threading
 import unittest
+from spica.ports.memory import MemoryScope
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -74,8 +75,12 @@ class _RecordingHandler:
 class _FakeTTS:
     name = "fake_tts"
 
+    def __init__(self):
+        self.calls = 0
+
     def synthesize(self, request):
         assert isinstance(request, TTSRequest)
+        self.calls += 1
         return TTSResult(ok=True, provider=self.name, audio_url="/x.wav", audio_path="/tmp/x.wav",
                          chunks=[{"index": 0, "text": request.text, "audio_url": "/x.wav", "audio_path": "/tmp/x.wav"}],
                          timing={"tts_total_ms": 1.0}, duration_ms=1.0)
@@ -117,7 +122,8 @@ def _build_engine(client, tmp, *, with_edge_tool=False):
 
 
 def _recent(engine):
-    return engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
+    return [row for row in engine.deps.memory.evidence(MemoryScope("spica", "owner", "default"))
+            if row["kind"] == "assistant_generated" and row["metadata"].get("generation_complete")]
 
 
 def _done_answer(events):
@@ -220,7 +226,7 @@ class _ChatToolAPI:
     def create(self, **kwargs):
         self.calls.append(kwargs)
         assert kwargs.get("stream"), "this harness only exercises the streaming chain"
-        is_followup = "[TOOL_RESULTS]" in kwargs["messages"][0]["content"]
+        is_followup = any(m["role"] == "tool" or "[TOOL_RESULTS]" in m["content"] for m in kwargs["messages"])
         if not is_followup and kwargs.get("tools"):
             def probe_chunks():
                 if self.preamble:
@@ -286,11 +292,13 @@ class FollowupCancelTest(unittest.TestCase):
             engine, handler = _build_engine(_deepseek_client(api), tmp, with_edge_tool=True)
             events = list(engine.stream_voice(QUESTION))
             recent = _recent(engine)
+            tts_calls = engine.services.tts_adapter.calls
 
         self.assertEqual(handler.calls, 1)
         self.assertEqual(api.followup_yielded, pieces)  # fully consumed
         self.assertEqual(_done_answer(events), "画面上是个女孩。")
         self.assertEqual(len(recent), 1)
+        self.assertGreater(tts_calls, 0)
 
 
 class StreamResetMemoryTest(unittest.TestCase):
@@ -311,7 +319,7 @@ class StreamResetMemoryTest(unittest.TestCase):
         # Memory carries exactly the followup answer; the preamble is nowhere in
         # the persisted turn (raw was reset before the followup streamed).
         self.assertEqual(len(recent), 1)
-        self.assertEqual(recent[0]["assistant_text"], "画面上是个女孩。")
+        self.assertEqual(recent[0]["content"], "画面上是个女孩。")
         self.assertNotIn(PREAMBLE, json.dumps(recent[0], ensure_ascii=False))
 
 

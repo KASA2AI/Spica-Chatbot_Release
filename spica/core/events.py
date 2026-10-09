@@ -13,6 +13,8 @@ INVARIANT (CLAUDE.md #1 + #7): Qt-free; cross-boundary events are dataclasses.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar
 
@@ -126,6 +128,7 @@ class UnitReadyEvent(RuntimeEvent):
     audio_path: str | None
     timing: dict[str, Any] = field(default_factory=dict)
     audio_error: str | None = None
+    speech_segments: list[dict[str, Any]] = field(default_factory=list)
 
     def _data(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -141,7 +144,10 @@ class UnitReadyEvent(RuntimeEvent):
         # audio_error only appears in the legacy dict when present (matches pipeline).
         if self.audio_error:
             data["audio_error"] = self.audio_error
+        if self.speech_segments:
+            data["speech_segments"] = self.speech_segments
         return data
+
 
 
 @dataclass(frozen=True)
@@ -229,6 +235,7 @@ _FROM_DATA: dict[str, Callable[[dict[str, Any]], RuntimeEvent]] = {
         audio_path=d.get("audio_path"),
         timing=d.get("timing") or {},
         audio_error=d.get("audio_error"),
+        speech_segments=d.get("speech_segments") or [],
     ),
     "done": lambda d: DoneEvent(
         answer=d.get("answer", ""),
@@ -275,3 +282,86 @@ __all__ = [
     "event_from_legacy",
     "register_event",
 ]
+
+
+@dataclass(frozen=True)
+class DesktopNoticeEvent(RuntimeEvent):
+    """Owner-local display text; never a conversation or audio request."""
+
+    kind: ClassVar[str] = "desktop_notice"
+    notification_id: str
+    title: str
+    message: str
+
+    def __post_init__(self):
+        for name, maximum in (("notification_id", 128), ("title", 80), ("message", 400)):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+                raise ValueError(f"{name} must be non-empty text of at most {maximum} characters")
+
+    def _data(self) -> dict[str, Any]:
+        return dict(notification_id=self.notification_id, title=self.title, message=self.message)
+
+
+@dataclass(frozen=True)
+class DesktopAudioPlaybackEvent(RuntimeEvent):
+    """A local player's receipt, separate from subtitle/presentation completion.
+
+    occurred_at uses this host's monotonic clock. A started receipt confirms
+    player state, not a physical speaker or that the owner heard the speech.
+    """
+
+    kind: ClassVar[str] = "desktop_audio_playback"
+    request_id: str
+    turn_id: str
+    endpoint_id: str
+    unit_index: int
+    outcome: Literal["started", "completed", "failed", "stopped", "not_started"]
+    occurred_at: float
+
+    def _data(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id, "turn_id": self.turn_id,
+            "endpoint_id": self.endpoint_id, "unit_index": self.unit_index,
+            "outcome": self.outcome, "occurred_at": self.occurred_at,
+        }
+
+
+
+@dataclass(frozen=True)
+class DesktopPresentationTerminalEvent(RuntimeEvent):
+    """Driver-owned presentation terminal mirrored to desktop bookkeeping."""
+
+    kind: ClassVar[str] = "desktop_presentation_terminal"
+    request_id: str
+    turn_id: str
+    endpoint_id: str
+    outcome: Literal["completed", "failed", "stopped"]
+    awaited_audio_playback: bool = False
+
+    def _data(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "turn_id": self.turn_id,
+            "endpoint_id": self.endpoint_id,
+            "outcome": self.outcome,
+            "awaited_audio_playback": self.awaited_audio_playback,
+        }
+
+
+
+@dataclass(frozen=True)
+class DesktopTurnLifecycleReleasedEvent(RuntimeEvent):
+    """Both producer and presentation are terminal; Coordinator BUSY may clear."""
+
+    kind: ClassVar[str] = "desktop_turn_lifecycle_released"
+    request_id: str
+    turn_id: str
+    endpoint_id: str
+
+    def _data(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "turn_id": self.turn_id,
+            "endpoint_id": self.endpoint_id,
+        }

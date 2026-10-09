@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from threading import RLock
 from typing import Any
 
-from agent_tools.function_tools.screen.backends.moondream import MoondreamBackend, MoondreamResult
+from agent_tools.function_tools.screen.backends.moondream import MoondreamBackend
 from agent_tools.function_tools.screen.backends.moondream_runtime import load_moondream_backend
 from agent_tools.function_tools.screen.config import ScreenPipelineConfig, load_screen_config
 from agent_tools.function_tools.screen.schema import ScreenToolError
@@ -369,19 +369,6 @@ class MoondreamModelManager:
         )
 
 
-class _MoondreamBackendAdapter:
-    """Compatibility adapter for older callers expecting .query(...).text."""
-
-    def __init__(self, manager: MoondreamModelManager) -> None:
-        self.manager = manager
-
-    def query(self, image: Any, question: str) -> MoondreamResult:
-        return MoondreamResult(
-            text=self.manager.query(image, question, reasoning=bool(self.manager.config.reasoning)),
-            raw=None,
-        )
-
-
 _MANAGER_LOCK = RLock()
 _MANAGER: MoondreamModelManager | None = None
 _SIGNATURE: _ManagerSignature | None = None
@@ -398,10 +385,6 @@ def get_moondream_manager(config: ScreenPipelineConfig | None = None) -> Moondre
         return _MANAGER
 
 
-def get_moondream_backend(config: ScreenPipelineConfig) -> _MoondreamBackendAdapter:
-    return _MoondreamBackendAdapter(get_moondream_manager(config))
-
-
 def clear_moondream_manager() -> None:
     global _MANAGER, _SIGNATURE
     with _MANAGER_LOCK:
@@ -412,10 +395,6 @@ def clear_moondream_manager() -> None:
             _MANAGER.reset(close=True)
         _MANAGER = None
         _SIGNATURE = None
-
-
-def clear_moondream_backend() -> None:
-    clear_moondream_manager()
 
 
 def preload_async(config: ScreenPipelineConfig | None = None) -> Future[Any]:

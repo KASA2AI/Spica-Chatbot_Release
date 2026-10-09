@@ -10,11 +10,13 @@
 
 - **聊天与陪伴**：打字、麦克风对话、主动开口和角色记忆。
 - **多角色**：角色卡、服装差分、独立声线打包导入，重启切换。
-- **动态立绘**：眼部原画动画，支持视线跟随与眨眼。
+- **动态立绘与桌宠**：eye-rig、可选原生 Cubism、Q 版拖动/摇晃/点击/三击唤醒、角色独立待机动作。
+- **本机通知**：有界纯文字通知与桌宠气泡，不需要 QQ 或跨端服务。
+- **可选 Home**：感知亮屏、固定/临时闹钟、角色叫醒、晚安与房间灯控；默认关闭，按硬件配置。
 - **自定义对话框**：独立样式包、配色、底图和动态句末标记。
 - **桌面互动**：galgame 陪玩、屏幕理解、看番与点歌唱歌。
 
-适用于 Windows / Linux，保留纯桌宠功能。语音与屏幕识别在本机运行；使用远端聊天模型时，参与对话的文本、角色卡及记忆会发给所配置的服务。
+适用于 Windows / Linux，保留纯桌宠功能。语音识别可选本地 Qwen3-ASR-1.7B 或百炼云端；屏幕识别在本机运行；使用远端聊天模型时，参与对话的文本、角色卡及记忆会发给所配置的服务。
 
 ## 🚀 开始使用
 
@@ -30,6 +32,17 @@ python -m pip install -r docs/requirements/requirements-windows-base.txt
 ```
 
 Linux 的 Ubuntu / Debian 用户先安装 `build-essential python3-dev portaudio19-dev ffmpeg`，再装 Python 依赖。基础清单同样适用于 Linux。
+
+也可让脚本安装独立基础环境并生成安全的首次文字配置（不覆盖已有配置）：
+
+```bash
+python scripts/setup_desktop.py --install --write-config --model YOUR_MODEL_ID --api-base https://YOUR_PROVIDER/v1
+```
+
+Linux 用 `.venv-desktop/bin/python webui_qt.py`，Windows 用
+`.venv-desktop/Scripts/python.exe webui_qt.py` 启动；然后在设置中保存 API Key。
+已使用 Conda 安装依赖时，仅运行 `--write-config`，保留当前 Python 即可。
+脚本不会安装服务、下载大模型或启用 Home，参数作用见[安装配置](docs/README.md#setup)。
 
 首次使用按[启动配置](docs/README.md#setup)填写 API 与本机设置，先用小型示例跑通文字聊天；语音依赖和模型见[声音配置](docs/README.md#voice)。配置完成后，每次启动运行：
 
@@ -52,10 +65,11 @@ Windows 也可使用 `powershell -ExecutionPolicy Bypass -File .\scripts\windows
 
 - [配置与自定义教程](docs/README.md)：从启动到角色卡、声音、动态立绘和对话框。
 - [角色包字段参考](docs/CHARACTER_PACKS.md) · [对话框字段参考](docs/DIALOGUE_STYLES.md)
+- [Home 配置与实机边界](docs/HOME.md) · [语音唤醒](docs/VOICE_WAKE.md) · [Cubism](docs/CUBISM_PACKS.md)
 - [依赖清单](docs/requirements/)：基础、GPU、语音和可选功能分开存放。
 
 ## 许可
 
 代码使用 [Source-Available 许可](LICENSE)。角色美术、声线及其他第三方素材遵循各自许可；分享自制包时请注明作者与来源。
 
-感谢 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)、[Applio](https://github.com/IAHispano/Applio)、[faster-whisper](https://github.com/SYSTRAN/faster-whisper)、[RapidOCR](https://github.com/RapidAI/RapidOCR)、[Moondream](https://github.com/vikhyat/moondream) 与 [yt-dlp](https://github.com/yt-dlp/yt-dlp)。
+感谢 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)、[Applio](https://github.com/IAHispano/Applio)、[Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)、[RapidOCR](https://github.com/RapidAI/RapidOCR)、[Moondream](https://github.com/vikhyat/moondream) 与 [yt-dlp](https://github.com/yt-dlp/yt-dlp)。

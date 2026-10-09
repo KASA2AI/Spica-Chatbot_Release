@@ -18,7 +18,7 @@ from common.timing import elapsed_ms, log_timing, now_ms
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = BASE_DIR / "data" / "config" / "tts.yaml"
-DEFAULT_OUTPUT_DIR = BASE_DIR / "static" / "generated_voice"
+DEFAULT_OUTPUT_DIR = BASE_DIR / "data" / "generated" / "voice"
 UNSAFE_TTS_CHUNK_ENDINGS = ("、", "，", ",")
 SHORT_TTS_OPENERS = {"もちろん。", "はい。", "ええ。", "そうですね。"}
 logger = logging.getLogger(__name__)
@@ -54,6 +54,13 @@ class GPTSoVITSTool:
         self.config_path = Path(config_path).resolve()
         self.config_dir = self.config_path.parent
         self._lock = threading.RLock()
+        self._state_lock = threading.RLock()
+        self._residency_managed = False
+        self._residents: set[str] = set()
+        self._closed = False
+        self._loading = False
+        self._last_error = ""
+        self._ready_generation = None
         self._config_mtime = 0.0
         self.config: dict[str, Any] = {}
 
@@ -67,7 +74,66 @@ class GPTSoVITSTool:
 
         self.reload_config(force=True)
 
+    @property
+    def resource_status(self) -> dict[str, Any]:
+        with self._state_lock:
+            driver = self._driver
+            generation = (id(driver), driver.generation if driver else 0)
+            ready = bool(driver is not None and driver.ready and self._ready_generation == generation)
+            return {"state": "ready" if ready else "loading" if self._loading else "failed" if self._last_error else "idle",
+                    "ready": ready, "generation": (*generation, self._config_mtime),
+                    "error": self._last_error}
+
+    def set_resident(self, owner: str, enabled: bool) -> None:
+        """Record demand immediately, without waiting on a native inference call."""
+        with self._state_lock:
+            self._residency_managed = True
+            if enabled and not self._closed:
+                self._residents.add(owner)
+            else:
+                self._residents.discard(owner)
+
+    def release_if_unused(self) -> None:
+        """May wait for native inference; callers schedule this off the UI thread."""
+        from spica.local_runtime.tts.model_imports import INFERENCE_LOCK
+        # Recheck demand *after* any blocked native work drains. New demand can
+        # arrive while we wait, and must fence a queued unload.
+        with self._lock, INFERENCE_LOCK, self._state_lock:
+            if self._residency_managed and not self._residents and self._driver is not None:
+                self._driver.unload()
+                self._ready_generation = None
+
+    def _mark_ready(self):
+        with self._state_lock:
+            self._ready_generation = (id(self._driver), self._driver.generation)
+
+    def close(self) -> None:
+        with self._state_lock:
+            self._closed = self._residency_managed = True
+            self._residents.clear()
+        self.release_if_unused()
+
+    @contextmanager
+    def _operation(self):
+        from spica.local_runtime.tts.model_imports import INFERENCE_LOCK
+        with self._lock, INFERENCE_LOCK:
+            with self._state_lock:
+                if self._closed:
+                    raise RuntimeError("TTS service is closed")
+                self._loading = True
+                self._last_error = ""
+            try:
+                yield
+            finally:
+                with self._state_lock:
+                    self._loading = False
+                self.release_if_unused()
+
     def reload_config(self, force: bool = False) -> None:
+        with self._lock:
+            self._reload_config(force)
+
+    def _reload_config(self, force: bool = False) -> None:
         try:
             mtime = self.config_path.stat().st_mtime
         except FileNotFoundError as exc:
@@ -77,7 +143,13 @@ class GPTSoVITSTool:
             return
 
         config = read_config_file(self.config_path)
+        if config != self.config:
+            self._ready_generation = None
 
+        if config.get("inference_profile", "legacy") != self.config.get("inference_profile", "legacy"):
+            if self._driver is not None:
+                self._driver.unload()
+            self._driver = None
         self.config = config
         self._config_mtime = mtime
         self.gptsovits_root = self._resolve_path(config["gptsovits_root"])
@@ -90,6 +162,10 @@ class GPTSoVITSTool:
         self.reload_config()
         return self.config
 
+    @property
+    def requires_full_text(self) -> bool:
+        return self.public_config().get("inference_profile") == "megumin_d"
+
     def warmup(self, emotion: str | None = None, synthesize: bool | None = None) -> dict[str, Any]:
         """Load GPT-SoVITS weights once at Flask startup.
 
@@ -97,7 +173,7 @@ class GPTSoVITSTool:
         the TTS service. Visual diff selection is handled separately by
         agent_tools/visual/diff_service.py and does not read this value.
         """
-        with self._lock:
+        with self._operation():
             start_ms = now_ms()
             emotion_key = str(emotion or "unknown")
             should_synthesize = bool(synthesize) if synthesize is not None else False
@@ -117,7 +193,9 @@ class GPTSoVITSTool:
                 driver = self._ensure_driver()
                 with self._vendor_output():
                     self._ensure_models(gpt_model_path, sovits_model_path, ref_language, target_language)
-                    if should_synthesize:
+                    if should_synthesize and self.config.get("inference_profile") == "megumin_d":
+                        self.synthesize(str(self.config.get("warmup_text") or "はい。"), emotion_key)
+                    elif should_synthesize:
                         warmup_text = str(self.config.get("warmup_text") or "はい。")
                         list(
                             driver.synthesize_chunks(
@@ -137,6 +215,10 @@ class GPTSoVITSTool:
                             )
                         )
             except Exception as exc:
+                with self._state_lock:
+                    self._last_error = str(exc)
+                if self._driver is not None:
+                    self._driver.unload()
                 duration_ms = elapsed_ms(start_ms)
                 log_timing("tts_warmup", duration_ms, emotion=emotion_key, synthesize=should_synthesize, ok=False)
                 logger.warning(
@@ -155,6 +237,7 @@ class GPTSoVITSTool:
                 }
 
             duration_ms = elapsed_ms(start_ms)
+            self._mark_ready()
             log_timing("tts_warmup", duration_ms, emotion=emotion_key, synthesize=should_synthesize)
             return {
                 "ok": True,
@@ -187,13 +270,16 @@ class GPTSoVITSTool:
         text: str,
         emotion: str,
         tts_param_overrides: dict[str, Any] | None = None,
+        *, artifact_directory: str | None = None, cancelled: threading.Event | None = None,
     ) -> dict[str, Any]:
         text = (text or "").strip()
         if not text:
             raise ValueError("TTS 文本为空，无法合成语音。")
         text = self._normalize_tts_text(text)
 
-        with self._lock:
+        with self._operation():
+            if cancelled is not None and cancelled.is_set():
+                return {"ok": True}
             total_start_ms = now_ms()
             self.reload_config()
             emotion_key = self.normalize_emotion(emotion)
@@ -204,6 +290,8 @@ class GPTSoVITSTool:
             ref_language = sample.get("ref_language") or self.config.get("ref_language", "日文")
             target_language = self.config.get("target_language", "日文")
             output_wav_path = self._new_output_path(emotion_key)
+            if artifact_directory is not None:
+                output_wav_path = Path(artifact_directory) / output_wav_path.name
             text_chunks = self._split_tts_text(text, params)
             chunk_audio_items = []
 
@@ -217,6 +305,8 @@ class GPTSoVITSTool:
                 result_list = []
                 chunk_timings = []
                 for index, chunk in enumerate(text_chunks):
+                    if cancelled is not None and cancelled.is_set():
+                        return {"ok": True}
                     chunk_start_ms = now_ms()
                     synthesis_result = driver.synthesize_chunks(
                         ref_wav_path=str(sample["ref_audio_path"]),
@@ -242,7 +332,7 @@ class GPTSoVITSTool:
                             {
                                 "index": index,
                                 "text": chunk,
-                                "audio_url": f"{self.static_url_prefix}/{chunk_wav_path.name}",
+                                "audio_url": None if artifact_directory is not None else f"{self.static_url_prefix}/{chunk_wav_path.name}",
                                 "audio_path": str(chunk_wav_path),
                                 "sampling_rate": chunk_sampling_rate,
                             }
@@ -288,10 +378,11 @@ class GPTSoVITSTool:
             )
             # The ONE user-visible line per synthesis (detail lives at DEBUG).
             logger.info("tts done: %s… chunks=%d %.0fms", text[:20], len(text_chunks), total_ms)
+            self._mark_ready()
             return {
                 "ok": True,
                 "tool": "gptsovits_tts",
-                "audio_url": f"{self.static_url_prefix}/{output_wav_path.name}",
+                "audio_url": None if artifact_directory is not None else f"{self.static_url_prefix}/{output_wav_path.name}",
                 "audio_path": str(output_wav_path),
                 "sampling_rate": sampling_rate,
                 "emotion": emotion_key,
@@ -341,9 +432,16 @@ class GPTSoVITSTool:
         env-prime glue now lives in ``spica.local_runtime.tts.model_imports`` (service
         no longer touches inference_webui directly)."""
         if self._driver is None:
-            from spica.local_runtime.tts import GptSovitsV2ProDriver
+            if self.config.get("inference_profile") == "megumin_d":
+                from spica.local_runtime.tts.driver import MeguminDDriver
 
-            self._driver = GptSovitsV2ProDriver(self.gptsovits_root)
+                self._driver = MeguminDDriver(
+                    self.gptsovits_root, config_path=self.output_dir / "tts_infer.yaml"
+                )
+            else:
+                from spica.local_runtime.tts import GptSovitsV2ProDriver
+
+                self._driver = GptSovitsV2ProDriver(self.gptsovits_root)
         return self._driver
 
     def _ensure_models(
@@ -427,6 +525,8 @@ class GPTSoVITSTool:
         params["sentence_chunking"] = bool(params["sentence_chunking"])
         params["max_chunk_chars"] = int(params["max_chunk_chars"])
         params["max_chunk_sentences"] = int(params["max_chunk_sentences"])
+        if self.config.get("inference_profile") == "megumin_d":
+            params["sentence_chunking"] = False
         return params
 
     def _normalize_tts_text(self, text: str) -> str:

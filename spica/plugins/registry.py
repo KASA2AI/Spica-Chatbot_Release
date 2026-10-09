@@ -14,6 +14,7 @@ config, paths) without the registry knowing the concrete types.
 from __future__ import annotations
 
 from typing import Any, Callable, NamedTuple
+from contextlib import contextmanager
 
 Factory = Callable[..., Any]
 
@@ -77,6 +78,22 @@ class CapabilityRegistry:
         # Field semantics documented on ToolEntry (Phase 4R: the historical
         # anonymous 7-tuple, now with named fields).
         self._tools: dict[str, ToolEntry] = {}
+
+    @contextmanager
+    def registration(self):
+        """Startup-only atomic registration; a failed feature publishes no tools.
+
+        Factories/handlers retain their identity. Resource cleanup belongs to the
+        feature initializer, not to this registry transaction.
+        """
+        names = ('_llm', '_tts', '_visual', '_memory', '_tools')
+        previous = {name: getattr(self, name).copy() for name in names}
+        try:
+            yield self
+        except Exception:
+            for name, table in previous.items():
+                setattr(self, name, table)
+            raise
 
     # -- registration ---------------------------------------------------------
     def register_llm(self, name: str, factory: Factory) -> None:

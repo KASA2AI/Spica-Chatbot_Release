@@ -1,39 +1,12 @@
-"""Play-history card (B 方案, FINDINGS #15): ONE compact character-memory line
-about a finished play, composed from data ALREADY in the galgame store -- no LLM.
+"""A bounded game-history card from the existing game store, published by the host.
 
-The card is what bridges "Spica forgets every game outside companion mode": it is
-upserted (by the HOST, not this domain -- 铁律 #8: galgame only reads character
-memory) into the default-scope long-term memory, so plain-chat retrieval finds it
-through the normal [LONG_TERM_MEMORY] channel.
+The card preserves shared play, game names, progress, recent cast, relationships
+and plot with game framing. Appearance lists identify who appeared, never who
+is the protagonist or what gender they are. Unknown identities remain unknown;
+no new model call or inferred character ranking is added here.
 
-Template v2 (after real-machine retrieval failure: the v1 card had no
-主人公/男主/主角/名字 token and no latin game token, so CJK-bigram search
-filtered it out; and "top-1 relation" picked a SIDE pair, never naming the
-protagonist):
-
-    {user}和我一起玩了游戏《名》（game_id）。主人公（男主角）是X
-    ，玩到{章}{线路}。游戏里的A和B是…。游戏里的C和D是…。最近剧情：…。（日期）
-
-- Game name written BOTH ways: 《display_name》（game_id） -- the latin game_id
-  token makes English-worded questions ("limelight …") hit keyword search.
-- Protagonist gets its OWN fronted sentence with the FIXED wording
-  "主人公（男主角）是" -- covers the 主人公/人公/男主/主角 bigrams (the
-  highest-frequency question shape). Heuristic: the most frequent name across
-  the latest summaries' ``characters`` lists (ties -> earlier in the newest
-  list). Relation-edge counting was REFUTED by real data (top-confidence pair
-  was side characters); persistent appearance across summaries is the strongest
-  protagonist signal the store carries. Undecidable -> sentence omitted, never
-  a wrong claim.
-- Relations: top-2 by confidence (was top-1, which dropped the protagonist
-  entirely when a side pair scored highest).
-- <= CARD_MAX_CHARS is a HARD guarantee by greedy assembly: segments join in
-  priority order (name -> protagonist -> progress -> relations -> summary) and
-  a segment that would overflow is dropped WHOLE -- key info stays in front by
-  construction, not by estimation. (prompt_builder renders memory content
-  through _compact_text(·, 220).)
-- §13.5 route tiers: confirmed -> "已确认走X线"; an unconfirmed guess at
-  confidence >= ROUTE_CONFIDENCE_THRESHOLD -> "似乎在X线"; below -> omitted.
-- "游戏" framing throughout (anemoi firewall, FINDINGS #2).
+Whole optional segments fit within the card budget. Route guesses remain marked
+as guesses; only the player's confirmation produces a confirmed route.
 """
 
 from __future__ import annotations
@@ -46,10 +19,10 @@ from spica.ports.game_memory import GameMemoryPort
 # §13.5: an unconfirmed (LLM-guessed) route below this confidence is NOT worth a
 # claim in character memory -- omit rather than guess wrong about "which 线".
 ROUTE_CONFIDENCE_THRESHOLD = 0.6
-# prompt_builder._compact_text truncates memory content at 220 chars -- hard budget.
+# The existing bounded card is copied whole into the personal history episode.
 CARD_MAX_CHARS = 220
-# How many recent summaries feed the protagonist heuristic + the plot snippet.
-_PROTAGONIST_SUMMARY_WINDOW = 3
+# Recent summaries supply names and the latest plot snippet.
+_HISTORY_SUMMARY_WINDOW = 3
 
 
 def _truncate(text: Any, limit: int) -> str:
@@ -57,25 +30,16 @@ def _truncate(text: Any, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _protagonist(summaries: Any) -> str | None:
-    """Most frequent name across the summaries' ``characters`` lists; ties break
-    toward the earlier position in the NEWEST summary (summaries arrive newest
-    first). One summary degrades to "first listed". No names -> None."""
-    counts: dict[str, int] = {}
-    first_seen: dict[str, int] = {}
-    order = 0
+def _appearing_characters(summaries: Any) -> list[str]:
+    names = []
     for summary in summaries or []:
         for raw in getattr(summary, "characters", None) or []:
             name = str(raw).strip()
-            if not name:
-                continue
-            counts[name] = counts.get(name, 0) + 1
-            if name not in first_seen:
-                first_seen[name] = order
-                order += 1
-    if not counts:
-        return None
-    return min(counts, key=lambda name: (-counts[name], first_seen[name]))
+            if name and name not in names:
+                names.append(name)
+                if len(names) == 3:
+                    return names
+    return names
 
 
 def _chapter_phrase(progress: Any) -> str:
@@ -131,10 +95,9 @@ def build_play_history_card(
     tail = f"。（{date}）"
 
     segments: list[str] = []
-    protagonist = _protagonist(summaries)
-    if protagonist:
-        # FIXED wording: covers the 主人公/人公/男主/主角 bigrams (retrieval).
-        segments.append(f"。主人公（男主角）是{_truncate(protagonist, 12)}")
+    characters = _appearing_characters(summaries)
+    if characters:
+        segments.append("。最近出场角色：" + "、".join(_truncate(name, 12) for name in characters))
     progress_phrase = f"{_chapter_phrase(progress)}{_route_phrase(progress)}"
     if progress_phrase:
         segments.append(progress_phrase)
@@ -168,7 +131,7 @@ def compose_play_history(
     profile = game_memory.get_game_profile(game_id)
     progress = game_memory.get_progress_state(game_id, playthrough_id)
     relations = game_memory.character_relations(game_id, playthrough_id)
-    summaries = game_memory.recent_summaries(game_id, playthrough_id, limit=_PROTAGONIST_SUMMARY_WINDOW)
+    summaries = game_memory.recent_summaries(game_id, playthrough_id, limit=_HISTORY_SUMMARY_WINDOW)
     if progress is None and not relations and not summaries:
         return None
     display_name = (profile.display_name if profile is not None else "") or game_id

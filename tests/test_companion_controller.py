@@ -193,7 +193,7 @@ class RecordHistoryCallbackTest(ControllerTestBase):
 
     def test_stop_invokes_recorder_with_card(self):
         records = []
-        controller = self._controller_with_recorder(lambda game_id, card: records.append((game_id, card)))
+        controller = self._controller_with_recorder(lambda game_id, card, session_id: records.append((game_id, card)))
         controller.start("0x1", game_id="g1", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
         for text in ["L1", "L1", "L2", "L2"]:
             controller.session.on_ocr_result(text)
@@ -219,7 +219,7 @@ class RecordHistoryCallbackTest(ControllerTestBase):
 
     def test_stop_without_start_makes_no_call(self):
         records = []
-        controller = self._controller_with_recorder(lambda game_id, card: records.append((game_id, card)))
+        controller = self._controller_with_recorder(lambda game_id, card, session_id: records.append((game_id, card)))
         controller.stop()  # never started
         self.assertEqual(records, [])
 
@@ -265,7 +265,7 @@ class EndFailureCardTest(ControllerTestBase):
         self._seed_card_material()
         records = []
         controller = self._controller_with(
-            lambda game_id, card: records.append((game_id, card)), _AlwaysFailSummarizer()
+            lambda game_id, card, session_id: records.append((game_id, card)), _AlwaysFailSummarizer()
         )
         session_id = self._start_feed_stop(controller)
         self.assertEqual([g for g, _ in records], ["g1"])  # card WAS written
@@ -275,7 +275,7 @@ class EndFailureCardTest(ControllerTestBase):
         self._seed_card_material()
         records = []
         controller = self._controller_with(
-            lambda game_id, card: records.append((game_id, card)), _StubSummarizer()
+            lambda game_id, card, session_id: records.append((game_id, card)), _StubSummarizer()
         )
         real_exec_p = GameMemorySqliteAdapter._exec_p
 
@@ -296,7 +296,7 @@ class EndFailureCardTest(ControllerTestBase):
         with self.subTest(case="normal"):
             records = []
             controller = self._controller_with(
-                lambda game_id, card: records.append(game_id), _StubSummarizer()
+                lambda game_id, card, session_id: records.append(game_id), _StubSummarizer()
             )
             session_id = self._start_feed_stop(controller)
             self.assertEqual(records, ["g1"])
@@ -305,7 +305,7 @@ class EndFailureCardTest(ControllerTestBase):
             self._seed_card_material("g2")
             records = []
             controller = self._controller_with(
-                lambda game_id, card: records.append(game_id), _StubSummarizer()
+                lambda game_id, card, session_id: records.append(game_id), _StubSummarizer()
             )
             controller.start("0x1", game_id="g2", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
             session_id = controller.session.session_id
@@ -316,7 +316,7 @@ class EndFailureCardTest(ControllerTestBase):
             self._seed_card_material("g3")
             records = []
             controller = self._controller_with(
-                lambda game_id, card: records.append(game_id), None
+                lambda game_id, card, session_id: records.append(game_id), None
             )
             controller.start("0x1", game_id="g3", dialog_ratios=(0.0, 0.0, 1.0, 1.0))
             for text in ["L1", "L1", "L2", "L2"]:

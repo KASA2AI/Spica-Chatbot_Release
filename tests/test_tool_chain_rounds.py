@@ -197,13 +197,12 @@ class ChainRoundsTest(unittest.TestCase):
         # The tool really ran twice, with the chained arguments.
         self.assertEqual([e["step"] for e in executions], [1, 2])
         # Round-2 probe carried round-1's result; round-3 carried both.
-        # Outputs sit JSON-escaped inside the [TOOL_RESULTS] dump.
-        round2_prompt = calls[1][1]["messages"][0]["content"]
-        self.assertIn("[TOOL_RESULTS]", round2_prompt)
-        self.assertIn('\\"page\\": 1', round2_prompt)
-        round3_prompt = calls[2][1]["messages"][0]["content"]
-        self.assertIn('\\"page\\": 1', round3_prompt)
-        self.assertIn('\\"page\\": 2', round3_prompt)
+        round2 = [m for m in calls[1][1]["messages"] if m["role"] == "tool"]
+        round3 = [m for m in calls[2][1]["messages"] if m["role"] == "tool"]
+        self.assertEqual([m["tool_call_id"] for m in round2], ["call_1"])
+        self.assertEqual([m["tool_call_id"] for m in round3], ["call_1", "call_2"])
+        self.assertIn('"page": 1', round3[0]["content"])
+        self.assertIn('"page": 2', round3[1]["content"])
 
 
 class NonChainableSingleRoundTest(unittest.TestCase):
@@ -226,7 +225,8 @@ class NonChainableSingleRoundTest(unittest.TestCase):
         followup = calls[1][1]
         self.assertTrue(followup.get("stream"))
         self.assertNotIn("tools", followup)
-        self.assertIn("[TOOL_RESULTS]", followup["messages"][0]["content"])
+        self.assertEqual(next(m["tool_call_id"] for m in followup["messages"]
+                              if m["role"] == "tool"), "call_1")
         self.assertEqual(len(executions), 1)
 
 
@@ -255,9 +255,10 @@ class LoopOverflowTest(unittest.TestCase):
             self.assertIn("tools", kwargs)
         self.assertTrue(final.get("stream"))
         self.assertNotIn("tools", final)
-        final_prompt = final["messages"][0]["content"]
-        self.assertIn("不要再调用工具", final_prompt)
-        self.assertIn('\\"page\\": 3', final_prompt)  # JSON-escaped inside [TOOL_RESULTS]
+        self.assertIn("不要再调用工具", final["messages"][-1]["content"])
+        self.assertEqual(final["messages"][-1]["role"], "system")
+        result = next(m for m in final["messages"] if m.get("tool_call_id") == "call_3")
+        self.assertIn('"page": 3', result["content"])
         self.assertEqual([e["step"] for e in executions], [1, 2, 3])
 
 

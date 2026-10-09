@@ -12,6 +12,8 @@ class StreamUnitState:
     audio_path: str | None = None
     visual: dict[str, Any] = field(default_factory=dict)
     cue: dict[str, Any] = field(default_factory=dict)
+    speech_segments: list[dict[str, Any]] = field(default_factory=list)
+    speech_segment_index: int = 0
     text_ready: bool = True
     audio_ready: bool = True
     visual_ready: bool = True
@@ -48,6 +50,8 @@ def merge_stream_unit_state(target: StreamUnitState, source: StreamUnitState) ->
         target.visual = source.visual
     if source.cue:
         target.cue = source.cue
+    if source.speech_segments:
+        target.speech_segments = source.speech_segments
     target.text_ready = target.text_ready or source.text_ready
     target.audio_ready = target.audio_ready or source.audio_ready
     target.visual_ready = target.visual_ready or source.visual_ready

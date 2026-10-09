@@ -197,3 +197,40 @@ my-character-live2d/
 - 称呼保存提示被 `SPICA_USER_NAME` 覆盖时，从自己的启动环境或 dotenv 中移除旧设置，重新启动后再保存；落盘失败不会假报成功。
 
 完整角色清单约束见 [character-pack.schema.json](character-pack.schema.json)，眼部几何约束见 [eye_rig.py](../spica/core/eye_rig.py)。发布自制包时，在 `LICENSE` 或 `sources.tsv` 写明素材作者、来源与许可；本项目代码许可不替代素材原作者的许可。
+
+
+## Q 版桌宠与本机通知
+
+完整界面顶部点击“收起为桌宠”；悬浮小人上停留会显示说话、摸头和展开按钮。
+单击播放角色交互，左右连续摇晃触发眩晕，三击请求唤醒；松手后恢复。
+桌宠共用当前对话和麦克风许可，完全禁麦时三击不会打开麦克风。
+“小／中／大”按所在屏幕高度的10%／15%／20%适配。
+
+默认 Spica 自带既有生成素材（约51 MiB）。其他角色不会借用 Spica 素材；未配套时
+显示该角色静态立绘。角色自己的 `meta.json` 在 `visuals` 下声明：
+
+```json
+{"floating": "floating/animation.json"}
+```
+
+动画文件是 WebP/GIF，`animation.json` 最少声明 `canvas`、`fps`、`poster` 和
+`states.idle`；每项写 `file`、实际编码帧数 `frames`、实际总时长 `duration_ms`。
+完整示例见 `spica_data/Spica_skill/floating/animation.json`；所有引用必须在包内。
+桌宠配置、动画和静态姿势随角色包一起导入/导出，路径逃逸、帧数或时长不符会拒绝安装。
+内置旧格式角色卡通过 `floating_config_path` 引用同一数据格式；新包使用 `visuals.floating`。
+
+`idle_actions` 是可选加权随机动作；默认未与 Spica 交互且未对话时每30–45秒选择一次。
+不以是否正在操作其他应用判断角色空闲；说话、拖动、菜单或正在呈现回复会中止动作。
+
+本机任务结束后可调用当前安装目录中的脚本：
+
+```bash
+python scripts/notify_desktop.py --title "任务完成" --message "相关测试已通过。"
+```
+
+该接口仅发送文字，不调用模型、不播放声音、不接受命令。Spica 未运行会返回
+`unavailable`，不会启动应用。`queued` 表示已进入本机显示队列，不表示本人看见。
+通知被设置遮挡、电脑无新输入时保留；展示后有新输入，再留8秒阅读时间。
+可通过“看完了”提前收起。队列有界、仅当前进程有效，不提供跨端或永久待处理中心。
+
+可选原生 Live2D 的安装和制作见 [Cubism 角色包](CUBISM_PACKS.md)。

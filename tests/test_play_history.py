@@ -1,5 +1,5 @@
-"""Play-history card v2 (B 方案, FINDINGS #15): template shape ("游戏" framing /
-fronted protagonist sentence / bilingual game name / §13.5 route tiers / one
+"""Play-history card: template shape ("游戏" framing / sourced cast names /
+bilingual game name / §13.5 route tiers / one
 compact line hard-under the 220-char prompt truncation), the retrieval-keyword
 guard (the v1 real-machine failure: zero bigram hits -> filtered out), graceful
 degradation, and compose's never-played -> None.
@@ -49,6 +49,24 @@ def _summary(text="雪鹰在天台向主人公告白，两人确认了心意。"
 
 
 class CardShapeTest(unittest.TestCase):
+    def test_frequent_side_character_does_not_become_the_protagonist(self):
+        with TemporaryDirectory() as directory:
+            game = GameMemorySqliteAdapter(Path(directory) / "game.sqlite3")
+            for number, text, characters in (
+                (1, "男主角悠人和女同学莉奈参观图书馆。", ["悠人", "莉奈"]),
+                (2, "莉奈和女同学美咲讨论借书规则。", ["莉奈", "美咲"]),
+                (3, "莉奈和美咲回到教室。", ["莉奈", "美咲"]),
+            ):
+                game.add_summary(StorySummary(
+                    summary_id=str(number), game_id="星灯图书馆", summary_zh=text,
+                    characters=characters, created_at=f"2026-09-14T0{number}:00:00",
+                ))
+            card = compose_play_history(game, "星灯图书馆")
+        self.assertNotIn("主人公（男主角）是莉奈", card)
+        self.assertIn("最近出场角色：莉奈、美咲、悠人", card)
+        self.assertIn("莉奈和美咲回到教室", card)
+        self.assertLessEqual(len(card), CARD_MAX_CHARS)
+
     def test_full_material_card_shape(self):
         card = build_play_history_card(
             display_name="LimeLight Lemonade Jam",
@@ -59,8 +77,8 @@ class CardShapeTest(unittest.TestCase):
             played_at="2026-06-10T12:00:00",
         )
         self.assertIn("一起玩了游戏《LimeLight Lemonade Jam》（limelight）", card)  # bilingual name
-        self.assertIn("主人公（男主角）是雪鹰", card)  # fronted protagonist sentence
-        self.assertLess(card.index("主人公"), card.index("玩到"))  # protagonist BEFORE progress
+        self.assertIn("最近出场角色：雪鹰、麦穗", card)
+        self.assertLess(card.index("最近出场角色"), card.index("玩到"))
         self.assertIn("游戏里的雪鹰和主人公是青梅竹马", card)
         self.assertIn("玩到第三章", card)
         self.assertIn("最近剧情：", card)
@@ -86,8 +104,8 @@ class CardShapeTest(unittest.TestCase):
                     hits = [keyword for keyword in keywords if keyword and keyword in haystack]
                     self.assertTrue(hits, f"card has no keyword overlap with {query!r}")
 
-    def test_protagonist_heuristic_and_omission(self):
-        # Frequency across summaries wins; ties break toward the newest list order.
+    def test_appearing_characters_are_deduplicated_without_role_inference(self):
+        # The former frequency-to-protagonist assertion was an unsupported inference.
         card = build_play_history_card(
             display_name="G",
             summaries=[
@@ -96,7 +114,8 @@ class CardShapeTest(unittest.TestCase):
                 _summary(characters=["雪鹰"]),
             ],
         )
-        self.assertIn("主人公（男主角）是雪鹰", card)  # 3 vs 2
+        self.assertIn("最近出场角色：雪鹰、雄真", card)
+        self.assertNotIn("主人公（男主角）是", card)
         # Undecidable (no characters anywhere) -> the sentence is OMITTED, never
         # guessed. Plot text deliberately avoids the word 主人公 so the assertion
         # checks the SENTENCE, not the snippet.
@@ -108,15 +127,15 @@ class CardShapeTest(unittest.TestCase):
     def test_real_machine_regression_side_pair_top_confidence(self):
         # The exact real-machine material shape: the highest-confidence relation is
         # a SIDE pair (雄真-杰 0.95) while the protagonist 雪鹰 only appears in
-        # summary.characters. v1 named no protagonist at all; v2 must front 雪鹰.
+        # summary.characters. Preserve all names without guessing their roles.
         card = build_play_history_card(
             display_name="LimeLight Lemonade Jam",
             game_id="limelight",
             relations=[_relation(a="雄真", b="杰", summary="双胞胎兄弟", confidence=0.95)],
             summaries=[_summary(characters=["雪鹰", "雄真", "杰"])],
         )
-        self.assertIn("主人公（男主角）是雪鹰", card)  # NOT 雄真
-        self.assertNotIn("主人公（男主角）是雄真", card)
+        self.assertIn("最近出场角色：雪鹰、雄真、杰", card)
+        self.assertNotIn("主人公（男主角）是", card)
         self.assertIn("游戏里的雄真和杰是双胞胎兄弟", card)  # the side pair still informs
 
     def test_relations_top_two_by_confidence(self):
@@ -154,7 +173,7 @@ class CardShapeTest(unittest.TestCase):
         self.assertEqual(ROUTE_CONFIDENCE_THRESHOLD, 0.6)
 
     def test_budget_under_220_with_extreme_material(self):
-        # Greedy assembly: overflowing segments drop WHOLE; head + protagonist stay.
+        # Greedy assembly: overflowing segments drop WHOLE; game and cast stay.
         card = build_play_history_card(
             display_name="超" * 60,
             game_id="x" * 40,
@@ -171,7 +190,7 @@ class CardShapeTest(unittest.TestCase):
         )
         self.assertLessEqual(len(card), CARD_MAX_CHARS)  # hard guarantee by construction
         self.assertIn("一起玩了游戏", card)
-        self.assertIn("主人公（男主角）是", card)  # fronted segments survive the squeeze
+        self.assertIn("最近出场角色：", card)  # fronted segments survive the squeeze
         self.assertIn("（2026-06-10）", card)  # date tail always present
 
     def test_degrades_without_optional_material(self):
@@ -221,14 +240,15 @@ class ComposeTest(unittest.TestCase):
         # placeholder summaries carry no characters -> protagonist omitted, not guessed
         self.assertNotIn("主人公", card)
 
-    def test_compose_protagonist_from_summary_characters(self):
+    def test_compose_cast_from_summary_characters_without_inventing_identity(self):
         now = utc_now_iso()
         self.mem.add_summary(StorySummary(
             summary_id="s1", game_id="g1", summary_zh="雪鹰登场。",
             characters=["雪鹰", "雄真"], created_at=now, updated_at=now,
         ))
         card = compose_play_history(self.mem, "g1")
-        self.assertIn("主人公（男主角）是雪鹰", card)
+        self.assertIn("最近出场角色：雪鹰、雄真", card)
+        self.assertNotIn("主人公（男主角）是", card)
 
     def test_compose_falls_back_to_game_id_without_profile(self):
         facade = ManualGameMemory(self.mem, character_id="spica", user_id="麦")

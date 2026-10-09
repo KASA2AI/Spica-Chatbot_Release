@@ -123,7 +123,7 @@ def _make_services(tmpdir, answer_text, **config_extra):
         "max_tool_rounds": 2,
     }
     config.update(config_extra)
-    return AgentServices(
+    services = AgentServices(
         llm_client=_FakeLLMClient(raw),
         tts_adapter=_FakeTTS(),
         visual_tool=_FakeVisual(),
@@ -134,6 +134,9 @@ def _make_services(tmpdir, answer_text, **config_extra):
         tool_functions=default_tool_functions(),
         tool_schemas=TOOL_SCHEMAS,
     )
+    from spica.adapters.memory.sqlite import SqliteMemoryAdapter
+    services.memory_adapter = SqliteMemoryAdapter(services.memory_store, services.recent_memory)
+    return services
 
 
 class SplitDialogTranslationTests(unittest.TestCase):
@@ -270,19 +273,18 @@ class BilingualPromptTests(unittest.TestCase):
             character_profile="profile",
             dialog_display_language="zh",
         )
+        prompt = "\n".join(m["content"] for m in prompt)
         self.assertIn("双语字幕模式", prompt)
 
 
 class BilingualStreamingTests(unittest.TestCase):
     def _run(self, answer, **config_extra):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            services = _make_services(tmpdir, answer, **config_extra)
-            events = list(
-                stream_voice_events(
-                    TurnContext(TurnRequest(conversation_id="c1", user_input="説明して")),
-                    services,
-                )
-            )
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        services = _make_services(directory.name, answer, **config_extra)
+        events = list(stream_voice_events(
+            TurnContext(TurnRequest(conversation_id="c1", user_input="説明して")), services,
+        ))
         return services, events
 
     def test_zh_mode_displays_subtitles_and_speaks_japanese(self):
@@ -353,8 +355,10 @@ class BilingualStreamingTests(unittest.TestCase):
             ["すみません、もう一度話しかけてください。"],
         )
         self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
-        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
-        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+        from spica.ports.memory import MemoryScope
+        generated = [row for row in services.memory_adapter.evidence(MemoryScope("spica", "owner", "c1"))
+                     if row["kind"] == "assistant_generated"]
+        self.assertEqual(generated[-1]["content"], "すみません、もう一度話しかけてください。")
 
     def test_all_translation_japanese_never_bypasses_zh_display_validation(self):
         services, events = self._run("⟦おはよう。⟧", dialog_display_language="zh")
@@ -370,8 +374,10 @@ class BilingualStreamingTests(unittest.TestCase):
             ["すみません、もう一度話しかけてください。"],
         )
         self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
-        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
-        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+        from spica.ports.memory import MemoryScope
+        generated = [row for row in services.memory_adapter.evidence(MemoryScope("spica", "owner", "c1"))
+                     if row["kind"] == "assistant_generated"]
+        self.assertEqual(generated[-1]["content"], "すみません、もう一度話しかけてください。")
 
     def test_zh_partial_compliance_never_leaks_japanese_into_subtitles(self):
         # The model translated はい but DROPPED the final うん's ⟦⟧. zh is a
@@ -433,8 +439,10 @@ class BilingualStreamingTests(unittest.TestCase):
             ["すみません、もう一度話しかけてください。"],
         )
         self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
-        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
-        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+        from spica.ports.memory import MemoryScope
+        generated = [row for row in services.memory_adapter.evidence(MemoryScope("spica", "owner", "c1"))
+                     if row["kind"] == "assistant_generated"]
+        self.assertEqual(generated[-1]["content"], "すみません、もう一度話しかけてください。")
 
     def test_zh_translation_prefix_does_not_trust_unpaired_chinese_tail(self):
         services, events = self._run(
@@ -453,8 +461,10 @@ class BilingualStreamingTests(unittest.TestCase):
             ["すみません、もう一度話しかけてください。"],
         )
         self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
-        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
-        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+        from spica.ports.memory import MemoryScope
+        generated = [row for row in services.memory_adapter.evidence(MemoryScope("spica", "owner", "c1"))
+                     if row["kind"] == "assistant_generated"]
+        self.assertEqual(generated[-1]["content"], "すみません、もう一度話しかけてください。")
 
     def test_zh_stray_close_does_not_forge_pair_for_chinese_tail(self):
         services, events = self._run(
@@ -471,8 +481,10 @@ class BilingualStreamingTests(unittest.TestCase):
             ["すみません、もう一度話しかけてください。"],
         )
         self.assertEqual(done["answer"], "すみません、もう一度話しかけてください。")
-        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
-        self.assertEqual(recent[-1]["assistant_text"], "すみません、もう一度話しかけてください。")
+        from spica.ports.memory import MemoryScope
+        generated = [row for row in services.memory_adapter.evidence(MemoryScope("spica", "owner", "c1"))
+                     if row["kind"] == "assistant_generated"]
+        self.assertEqual(generated[-1]["content"], "すみません、もう一度話しかけてください。")
 
     def test_zh_paired_kanji_only_japanese_remains_in_spoken_and_memory_channels(self):
         services, events = self._run(
@@ -492,8 +504,10 @@ class BilingualStreamingTests(unittest.TestCase):
             ["了解。", "あとで行く。"],
         )
         self.assertEqual(done["answer"], "了解。あとで行く。")
-        recent = services.recent_memory.get_recent(scoped_conversation_id("spica", "c1"))
-        self.assertEqual(recent[-1]["assistant_text"], "了解。あとで行く。")
+        from spica.ports.memory import MemoryScope
+        generated = [row for row in services.memory_adapter.evidence(MemoryScope("spica", "owner", "c1"))
+                     if row["kind"] == "assistant_generated"]
+        self.assertEqual(generated[-1]["content"], "了解。あとで行く。")
 
     def test_zh_rejects_japanese_inside_the_translation_channel(self):
         services, events = self._run(
@@ -687,6 +701,7 @@ class BilingualPromptHardeningTests(unittest.TestCase):
             character_profile="profile",
             dialog_display_language="zh",
         )
+        prompt = "\n".join(m["content"] for m in prompt)
         self.assertIn("⟦⟧ 内只允许使用中文", prompt)
         self.assertIn("不得保留日语假名或未翻译的日文原句", prompt)
         self.assertTrue(prompt.rstrip().endswith(BILINGUAL_OUTPUT_REMINDER))
@@ -710,6 +725,7 @@ class BilingualPromptHardeningTests(unittest.TestCase):
             character_profile="profile",
             dialog_display_language="zh",
         )
+        prompt = "\n".join(m["content"] for m in prompt)
         self.assertIn("[OUTPUT_FORMAT_REMINDER]", prompt)
         # The reminder is a real recency anchor: it sits AFTER the user input.
         self.assertLess(
@@ -724,6 +740,7 @@ class BilingualPromptHardeningTests(unittest.TestCase):
             long_term_memories=[],
             character_profile="profile",
         )
+        prompt = "\n".join(m["content"] for m in prompt)
         self.assertNotIn("[OUTPUT_FORMAT_REMINDER]", prompt)
         self.assertIn("[RUNTIME_CAPABILITY_REMINDER]", prompt)
 

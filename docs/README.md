@@ -32,11 +32,11 @@ character:
 tts:
   enabled: false
 stt:
-  backend: faster_whisper
+  backend: qwen_asr
   mic_backend: generic
-  model: spica_data/models/faster-whisper-large-v3-turbo
+  model: models/stt/Qwen3-ASR-1.7B
   device: cpu
-  compute_type: int8
+  compute_type: float32
   language: zh
   warmup_on_startup: false
 screen:
@@ -123,11 +123,11 @@ python -m pip install -c docs/requirements/constraints-windows-app.txt -r docs/r
 python -m pip install -c docs/requirements/constraints-windows-app.txt --no-deps audio-separator==0.44.2
 ```
 
-确认 `ffmpeg -version` 能运行。共享语音权重与 STT 模型不放进角色包，缺少时分别从 [GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS) 和 [faster-whisper 模型仓库](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo)下载；已有完整文件可跳过：
+确认 `ffmpeg -version` 能运行。共享语音权重与 STT 模型不放进角色包，缺少时分别从 [GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS) 和 [Qwen3-ASR 模型仓库](https://huggingface.co/Qwen/Qwen3-ASR-1.7B)下载；已有完整文件可跳过：
 
 ```bash
 python -c "from huggingface_hub import snapshot_download; snapshot_download('lj1995/GPT-SoVITS', local_dir='artifacts/tts_slim/base/GPT_SoVITS/pretrained_models', allow_patterns=['chinese-hubert-base/*', 'chinese-roberta-wwm-ext-large/*', 'sv/*', 's1v3.ckpt', 'v2Pro/*'])"
-python -c "from huggingface_hub import snapshot_download; snapshot_download('dropbox-dash/faster-whisper-large-v3-turbo', local_dir='spica_data/models/faster-whisper-large-v3-turbo')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-ASR-1.7B', local_dir='models/stt/Qwen3-ASR-1.7B')"
 ```
 
 **角色声线单独准备。** 将作者提供的成套模型和约 3～10 秒干净参考录音放入 `voice/`，在原 `meta.json` 顶层追加 `tts`，不要用这段替换整个文件：
@@ -212,3 +212,77 @@ Sana 示例尾标是 **5 列 × 4 行、20 帧、每帧 50ms**，从左到右逐
 - **没声音**：检查成套模型、参考原文、共享权重及 `tts.enabled`；导入成功不等于实际合成成功。
 - **称呼或模型不更新**：检查旧环境变量覆盖；保存后重启。
 - **Windows 路径报错**：本机 YAML 用 `C:/Spica/models/file`，包内始终用相对路径；别把 ZIP 当文件夹导入。
+
+## 语音识别：本地 Qwen3-ASR / 百炼云端
+
+两种方式任选一种，在 **设置 → 应用设置 → 语音识别** 中切换，保存后重启生效。
+
+### 显存充足：本地识别
+
+使用 **Qwen3-ASR-1.7B**。识别录音不上传；模型放在角色包之外。
+请用安装 Spica 的 Python 运行下面的命令，主环境需要已经安装可用的 PyTorch：
+
+```bash
+python scripts/setup_qwen_asr.py --device cuda --download --write-config
+```
+
+该脚本在项目下创建 `.venv-qwen-asr`，复用主环境 PyTorch，并将 Qwen 的依赖安装到
+独立环境，避免较新的 Transformers 影响屏幕理解/RVC。`--download` 下载模型；
+`--write-config` 只更新 app.yaml 的本地 ASR 配置，不修改密钥和角色。两个参数均可省略。
+Windows 和 Linux 使用同一命令；不支持 CUDA 的设备可将 `cuda` 改为 `cpu`，CPU 使用 float32。
+
+如果已有模型，可加 `--model-dir "模型完整目录"` 并省略 `--download`。
+如果手动配置，填写“本地模型目录”和“本地识别 Python”；后者是独立环境的
+`Scripts/python.exe`（Windows）或 `bin/python`（Linux）。程序不会在聊天时自动下载模型。
+
+### 显存较小：云端识别
+
+1. 安装主环境的 `docs/requirements/requirements-stt.txt`，不需要运行上面的本地安装脚本。
+2. 在应用设置中填写并保存 **百炼语音识别 API Key**。
+3. 选择 **百炼 Qwen 云端**，按密钥所属服务地域选择北京或新加坡。
+4. 保持云端模型 `qwen3-asr-flash`，保存应用设置，然后重启。
+
+云端模式会将有效录音发送到所选百炼服务，可能产生服务商费用；不加载本地识别模型。
+启动预热、自检不上传录音，也不代表已验证云端账户可用。本地识别失败不会自动转云端。
+
+### 麦克风与音箱
+
+点击“刷新音频设备”，选择输入麦克风和输出音箱，保存后重启。
+“系统默认”跟随操作系统；指定设备断开则报错，不自动改用别的设备。
+普通 USB/系统麦克风在两个平台均可使用；只有使用 ReSpeaker 硬件 VAD 时才选择该选项。
+
+旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新填写模型目录与独立 Python，
+或明确选择云端。密钥保存在本机 xiaosan.env，不放在 app.yaml 或角色包内。
+
+
+## 独立桌面整合后的入口
+
+- `scripts/setup_desktop.py --install`：在 `.venv-desktop` 安装基础依赖；不下载语音模型。
+- `--write-config --model 模型ID [--api-base 服务地址]`：只在 app.yaml 不存在时写入初始文字配置，
+  使用仓库小型示例角色；已有用户不运行这个选项。密钥在设置中保存。
+- `scripts/setup_qwen_asr.py`：独立 Qwen 环境；`--download` 才下载模型，`--write-config` 才改 ASR 配置。
+- [语音唤醒](VOICE_WAKE.md)：可选小模型、呼叫后的短接话窗口、完全禁麦。
+- [Home](HOME.md)：相机/区域、专用音箱、传感器/灯、闹钟、平台电源配置与真实验收。
+- [Cubism](CUBISM_PACKS.md) 与 [Q版素材字段](CHARACTER_PACKS.md)：每个角色有自己的表现资源。
+
+主窗口点击“收起为桌宠”即可切换，悬浮控件可展开；模式随本机偏好保存。
+点击有角色交互，三击可手动唤醒语音，摇晃持续到松手后恢复；每 30–45 秒在未使用角色时
+按素材权重播放待机。不是必须停止电脑键鼠才算角色空闲。
+
+“日常对话语音”和总语音开关分开；日常无声仍按句子逐步显示，并保持麦克风偏好。
+记忆原话立即保存；自动整理默认关闭，开启后按10轮本人对话或4000估算token积累，空闲再整理。
+模型由你在设置中填写，沿用聊天 API 服务；记忆页可查询、修订、删除和手动整理。
+旧记忆迁移用 `scripts/migrate_memory.py --help` 查看预览/备份选项，不直接拷贝私人数据库进公开仓库。
+
+本机文字通知示例：
+
+```bash
+python scripts/notify_desktop.py --title '任务完成' --message '构建已通过。'
+```
+
+仅投递给同一用户、同一安装的正在运行的桌面；`queued` 是排队回执，不代表本人已看到。
+不触发 LLM、语音、工具或 QQ，桌面关闭时不会自动启动。没有跨端待处理中心或召回入口。
+
+当前架构：`Qt UI → AppHost/功能装配 → ChatEngine → run_turn → ports/adapters`。
+Home 通过本机呈现控制器进入同一回复/播放链；实际呈现与后台资源释放分别回执。
+角色包、模型、配置和私人数据分别存放，平台由 `platform.os: auto` 选择；公共功能只维护一份。

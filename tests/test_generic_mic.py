@@ -18,7 +18,7 @@ from hardware.respeaker.audio import (
     ReSpeakerNoSpeechError,
     ReSpeakerRecordingCancelled,
 )
-from hardware.respeaker.speech_worker import is_fatal_speech_error
+from hardware.audio_input.speech_errors import is_fatal_speech_error
 
 SPEECH = b"\x01" * FRAME_BYTES
 SILENCE = b"\x00" * FRAME_BYTES
@@ -92,18 +92,33 @@ class SegmentationTest(unittest.TestCase):
         with self.assertRaises(ReSpeakerRecordingCancelled):
             _record([SPEECH, SPEECH], should_stop=lambda: True)
 
-    def test_min_speech_not_met_keeps_recording_past_silence_window(self):
-        # min_speech 0.1 s = 5 frames: after 1 speech + 3 silence (elapsed 4 frames,
-        # < 5) the segment must NOT close; it closes at the next silence frame
-        # (elapsed 5 frames >= min AND trailing silence >= 3 frames).
+    def test_short_vad_pulse_is_rejected_at_endpoint_or_duration_cap(self):
+        for max_seconds in (8.0, 0.04):
+            with self.subTest(max_seconds=max_seconds):
+                stream = _FakeStream([SPEECH] + [SILENCE] * 50)
+                with self.assertRaises(ReSpeakerNoSpeechError):
+                    _record(
+                        [], stream_factory=lambda _: stream,
+                        min_speech_seconds=0.2, max_seconds=max_seconds,
+                    )
+                self.assertTrue(stream.closed)
+
+    def test_short_speech_meeting_minimum_is_kept(self):
         _, pcm = _record(
-            [SPEECH, SILENCE, SILENCE, SILENCE, SILENCE, SILENCE],
-            min_speech_seconds=0.1,
+            [SPEECH] * 10 + [SILENCE] * 3,
+            min_speech_seconds=0.2,
         )
-        self.assertEqual(pcm, SPEECH + SILENCE * 4)
+        self.assertEqual(pcm, SPEECH * 10 + SILENCE * 3)
+
+    def test_waiting_for_speech_does_not_consume_utterance_duration_cap(self):
+        _, pcm = _record(
+            [SILENCE] * 6 + [SPEECH] * 4,
+            start_timeout=0.2, max_seconds=0.08,
+        )
+        self.assertEqual(pcm, SILENCE * 2 + SPEECH * 4)
 
     def test_max_seconds_caps_a_started_recording(self):
-        # max 0.08 s = 4 frames of session time: returns what was recorded.
+        # max 0.08 s = 4 frames since speech onset: returns what was recorded.
         _, pcm = _record([SPEECH, SPEECH, SPEECH, SPEECH, SPEECH], max_seconds=0.08)
         self.assertEqual(pcm, SPEECH * 4)
 

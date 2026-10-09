@@ -8,8 +8,20 @@
 | [requirements-windows-heavy.txt](requirements-windows-heavy.txt) | NVIDIA GPU runtime / GPU 运行依赖 |
 | [requirements-windows-app.txt](requirements-windows-app.txt) | TTS and singing in the main environment / 主环境语音与唱歌 |
 | [constraints-windows-app.txt](constraints-windows-app.txt) | Version constraints for the app list; use `-c` / 版本约束，不单独安装 |
-| [requirements-stt.txt](requirements-stt.txt) | Optional STT dependency subset / 语音识别依赖子集 |
+| [requirements-stt.txt](requirements-stt.txt) | 主环境的麦克风与云端识别依赖，不安装本地 ASR 模型 |
+| [requirements-qwen-asr.txt](requirements-qwen-asr.txt) | 只安装到独立 Qwen 环境，本地 Qwen3-ASR-1.7B 推理依赖 |
 | [requirements-screen.txt](requirements-screen.txt) | Optional screen-recognition subset / 屏幕识别依赖子集 |
 | [requirements-rvc.txt](requirements-rvc.txt) | Separate RVC worker environment only, NumPy 2.x / 仅限独立 RVC 环境 |
 
 Full desktop speech setup uses **base → heavy → CUDA PyTorch → app with constraints**, followed by the separate `audio-separator --no-deps` command in the tutorial. Keep the main environment on NumPy 1.26.x.
+
+
+Additional optional lists:
+
+- [Home runtime](requirements-home.txt): desktop environment; no models or device setup.
+- [Home export](requirements-home-export.txt): separate CUDA export environment only.
+- [Wake word](requirements-wake.txt): local lightweight keyword detector, separate from ASR.
+- [Cubism](requirements-cubism.txt): explicit native renderer opt-in.
+
+`requirements-windows-*` are historical filenames; base/application Python lists also serve Linux.
+Qwen requires its own newer Transformers environment and is not installed with the legacy heavy list.

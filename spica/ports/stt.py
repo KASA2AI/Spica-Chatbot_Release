@@ -1,21 +1,16 @@
-"""Speech-to-text capability port (Plan B).
+"""Shared speech-to-text capability with an explicitly selected backend.
 
-A seam over "PCM bytes -> recognized text" so the voice loop never hard-codes a
-recognizer. The default adapter is local faster-whisper (no network, so the old
-``recognize_google`` freeze -- a hung, timeout-less ``urlopen`` -- cannot recur).
-
-The model is HEAVY and MUST be loaded once and kept resident: an adapter holds it
-as a singleton and reuses it across calls (see ``FasterWhisperAdapter``). The
-voice worker is recreated per utterance but only ever receives a REFERENCE to the
-already-loaded adapter, so worker churn never reloads the model.
-
-INVARIANT (CLAUDE.md #1): Qt-free -- the adapter lives under ``spica/``; the Qt
-``SpeechWorker`` (hardware/) receives this port by injection from ``ui/``.
+The host owns one adapter and its lifecycle. Local mode never uploads audio;
+cloud mode uploads admitted utterances only, with no implicit provider fallback.
 """
 
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
+
+# Includes admission/serialization, a cold local model load, and recognition.
+# Callers leave five seconds beyond this budget for child cleanup and delivery.
+STT_REQUEST_TIMEOUT_SECONDS = 110.0
 
 
 @runtime_checkable
@@ -25,15 +20,22 @@ class SpeechToTextPort(Protocol):
     def transcribe(self, pcm: bytes, *, sample_rate: int = 16000) -> str:
         """Transcribe a single VAD-segmented utterance (16-bit mono PCM at
         ``sample_rate``) to text. Synchronous + blocking on the caller's worker
-        thread (same contract the old ``recognize_google`` had), but LOCAL -- no
-        network, so it cannot hang on connectivity. The model is loaded lazily on
-        the first call and reused thereafter (never reloaded per call)."""
+        thread with a bounded request and no implicit backend fallback. Local
+        models are reused; cloud implementations do not load local ASR models."""
         ...
 
     def warmup(self) -> dict[str, Any]:
-        """Load the model once + run one tiny dummy inference to warm CUDA kernels,
-        so the first real utterance has no load/compile lag. Returns a result dict
-        ``{"ok": bool, "duration_ms": float, "error"?: str}`` mirroring the TTS
-        warmup contract (so ``spica.host.warmup.run_warmup`` can drive it the same
-        way). Best-effort: a failure is reported, never raised."""
+        """Prepare local resources; cloud implementations only check local state.
+
+        Returns {"ok": bool, "duration_ms": float, "error"?: str}. Cloud
+        preparation is not evidence of a successful remote transcription.
+        """
+        ...
+
+    def close(self) -> None:
+        """Idempotently reject new requests and interrupt active recognition.
+
+        The host can call this before draining consumers; plugin cleanup may
+        call it again after the remaining business writers finish.
+        """
         ...

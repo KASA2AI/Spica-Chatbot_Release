@@ -14,7 +14,7 @@
 - **Dialogue styles**: separate packs for colors, backgrounds, and animated sentence markers.
 - **Desktop activities**: galgame companionship, screen understanding, anime, and singing.
 
-A desktop-only app for Windows / Linux. Speech and screen recognition run locally; when using a remote chat model, conversation text, relevant character cards, and memory are sent to the configured service.
+A desktop-only app for Windows / Linux. Speech recognition supports local Qwen3-ASR-1.7B or DashScope cloud; screen recognition runs locally; when using a remote chat model, conversation text, relevant character cards, and memory are sent to the configured service.
 
 ## 🚀 Get started
 
@@ -58,4 +58,9 @@ Large weights and complete character artwork are not included in Git. Character 
 
 The code uses a [Source-Available license](LICENSE). Character artwork, voices, and other third-party assets retain their own licenses. Credit authors and sources when sharing a pack.
 
-Thanks to [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS), [Applio](https://github.com/IAHispano/Applio), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [RapidOCR](https://github.com/RapidAI/RapidOCR), [Moondream](https://github.com/vikhyat/moondream), and [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+Thanks to [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS), [Applio](https://github.com/IAHispano/Applio), [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR), [RapidOCR](https://github.com/RapidAI/RapidOCR), [Moondream](https://github.com/vikhyat/moondream), and [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+
+
+Local Qwen3-ASR-1.7B or DashScope cloud recognition, optional Home H1–H3, floating pets and local text notifications are now available. No phone, robot, QQ or Hub service is required.
+
+[Current setup and behavior / 最新配置说明](docs/README.md) · [Home](docs/HOME.md) · [Cubism](docs/CUBISM_PACKS.md)

@@ -39,6 +39,7 @@ from ui.widgets.common import MAX_UI_SCALE, MIN_UI_SCALE, DEFAULT_DIALOGUE_OPACI
 from ui.widgets.icons import line_icon
 from ui.widgets.package_combo_box import PackageComboBox
 from ui.widgets.application_settings_page import ApplicationSettingsPage
+from ui.widgets.memory_settings_page import MemorySettingsPage
 
 # Shared motion language (2026-07-22): panel slides in from the right while
 # fading, InOutCubic. Aesthetic constants, deliberately NOT configuration.
@@ -68,6 +69,9 @@ class SettingsPanel(QFrame):
     dialogue_style_changed = Signal(object)
     character_changed = Signal(str)
     character_export_requested = Signal(bool)
+    voice_wake_enabled_changed = Signal(bool)
+    voice_wake_words_changed = Signal(str)
+    microphone_muted_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -77,6 +81,7 @@ class SettingsPanel(QFrame):
         self._scale = 1.0
         self._character_busy = False
         self._application_busy = False
+        self._memory_busy = False
 
         # The ONLY QGraphicsEffect in this subtree lives on the panel root
         # (children stay effect-free); it carries the open/close fade.
@@ -131,7 +136,29 @@ class SettingsPanel(QFrame):
         self.tabs.addTab(self.scroll_area, "角色与外观")
         self.application_page = ApplicationSettingsPage(self)
         self.tabs.addTab(self.application_page, "应用设置")
+        self.memory_page = MemorySettingsPage(self)
+        self.memory_page.busy_changed.connect(self.set_memory_busy)
+        self.tabs.addTab(self.memory_page, "记忆")
+        from ui.widgets.home_status_page import HomeStatusPage
+        self.home_status_page = HomeStatusPage(self)
+        self.tabs.addTab(self.home_status_page, 'Home 状态')
         layout.addWidget(self.tabs, 1)
+
+        self.microphone_muted_checkbox = QCheckBox("完全禁用麦克风（包括唤醒监听）", self)
+        self.microphone_muted_checkbox.toggled.connect(self.microphone_muted_changed.emit)
+        body_layout.addWidget(self.microphone_muted_checkbox)
+        self.voice_wake_checkbox = QCheckBox("呼叫角色名字来唤醒", self)
+        self.voice_wake_checkbox.toggled.connect(self.voice_wake_enabled_changed.emit)
+        self.voice_wake_words_input = QLineEdit(self)
+        self.voice_wake_words_input.setPlaceholderText("中文或英文读法；多个词用逗号分隔")
+        self.voice_wake_words_input.editingFinished.connect(
+            lambda: self.voice_wake_words_changed.emit(self.voice_wake_words_input.text()))
+        body_layout.addWidget(self.voice_wake_checkbox)
+        body_layout.addWidget(self.voice_wake_words_input)
+        wake_hint = QLabel("需安装本地唤醒模型。回应结束后留 8 秒接话；没有说话就收麦，继续只监听角色名。也可说“结束对话”或“关闭麦克风”。", self)
+        wake_hint.setWordWrap(True)
+        wake_hint.setObjectName("settingsHint")
+        body_layout.addWidget(wake_hint)
 
         self.character_box = PackageComboBox(self)
         self.character_box.removal_requested.connect(self.character_remove_requested.emit)
@@ -181,9 +208,12 @@ class SettingsPanel(QFrame):
         self.interlocutor_name_status.setWordWrap(True)
 
         self.costume_box = QComboBox(self)
-        self.costume_box.activated.connect(
-            lambda _index: self.costume_changed.emit(self.costume_box.currentText())
-        )
+        self.costume_box.activated.connect(self._select_costume_group)
+        self.costume_variant_box = None
+        self._costume_groups = {}
+        self._costume_labels = {}
+        self._costume_variants = {}
+        self._selected_costume = None
 
         scale_row = QWidget(self)
         scale_row.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -368,6 +398,16 @@ class SettingsPanel(QFrame):
         self.character_box.setCurrentIndex(max(0, index))
         self.character_box.blockSignals(False)
 
+    def set_voice_wake(self, enabled: bool, words: tuple[str, ...], muted: bool = False) -> None:
+        self.microphone_muted_checkbox.blockSignals(True)
+        self.microphone_muted_checkbox.setChecked(muted)
+        self.microphone_muted_checkbox.blockSignals(False)
+        self.voice_wake_checkbox.blockSignals(True)
+        self.voice_wake_checkbox.setChecked(enabled)
+        self.voice_wake_checkbox.blockSignals(False)
+        if not self.voice_wake_words_input.hasFocus():
+            self.voice_wake_words_input.setText("，".join(words))
+
     def set_character_busy(self, busy: bool) -> None:
         self._character_busy = busy
         self._update_settings_busy()
@@ -376,14 +416,22 @@ class SettingsPanel(QFrame):
         self._application_busy = busy
         self._update_settings_busy()
 
+    def set_memory_busy(self, busy: bool) -> None:
+        self._memory_busy = busy
+        self._update_settings_busy()
+
     @property
     def settings_busy(self) -> bool:
-        return self._character_busy or self._application_busy
+        return self._character_busy or self._application_busy or self._memory_busy
 
     def _update_settings_busy(self) -> None:
         busy = self.settings_busy
         self.application_page.set_busy(busy)
+        self.memory_page.set_external_busy(self._character_busy or self._application_busy)
         self.name_input.setEnabled(not busy)
+        self.microphone_muted_checkbox.setEnabled(not busy)
+        self.voice_wake_checkbox.setEnabled(not busy)
+        self.voice_wake_words_input.setEnabled(not busy)
         self.restart_button.setEnabled(not busy)
         self.exit_button.setEnabled(not busy)
         self.dialogue_style_box.setEnabled(not busy)
@@ -485,15 +533,36 @@ class SettingsPanel(QFrame):
     def set_costume_enabled(self, enabled: bool) -> None:
         self.costume_box.setEnabled(enabled)
         self.costume_box.setToolTip("" if enabled else "请等本轮回复和语音结束后再切换服装。")
+        if self.costume_variant_box is not None:
+            self.costume_variant_box.setEnabled(enabled)
+            self.costume_variant_box.setToolTip(self.costume_box.toolTip())
+
 
     def set_costumes(self, costumes: list[str], selected: str | None) -> None:
+        self._selected_costume = selected
+        self._costume_variants = {}
         self.costume_box.blockSignals(True)
         self.costume_box.clear()
+        grouped = set()
+        for label, members in self._costume_groups.items():
+            variants = [key for key in members if key in costumes]
+            if not variants:
+                continue
+            key = variants[0]
+            self._costume_variants[key] = variants
+            grouped.update(variants)
+            self.costume_box.addItem(label, key)
         for costume in costumes:
-            self.costume_box.addItem(costume)
-        if selected and selected in costumes:
-            self.costume_box.setCurrentText(selected)
+            if costume not in grouped:
+                self.costume_box.addItem(self._costume_labels.get(costume, costume), costume)
+        key = next((key for key, variants in self._costume_variants.items() if selected in variants), selected)
+        index = self.costume_box.findData(key)
+        if index >= 0:
+            self.costume_box.setCurrentIndex(index)
+        key = self.costume_box.currentData()
+        self._show_costume_variants(self._costume_variants.get(key, [key]) if key else [], selected)
         self.costume_box.blockSignals(False)
+
 
     def set_interlocutor_name(self, name: str) -> None:
         self.name_input.blockSignals(True)
@@ -757,3 +826,37 @@ class SettingsPanel(QFrame):
                     label.widget().setFixedWidth(scaled_px(86, scale))
         for spin in self.findChildren(QDoubleSpinBox):
             spin.setFixedWidth(scaled_px(68, scale))
+
+    def set_costume_groups(self, groups: dict[str, list[str]], labels: dict[str, str]) -> None:
+        self._costume_groups = groups
+        self._costume_labels = labels
+        if groups and self.costume_variant_box is None:
+            self.costume_variant_box = QComboBox(self)
+            self.costume_variant_box.activated.connect(
+                lambda _index: self.costume_changed.emit(self.costume_variant_box.currentData())
+            )
+            self.costume_variant_box.setEnabled(self.costume_box.isEnabled())
+            self._form.insertRow(1, "造型", self.costume_variant_box)
+            self.costume_variant_box.installEventFilter(self)
+
+
+    def _select_costume_group(self, _index: int) -> None:
+        key = self.costume_box.currentData()
+        variants = self._costume_variants.get(key, [key])
+        selected = self._selected_costume if self._selected_costume in variants else variants[0]
+        self._show_costume_variants(variants, selected)
+        if selected:
+            self.costume_changed.emit(selected)
+
+
+    def _show_costume_variants(self, variants, selected) -> None:
+        box = self.costume_variant_box
+        if box is None:
+            return
+        box.blockSignals(True)
+        box.clear()
+        for variant in variants:
+            box.addItem(self._costume_labels.get(variant, variant), variant)
+        box.setCurrentIndex(box.findData(selected))
+        box.blockSignals(False)
+        self._form.setRowVisible(box, len(variants) > 1)

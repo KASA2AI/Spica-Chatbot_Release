@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from common.sqlite import ClosingConnection
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,13 +21,17 @@ class SQLiteMemoryStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         # Review #6: UI turns / backgrounded commits / galgame summaries write
         # concurrently -- WAL keeps readers unblocked by writers; busy_timeout
         # pins Python's implicit 5s default as an explicit, testable contract.
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def export_namespace(self, prefix: str) -> list[dict[str, Any]]:
@@ -213,6 +218,8 @@ class SQLiteMemoryStore:
     def search_memories(self, conversation_id: str, query: str, limit: int = 5) -> list[dict[str, Any]]:
         limit = min(20, max(1, int(limit)))
         keywords = self._keywords(query)
+        if not keywords:
+            return []
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -235,22 +242,14 @@ class SQLiteMemoryStore:
                     haystack = self._normalize_for_search(content)
                     hits = sum(1 for keyword in keywords if keyword and keyword in haystack)
                     if hits == 0:
-                        if not int(row["pinned"] or 0):
-                            continue
+                        continue
                     else:
                         score += hits * 0.35
-                score += min(int(row["use_count"] or 0), 5) * 0.03
                 scored.append((score, row))
 
             scored.sort(key=lambda item: (item[0], item[1]["updated_at"]), reverse=True)
             selected = [self._row_to_dict(row) for _, row in scored[:limit]]
 
-            if selected:
-                now = datetime.utcnow().isoformat(timespec="seconds")
-                conn.executemany(
-                    "UPDATE memories SET last_used_at = ?, use_count = use_count + 1 WHERE id = ?",
-                    [(now, item["id"]) for item in selected],
-                )
         return selected
 
     def list_memories(
@@ -322,12 +321,14 @@ class SQLiteMemoryStore:
         if not text:
             return []
         parts = re.findall(r"[a-z0-9_]+|[\u3040-\u30ff]{2,}", text)
-        cjk_chars = [ch for ch in re.findall(r"[\u4e00-\u9fff]", text) if ch not in _CJK_STOP_CHARS]
-        cjk_bigrams = [
-            "".join(cjk_chars[index:index + 2])
-            for index in range(0, max(0, len(cjk_chars) - 1))
-        ]
-        keywords = parts + cjk_bigrams + cjk_chars
+        # Match actual adjacent words, not manufactured pairs across stop words
+        # or punctuation. A shared single 天/的/子 does not establish relevance.
+        cjk_spans = re.findall(r"[\u4e00-\u9fff]+", text)
+        cjk_bigrams = [span[i:i + 2] for span in cjk_spans for i in range(len(span) - 1)
+                       if not any(char in _CJK_STOP_CHARS for char in span[i:i + 2])]
+        singles = cjk_spans if len(text) == 1 and text not in _CJK_STOP_CHARS else []
+        keywords = parts + cjk_bigrams + singles
+        keywords = [word for word in keywords if word not in {'今天','现在','这样','刚才','一下','一点','最近'}]
         return [keyword for keyword in dict.fromkeys(keywords) if keyword]
 
     def _memory_key(self, scope: str, content: str) -> str:

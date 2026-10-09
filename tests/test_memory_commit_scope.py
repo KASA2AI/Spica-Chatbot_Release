@@ -58,14 +58,10 @@ GALGAME_CID = "galgame::limelight::playthrough::default"
 
 
 class CommitScopeTest(unittest.TestCase):
-    def test_galgame_turn_commits_to_origin_scope(self):
-        memory, _ = _run(
-            TurnRequest(user_input="刚才剧情?", conversation_id=GALGAME_CID, memory_conversation_id="default")
-        )
-        self.assertEqual(len(memory.scopes), 1)
-        scope = memory.scopes[0]
-        self.assertEqual(scope.conversation_id, "default")  # the ORIGIN, not galgame::
-        self.assertNotEqual(scope.conversation_id, GALGAME_CID)
+    def test_galgame_turn_does_not_enter_legacy_personal_extraction(self):
+        memory, _ = _run(TurnRequest(user_input="刚才剧情?", conversation_id=GALGAME_CID,
+                                    memory_conversation_id="default"))
+        self.assertEqual(memory.scopes, [])
 
     def test_plain_turn_scope_byte_identical(self):
         # memory_conversation_id unset -> effective == raw conversation_id: the
@@ -74,7 +70,7 @@ class CommitScopeTest(unittest.TestCase):
         scope = memory.scopes[0]
         self.assertEqual(
             (scope.character_id, scope.user_id, scope.conversation_id),
-            ("spica", "麦", "default"),
+            ("spica", "owner", "default"),
         )
 
     def test_recent_append_uses_character_scoped_galgame_conversation_id(self):

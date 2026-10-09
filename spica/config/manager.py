@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 from spica.config.env_roster import APP_ENV_MAP, RESPEAKER_ENV_MAP, SCREEN_ENV_MAP
 from spica.config.environment_snapshot import EnvironmentSnapshot
 from spica.config.immutable import freeze_config_tree, thaw_config_tree
-from spica.config.schema import AppConfig
+from spica.config.schema import AppConfig, SttConfig
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = _REPO_ROOT / "data" / "config" / "app.yaml"
@@ -134,10 +134,10 @@ class ConfigManager:
         """Serialize settings read/merge/write and reject a shadowed name edit."""
         with self._update_lock:
             snapshot = environment_snapshot if environment_snapshot is not None else self._current_snapshot()
-            raw = self._read_yaml(self.config_path)
+            raw = self.migrate(self._read_yaml(self.config_path))
             # Patch the document, never the environment-merged running config:
             # saving a name/character must not restore stale API settings.
-            candidate = self.merge(raw, patch)
+            candidate = self.migrate(self.merge(raw, patch))
             resolution = self.resolve_snapshot(candidate, snapshot)
             effective = resolution.to_app_config()
             if reject_overrides:
@@ -293,9 +293,11 @@ class ConfigManager:
         return result
 
     def migrate(self, data: dict[str, Any]) -> dict[str, Any]:
-        # Phase 3: the tunable knobs were env-only, so there is no legacy on-disk
-        # schema to migrate yet. Passthrough placeholder; legacy tts/visual JSON
-        # consolidation is deferred to a later phase.
+        # Normalize the stored base BEFORE merging an edit. Otherwise an old
+        # backend marker can overwrite the user's newly selected Qwen path on
+        # every validation. The same migration is idempotent on read and write.
+        if "stt" in data:
+            return {**data, "stt": SttConfig.migrate_legacy_backend(data["stt"])}
         return data
 
     @staticmethod

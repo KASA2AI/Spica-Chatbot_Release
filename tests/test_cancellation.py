@@ -28,6 +28,7 @@ import json
 import tempfile
 import threading
 import unittest
+from spica.ports.memory import MemoryScope
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -193,9 +194,10 @@ class CheckpointTwoMemoryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             engine = _build_engine(_OneChunkChatAPI(), tmp)
             list(engine.stream_voice("你好"))  # no cancel
-            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
-        self.assertEqual(len(recent), 1)  # the harness really writes when not cancelled
-        self.assertIn("你好", recent[0]["user_text"])
+            evidence = engine.deps.memory.evidence(MemoryScope('spica','owner'))
+        self.assertEqual([row['kind'] for row in evidence], ['user','assistant_generated'])
+        self.assertEqual(evidence[0]['content'],'你好')
+        self.assertTrue(evidence[1]['metadata']['generation_complete'])
 
 
 class _MultiDeltaChatAPI:

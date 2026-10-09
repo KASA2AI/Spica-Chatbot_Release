@@ -168,6 +168,9 @@ class PlaySession(_Model):
     state: str = "active"  # active | paused | ended | interrupted | crashed
     ocr_line_count: int = 0
     summary_count: int = 0
+    character_id: str | None = None
+    principal_id: str | None = None
+    user_name: str | None = None
 
 
 # -- §9.7 StoryLine -----------------------------------------------------------

@@ -336,7 +336,7 @@ class StreamingPipelineTests(unittest.TestCase):
 
         done = [event for event in events if event["event"] == "done"][-1]["data"]
         self.assertEqual(done["answer"], answer)
-        self.assertEqual(client.chat.completions.calls[0]["messages"][0]["role"], "user")
+        self.assertEqual(client.chat.completions.calls[0]["messages"][0]["role"], "system")
         self.assertTrue(client.chat.completions.calls[0]["stream"])
         self.assertEqual(done["timing"]["llm_stream_fallback_reason"], "chat_completions_compatible_client")
 
@@ -386,6 +386,8 @@ class StreamingMemoryJobTest(unittest.TestCase):
             deps = replace(TurnDeps.from_legacy_services(services), jobs=jobs)
             state = TurnContext(TurnRequest(conversation_id="c1", user_input="説明して"))
             events = list(stream_voice_events(state, services, exec_strategy=Inline(), deps=deps))
+            from spica.ports.memory import MemoryScope
+            originals = deps.memory.evidence(MemoryScope("spica", "owner", "c1"))
 
         done = [e for e in events if e["event"] == "done"]
         # the answer was delivered ...
@@ -393,8 +395,9 @@ class StreamingMemoryJobTest(unittest.TestCase):
         self.assertEqual(done[0]["data"]["answer"], answer)
         # ... while the long-term commit is merely SUBMITTED, never run on the hot path
         self.assertEqual(len(jobs.submitted), 1)
-        # recent append, by contrast, ran synchronously before `done`
-        self.assertTrue(services.recent_memory.get_recent(scoped_conversation_id("spica", "c1")))
+        # Input and generated answer are already durable before the deferred commit.
+        self.assertEqual({row["kind"] for row in originals}, {"user", "assistant_generated"})
+        self.assertEqual(services.recent_memory.get_recent(scoped_conversation_id("spica", "c1")), [])
 
 
 class StreamingSetupFailureTest(unittest.TestCase):

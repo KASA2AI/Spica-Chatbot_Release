@@ -19,13 +19,64 @@ BEFORE the vendored import). ``os.chdir`` / ``sys.path`` are not env access.
 from __future__ import annotations
 
 import contextlib
+import gc
 import os
 import sys
 from pathlib import Path
 from typing import Any
+from threading import RLock
 
 # Cache the imported callables per gptsovits_root (idempotent: import once).
 _IMPORT_CACHE: dict[str, tuple] = {}
+_TTS_PIPELINE_CACHE: dict[str, tuple] = {}
+# The vendor modules own process-global models and cwd-sensitive weight loaders.
+# A complete service load + inference operation must hold this same lock.
+INFERENCE_LOCK = RLock()
+
+
+def restore_inference_frontend(funcs: tuple) -> None:
+    """Restore the lazy-releasable HuBERT frontend without reimporting modules."""
+    module = sys.modules.get(getattr(funcs[2], "__module__", ""))
+    if module is None or module.__name__ != "GPT_SoVITS.inference_webui":
+        return
+    if module.ssl_model is None:
+        model = module.cnhubert.get_model()
+        if module.is_half:
+            model = model.half()
+        module.ssl_model = model.to(module.device)
+
+
+def release_inference_models(funcs: tuple) -> None:
+    """Drop the vendor's owning references, not just the adapter's references."""
+    module = sys.modules.get(getattr(funcs[2], "__module__", ""))
+    if module is None or module.__name__ != "GPT_SoVITS.inference_webui":
+        return
+    for name in ("ssl_model", "vq_model", "t2s_model", "bert_model", "tokenizer",
+                 "bigvgan_model", "hifigan_model", "sv_cn_model", "sr_model"):
+        if hasattr(module, name):
+            setattr(module, name, None)
+    for name in ("cache", "resample_transform_dict"):
+        getattr(module, name, {}).clear()
+    release_tensor_caches()
+
+
+def release_tensor_caches() -> None:
+    """Called under INFERENCE_LOCK after the last native operation has returned."""
+    for name, fields in (
+        ("module.mel_processing", ("mel_basis", "hann_window")),
+        ("TTS_infer_pack.TTS", ("resample_transform_dict",)),
+    ):
+        module = sys.modules.get(name)
+        if module is not None:
+            for field in fields:
+                getattr(module, field, {}).clear()
+    gc.collect()
+    # Never initialize Torch/CUDA merely because an unused service is closed.
+    torch = sys.modules.get("torch")
+    if torch is not None and torch.cuda.is_initialized():
+        torch.cuda.empty_cache()
+    from common.memory import release_native_buffers
+    release_native_buffers()
 
 
 @contextlib.contextmanager
@@ -104,11 +155,9 @@ def import_gptsovits_inference(gptsovits_root: str | Path) -> tuple[Any, Any, An
     _drop_conflicting_module("tools", [root])
     _drop_conflicting_module("utils", [package_dir])
 
-    # A3: import-pushd KEPT. inference_webui's MODULE-level code loads BERT (relative
-    # bert_path), cnhubert (relative cnhubert_base_path), reads ./weight.json, and
-    # captures now_dir / sv_path via os.getcwd() -- all cwd-relative AT IMPORT. Fully
-    # removing this needs absolute bert/cnhubert env injection: a separate task (the
-    # A3 cut only decouples the synthesize hot path; see driver.synthesize_chunks).
+    # Import-pushd remains for cnhubert, ./weight.json and the captured sv paths.
+    # The shipped inference module freezes bert_path here but loads Chinese BERT
+    # only on its first Chinese segment. Gradio is confined to its script entry.
     with pushd(root):
         from tools.i18n.i18n import I18nAuto
         from GPT_SoVITS.inference_webui import (
@@ -122,3 +171,54 @@ def import_gptsovits_inference(gptsovits_root: str | Path) -> tuple[Any, Any, An
     funcs = (change_gpt_weights, change_sovits_weights, get_tts_wav, i18n)
     _IMPORT_CACHE[key] = funcs
     return funcs
+
+
+def create_megumin_tts_pipeline(
+    root: Path, *, gpt_path: str, sovits_path: str, config_path: Path
+) -> Any:
+    """Load the same vendor TTS class used for the accepted Megumin D samples.
+
+    Kept separate from inference_webui: importing that module would also load
+    its global models. Only this explicitly selected profile uses this factory.
+    """
+    from spica.config.runtime_env import (
+        prime_vendored_runtime_cache_env,
+        strip_proxy_env_for_vendored_runtime,
+    )
+
+    root = root.resolve()
+    prime_vendored_runtime_cache_env()
+    strip_proxy_env_for_vendored_runtime()
+    _ensure_import_paths(root)
+    _drop_conflicting_module("tools", [root])
+    _drop_conflicting_module("utils", [root / "GPT_SoVITS"])
+    with pushd(root):
+        import torch
+
+        key = str(root)
+        if key not in _TTS_PIPELINE_CACHE:
+            from TTS_infer_pack.TTS import TTS, TTS_Config
+
+            _TTS_PIPELINE_CACHE[key] = (TTS, TTS_Config)
+        TTS, TTS_Config = _TTS_PIPELINE_CACHE[key]
+        pretrained = root / "GPT_SoVITS" / "pretrained_models"
+        paths = {
+            "t2s_weights_path": gpt_path,
+            "vits_weights_path": sovits_path,
+            "bert_base_path": str(pretrained / "chinese-roberta-wwm-ext-large"),
+            "cnhuhbert_base_path": str(pretrained / "chinese-hubert-base"),
+        }
+        # TTS_Config silently substitutes base weights when a path is missing.
+        # A missing character model must fail instead of changing her voice.
+        for path in paths.values():
+            if not Path(path).exists():
+                raise FileNotFoundError(path)
+        cuda = torch.cuda.is_available()
+        cfg = TTS_Config({"custom": {
+            **paths, "device": "cuda:0" if cuda else "cpu",
+            "is_half": cuda, "version": "v2ProPlus",
+        }})
+        config_path = config_path.resolve()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg.configs_path = str(config_path)
+        return TTS(cfg)

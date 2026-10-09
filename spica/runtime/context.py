@@ -30,7 +30,12 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
+from uuid import uuid4
+
+from spica.ports.model import ModelInput, ModelMessage
+
+from spica.ports.conversation import MaterialHint, BusinessEventBinding
 
 
 @dataclass(frozen=True)
@@ -167,6 +172,24 @@ class TurnRequest:
     # equality; None / unset -> is_turn_cancelled is False -> every checkpoint stays
     # byte-identical to before (the deadline guarantee).
     cancelled: threading.Event | None = field(default=None, compare=False)
+    # Internal safety default: every desktop / galgame request
+    # keeps synthesizing audio until daily voice is explicitly disabled.
+    want_audio: bool = field(default=True, kw_only=True)
+    audio_route: str = field(default="daily", kw_only=True)
+    audio_cancelled: threading.Event | None = field(default=None, kw_only=True, compare=False)
+    evidence_turn_id: str = field(default_factory=lambda: uuid4().hex, kw_only=True)
+    input_modality: str = field(default="text", kw_only=True)
+    input_source: str = field(default="local", kw_only=True)
+    runtime_turn_id: str | None = field(default=None, kw_only=True)
+    material_hint: MaterialHint | None = field(default=None, kw_only=True)
+    event_binding: BusinessEventBinding | None = field(default=None, kw_only=True)
+    # A delivery-scoped socket timeout, not a whole-turn or playback deadline.
+    model_request_timeout_seconds: float | None = field(default=None, kw_only=True)
+
+    @property
+    def material_query(self) -> str:
+        return self.material_hint.retrieval_text if self.material_hint is not None else self.user_input
+
 
     @property
     def effective_memory_conversation_id(self) -> str:
@@ -198,13 +221,16 @@ class RetrievedContext:
 
     recent_context: list[dict[str, str]] = field(default_factory=list)
     long_term_memories: list[dict[str, Any]] = field(default_factory=list)
+    personal_continuity: list[dict[str, Any]] = field(default_factory=list)
+    working_messages: list[ModelMessage] | None = None
 
 
 @dataclass
 class PromptBundle:
     """Output of the build-prompt stage: the assembled model input."""
 
-    prompt_input: str | list[Any] | dict[str, Any] | None = None
+    prompt_input: ModelInput | None = None
+    model_instructions: str = ""
 
 
 @dataclass
@@ -274,6 +300,9 @@ class TurnContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     tools: list[dict[str, Any]] = field(default_factory=list)
     response_payload: dict[str, Any] = field(default_factory=dict)
+    # Runtime-owned source check. Providers invoke it before each actual new
+    # request, including internal fallbacks; it never enters model messages.
+    before_model_request: Callable[[TurnContext], None] | None = None
 
     def __post_init__(self) -> None:
         # Default the working input to the request's raw input; validate_input

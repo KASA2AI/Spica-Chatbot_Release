@@ -1,21 +1,25 @@
 from __future__ import annotations
 
 import logging
+import math
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, QUrl
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 
 from ui.models.playback import AudioOwner, AudioToken
+from ui.audio_devices import output_label, resolve_output_device
 
 logger = logging.getLogger(__name__)
 
 try:
-    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+    from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
 except Exception:  # pragma: no cover - depends on the local Qt install
     QAudioOutput = None
+    QMediaDevices = None
     QMediaPlayer = None
 
 
@@ -27,25 +31,130 @@ class _PreloadedAudio:
 
 
 class AudioController(QObject):
-    def __init__(self, parent: QObject) -> None:
+    playback_requested = Signal()
+    def set_output_device(self, device_id: str) -> None:
+        """Restart-effective binding, installed before presentation starts."""
+        self._output_device_id = device_id
+
+    def set_home_output_device(self, device_id: str | None, *, fallback_device_id: str = '') -> None:
+        self._home_output_device_id = device_id
+        self._home_fallback_device_id = fallback_device_id
+
+    def __init__(self, parent: QObject, *, output_device_id: str = '') -> None:
         super().__init__(parent)
+        self._output_device_id = output_device_id
+        self._home_output_device_id = None
+        self._home_fallback_device_id = ''
+        self._chat_bound_device = self._song_bound_device = ''
         # Playback volume for HER VOICE (the chat/TTS audio path: normal chat +
         # galgame reaction + song-finished report). Linear 0.0-1.0; 0.86 is the
         # historical hardcoded value, kept as the default so behaviour is unchanged
         # until the user moves the "Spica 语音音量" slider. Song playback uses a
         # SEPARATE output (_song_audio_output) and is intentionally not governed here.
         self._chat_volume = 0.86
+        self._chat_volume_override: float | None = None
         self._chat_media_player = None
         self._chat_audio_output = None
         self._chat_token: AudioToken | None = None
         self._chat_on_finished: Callable[[], None] | None = None
+        self._chat_on_playback: Callable[[str, float], None] | None = None
+        self._chat_started = False
+        self._chat_started_at: float | None = None
         self._preloaded_chat: dict[int, _PreloadedAudio] = {}
+        self._cubism_audio = None
 
         self._song_media_player = None
         self._song_audio_output = None
         self._song_token: AudioToken | None = None
         self._song_on_finished: Callable[[], None] | None = None
         self._song_on_error: Callable[[str], None] | None = None
+        self._media_devices = None
+        if QMediaDevices is not None and hasattr(QMediaDevices, 'audioOutputsChanged'):
+            self._media_devices = QMediaDevices(self)
+            self._media_devices.audioOutputsChanged.connect(self._outputs_changed)
+
+    def _output_binding(self, audio_route):
+        if audio_route not in {'daily', 'home'}:
+            raise ValueError('未知的音频输出用途')
+        primary, fallback = self._output_device_id, ''
+        if audio_route == 'home':
+            primary = self._home_output_device_id if self._home_output_device_id is not None else primary
+            fallback = self._home_fallback_device_id
+        return primary, fallback
+
+    def output_status(self, audio_route='home'):
+        """Resolve the running selection without constructing a player."""
+        primary, fallback = self._output_binding(audio_route)
+        if QMediaDevices is None:
+            return {'available': False, 'detail': '当前音频后端不可用'}
+        try:
+            device, binding = resolve_output_device(QMediaDevices, primary, fallback)
+            if device.isNull():
+                return {'available': False, 'detail': '系统没有可用的输出设备'}
+            return {'available': True, 'name': output_label(device),
+                    'system_default': not binding, 'fallback': bool(binding and binding != primary)}
+        except RuntimeError as exc:
+            return {'available': False, 'detail': str(exc)}
+
+    def _configure_output(self, output, audio_route='daily') -> str:
+        primary, fallback = self._output_binding(audio_route)
+        device, binding = resolve_output_device(QMediaDevices, primary, fallback)
+        output.setDevice(device)
+        if binding and binding != primary:
+            logger.warning('event=audio_output_fallback route=%s device_id=%s', audio_route, binding)
+        return binding
+
+    def _outputs_changed(self):
+        # Device removal may otherwise make an OS backend reroute silently.
+        QTimer.singleShot(0, self._check_output_devices)
+
+    def _check_output_devices(self):
+        available = {bytes(device.id()).hex() for device in QMediaDevices.audioOutputs()}
+        if self._chat_token is not None and self._chat_bound_device and self._chat_bound_device not in available:
+            on_finished, on_playback = self._chat_on_finished, self._chat_on_playback
+            self._chat_on_playback = None
+            self.release_chat_audio()
+            logger.warning('event=chat_audio_output_disconnected')
+            if on_playback is not None:
+                on_playback('failed', time.monotonic())
+            if on_finished is not None:
+                on_finished()
+        if self._song_token is not None and self._song_bound_device and self._song_bound_device not in available:
+            on_error = self._song_on_error
+            self.stop_song()
+            if on_error is not None:
+                on_error('指定音箱已断开，歌曲播放已停止。')
+
+    def enable_cubism_lipsync(self):
+        if self._cubism_audio is None:
+            from ui.controllers.cubism_audio import CubismAudio
+
+            self._cubism_audio = CubismAudio(self)
+        return self._cubism_audio
+
+    def voice_playback_position(self):
+        player = self._chat_media_player
+        if player is not None and self._chat_token is not None and QMediaPlayer is not None:
+            if player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                return Path(player.source().toLocalFile()), player.position()
+        player = self._song_media_player
+        if player is not None and self._song_token is not None and self._cubism_audio is not None:
+            if player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                vocal = self._cubism_audio.song_voice(player.source().toLocalFile())
+                if vocal is not None:
+                    return vocal, player.position()
+        return None, 0
+
+    def register_song_voice(self, mixed_path, vocal_path):
+        if self._cubism_audio is not None:
+            self._cubism_audio.register_song(mixed_path, vocal_path)
+
+    def chat_audio_started_at(self) -> float | None:
+        return self._chat_started_at
+
+    def is_voice_playing(self) -> bool:
+        return bool(self._chat_started or (QMediaPlayer is not None and self._song_media_player is not None
+                    and self._song_media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState))
 
     def set_chat_volume(self, volume: float) -> None:
         """Set HER VOICE playback volume (linear 0.0-1.0). Stored so every future chat
@@ -60,7 +169,7 @@ class AudioController(QObject):
             return
         v = max(0.0, min(1.0, v))
         self._chat_volume = v
-        if self._chat_audio_output is not None:
+        if self._chat_audio_output is not None and self._chat_volume_override is None:
             try:
                 self._chat_audio_output.setVolume(v)
             except Exception:
@@ -72,7 +181,14 @@ class AudioController(QObject):
                 except Exception:
                     pass
 
-    def play_chat_audio(self, audio_path: Any, token: AudioToken, on_finished: Callable[[], None]) -> bool:
+    def play_chat_audio(
+        self, audio_path: Any, token: AudioToken, on_finished: Callable[[], None],
+        *, on_playback: Callable[[str, float], None] | None = None,
+        volume: float | None = None,
+        audio_route: str = 'daily',
+    ) -> bool:
+        if volume is not None and (not math.isfinite(volume) or not 0 <= volume <= 1):
+            raise ValueError('playback volume must be finite and between 0 and 1')
         self.release_chat_audio()
         if not audio_path or QMediaPlayer is None or QAudioOutput is None:
             logger.debug(
@@ -80,49 +196,70 @@ class AudioController(QObject):
                 token.id,
                 audio_path,
             )
+            if on_playback is not None:
+                on_playback('not_started', time.monotonic())
             on_finished()
             return False
 
         path = Path(str(audio_path))
         if not path.exists():
             logger.debug("event=chat_audio_end token_id=%s reason=missing_file path=%s", token.id, path)
+            if on_playback is not None:
+                on_playback('not_started', time.monotonic())
             on_finished()
             return False
 
+        self.playback_requested.emit()
         self._chat_token = token
         self._chat_on_finished = on_finished
-
-        preloaded_key = self._preloaded_key_for_path(path)
-        if preloaded_key is not None:
-            logger.debug("event=preload_hit owner=chat token_id=%s index=%s path=%s", token.id, preloaded_key, path)
-            preloaded = self._preloaded_chat.pop(preloaded_key)
-            self._chat_media_player = preloaded.media_player
-            self._chat_audio_output = preloaded.audio_output
-            self._set_player_token(self._chat_media_player, token)
-            try:
-                self._chat_media_player.mediaStatusChanged.connect(self._handle_chat_media_status)
-            except Exception:
-                self.release_chat_audio()
-                logger.debug("event=chat_audio_end token_id=%s reason=connect_failed path=%s", token.id, path)
-                on_finished()
+        self._chat_on_playback = on_playback
+        self._chat_volume_override = volume
+        play_volume = self._chat_volume if volume is None else volume
+        self._chat_started = False
+        self._chat_started_at = None
+        try:
+            if self._cubism_audio is not None:
+                self._cubism_audio.prepare(path)
+            preloaded_key = self._preloaded_key_for_path(path)
+            if preloaded_key is not None:
+                preloaded = self._preloaded_chat.pop(preloaded_key)
+                self._chat_media_player = preloaded.media_player
+                self._chat_audio_output = preloaded.audio_output
+            else:
+                self._chat_audio_output = QAudioOutput(self)
+                self._chat_media_player = QMediaPlayer(self)
+                self._chat_media_player.setAudioOutput(self._chat_audio_output)
+            self._chat_audio_output.setVolume(play_volume)
+            player = self._chat_media_player
+            self._set_player_token(player, token)
+            player.mediaStatusChanged.connect(self._handle_chat_media_status)
+            player.playbackStateChanged.connect(self._handle_chat_playback_state)
+            player.errorOccurred.connect(self._handle_chat_error)
+            # Re-resolve at actual playback too: a prepared greeting may span a
+            # device reconnect or a system-default change.
+            self._chat_bound_device = self._configure_output(self._chat_audio_output, audio_route)
+            if preloaded_key is None:
+                player.setSource(QUrl.fromLocalFile(str(path)))
+            # A synchronous InvalidMedia/error callback already owns cleanup.
+            if self._chat_media_player is not player:
                 return False
-            logger.debug("event=chat_audio_start token_id=%s path=%s preloaded=true", token.id, path)
-            self._chat_media_player.play()
-            return True
+            logger.debug("event=chat_audio_play_requested token_id=%s path=%s preloaded=%s",
+                         token.id, path, preloaded_key is not None)
+            logger.info('event=chat_audio_output_selected token_id=%s route=%s device_id=%s',
+                        token.id, audio_route, self._chat_bound_device or 'system_default')
+            player.play()
+            return self._chat_media_player is player
+        except Exception:
+            logger.warning('chat audio player failed to start', exc_info=True)
+            if self._chat_token is token:
+                self._chat_on_playback = None
+                self.release_chat_audio()
+                if on_playback is not None:
+                    on_playback('failed', time.monotonic())
+                on_finished()
+            return False
 
-        logger.debug("event=preload_miss owner=chat token_id=%s path=%s", token.id, path)
-        self._chat_audio_output = QAudioOutput(self)
-        self._chat_audio_output.setVolume(self._chat_volume)
-        self._chat_media_player = QMediaPlayer(self)
-        self._set_player_token(self._chat_media_player, token)
-        self._chat_media_player.setAudioOutput(self._chat_audio_output)
-        self._chat_media_player.mediaStatusChanged.connect(self._handle_chat_media_status)
-        self._chat_media_player.setSource(QUrl.fromLocalFile(str(path)))
-        logger.debug("event=chat_audio_start token_id=%s path=%s preloaded=false", token.id, path)
-        self._chat_media_player.play()
-        return True
-
-    def preload_chat_audio(self, index: int, audio_path: Any) -> bool:
+    def preload_chat_audio(self, index: int, audio_path: Any, *, audio_route: str = 'daily') -> bool:
         if QMediaPlayer is None or QAudioOutput is None:
             logger.debug("event=preload_miss owner=chat index=%s reason=qt_unavailable audio_path=%s", index, audio_path)
             return False
@@ -142,6 +279,7 @@ class AudioController(QObject):
         media_player = None
         try:
             audio_output = QAudioOutput(self)
+            self._configure_output(audio_output, audio_route)
             audio_output.setVolume(self._chat_volume)
             media_player = QMediaPlayer(self)
             media_player.setAudioOutput(audio_output)
@@ -153,17 +291,26 @@ class AudioController(QObject):
             return False
 
         self._preloaded_chat[index] = _PreloadedAudio(media_player, audio_output, path)
+        if self._cubism_audio is not None:
+            self._cubism_audio.prepare(path)
         logger.debug("event=preload_hit owner=chat index=%s path=%s action=store", index, path)
         return True
 
     def release_chat_audio(self) -> None:
         media_player = self._chat_media_player
         audio_output = self._chat_audio_output
+        on_playback = self._chat_on_playback
         self._chat_media_player = None
         self._chat_audio_output = None
         self._chat_token = None
         self._chat_on_finished = None
+        self._chat_on_playback = None
+        self._chat_volume_override = None
+        self._chat_started = False
+        self._chat_started_at = None
         self._release_player(media_player, audio_output, self._handle_chat_media_status)
+        if on_playback is not None:
+            on_playback('stopped', time.monotonic())
 
     def release_preloaded(self, index: int | None = None) -> None:
         if index is None:
@@ -196,10 +343,20 @@ class AudioController(QObject):
             return False
 
         logger.debug("event=song_audio_start token_id=%s path=%s", token.id, path)
+        self.playback_requested.emit()
         self._song_token = token
         self._song_on_finished = on_finished
         self._song_on_error = on_error
         self._song_audio_output = QAudioOutput(self)
+        try:
+            self._song_bound_device = self._configure_output(self._song_audio_output)
+        except RuntimeError as exc:
+            self._song_audio_output.deleteLater()
+            self._song_audio_output = None
+            self._song_token = None
+            self._song_on_finished = self._song_on_error = None
+            on_error(str(exc))
+            return False
         self._song_audio_output.setVolume(0.92)
         self._song_media_player = QMediaPlayer(self)
         self._set_player_token(self._song_media_player, token)
@@ -243,6 +400,24 @@ class AudioController(QObject):
         self.stop_owner(AudioOwner.CHAT)
         self.stop_owner(AudioOwner.SONG)
 
+    def _handle_chat_error(self, error, message='') -> None:
+        if QMediaPlayer is not None and error != QMediaPlayer.Error.NoError:
+            self._handle_chat_media_status(QMediaPlayer.MediaStatus.InvalidMedia)
+
+    def _handle_chat_playback_state(self, state) -> None:
+        if QMediaPlayer is None or state != QMediaPlayer.PlaybackState.PlayingState:
+            return
+        if self._chat_started or not self._sender_matches_token(
+            self.sender(), self._chat_media_player, self._chat_token, AudioOwner.CHAT,
+        ):
+            return
+        self._chat_started = True
+        callback, occurred_at = self._chat_on_playback, time.monotonic()
+        self._chat_started_at = occurred_at
+        # A receipt may cause cancellation. Keep that work off Qt's signal stack.
+        if callback is not None:
+            QTimer.singleShot(0, lambda: callback('started', occurred_at))
+
     def _handle_chat_media_status(self, status) -> None:
         if QMediaPlayer is None:
             return
@@ -268,10 +443,16 @@ class AudioController(QObject):
             media_player = self._chat_media_player
             audio_output = self._chat_audio_output
             on_finished = self._chat_on_finished
+            on_playback = self._chat_on_playback
+            outcome = ('failed' if status == QMediaPlayer.MediaStatus.InvalidMedia
+                       else 'completed' if self._chat_started else 'not_started')
+            occurred_at = time.monotonic()
             self._chat_media_player = None
             self._chat_audio_output = None
             self._chat_token = None
             self._chat_on_finished = None
+            self._chat_on_playback = None
+            self._chat_started = False
             logger.debug("event=chat_audio_end token_id=%s status=%s", token.id, status)
 
             def _finish_chat_eom() -> None:
@@ -280,6 +461,8 @@ class AudioController(QObject):
                 # during the defer gap -- which sees self refs already None -- can
                 # neither double-free it nor mix old/new players.
                 self._release_player(media_player, audio_output, self._handle_chat_media_status)
+                if on_playback is not None:
+                    on_playback(outcome, occurred_at)
                 if on_finished is not None:
                     on_finished()
 
@@ -367,6 +550,15 @@ class AudioController(QObject):
 
     def _release_player(self, media_player: Any, audio_output: Any, handler: Callable[..., None]) -> None:
         if media_player is not None:
+            if handler == self._handle_chat_media_status:
+                try:
+                    media_player.playbackStateChanged.disconnect(self._handle_chat_playback_state)
+                except Exception:
+                    pass
+                try:
+                    media_player.errorOccurred.disconnect(self._handle_chat_error)
+                except Exception:
+                    pass
             try:
                 media_player.mediaStatusChanged.disconnect(handler)
             except Exception:
@@ -374,7 +566,15 @@ class AudioController(QObject):
             try:
                 media_player.stop()
             except Exception:
-                pass
+                logger.warning('event=audio_player_stop_failed', exc_info=True)
+            # Record the native player's state separately from the core's
+            # cancellation result. This is not a claim of physical audibility.
+            if handler == self._handle_chat_media_status:
+                try:
+                    state = media_player.playbackState()
+                    logger.info('event=chat_audio_player_stop_state state=%s', state.name)
+                except Exception:
+                    logger.debug('event=chat_audio_player_stop_state state=unknown')
             self._delete_later(media_player)
         self._delete_later(audio_output)
 
@@ -385,3 +585,28 @@ class AudioController(QObject):
             obj.deleteLater()
         except Exception:
             pass
+
+    def voice_playback_position(self):
+        player = self._chat_media_player
+        if player is not None and self._chat_token is not None and QMediaPlayer is not None:
+            if player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                return Path(player.source().toLocalFile()), player.position()
+        player = self._song_media_player
+        if player is not None and self._song_token is not None and self._cubism_audio is not None:
+            if player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                vocal = self._cubism_audio.song_voice(player.source().toLocalFile())
+                if vocal is not None:
+                    return vocal, player.position()
+        return None, 0
+
+    def enable_cubism_lipsync(self):
+        if self._cubism_audio is None:
+            from ui.controllers.cubism_audio import CubismAudio
+
+            self._cubism_audio = CubismAudio(self)
+        return self._cubism_audio
+
+
+    def register_song_voice(self, mixed_path, vocal_path):
+        if self._cubism_audio is not None:
+            self._cubism_audio.register_song(mixed_path, vocal_path)

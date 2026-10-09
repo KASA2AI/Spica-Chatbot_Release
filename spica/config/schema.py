@@ -13,6 +13,8 @@ character-agnostic and there is no ``agent -> spica.config -> agent`` cycle.
 
 from __future__ import annotations
 
+from spica.config.home import HomeConfig
+
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -49,6 +51,24 @@ class MemoryConfig(BaseModel):
     long_term_memory_budget_chars: int = 1200
     recent_turn_char_limit: int = 360
     max_long_term_memories: int = 200
+    consolidation_model: str = ""  # Explicit service model; never assume a paid provider.
+    consolidation_idle_seconds: float = Field(default=120.0, ge=0)
+    # Background model use is opt-in. Either threshold admits a batch; both zero use idle-only behavior.
+    consolidation_min_user_turns: int = Field(default=10, ge=0)
+    consolidation_min_tokens: int = Field(default=4000, ge=0)
+    consolidation_enabled: bool = False
+    consolidation_max_attempts: int = Field(default=3, ge=1)
+    consolidation_input_limit: int = Field(default=24576, ge=512)
+    consolidation_extract_output_limit: int = Field(default=8192, ge=1)
+    consolidation_verify_output_limit: int = Field(default=8192, ge=1)
+    consolidation_candidate_limit: int = Field(default=8192, ge=1)
+    consolidation_sparse_seconds: float = Field(default=86400.0, gt=0)
+    context_token_budget: int = Field(default=12000, ge=512)
+    raw_retention_days: int = Field(default=365, ge=1)
+    delete_source_on_forget: bool = True
+    shared_fact_characters: tuple[str, ...] = ()
+    embedding_model_dir: str = Field(default="models/memory/paraphrase-multilingual-MiniLM-L12-v2",
+        json_schema_extra={"path_semantics": {"base": "repository", "kind": "directory"}})
 
 
 class CharacterConfig(BaseModel):
@@ -323,46 +343,78 @@ class TtsConfig(BaseModel):
     skipped entirely when tts_adapter is None (ui/qt_overlay._start_startup_warmup)."""
 
     enabled: bool = True
+    daily_enabled: bool = True
+    output_device_id: str = ""  # Empty follows system default; otherwise bind explicitly.
+
+    @property
+    def daily_voice_enabled(self) -> bool:
+        return self.enabled and self.daily_enabled
 
 
 class SttConfig(BaseModel):
-    """Speech-to-text (Plan B): local faster-whisper replaces network Google STT.
-    yaml-only (铁律 #4: no env names -- nothing added to env_roster). All fields
-    restart-effective; the model is resolved once at startup and kept resident."""
+    """Explicit local/cloud recognition choice; effective on application restart."""
 
-    # "faster_whisper" -> local whisper (default; no network, cannot hang).
-    # "google" -> legacy recognize_google fallback (STILL timeout-less / can hang;
-    # kept only as an explicit opt-out, never auto-selected). THIS is the STT
-    # switch: backend=google means "no local model resident" (VRAM freed), voice
-    # input degrades to the online recognizer. Literal so a typo fails loud at
-    # load instead of silently falling back to google (mirrors mic_backend).
-    backend: Literal["faster_whisper", "google"] = "faster_whisper"
-    # W3 (A5): which microphone RECORDER feeds the voice loop. "auto" folds by
-    # effective platform (linux -> respeaker hardware-VAD path, windows -> generic
-    # PyAudio + webrtcvad software VAD); explicit values override (W3b: ReSpeaker
-    # on Windows / debugging: force generic on Linux). Resolution is the pure
-    # ``resolve_mic_backend`` in spica/host/app_host.py; illegal values die here.
+    backend: Literal["qwen_asr", "qwen_cloud"] = "qwen_asr"
+    cloud_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    cloud_model: str = "qwen3-asr-flash"
+    cloud_timeout_seconds: float = Field(default=20.0, ge=1, le=25)
+
+    @field_validator("cloud_base_url")
+    @classmethod
+    def validate_cloud_base_url(cls, value: str) -> str:
+        import re
+        from urllib.parse import urlsplit
+        value = value.strip().rstrip("/")
+        try:
+            url = urlsplit(value)
+            host = url.hostname or ""
+            official = host in {"dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"} or bool(
+                re.fullmatch(r"[a-z0-9][a-z0-9-]*\.(cn-beijing|ap-southeast-1)\.maas\.aliyuncs\.com", host))
+            valid = (official and url.scheme == "https" and url.port in {None, 443}
+                     and not url.username and not url.password and not url.query and not url.fragment
+                     and url.path == "/compatible-mode/v1")
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("云端识别地址须为百炼北京或新加坡的 HTTPS compatible-mode/v1 地址。")
+        return value
+
+    @field_validator("cloud_model")
+    @classmethod
+    def validate_cloud_model(cls, value: str) -> str:
+        import re
+        value = value.strip()
+        if not re.fullmatch(r"qwen3-asr-flash(?:-\d{4}-\d{2}-\d{2})?", value):
+            raise ValueError("请选择 qwen3-asr-flash 或其日期快照；不支持 realtime/filetrans 接口。")
+        return value
+
+    # Qwen runs in a resident child because its Transformers version conflicts
+    # with existing screen/RVC runtimes. None uses the current interpreter.
+    worker_python: str | None = Field(default=None, json_schema_extra={
+        "path_semantics": {"base": "launch_working_directory", "kind": "file"}})
+    # Ordinary microphones work on either OS; ReSpeaker is an explicit option.
     mic_backend: Literal["auto", "respeaker", "generic"] = "auto"
-    model: str = "large-v3-turbo"  # repo id OR a local dir path (pre-downloaded)
-    device: str = "cuda"  # cuda | cpu
-    compute_type: str = "float16"  # float16 (gpu) | int8 | int8_float16 ...
+    input_device: str = ""  # PortAudio host/name identity; never a saved ordinal.
+    model: str = "models/stt/Qwen3-ASR-1.7B"  # pre-downloaded local directory
+    device: Literal["cuda", "cpu", "auto"] = "cuda"
+    compute_type: Literal["float16", "bfloat16", "float32"] = "bfloat16"
     language: str = "zh"
-    beam_size: int = 5
-    vad_filter: bool = False
     # Warm the model at startup alongside TTS (predictable first-utterance latency).
     # False -> lazy load on the first transcribe (still loaded ONCE, never per call).
     warmup_on_startup: bool = True
-    # None -> faster-whisper's default HF cache. Set to a dir to pin a pre-downloaded
-    # model (China-friendly: avoids a blocking first-startup download).
-    download_root: str | None = Field(
-        default=None,
-        json_schema_extra={
-            "path_semantics": {
-                "base": "launch_working_directory",
-                "kind": "directory",
-            }
-        },
-    )
+
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_backend(cls, value):
+        if not isinstance(value, dict) or value.get("backend") not in {"faster_whisper", "google"}:
+            return value
+        migrated = dict(value)
+        migrated.update(backend="qwen_asr", model="models/stt/Qwen3-ASR-1.7B",
+                        compute_type="float32" if value.get("device") == "cpu" else "bfloat16")
+        for key in ("beam_size", "vad_filter", "download_root"):
+            migrated.pop(key, None)
+        return migrated
 
 
 class TrtOcrConfig(BaseModel):
@@ -531,6 +583,7 @@ class AnimeConfig(BaseModel):
 
 class AppConfig(BaseModel):
     dialogue_style: DialogueStyleConfig = Field(default_factory=DialogueStyleConfig)
+    home: HomeConfig = Field(default_factory=HomeConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     character: CharacterConfig = Field(default_factory=CharacterConfig)
@@ -567,3 +620,19 @@ class AppConfig(BaseModel):
             elif isinstance(item, PluginEntryConfig):
                 normalized.append(item)
         return normalized
+
+
+def fold_platform(os_cfg: str, host_platform: str) -> str:
+    """Pure platform selection shared by runtime assembly and setup inspection."""
+    if os_cfg in ("linux", "windows"):
+        return os_cfg
+    if os_cfg == "auto":
+        if host_platform == "linux":
+            return "linux"
+        if host_platform == "win32":
+            return "windows"
+        raise ValueError(
+            f"platform.os=auto has no fold for host platform {host_platform!r}; "
+            "set platform.os explicitly (linux|windows) in data/config/app.yaml"
+        )
+    raise ValueError(f"unknown platform.os value {os_cfg!r}")

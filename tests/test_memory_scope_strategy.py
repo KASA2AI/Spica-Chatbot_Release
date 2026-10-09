@@ -64,7 +64,7 @@ class StrategySemanticsTest(unittest.TestCase):
         # §27①: the galgame turn keeps reading/writing the ORIGIN conversation.
         self.assertEqual(
             (scope.character_id, scope.user_id, scope.conversation_id),
-            ("spica", "麦", "default"),
+            ("spica", "owner", "default"),
         )
         # Unset -> falls back to the raw conversation_id (plain chat, unchanged).
         plain = strategy.ltm_scope(TurnRequest(user_input="x", conversation_id="c1"))
@@ -117,7 +117,7 @@ class RetrieveCommitSymmetryTest(unittest.TestCase):
         services = SimpleNamespace(recent_memory=recent)
         req = TurnRequest(
             user_input="记住这个",
-            conversation_id="galgame::ABC::playthrough::default",
+            conversation_id="default",
             memory_conversation_id="default",
             include_user_time_context=False,
         )
@@ -207,36 +207,37 @@ class ClearSymmetryTest(unittest.TestCase):
                 )
             )
             ctx.answer = StreamedAnswer(answer="嗯。")
+            ctx.user_input = ctx.request.user_input
             save_stream_memory(ctx, engine.services, engine.deps)
 
-            self.assertTrue(engine.services.recent_memory.get_recent(scoped))
-            self.assertTrue(store.list_memories(scoped))
+            self.assertTrue(engine.deps.memory.working_context(engine._memory_scope.evidence_scope(ctx.request), "你好")["messages"])
+            self.assertTrue(engine.list_memory("c1"))
 
             engine.clear_memory("c1", clear_long_term=True)
 
             # Both sides of the SAME scoped conversation are empty -- the recent
             # half used to clear the bare key and silently miss the real bucket.
             self.assertEqual(engine.services.recent_memory.get_recent(scoped), [])
-            self.assertEqual(store.list_memories(scoped), [])
+            self.assertEqual(engine.list_memory("c1"), [])
 
 
 class RenameLiveReadTest(unittest.TestCase):
-    def test_strategy_follows_in_place_config_rename(self):
+    def test_owner_identity_survives_display_name_change(self):
         config = _config()
         strategy = MemoryScopeStrategy(config)
         req = TurnRequest(user_input="x", conversation_id="c1")
-        self.assertEqual(strategy.ltm_scope(req).user_id, "麦")
+        self.assertEqual(strategy.ltm_scope(req).user_id, "owner")
         # The exact mutation shape set_interlocutor_name performs (same object).
         config.character.interlocutor_name = "レン"
-        self.assertEqual(strategy.ltm_scope(req).user_id, "レン")
+        self.assertEqual(strategy.ltm_scope(req).user_id, "owner")
 
-    def test_engine_rename_is_visible_to_its_strategy(self):
+    def test_engine_rename_preserves_memory_owner(self):
         with tempfile.TemporaryDirectory() as tmp:
             engine = _engine(SQLiteMemoryStore(Path(tmp) / "m.sqlite3"))
             req = TurnRequest(user_input="x", conversation_id="c1")
-            self.assertEqual(engine._memory_scope.ltm_scope(req).user_id, "麦")
+            self.assertEqual(engine._memory_scope.ltm_scope(req).user_id, "owner")
             engine.set_interlocutor_name("レン")
-            self.assertEqual(engine._memory_scope.ltm_scope(req).user_id, "レン")
+            self.assertEqual(engine._memory_scope.ltm_scope(req).user_id, "owner")
 
 
 if __name__ == "__main__":

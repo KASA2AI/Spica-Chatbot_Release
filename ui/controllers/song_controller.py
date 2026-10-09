@@ -362,6 +362,9 @@ class SongController(QObject):
             self.handle_song_error(job_id, "唱歌任务没有返回音频文件。")
             return
         self._log_song_event("song_ready", job_id=job_id, audio_path=audio_path)
+        register_voice = getattr(self.audio_controller, "register_song_voice", None)
+        if register_voice is not None:
+            register_voice(audio_path, (payload.get("metadata") or {}).get("rvc_vocal_path"))
         self.ui_state.pending_audio_path = str(audio_path)
         self.ui_state.context.pending_audio_path = str(audio_path)
         self._update_playback_gate(reason="song_ready", song_ready=True)

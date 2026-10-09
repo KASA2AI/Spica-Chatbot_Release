@@ -23,9 +23,15 @@ def _warmup_stt(
     """Plan B: warm the local STT model alongside TTS so the first utterance has no
     load/compile lag. Best-effort -- a failure is reported but never blocks startup
     (voice simply loads on first use, or stays unavailable with a clear log). Only
-    runs when an adapter exists (backend == faster_whisper) and warmup_on_startup."""
+    runs when a local adapter exists and warmup_on_startup is enabled."""
     warmup = getattr(stt_adapter, "warmup", None)
     if stt_adapter is None or warmup is None:
+        return
+    if getattr(stt_adapter, "requires_model_warmup", True) is False:
+        result = warmup()
+        on_progress("ready" if result.get("ok") else "error",
+                    "云端语音识别已配置，实际连接待说话验证；不加载本地识别模型。"
+                    if result.get("ok") else result.get("error", "云端识别不可用"))
         return
     if not warmup_on_startup:
         # stt.warmup_on_startup=false -> lazy load on the first utterance. (The
@@ -33,7 +39,7 @@ def _warmup_stt(
         # the docstring promised the gate while the code ignored it.)
         on_progress("ready", "语音识别启动预热已关闭（首次说话时加载）。")
         return
-    on_progress("initializing", "正在预热本地语音识别(faster-whisper)模型...")
+    on_progress("initializing", "正在预热本地语音识别模型...")
     result = warmup()
     if result.get("ok"):
         on_progress("ready", f"语音识别模型已就绪（{float(result.get('duration_ms') or 0):.0f}ms）。")
@@ -91,6 +97,7 @@ def run_warmup(
     on_progress: Callable[[str, str], None],
     stt_adapter: Any = None,
     stt_warmup_on_startup: bool = True,
+    daily_voice_enabled: bool = True,
 ) -> None:
     """Run startup warmup, reporting progress as ``on_progress(stage, message)``
     where stage is ``"initializing" | "ready" | "error"``.
@@ -100,5 +107,23 @@ def run_warmup(
     never skips loading the voice-input model. The UI runs this on a background
     thread and maps stages to its loading UI.
     """
-    _warmup_tts(surface, tts_adapter, on_progress)
-    _warmup_stt(stt_adapter, on_progress, warmup_on_startup=stt_warmup_on_startup)
+    try:
+        if daily_voice_enabled:
+            _warmup_tts(surface, tts_adapter, on_progress)
+        else:
+            on_progress("ready", "日常无声回复已启用；麦克风偏好不变，闹钟按需准备语音。")
+        _warmup_stt(stt_adapter, on_progress, warmup_on_startup=stt_warmup_on_startup)
+    finally:
+        from common.memory import release_native_buffers
+        release_native_buffers()
+
+
+def prepare_output_audio(tts: Any) -> bool:
+    """Output-only preparation: microphone/STT readiness is independent."""
+    if tts is None or getattr(tts, 'name', '') == 'text_only':
+        return False
+    warmup = getattr(tts, 'warmup', None)
+    if warmup is None:
+        return True
+    result = warmup(synthesize=True)
+    return bool(result.get('ok') and getattr(tts, 'resource_status', {'ready': True})['ready'])

@@ -50,6 +50,10 @@ class ModelRouter:
             return config.galgame.reaction_judge_model or config.llm.model
         if role == "dialogue":
             return config.llm.model
+        if role == "memory":
+            if not config.memory.consolidation_model.strip():
+                raise ValueError("请先配置长期记忆整理模型。")
+            return config.memory.consolidation_model
         raise ValueError(f"unknown model role {role!r} (expected summary/judge/dialogue)")
 
     def for_role(self, role: str) -> BoundModel:
@@ -58,6 +62,10 @@ class ModelRouter:
         judge: the adapter comes THROUGH ``host._judge_llm_adapter()`` (facade
         contract -- see module docstring); summary/dialogue ride the main
         resolved adapter."""
+        if role == "memory":
+            client = self._host.services.llm_client.with_options(timeout=90.0, max_retries=0)
+            adapter = self._host.registry.resolve_llm(self._host.config.llm.provider, client=client, reasoning_effort="none")
+            return BoundModel(adapter, self.role_model("memory"))
         if role == "judge":
             return BoundModel(self._host._judge_llm_adapter(), self.role_model("judge"))
         return BoundModel(self._host.services.llm_adapter, self.role_model(role))

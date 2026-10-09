@@ -50,6 +50,7 @@ APP_ENV_MAP: dict[str, str] = {
 
 SECRETS_ENV_MAP: dict[str, str] = {
     "openai_api_key": "OPENAI_API_KEY",
+    "dashscope_api_key": "DASHSCOPE_API_KEY",
     # Separate key for the reaction-judge LLM endpoint, so the judge's load never
     # saturates the main chat/summary endpoint (they share one key otherwise).
     # Vendor-neutral name -- the judge endpoint is any OpenAI-compatible provider
@@ -101,6 +102,7 @@ RESPEAKER_ENV_MAP: dict[str, str] = {
     # lower it if she feels slow to respond after you stop. Coerced in
     # hardware/respeaker/audio.py (default DEFAULT_END_SILENCE_SECONDS).
     "end_silence_seconds": "RESPEAKER_END_SILENCE_SECONDS",
+    "agc_max_gain": "RESPEAKER_AGC_MAX_GAIN",
 }
 
 # -- legacy: present in xiaosan.env history, consumed by NOTHING since B2

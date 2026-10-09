@@ -62,23 +62,13 @@ def character_scope_from_config(config: AppConfig) -> CharacterScope:
 
 
 class MemoryScopeStrategy:
-    """The one place that derives memory keys/scopes from a turn's identity.
+    """Derive local memory identity once for reads, writes and management.
 
-    Three consumers, three methods:
-    - ``recent_key`` -- the recent-context bucket (stages read + memory_commit
-      write): ``{character_id}::{conversation_id}``. THE Phase 2 behaviour
-      change -- previously the bare conversation_id, which let two characters
-      sharing a conversation silently share short-term context.
-    - ``ltm_scope`` -- the long-term MemoryScope (stages retrieve + memory_commit
-      commit): triple-identical to the pre-Phase-2 hand-built scopes, including
-      the §27① ``effective_memory_conversation_id`` fallback. Zero LTM change.
-    - ``clear_targets`` -- what ``ChatEngine.clear_memory`` must clear on both
-      sides. Today both slots coincide (same scoped id); kept as a pair so a
-      future divergence has a typed seam instead of a silent split.
-
-    Construction is free (holds only the config reference), so stages /
-    memory_commit build one per call from ``deps.config``; ChatEngine keeps a
-    single instance over its own (same) AppConfig object.
+    Personal evidence uses the stable owner key, independent of the editable
+    display name. Original dialogue retains its conversation/domain ID. The
+    legacy recent-buffer key remains role-scoped for non-journal providers.
+    CharacterScope.user_id is retained as the older game store's display key;
+    its play sessions separately persist the personal principal for history.
     """
 
     def __init__(self, config: AppConfig) -> None:
@@ -90,13 +80,17 @@ class MemoryScopeStrategy:
     def recent_key(self, request: Any) -> str:
         return scoped_conversation_id(self._scope().character_id, request.conversation_id)
 
-    def ltm_scope(self, request: Any) -> MemoryScope:
+    def ltm_scope(self, request: Any, principal_id: str | None = None) -> MemoryScope:
         scope = self._scope()
         return MemoryScope(
             character_id=scope.character_id,
-            user_id=scope.user_id,
+            user_id=principal_id or "owner",
             conversation_id=request.effective_memory_conversation_id,
         )
+
+    def evidence_scope(self, request: Any, principal_id: str | None = None) -> MemoryScope:
+        scope = self.ltm_scope(request, principal_id)
+        return MemoryScope(scope.character_id, scope.user_id, request.conversation_id)
 
     def clear_targets(self, conversation_id: str) -> tuple[str, str]:
         scoped = scoped_conversation_id(self._scope().character_id, conversation_id)

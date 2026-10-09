@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 import pytest
+from test_application_settings import _wait_for_controller
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
@@ -62,6 +63,7 @@ def test_opacity_persistence_preserves_other_preferences_and_corrupt_file(tmp_pa
 
 def test_costume_controls_wait_for_the_whole_reply_before_changing(window, qapp):
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     writes = []
     window.visual_tool = SimpleNamespace(set_costume=lambda value: writes.append(value) or value)
     window.available_costumes = ["school", "summer"]
@@ -89,6 +91,7 @@ def test_interlocutor_edit_does_not_change_the_running_conversation(window, qapp
         set_interlocutor_name=lambda name: names.append(name) or name,
     )
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     field = window.settings_panel.name_input
     field.setFocus()
     qapp.processEvents()
@@ -127,6 +130,7 @@ def test_interlocutor_edit_is_saved_for_restart(window, qapp, tmp_path, monkeypa
     window.host = SimpleNamespace(management_surface=surface)
     window.interlocutor_name = "kasa"
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     field = window.settings_panel.name_input
     field.setFocus()
     qapp.processEvents()
@@ -149,6 +153,7 @@ def test_interlocutor_edit_is_saved_for_restart(window, qapp, tmp_path, monkeypa
     )
     qapp.processEvents()
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     assert field.text() == "伞"
     assert ConfigManager(manager.config_path).load().character.interlocutor_name == "伞"
     assert window.interlocutor_name == "kasa"
@@ -167,6 +172,7 @@ def test_restart_saves_pending_name_and_keeps_window_open_on_save_failure(window
                                 characters_root=tmp_path / "characters")
     window.host = SimpleNamespace(management_surface=surface)
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     panel = window.settings_panel
     panel.name_input.setText("伞")
     if save_fails:
@@ -186,6 +192,7 @@ def test_restart_saves_pending_name_and_keeps_window_open_on_save_failure(window
 
 def test_restart_waits_for_package_operation(window, qapp):
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     controller = window.character_settings_controller
     controller.worker = object()
     window.settings_panel.set_character_busy(True)
@@ -230,6 +237,7 @@ def test_restart_button_finishes_after_a_busy_worker_exits(window, qapp, tmp_pat
         window.startup_warmup_worker = worker
     try:
         window.open_settings_panel()
+        _wait_for_controller(qapp, window.application_settings_controller)
         panel = window.settings_panel
         with patch("ui.qt_overlay._force_process_exit") as force_exit:
             QTest.mouseClick(panel.restart_button, Qt.MouseButton.LeftButton)
@@ -262,6 +270,7 @@ def test_name_save_does_not_claim_success_when_environment_wins(window, qapp, tm
     window.host = SimpleNamespace(management_surface=ManagementSurface(
         registry=None, plugin_host=None, config_manager=manager, characters_root=tmp_path / "characters"))
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     assert not window.character_settings_controller.save_interlocutor_name("NewAlias")
     assert "SPICA_USER_NAME" in window.settings_panel.interlocutor_name_status.text()
     assert not manager.config_path.exists()
@@ -304,7 +313,7 @@ def desktop_main(monkeypatch):
 
     app = Mock()
     app.exec.return_value = 0
-    overlay = SimpleNamespace(_restart_requested=False, show=lambda: None)
+    overlay = SimpleNamespace(_restart_requested=False, floating_controller=SimpleNamespace(show_initial=lambda: None))
     startup = SimpleNamespace(restart_environment=lambda: {"PATH": "original-path"})
     monkeypatch.setattr(qt_overlay, "load_secrets", lambda **kwargs: startup)
     monkeypatch.setattr(qt_overlay, "QApplication", lambda _argv: app)
@@ -434,6 +443,7 @@ def test_frame_settings_and_character_share_safe_geometry(window, qapp, size):
     assert not window.mask().contains(QPoint(window.width() // 2, footer.bottom() + 2))
     character_before = window.character_label.geometry()
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     window.settings_panel.stop_motion_for_layout()
     qapp.processEvents()
     assert window.settings_panel.geometry().bottom() < footer.top()
@@ -539,6 +549,7 @@ def test_package_picker_keeps_animation_running_and_cancel_keeps_selection(windo
         management_surface=surface, character_package=SimpleNamespace(manifest=True, character_id="test"),
     )
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     controller = window.character_settings_controller
     before = surface.read_config()
     window.dialogue.set_dialogue_text("选择文件夹时，动画继续。")
@@ -582,6 +593,7 @@ def test_reply_focus_and_settings_close_preserve_draft(window, qapp, tmp_path):
         registry=None, plugin_host=None, config_manager=ConfigManager(tmp_path / "app.yaml"), characters_root=tmp_path))
     window.input_panel.input.setText("还没写完的消息")
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     panel = window.settings_panel
     panel.stop_motion_for_layout()
     window.activateWindow()
@@ -596,6 +608,7 @@ def test_reply_focus_and_settings_close_preserve_draft(window, qapp, tmp_path):
     assert window.isVisible()
     assert window.input_panel.input.text() == "还没写完的消息"
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     panel.stop_motion_for_layout()
     window.input_panel.input.setFocus()
     QTest.keyClick(window.input_panel.input, Qt.Key.Key_Escape)
@@ -645,6 +658,7 @@ def test_async_status_never_covers_open_settings(window, qapp):
     settings_button = window.window_controls.settings_button
     assert window.childAt(settings_button.mapTo(window, settings_button.rect().center())) is settings_button
     window.open_settings_panel()
+    _wait_for_controller(qapp, window.application_settings_controller)
     panel = window.settings_panel
     panel.stop_motion_for_layout()
     overlap = panel.geometry().intersected(window.dialogue.geometry()).center()

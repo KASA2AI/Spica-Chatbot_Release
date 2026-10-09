@@ -16,15 +16,19 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Iterator
+from uuid import uuid4
 
-from spica.runtime.stages import _compact_tool_history_for_prompt, record_screen_tool_result
+from spica.ports.model import ModelInput, ModelMessage, ToolProbeResult
+
+from spica.runtime.stages import _compact_tool_history_for_prompt, check_context_budget, check_context_sources, record_screen_tool_result
 from spica.conversation.prompt_builder import (
     RUNTIME_CAPABILITY_REMINDER,
     bilingual_output_reminder,
 )
 from common.timing import elapsed_ms, now_ms
-from spica.runtime.context import TurnContext, is_turn_cancelled
+from spica.runtime.context import TurnContext, is_turn_cancelled, is_domain_conversation
 from spica.runtime.llm_stream import record_usage
+from spica.runtime.memory_commit import record_turn_result
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +39,17 @@ logger = logging.getLogger(__name__)
 STREAM_RESET = object()
 
 
+def _require_context_budget(ctx, deps, prompt, schemas=()):
+    if not check_context_budget(ctx, deps, prompt, schemas):
+        raise ValueError(ctx.error.message)
+
+
 def prepare_prompt_for_streaming(
     ctx: TurnContext,
     services: Any,
     put_status: Any,
     deps: Any = None,
-) -> tuple[str, str | None]:
+) -> tuple[ModelInput, Any]:
     if not deps.llm_ready:
         # Terminal semantics (7-c2): "no LLM capability at all" -- neither an
         # adapter nor a raw client. Message byte-identical (5-c0 pins it).
@@ -51,6 +60,8 @@ def prepare_prompt_for_streaming(
     tools = deps.tools
     model = deps.config.llm.model
     prompt_input = ctx.prompt.prompt_input if ctx.prompt else None
+    cap_output = (is_domain_conversation(ctx.request.conversation_id)
+                  or ctx.recent is None or ctx.recent.working_messages is None)
     # P3: a SYSTEM-initiated turn (proactive speech) gets NO tools, hard-off --
     # its directive may mention 唱/看屏 etc. and the supply wordlist would
     # otherwise offer tools right back to her (self-excitation: a "just finished
@@ -66,6 +77,7 @@ def prepare_prompt_for_streaming(
         else tools.schemas_for_user_text(ctx.user_input)
     )
     use_tools = bool(active_tool_schemas)
+    _require_context_budget(ctx, deps, prompt_input or '', active_tool_schemas)
     obs = deps.observer
     ctx.metadata["use_tools"] = use_tools
     ctx.metadata["available_tool_schema_count"] = deps.available_tool_schema_count
@@ -75,7 +87,7 @@ def prepare_prompt_for_streaming(
     obs.mark("agent_rounds", 0)
 
     if not use_tools or not active_tool_schemas:
-        return str(prompt_input or ""), None
+        return prompt_input or "", None
 
     # Supply diagnostic on the REAL streaming path (the previous triage logged
     # only on the sync path and never fired). DEBUG: raise the level when
@@ -95,12 +107,13 @@ def prepare_prompt_for_streaming(
     # handle means the chat-family streaming flow, None means the Responses
     # non-streaming flow. Constructing the handle is ZERO client I/O (lazy
     # contract), so the probe timing below still starts at first consumption.
-    probe_handle = deps.model.probe_stream(str(prompt_input or ""), active_tool_schemas, ctx)
+    probe_handle = deps.model.probe_stream(prompt_input or "", active_tool_schemas, ctx)
     if probe_handle is not None:
         # Chat Completions tool probe (DeepSeek etc.). Until this branch existed
         # the probe was skipped entirely and tools never reached the request --
         # the watch_game_screen zero-trigger root cause (FINDINGS #18).
-        def _probe_chat(prompt_text: str, round_number: int) -> tuple[list[dict[str, str]], str]:
+        def _probe_chat(prompt_text: ModelInput, round_number: int) -> ToolProbeResult:
+            _require_context_budget(ctx, deps, prompt_text, active_tool_schemas)
             probe_start_ms = now_ms()
             result = deps.model.probe(prompt_text, active_tool_schemas, ctx)
             calls, text = result.calls, result.text
@@ -119,7 +132,7 @@ def prepare_prompt_for_streaming(
                 use_tools=True,
                 round=round_number,
             )
-            return calls, text
+            return result
 
         # Round 1 STREAMS: the no-tool JSON answer plays as it generates (the latency
         # win) instead of waiting for the whole non-streamed reply. The whole flow
@@ -129,8 +142,7 @@ def prepare_prompt_for_streaming(
         # played); STREAM_RESET then clears it from raw before the followup answer.
         def _chat_tool_stream() -> Iterator[Any]:
             probe_start_ms = now_ms()
-            for delta in probe_handle.deltas:
-                yield delta
+            yield from probe_handle.deltas
             probe_ms = elapsed_ms(probe_start_ms)
             obs.mark("agent_rounds", 1)
             obs.mark("agent_response_initial_ms", probe_ms)
@@ -148,32 +160,48 @@ def prepare_prompt_for_streaming(
             if is_turn_cancelled(ctx.request):
                 return  # cancelled during the (unplayed) preamble -> never run tools
             yield STREAM_RESET  # drop the plain preamble; keep only the followup answer
-            tool_history = _run_tool_calls(ctx, obs, tools, put_status, calls_sink)
+            tool_history = _run_tool_calls(ctx, obs, tools, put_status, calls_sink, deps=deps)
             if not _any_chainable(tools, calls_sink):
                 # Single-shot tools (watch/note/inspect): one followup, streamed.
                 put_status("thinking", "thinking")
-                followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language)
-                for delta in deps.model.stream(followup, ctx):
-                    if is_turn_cancelled(ctx.request):
-                        break
-                    yield delta
+                followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, force_final=True, dialog_display_language=deps.config.character.dialog_display_language,
+                    cap_output=cap_output, tool_schemas=active_tool_schemas)
+                _require_context_budget(ctx, deps, followup)
+                stream = deps.model.stream(followup, ctx)
+                try:
+                    for delta in stream:
+                        if is_turn_cancelled(ctx.request):
+                            break
+                        yield delta
+                finally:
+                    close = getattr(stream, "close", None)
+                    if callable(close):
+                        close()
                 return
             # Chainable tools are dormant today (all single-shot); the chain re-probes
             # NON-streaming (round 2+) then its final answer is emitted as one delta.
             chain_prompt, chain_text = _run_chain_rounds(
-                ctx, deps, obs, tools, put_status, prompt_input, tool_history, _probe_chat
+                ctx, deps, obs, tools, put_status, prompt_input, tool_history, _probe_chat, active_tool_schemas
             )
             if chain_text is not None:
                 yield chain_text
                 return
-            for delta in deps.model.stream(chain_prompt, ctx):
-                if is_turn_cancelled(ctx.request):
-                    break
-                yield delta
+            _require_context_budget(ctx, deps, chain_prompt)
+            stream = deps.model.stream(chain_prompt, ctx)
+            try:
+                for delta in stream:
+                    if is_turn_cancelled(ctx.request):
+                        break
+                    yield delta
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
 
-        return str(prompt_input or ""), _chat_tool_stream()
+        return prompt_input or "", _chat_tool_stream()
 
-    def _probe_responses(prompt_text: str, round_number: int) -> tuple[list[dict[str, str]], str]:
+    def _probe_responses(prompt_text: ModelInput, round_number: int) -> ToolProbeResult:
+        _require_context_budget(ctx, deps, prompt_text, active_tool_schemas)
         response_start_ms = now_ms()
         result = deps.model.probe(prompt_text, active_tool_schemas, ctx)
         response_ms = elapsed_ms(response_start_ms)
@@ -197,20 +225,27 @@ def prepare_prompt_for_streaming(
         )
         if not result.calls:
             ctx.response_id = result.response_id
-        return result.calls, result.text
+        return result
 
-    normalized_calls, probe_text = _probe_responses(str(prompt_input or ""), 1)
+    initial = _probe_responses(prompt_input or "", 1)
+    normalized_calls, probe_text = initial.calls, initial.text
     if not normalized_calls:
-        return str(prompt_input or ""), probe_text
+        return prompt_input or "", probe_text
 
-    tool_history = _run_tool_calls(ctx, obs, tools, put_status, normalized_calls)
+    tool_history = _run_tool_calls(ctx, obs, tools, put_status, normalized_calls, deps=deps, probe_result=initial)
     if not _any_chainable(tools, normalized_calls):
         # Single-shot tools only: today's single-round path, byte for byte.
         put_status("thinking", "thinking")
-        return build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language), None
-    return _run_chain_rounds(
-        ctx, deps, obs, tools, put_status, prompt_input, tool_history, _probe_responses
+        followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, force_final=True, dialog_display_language=deps.config.character.dialog_display_language,
+                    cap_output=cap_output, tool_schemas=active_tool_schemas)
+        _require_context_budget(ctx, deps, followup)
+        return followup, None
+    followup, text = _run_chain_rounds(
+        ctx, deps, obs, tools, put_status, prompt_input, tool_history, _probe_responses, active_tool_schemas
     )
+    if text is None:
+        _require_context_budget(ctx, deps, followup)
+    return followup, text
 
 
 def _any_chainable(tools: Any, calls: list[dict[str, str]]) -> bool:
@@ -232,7 +267,8 @@ def _run_chain_rounds(
     prompt_input: Any,
     tool_history: list[dict[str, Any]],
     probe: Any,
-) -> tuple[str, str | None]:
+    tool_schemas=(),
+) -> tuple[ModelInput, Any]:
     """P1 chain rounds (round 2..max_tool_rounds) for chainable tools.
 
     Each round re-probes WITH tools (non-streaming, same endpoint helper as
@@ -245,14 +281,19 @@ def _run_chain_rounds(
     historical LLM_TOOL_LOOP_EXCEEDED error instead -- see stages.call_llm_node.)
     """
     compact_lookup = getattr(tools, "compact_output", None)
+    cap_output = (is_domain_conversation(ctx.request.conversation_id)
+                  or ctx.recent is None or ctx.recent.working_messages is None)
     max_rounds = max(1, int(deps.config.max_tool_rounds))
-    followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language)
+    followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language,
+                    cap_output=cap_output, tool_schemas=tool_schemas)
     for round_number in range(2, max_rounds + 1):
-        calls, text = probe(followup, round_number)
+        result = probe(followup, round_number)
+        calls, text = result.calls, result.text
         if not calls:
             return followup, text
-        _run_tool_calls(ctx, obs, tools, put_status, calls, history=tool_history)
-        followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language)
+        _run_tool_calls(ctx, obs, tools, put_status, calls, history=tool_history, deps=deps, probe_result=result)
+        followup = build_tool_followup_prompt(prompt_input, tool_history, compact_lookup, dialog_display_language=deps.config.character.dialog_display_language,
+                    cap_output=cap_output, tool_schemas=tool_schemas)
     logger.warning(
         "tool loop exceeded max_tool_rounds=%d; forcing a final answer without tools",
         max_rounds,
@@ -263,6 +304,7 @@ def _run_chain_rounds(
         build_tool_followup_prompt(
             prompt_input, tool_history, compact_lookup, force_final=True,
             dialog_display_language=deps.config.character.dialog_display_language,
+            cap_output=cap_output, tool_schemas=tool_schemas,
         ),
         None,
     )
@@ -275,6 +317,7 @@ def _run_tool_calls(
     put_status: Any,
     calls: list[dict[str, str]],
     history: list[dict[str, Any]] | None = None,
+    *, deps: Any = None, probe_result: ToolProbeResult | None = None,
 ) -> list[dict[str, Any]]:
     """Execute normalized tool calls (``{"name", "arguments"}``) locally.
 
@@ -283,6 +326,7 @@ def _run_tool_calls(
     are identical regardless of which endpoint produced the calls. Chain rounds
     pass ``history`` so executions accumulate into the same list."""
     tool_history: list[dict[str, Any]] = history if history is not None else []
+    batch = 1 + max((item.get("batch", 0) for item in tool_history), default=0)
     for call in calls:
         # #1 checkpoint ①: a cancelled turn stops BEFORE executing any (further)
         # tool. This is what blocks ghost sing_song -- its SongRequestEvent rides
@@ -290,8 +334,10 @@ def _run_tool_calls(
         # fires nothing else can stop it singing. Returns the history accumulated
         # so far. Deadline: cancelled None/unset -> is_turn_cancelled False -> never
         # taken, every tool runs exactly as before.
-        if is_turn_cancelled(ctx.request):
+        if is_turn_cancelled(ctx.request) or ctx.request.interaction_mode == "system":
             break
+        if not check_context_sources(ctx):
+            raise ValueError(ctx.error.message)
         obs.bump("agent_function_calls", 1)
         tool_start_ms = now_ms()
         tool_name = call["name"]
@@ -301,10 +347,20 @@ def _run_tool_calls(
         else:
             put_status("tools", f"tool:{tool_name}")
         tool_result = tools.run(tool_name, arguments)
+        call_id = call.get("id") or "local_" + uuid4().hex
+        if deps is not None:
+            record_turn_result(ctx, deps, kind="tool", content=tool_result,
+                               event_suffix="tool:" + call_id, source=tool_name,
+                               metadata={"model_call_id": call_id, "arguments": arguments, "batch": batch})
         record_screen_tool_result(ctx, obs, tool_name, tool_result)
         tool_duration = elapsed_ms(tool_start_ms)
         obs.bump("agent_tool_local_ms", tool_duration)
-        tool_history.append({"name": tool_name, "arguments": arguments, "output": tool_result})
+        tool_history.append({**call, "id": call_id,
+                             "batch": batch, "output": tool_result})
+        if probe_result is not None:
+            tool_history[-1]["assistant_text"] = probe_result.text
+            tool_history[-1]["response_items"] = probe_result.response_items
+        ctx.metadata["tool_history"] = tool_history
         obs.event(
             "agent_tool_local",
             tool_duration,
@@ -321,7 +377,59 @@ def build_tool_followup_prompt(
     compact_lookup: Any = None,
     force_final: bool = False,
     dialog_display_language: str = "ja",
-) -> str:
+    cap_output: bool = True,
+    tool_schemas=(),
+) -> ModelInput:
+    # The final call has no tools. Keep the executed tools' trusted result/
+    # confirmation contract, not the entire available capability catalogue.
+    executed = {item['name'] for item in tool_history}
+    descriptions = {}
+    for schema in tool_schemas:
+        function = schema.get('function', schema)
+        if function.get('name') in executed and function.get('description'):
+            descriptions[function['name']] = function['description']
+    contract = ('[EXECUTED_TOOL_CONTRACT]\n本轮已执行工具的结果解释与确认要求；'
+                '不授权重试、重做或新增动作。\n' + json.dumps(descriptions, ensure_ascii=False)) if descriptions else ''
+    if isinstance(prompt_input, list):
+        messages = list(prompt_input)
+        # Budgeted personal calls opt out of slicing complete result values;
+        # other scopes retain their existing cap and memory owner.
+        history = _compact_tool_history_for_prompt(tool_history, compact_lookup, cap_output=cap_output)
+        # One assistant message per actual probe, then its paired tool results.
+        groups: list[list[dict[str, Any]]] = []
+        for item in history:
+            if not groups or groups[-1][0].get("batch") != item.get("batch"):
+                groups.append([])
+            groups[-1].append(item)
+        for group in groups:
+            calls = []
+            for item in group:
+                call_id = item.get("id") or "local_" + uuid4().hex
+                calls.append({"id": call_id, "type": "function", "function": {
+                    "name": item["name"], "arguments": item["arguments"],
+                }})
+            assistant: ModelMessage = {
+                "role": "assistant", "content": group[0].get("assistant_text", ""),
+                "tool_calls": calls,
+            }
+            if group[0].get("reasoning_content"):
+                assistant["reasoning_content"] = group[0]["reasoning_content"]
+            if group[0].get("response_items"):
+                assistant["response_items"] = group[0]["response_items"]
+            messages.append(assistant)
+            messages.extend({"role": "tool", "tool_call_id": call["id"], "content": item["output"]}
+                            for call, item in zip(calls, group))
+        final_contract = "[NEXT_STEP]\n根据真实工具结果继续本轮，最终按既定 JSON 与会话语言输出。请求、受理、完成和取消必须按结果区分。"
+        if contract:
+            final_contract += '\n\n' + contract
+        if force_final:
+            final_contract += "本轮工具阶段已结束。不要再调用工具，基于已有结果回答，只返回既定 JSON。失败或未知结果如实说明，不把继续执行的工具标记写进回答。"
+        # Carry the trusted session/output contract to the end after tools;
+        # retain the same desktop output language after tool continuations.
+        if prompt_input and prompt_input[-1]["role"] == "system":
+            final_contract += "\n\n" + prompt_input[-1]["content"]
+        messages.append({"role": "system", "content": final_contract})
+        return messages
     prompt_text = str(prompt_input).rstrip()
     format_reminder = bilingual_output_reminder(dialog_display_language)
     if format_reminder and prompt_text.endswith(format_reminder):
@@ -341,6 +449,8 @@ def build_tool_followup_prompt(
         # Loop-budget exceeded (P1): the graceful forced final -- streamed, no
         # tools offered, and the prompt says so explicitly.
         sections.append("不要再调用工具，基于已有结果回答。")
+    if contract:
+        sections.append(contract)
     sections.append(RUNTIME_CAPABILITY_REMINDER)
     # zh mode: re-anchor the per-sentence ⟦中文⟧ format LAST -- [TOOL_RESULTS] /
     # [NEXT_STEP] pushed the system-prompt rule far up, so the followup answer would

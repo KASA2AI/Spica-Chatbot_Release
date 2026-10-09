@@ -1,0 +1,4 @@
+# Optional, local keyword detection. Install in the desktop application environment.
+sherpa-onnx>=1.10.46,<2
+pypinyin>=0.55,<1
+g2p-en>=2.1,<3

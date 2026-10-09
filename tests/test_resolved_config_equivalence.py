@@ -331,7 +331,7 @@ def test_stt_mic_backend_default_auto_and_literal_fails_loud(clean_env, tmp_path
 def test_resolve_mic_backend_auto_folds_by_platform():
     from spica.host.app_host import resolve_mic_backend
 
-    assert resolve_mic_backend("auto", "linux") == "respeaker"
+    assert resolve_mic_backend("auto", "linux") == "generic"
     assert resolve_mic_backend("auto", "windows") == "generic"
 
 

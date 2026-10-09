@@ -38,12 +38,6 @@ class ManagedDocumentSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class PrivateDocumentInspection:
-    snapshot: ManagedDocumentSnapshot | None
-    permission_health: str
-
-
-@dataclass(frozen=True, slots=True)
 class ChangePreview:
     current: ManagedDocumentSnapshot
     candidate_revision: DocumentRevision
@@ -161,32 +155,6 @@ class ManagedDocumentTransaction:
             candidate_revision=candidate_revision,
             changed=current.revision != candidate_revision,
         )
-
-    def inspect_private(self) -> PrivateDocumentInspection:
-        """Read bytes and POSIX permission facts from one no-follow file identity.
-
-        This is a read-only capability probe and must not create lock or backup
-        state. Mutating transactions still take the stable cross-process lock.
-        """
-
-        if not self.private_posix or not self._platform.posix_permissions:
-            raise DocumentSafetyError("private POSIX inspection is unavailable")
-        try:
-            snapshot, file_stat = self._snapshot_with_stat()
-        except DocumentMultipleLinksError:
-            return PrivateDocumentInspection(None, "MULTIPLE_LINKS")
-        except DocumentWrongOwnerError:
-            return PrivateDocumentInspection(None, "WRONG_OWNER")
-        except DocumentSafetyError:
-            return PrivateDocumentInspection(None, "DOCUMENT_UNSAFE")
-        if file_stat is None:
-            return PrivateDocumentInspection(snapshot, "MISSING")
-        permission_health = (
-            "PRIVATE"
-            if stat.S_IMODE(file_stat.st_mode) == 0o600
-            else "TOO_PERMISSIVE"
-        )
-        return PrivateDocumentInspection(snapshot, permission_health)
 
     def commit(
         self,
@@ -327,31 +295,6 @@ class ManagedDocumentTransaction:
             )
             return result
 
-    def finalize_deferred_retention(
-        self,
-        *,
-        expected_snapshot: ManagedDocumentSnapshot,
-        protected_restore_point_id: str | None,
-    ) -> str | None:
-        """Apply retention after a caller has accepted a guarded publication."""
-
-        self._ensure_writes_supported()
-        with self._write_lock():
-            current = self._snapshot()
-            if not self._same_live_snapshot(current, expected_snapshot):
-                raise DocumentConflictError(
-                    "managed document changed before retention"
-                )
-            maintenance_code = self._prune_after_publish(
-                protected_restore_point_id=protected_restore_point_id,
-            )
-            current = self._snapshot()
-            if not self._same_live_snapshot(current, expected_snapshot):
-                raise DocumentConflictError(
-                    "managed document changed during retention"
-                )
-            return maintenance_code
-
     def recover_failed_publication(
         self,
         restore_point_id: str | None,
@@ -438,15 +381,6 @@ class ManagedDocumentTransaction:
                 )
             )
         return tuple(valid)
-
-    def publication_matches(
-        self,
-        current: ManagedDocumentSnapshot,
-        published: ManagedDocumentSnapshot,
-    ) -> bool:
-        """Compare private live-file identity without exposing its token."""
-
-        return self._same_live_snapshot(current, published)
 
     def _snapshot(self) -> ManagedDocumentSnapshot:
         snapshot, _ = self._snapshot_with_stat()

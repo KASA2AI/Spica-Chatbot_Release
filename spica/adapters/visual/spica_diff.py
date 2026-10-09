@@ -17,5 +17,10 @@ def build_spica_visual(config_path: Any = None, **_kwargs: Any) -> VisualDiffSer
     # Phase 7b: use the active character package's visual config when provided;
     # otherwise the engine default (Spica behaviour unchanged).
     if config_path:
-        return VisualDiffService(config_path=config_path)
+        visual = VisualDiffService(config_path=config_path)
+        if visual.config.get("renderer") == "cubism":
+            from spica.adapters.visual.cubism import CubismVisualService
+
+            return CubismVisualService(config_path)
+        return visual
     return VisualDiffService()

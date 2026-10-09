@@ -52,7 +52,7 @@ def register_core_capability_catalogue(registry: CapabilityRegistry) -> None:
     register_tts_providers(registry)
     registry.register_visual("spica_diff", build_spica_visual)
     registry.register_memory(
-        "sqlite", lambda store=None, recent=None: SqliteMemoryAdapter(store, recent)
+        "sqlite", lambda store=None, recent=None, memory_config=None: SqliteMemoryAdapter(store, recent, memory_config=memory_config)
     )
 
 

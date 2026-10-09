@@ -16,6 +16,7 @@ Same two-group discipline as tests/test_text_model_contract.py:
 
 import gc
 import unittest
+import pytest
 from types import SimpleNamespace
 
 from spica.adapters.llm import OpenAICompatibleAdapter
@@ -27,6 +28,49 @@ TOOLS = [{"type": "function", "name": "t1", "description": "d",
 
 def _state():
     return SimpleNamespace(timing={}, response_id=None)
+
+
+@pytest.mark.parametrize('family', ['chat', 'responses'])
+def test_turn_probe_does_not_retry_inside_sdk_after_source_withdrawal(family):
+    import httpx
+    from openai import OpenAI, InternalServerError
+
+    requests = []
+    current = [True]
+    state = _state()
+    def guard(_state):
+        if not current[0]:
+            raise ValueError('source withdrawn')
+    state.before_model_request = guard
+
+    def transport(request):
+        requests.append(request)
+        current[0] = False  # deletion completed while the first request failed
+        return httpx.Response(500, json={'error': {'message': 'isolated failure'}})
+
+    with OpenAI(api_key='isolated-test-key', max_retries=1,
+            base_url='https://api.deepseek.com' if family == 'chat' else 'https://api.openai.com/v1',
+            http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        adapter = OpenAICompatibleAdapter(client)
+        with pytest.raises(InternalServerError):
+            adapter.probe([{'role': 'user', 'content': 'selected private context'}], TOOLS,
+                          model='test-model', state=state)
+    assert len(requests) == 1
+
+
+def test_turn_independent_completion_keeps_configured_sdk_retry():
+    import httpx
+    from openai import OpenAI
+    requests = []
+    def transport(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(500, json={'error': {'message': 'isolated failure'}})
+        return httpx.Response(200, json={'choices': [{'message': {'content': 'summary'}}]})
+    with OpenAI(api_key='isolated-test-key', max_retries=1, base_url='https://api.deepseek.com',
+            http_client=httpx.Client(transport=httpx.MockTransport(transport))) as client:
+        assert OpenAICompatibleAdapter(client).complete('summary input', model='test-model') == 'summary'
+    assert len(requests) == 2
 
 
 # --- Group A fakes: client layer --------------------------------------------- #
@@ -115,7 +159,7 @@ class AdapterProbeStreamContractTest(unittest.TestCase):
         self.assertEqual(api.create_calls, 1)
         self.assertEqual(deltas, ["前导"])
         # Normal exhaustion -> calls readable, accumulated across split chunks.
-        self.assertEqual(handle.calls, [{"name": "t1", "arguments": '{"a":1}'}])
+        self.assertEqual(handle.calls, [{"name": "t1", "arguments": '{"a":1}', "id": "c1", "assistant_text": "前导"}])
 
     def test_responses_family_probe_stream_is_none(self):
         adapter = OpenAICompatibleAdapter(_openai(_ToolResponsesAPI()))
@@ -170,7 +214,7 @@ class AdapterProbeContractTest(unittest.TestCase):
         state = _state()
         result = OpenAICompatibleAdapter(_deepseek(_NonStreamToolChatAPI())).probe(
             "p", TOOLS, model="m", state=state)
-        self.assertEqual(result.calls, [{"name": "t1", "arguments": '{"a":1}'}])
+        self.assertEqual(result.calls, [{"name": "t1", "arguments": '{"a":1}', "id": "c1", "assistant_text": "答"}])
         self.assertEqual(result.text, "答")
         # No-double-accounting: usage went into state via the adapter-internal
         # _record_usage; the result deliberately carries None.
@@ -182,6 +226,25 @@ class AdapterProbeContractTest(unittest.TestCase):
 # --- Group B: ToolProbeStream own contract + BoundModel injection ------------ #
 
 class ToolProbeStreamContractTest(unittest.TestCase):
+    def test_explicit_close_reaches_a_retained_underlying_stream(self):
+        closed = []
+        def opener():
+            try:
+                yield "a"
+                yield "b"
+            finally:
+                closed.append(True)
+        underlying = opener()
+        stream = ToolProbeStream(lambda sink: underlying)
+        try:
+            self.assertEqual(next(stream.deltas), "a")
+            stream.deltas.close()
+            self.assertEqual(closed, [True])
+            with self.assertRaises(RuntimeError):
+                _ = stream.calls
+        finally:
+            underlying.close()
+
     def test_normal_exhaustion_unlocks_calls(self):
         def opener(sink):
             yield "a"

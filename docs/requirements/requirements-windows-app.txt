@@ -38,8 +38,8 @@ fast-langdetect==1.0.1
 OpenCC==1.3.1
 # Japanese g2p -- Windows fork of pyopenjtalk (imports as `pyopenjtalk`)
 pyopenjtalk-plus==0.4.1.post8
-# vendored inference_webui.py top-level-imports gradio even headless (known smell)
-gradio==4.44.1
+# Gradio is only needed when running the upstream standalone training/WebUI,
+# not by Spica’s desktop/headless inference adapter. Install it separately if needed.
 
 # --- vendored-code hard deps the top-level list alone did NOT pull ---
 # The W4-b §6.3 runbook smoke found these: the vendored GPT-SoVITS / Applio trees

@@ -76,11 +76,11 @@ class TtsConfigTest(unittest.TestCase):
 
 
 class SttBackendLiteralTest(unittest.TestCase):
-    def test_default_faster_whisper(self):
-        self.assertEqual(SttConfig().backend, "faster_whisper")
+    def test_default_local_qwen(self):
+        self.assertEqual(SttConfig().backend, "qwen_asr")
 
-    def test_google_is_the_explicit_online_opt_out(self):
-        self.assertEqual(SttConfig(backend="google").backend, "google")
+    def test_cloud_is_an_explicit_selection(self):
+        self.assertEqual(SttConfig(backend="qwen_cloud").backend, "qwen_cloud")
 
     def test_typo_fails_loud(self):
         # Pre-fix a typo VALIDATED fine and silently assembled no local adapter
@@ -750,29 +750,13 @@ class SttWarmupFlagTest(unittest.TestCase):
         self.assertEqual(calls, [1])
 
 
-class FasterWhisperWarmupDrainTest(unittest.TestCase):
-    def test_warmup_iterates_the_lazy_segments_generator(self):
-        # faster-whisper's transcribe() returns a LAZY generator; encode/decode
-        # only run while iterating. A warmup that never iterates only loaded
-        # weights while claiming to have warmed the decode path.
-        from spica.adapters.stt.faster_whisper import FasterWhisperAdapter
-
-        consumed: list = []
-
-        def _lazy_segments():
-            consumed.append(True)
-            yield SimpleNamespace(text="")
-
-        adapter = FasterWhisperAdapter(
-            model="x", device="cpu", compute_type="int8", language="zh"
-        )
-        fake_model = SimpleNamespace(
-            transcribe=lambda *a, **k: (_lazy_segments(), SimpleNamespace())
-        )
-        adapter._ensure_model = lambda: fake_model
-        result = adapter.warmup()
-        self.assertTrue(result["ok"])
-        self.assertEqual(consumed, [True])
+class LegacySttMigrationTest(unittest.TestCase):
+    def test_old_configs_choose_local_qwen_without_reusing_whisper_weights(self):
+        for backend in ("faster_whisper", "google"):
+            migrated = SttConfig(backend=backend, model="old-model", device="cpu", compute_type="int8")
+            self.assertEqual(migrated.backend, "qwen_asr")
+            self.assertEqual(migrated.model, "models/stt/Qwen3-ASR-1.7B")
+            self.assertEqual(migrated.compute_type, "float32")
 
 
 if __name__ == "__main__":

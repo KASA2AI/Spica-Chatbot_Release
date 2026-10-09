@@ -69,18 +69,6 @@
 #   enabled: true                # false = 不装配 GPT-SoVITS(启动零 TTS 显存),换无模型纯文本 adapter:字幕照常流式、无语音;
 #                                # 启动 warmup 链/galgame 崩溃恢复生命周期保留(TextOnlyTTSAdapter,绝不是 None)
 
-# stt:                           # 本地语音转文字 (Plan B):faster-whisper 取代 Google STT。yaml-only 无 env (铁律 #4)
-#   backend: faster_whisper      # ★这就是 STT 开关: faster_whisper=本地模型 | google=不驻留本地模型(省 2-3GB 显存),
-#                                #   语音输入走线上 Google Web Speech(旧回退,无超时可能卡)。拼错值启动即报错(Literal)
-#   model: large-v3-turbo        # repo 名走 HF 缓存,或填本地目录路径(完全离线)
-#   device: cuda                 # cuda | cpu
-#   compute_type: float16        # float16(GPU)| int8(CPU)
-#   language: zh
-#   beam_size: 5
-#   vad_filter: false
-#   warmup_on_startup: true      # 随 TTS 启动预热(模型只加载一次);false=首次说话懒加载
-#   download_root: null          # null=HF 默认缓存;可指向预下载目录
-
 # screen:                        # legacy carrier: config/screen_vision_config.json
 #   enabled: true                # env SPICA_SCREEN_ENABLED (env > yaml!)。★Moondream/看屏开关: false=inspect_screen/
 #                                #   watch_game_screen 不供给 LLM + 截图前硬拒 + moondream seam 不装(模型永不加载)
@@ -239,16 +227,19 @@ galgame:
       max_per_window: 10                   # 6→10(方案A):dense 高潮少被预算上限砍
       cooldown_seconds: 20                 # 45→20(方案A):一吐之后冷却短点,扎堆炸点少漏(judge 仍按 worth≥6 把关)
   play_history_card_max_chars: 220      # 默认 220:履历卡硬字数上限(注:prompt_builder 另在 220 截断,设高于 220 需同改那处才真正变长)
-stt:                                     # 本地语音转文字(Plan B):faster-whisper 取代 Google STT(无网络/不卡死)。yaml-only 无 env(铁律 #4)
-  backend: faster_whisper                # ★STT 开关: faster_whisper=本地 | google=不驻留本地模型(省显存),语音输入走线上(可能卡)。拼错启动即报错
-  model: spica_data/models/faster-whisper-large-v3-turbo  # 本地预下目录(完全离线);也可填 "large-v3-turbo" 走 HF 缓存
+stt:
+  backend: qwen_asr                  # qwen_asr 本地；qwen_cloud 百炼云端，需另存密钥
+  model: models/stt/Qwen3-ASR-1.7B   # 下载后的本地目录，不在对话中自动下载
+  worker_python: null               # 填写独立 Qwen 环境 Python 路径
+  mic_backend: auto                 # 普通麦克风；ReSpeaker 可显式选择
   device: cuda
-  compute_type: float16                  # 显存约 2-3GB 常驻;CPU 可改 int8
+  compute_type: bfloat16             # CPU 请用 float32
   language: zh
-  beam_size: 5
-  vad_filter: false
-  warmup_on_startup: true                # 随 TTS 一起启动预热(模型只加载一次,绝不每次调用重载);false=首次说话懒加载
-  download_root: null                    # null=HF 默认缓存;model 填本地目录时此项不用
+  warmup_on_startup: false           # 初次安装先配置模型；需要时可开启预热
+  cloud_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  cloud_model: qwen3-asr-flash
+  cloud_timeout_seconds: 20
+
 anime:                                   # spica 看番:Phase 4 端到端验收通过,已启用。完整键见上方注释模板
   enabled: true
   player_command: vlc

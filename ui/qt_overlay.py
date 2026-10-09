@@ -50,6 +50,9 @@ from ui.controllers.interaction_controller import InteractionController
 from ui.controllers.song_controller import SongController
 from ui.controllers.typewriter_controller import TypewriterController
 from ui.controllers.voice_input_controller import ReactionVoiceDuckGate, VoiceInputController
+from ui.overlay_config import load_microphone_muted, save_voice_ui_preference
+from ui.wake_words import default_wake_words, parse_wake_words, wake_reply_request
+from ui.overlay_config import load_voice_wake_preferences, save_voice_wake_enabled, save_voice_wake_words
 from ui.layered_sprite_store import LocalSpriteStore, PixmapByteCache
 from ui.overlay_config import (
     load_dialogue_opacity,
@@ -76,7 +79,6 @@ from ui.widgets.window_controls import WindowControls
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEBUG_NORMAL_WINDOW = False
 MIN_WINDOW_SIZE = QSize(460, 360)
-CHARACTER_HIT_ALPHA_THRESHOLD = 8
 CHARACTER_HIT_MARGIN = 7
 SCALED_PIXMAP_CACHE_BYTES = 48 * 1024 * 1024
 # Voice-mode visualisation (display-only): how long the recognized whole sentence
@@ -173,6 +175,8 @@ class OverlayWindow(QWidget):
         self.resize_origin_geometry: QRect | None = None
         self.resize_origin_pos: QPoint | None = None
         self.resize_origin_ui_scale = 1.0
+        self._cubism_view = None
+        self._cubism_status_label = None
         self.current_pixmap: QPixmap | None = None
         self.current_pixmap_cache_key: str | None = None
         self.sprite_store = LocalSpriteStore()
@@ -318,6 +322,9 @@ class OverlayWindow(QWidget):
         # input box (display-only) BEFORE the unchanged auto-submit. Runs on the GUI
         # thread (recognized is delivered queued from the worker), so it is widget-safe.
         self.voice_input_controller.set_on_recognized_text(self._on_voice_recognized_text)
+        self.voice_input_controller.on_wake_word = self._on_voice_wake_word
+        self.voice_input_controller.wake_enabled_changed.connect(self._refresh_voice_wake_settings)
+        self.voice_input_controller.manual_mute_changed.connect(self._microphone_mute_changed)
         self.song_controller.set_stop_conversation_for_song(self.interaction_controller.stop_conversation_for_song)
 
         self.window_controls = WindowControls(self)
@@ -386,6 +393,25 @@ class OverlayWindow(QWidget):
         self._init_backend()
         self._load_default_character()
         self._size_to_screen()
+        from ui.controllers.floating_controller import FloatingController
+        self.floating_controller = FloatingController(self)
+        from ui.local_notifications import LocalNotifications
+        self.local_notifications = LocalNotifications(self.floating_controller.show_notice, self)
+        self.window_controls.floating_requested.connect(self.floating_controller.collapse)
+        self.window_controls.floating_button.setVisible(self.agent is not None)
+        self.home_speech_controller = None
+        from ui.controllers.alarm_controller import AlarmController
+        self.alarm_controller = AlarmController(self, surface_provider=lambda: self.host)
+        self.alarm_controller.control_feedback.connect(self.dialogue_visibility_controller.show_system_message)
+        self.window_controls.alarm_requested.connect(self.alarm_controller.show)
+        if self.agent is not None and self.host.config.home.enabled:
+            from ui.controllers.home_speech_controller import HomeSpeechController
+            self.home_speech_controller = HomeSpeechController(self)
+            self.host.start_home(self.home_speech_controller)
+            if self.host.home_runtime is None:
+                error = self.host.plugin_host.errors().get('builtin:home', 'Home 未能启动')
+                logger.error('Home unavailable: %s', error)
+                self.dialogue_visibility_controller.show_system_message('Home 未能启动，聊天仍可用：' + error)
         self._start_startup_warmup()
         if loaded_secrets is not None and not loaded_secrets.secrets.openai_api_key:
             QTimer.singleShot(0, self.open_application_settings)
@@ -413,14 +439,15 @@ class OverlayWindow(QWidget):
             self.tts_tool = self.host.tts_tool
             self.tts_adapter = self.host.tts_adapter
             self.agent = self.host.conversation_surface
-            # Plan B: inject the resident local STT adapter into the voice loop
-            # (delayed -- the controller is built before the host). None when
-            # backend=google -> SpeechWorker uses the legacy fallback.
+            self.audio_controller.set_output_device(self.host.config.tts.output_device_id)
+            self.audio_controller.set_home_output_device(self.host.config.home.output_device_id,
+                fallback_device_id=self.host.config.home.output_fallback_device_id)
             if self.voice_input_controller is not None:
                 self.voice_input_controller.set_stt_port(self.host.stt_adapter)
                 # W3: same delayed-wiring shape -- the resolved mic backend
                 # string reaches each SpeechWorker via the controller.
                 self.voice_input_controller.set_mic_backend(self.host.effective_mic_backend)
+                self.voice_input_controller.set_input_device(self.host.config.stt.input_device)
             self._init_chat_stream_controller()
             self._init_companion_ui()
             self._init_anime_ui()
@@ -453,12 +480,26 @@ class OverlayWindow(QWidget):
             on_chat_done=self._handle_chat_stream_done,
             on_error=self._handle_chat_error,
             apply_visual=self._apply_visual,
+            text_surface_visible=self._reply_text_visible,
         )
+        self.chat_stream_controller.reply_text_complete.connect(self.dialogue_visibility_controller.retain_reply)
         if self.song_controller is not None:
             self.song_controller.set_chat_stream_controller(self.chat_stream_controller)
         if self.interaction_controller is not None:
             self.interaction_controller.set_chat_stream_controller(self.chat_stream_controller)
 
+
+    def _reply_text_visible(self) -> bool:
+        if self.settings_panel is not None and self.settings_panel.isVisible():
+            return False
+        floating = getattr(self, 'floating_controller', None)
+        if floating is not None and floating.enabled:
+            return floating.reply_text_visible
+        return self.dialogue_visibility_controller.reply_text_visible
+
+    def _bind_voice_reply(self, reply_key):
+        if reply_key is not None and self.chat_stream_controller is not None:
+            self.voice_input_controller.bind_reply(self.chat_stream_controller, reply_key=reply_key)
 
     def _init_companion_ui(self) -> None:
         """Wire the galgame companion UI (stage 3). MUST run inside __init__ (UI
@@ -732,9 +773,68 @@ class OverlayWindow(QWidget):
             self.dialogue_visibility_controller.show_system_message
         )
         # Dangling-session recovery runs after warmup either way (success or not).
+        self.startup_warmup_worker.finished_ok.connect(self._load_voice_wake_preferences)
         self.startup_warmup_worker.finished_ok.connect(self._start_dangling_recovery)
         self.startup_warmup_worker.failed.connect(self._start_dangling_recovery)
         self.startup_warmup_worker.start()
+
+    def _load_voice_wake_preferences(self) -> None:
+        character = self.host.character_package
+        enabled, words = load_voice_wake_preferences(
+            character.character_id, default_wake_words(character),
+        )
+        self.voice_input_controller.set_manual_muted(load_microphone_muted())
+        self.voice_input_controller.configure_wake(enabled, words)
+
+
+    def _refresh_voice_wake_settings(self, _enabled: bool | None = None) -> None:
+        voice = self.voice_input_controller
+        if self.settings_panel is not None:
+            self.settings_panel.set_voice_wake(voice.wake_enabled, voice.wake_words, voice.manual_muted)
+
+
+    def _microphone_mute_changed(self, muted: bool) -> None:
+        if not save_voice_ui_preference("microphone_muted", muted):
+            self.dialogue_visibility_controller.show_system_message("麦克风设置仅本次生效，保存失败。")
+        self._refresh_voice_wake_settings()
+
+    def _set_voice_wake_enabled(self, enabled: bool) -> None:
+        voice = self.voice_input_controller
+        if voice.configure_wake(enabled, voice.wake_words):
+            if not save_voice_wake_enabled(enabled):
+                self.dialogue_visibility_controller.show_system_message("唤醒开关仅本次生效，设置保存失败。")
+        self._refresh_voice_wake_settings()
+
+
+    def _set_voice_wake_words(self, text: str) -> None:
+        voice = self.voice_input_controller
+        words = parse_wake_words(text)
+        if words == voice.wake_words:
+            return
+        if not words:
+            self.dialogue_visibility_controller.show_system_message("请至少保留一个当前角色的唤醒词。")
+            self._refresh_voice_wake_settings()
+            return
+        if voice.configure_wake(voice.wake_enabled, words):
+            if not save_voice_wake_words(self.host.character_package.character_id, words):
+                self.dialogue_visibility_controller.show_system_message("唤醒词仅本次生效，设置保存失败。")
+
+
+    def _on_voice_wake_word(self, text: str) -> None:
+        controller = self.chat_stream_controller
+        if controller is None:
+            return
+        # A keyword is an attention signal, not an open-ended chat message.
+        # The existing system-turn path keeps the role/TTS and disables tools.
+        voice = self.voice_input_controller
+        voice.interrupt_current_recording()
+        token = controller.start_system_turn(wake_reply_request(text))
+        if token is not None:
+            session_id = voice.wait_for_wake_reply()
+            voice.bind_reply(controller, wake_session=session_id)
+        else:
+            self._schedule_next_voice_recording()
+
 
     def _size_to_screen(self) -> None:
         screen = QGuiApplication.primaryScreen()
@@ -761,6 +861,7 @@ class OverlayWindow(QWidget):
             config = self.visual_tool.config
             if isinstance(config.get("sprite_map"), dict):
                 self.sprite_store = LocalSpriteStore(bundle_root=None)
+            self._configure_cubism_character()
             self.character_label.set_eye_rigs(config.get("eye_rigs", {}))
             costumes = self.visual_tool.list_costume_sets()
             costume, _mode = self.visual_tool.choose_costume(costumes, config=config)
@@ -792,6 +893,11 @@ class OverlayWindow(QWidget):
             self.set_character_image(image_path)
 
     def _restore_animated_idle_character(self) -> None:
+        if self._cubism_view is not None:
+            controller = self.chat_stream_controller
+            if controller is None or not (controller.streaming_mode or controller.playback_active):
+                self._cubism_view.finish_performance()
+            return
         rigs = getattr(self.visual_tool, "config", {}).get("eye_rigs", {})
         if not rigs or self.current_pixmap_cache_key in rigs:
             return
@@ -863,12 +969,13 @@ class OverlayWindow(QWidget):
         chip_y = max(0, dialogue_y - chip_height - scaled_px(10, scale))
         chip_right_edge = frame_right
         for chip, fraction in (
+            (self._cubism_status_label, 0.9),
             (self.anime_cancel_button, 0.25),
             (self.anime_status_label, 0.4),
             (self.song_status_label, 0.4),
             (self.companion_status_label, 0.5),
         ):
-            if chip.isVisible():
+            if chip is not None and chip.isVisible():
                 available = max(0, chip_right_edge - frame_x)
                 chip_width = min(chip.sizeHint().width(), max(120, int(width * fraction)), available)
                 chip.setGeometry(chip_right_edge - chip_width, chip_y, chip_width, chip_height)
@@ -1092,37 +1199,6 @@ class OverlayWindow(QWidget):
         if duration_ms > 100:
             logger.warning("event=set_character_image_slow monotonic_ms=%s path=%r duration_ms=%s", self._now_ms(), cache_key, duration_ms)
 
-    def _trim_transparent_pixmap(self, pixmap: QPixmap) -> QPixmap:
-        # This is an O(width * height) Python alpha scan. Keep it out of
-        # playback hot paths; use only for offline/explicit image processing.
-        image = pixmap.toImage()
-        if image.isNull() or not image.hasAlphaChannel():
-            return pixmap
-
-        left = image.width()
-        top = image.height()
-        right = -1
-        bottom = -1
-        for y in range(image.height()):
-            for x in range(image.width()):
-                if image.pixelColor(x, y).alpha() <= CHARACTER_HIT_ALPHA_THRESHOLD:
-                    continue
-                left = min(left, x)
-                top = min(top, y)
-                right = max(right, x)
-                bottom = max(bottom, y)
-
-        if right < left or bottom < top:
-            return pixmap
-
-        padding = 4
-        left = max(0, left - padding)
-        top = max(0, top - padding)
-        right = min(image.width() - 1, right + padding)
-        bottom = min(image.height() - 1, bottom + padding)
-        crop_rect = QRect(left, top, right - left + 1, bottom - top + 1)
-        return pixmap.copy(crop_rect)
-
     def _apply_ui_scale(self) -> None:
         self._clear_scaled_pixmap_cache("ui_scale")
         self._applied_visual_scale = None
@@ -1154,7 +1230,7 @@ class OverlayWindow(QWidget):
 
         The preview is skipped (never clobbered) when the box holds a user draft, and
         only overwrites a stale preview of our own. It is cleared after a brief linger."""
-        if self._is_voice_mode_active():
+        if self.voice_input_controller.conversation_active:
             current = self.input_panel.input.text().strip()
             if not current or current == self._voice_transcript_shown:
                 self.input_panel.set_voice_transcript(text)
@@ -1164,7 +1240,15 @@ class OverlayWindow(QWidget):
         if self.anime_controller is not None:
             self.anime_controller.notify_user_activity()
         if self.interaction_controller is not None:
-            self.interaction_controller.handle_user_text(text)
+            voice = self.voice_input_controller
+            reply_key = voice.response_reply_key
+            previous = getattr(self.chat_stream_controller, "active_stream_token", None)
+            self.interaction_controller.handle_user_text(text, input_modality="speech")
+            if reply_key is not None:
+                if getattr(self.chat_stream_controller, "active_stream_token", None) is previous:
+                    voice.finish_response_reply(False, reply_key=reply_key)
+                else:
+                    voice.bind_reply(self.chat_stream_controller, reply_key=reply_key)
 
     def _clear_voice_transcript(self) -> None:
         """Clear the lingering voice preview -- but ONLY if the box still holds the
@@ -1327,11 +1411,19 @@ class OverlayWindow(QWidget):
         dialog = visual.get("dialog") if isinstance(visual.get("dialog"), dict) else {}
         speaker = str(dialog.get("speaker") or "spica").lower()
         self.dialogue.speaker_label.setText(speaker)
+        if self._cubism_view is not None:
+            cue = visual.get("cue")
+            command = cue.get("cubism") if isinstance(cue, dict) else None
+            if isinstance(command, dict):
+                self._cubism_view.apply_cue(command)
 
     def toggle_voice(self, checked: bool = False) -> None:
         del checked
         if self.voice_input_controller is not None:
+            if self.voice_input_controller.manual_muted:
+                self.voice_input_controller.set_manual_muted(False)
             self.voice_input_controller.toggle()
+            self.voice_input_controller.use_short_conversation()
 
     def _schedule_next_voice_recording(self, delay_ms: int = 320) -> None:
         if self.voice_input_controller is not None:
@@ -1432,6 +1524,9 @@ class OverlayWindow(QWidget):
         _handle_chat_stream_done. The stop itself touches no microphone/recording
         state (no VAD, no SpeechWorker) -- the resume is the standard turn-done rearm."""
         self.dialogue.hide_tail()
+        alarm = getattr(self, 'alarm_controller', None)
+        if alarm is not None:
+            alarm.stop_wake()
         if self.chat_stream_controller is not None:
             self.chat_stream_controller.stop_current()
         if self._is_voice_mode_active():
@@ -1473,13 +1568,25 @@ class OverlayWindow(QWidget):
             self.input_panel.screenshot_button.setEnabled(False)
 
     def open_settings_panel(self) -> None:
+        floating = getattr(self, 'floating_controller', None)
+        if floating is not None:
+            floating.prepare_settings()
         if self.settings_panel is not None and self.settings_panel.isVisible():
             self._close_settings_panel()
             return
         if self.settings_panel is None:
             self.settings_panel = SettingsPanel(self)
-            self.character_settings_controller = CharacterSettingsController(self, self.settings_panel)
-            self.application_settings_controller = ApplicationSettingsController(self, self.settings_panel)
+            self.settings_panel.memory_page.surface_provider = lambda: self.host.conversation_surface
+            self.character_settings_controller = CharacterSettingsController(self, self.settings_panel, autoload=False)
+            self.application_settings_controller = ApplicationSettingsController(self, self.settings_panel, autoload=False)
+            from ui.controllers.home_camera_controller import HomeCameraController
+            from ui.controllers.home_status_controller import HomeStatusController
+            self.home_camera_controller = HomeCameraController(self, self.settings_panel)
+            self.home_status_controller = HomeStatusController(self, self.settings_panel.home_status_page)
+            self.settings_panel.home_status_page.alarms_requested.connect(self.alarm_controller.show)
+            self.settings_panel.microphone_muted_changed.connect(self.voice_input_controller.set_manual_muted)
+            self.settings_panel.voice_wake_enabled_changed.connect(self._set_voice_wake_enabled)
+            self.settings_panel.voice_wake_words_changed.connect(self._set_voice_wake_words)
             self.settings_panel.close_requested.connect(self._close_settings_panel)
             self.settings_panel.exit_requested.connect(self.close)
             self.settings_panel.restart_requested.connect(self.restart_application)
@@ -1502,10 +1609,13 @@ class OverlayWindow(QWidget):
 
         if self.visual_tool is not None:
             self.available_costumes = self.visual_tool.list_costume_sets()
+        self._refresh_voice_wake_settings()
+        self.settings_panel.set_costume_groups(
+            self._cubism_view._bindings.costume_groups if self._cubism_view is not None else {},
+            getattr(self.visual_tool, 'config', {}).get('costume_labels', {}),
+        )
         self.settings_panel.set_costumes(self.available_costumes, self.selected_costume)
         self.settings_panel.set_costume_enabled(not self._is_conversation_busy())
-        self.character_settings_controller.refresh()
-        self.application_settings_controller.refresh()
         self.settings_panel.set_scale(self.character_scale)
         self.settings_panel.set_overall_scale(self.ui_scale)
         self.settings_panel.set_typing_speed(self.typewriter_controller.typewriter_speed)
@@ -1519,6 +1629,7 @@ class OverlayWindow(QWidget):
         self.settings_panel.play_open_motion()
         self._update_click_through_mask()
         self.settings_panel.close_button.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.application_settings_controller.refresh_async(self.character_settings_controller)
 
     def open_application_settings(self) -> None:
         if self.settings_panel is None or not self.settings_panel.isVisible():
@@ -1531,6 +1642,9 @@ class OverlayWindow(QWidget):
         controller = getattr(self, "character_settings_controller", None)
         if controller is not None and controller.worker is not None:
             return  # Finish the package/config write before stopping its owner.
+        if self.settings_panel is not None and self.settings_panel.memory_page.worker is not None:
+            self.settings_panel.memory_page.status.setText("正在处理记忆，请稍候再重启。")
+            return
         if self.settings_panel is not None:
             QApplication.inputMethod().commit()
         application = getattr(self, "application_settings_controller", None)
@@ -1556,6 +1670,9 @@ class OverlayWindow(QWidget):
             self.settings_panel.name_input.clearFocus()
             self.settings_panel.play_close_motion(on_hidden=self._update_click_through_mask)
             self._update_click_through_mask()
+        floating = getattr(self, 'floating_controller', None)
+        if floating is not None:
+            floating.settings_closed()
 
     def minimize_overlay(self) -> None:
         self.showMinimized()
@@ -1724,6 +1841,7 @@ class OverlayWindow(QWidget):
         if region.isEmpty():
             self.clearMask()
             return
+        region |= self._widget_hit_region(self._cubism_status_label)
         # The shared bottom edge clips the sprite's legacy drop shadow as well.
         frame_bounds = QRect(0, 0, self.width(), self.input_panel.geometry().bottom() + 1)
         self.setMask(region.intersected(QRegion(self.rect().intersected(frame_bounds))))
@@ -1749,6 +1867,13 @@ class OverlayWindow(QWidget):
         return QRegion(rect)
 
     def _character_hit_region(self) -> QRegion:
+        if self._cubism_view is not None:
+            view = self._cubism_view
+            if not view.isVisible():
+                return QRegion()
+            region = view.native_hit_region()
+            if region is not None:
+                return region.translated(view.mapTo(self, QPoint(0, 0))).intersected(QRegion(self.rect()))
         if self.character_label.isHidden():
             return QRegion()
         pixmap = self.character_label.pixmap()
@@ -1896,6 +2021,16 @@ class OverlayWindow(QWidget):
             application.page.status.setText("正在保存，请稍候再退出。")
             event.ignore()
             return
+        panel = getattr(self, "settings_panel", None)
+        if panel is not None and panel.memory_page.worker is not None:
+            panel.memory_page.status.setText("正在处理记忆，请稍候再退出。")
+            event.ignore()
+            return
+        alarms = getattr(self, 'alarm_controller', None)
+        if alarms is not None and alarms.is_saving:
+            alarms.panel.status.setText('闹钟正在保存，请稍候再退出。')
+            event.ignore()
+            return
         if self._forced_close_armed:
             owners = ",".join(self._forced_close_owners) or "unknown"
             armed_at = self._forced_close_armed_at or 0.0
@@ -1914,6 +2049,28 @@ class OverlayWindow(QWidget):
         # attempts only poll, so a slow cancelled worker cannot freeze Qt.
         shutdown_deadline = time.monotonic() + (0.0 if self._restart_timer.isActive() else 1.5)
         nonclean_owners: list[str] = []
+        if alarms is not None:
+            alarms.shutdown()
+        home_status = getattr(self, 'home_status_controller', None)
+        if home_status is not None:
+            home_status.shutdown()
+        home_camera = getattr(self, 'home_camera_controller', None)
+        if home_camera is not None and not home_camera.shutdown():
+            nonclean_owners.append('home_camera')
+        home_speech = getattr(self, 'home_speech_controller', None)
+        if home_speech is not None and not home_speech.shutdown():
+            nonclean_owners.append('home_speech')
+        from spica.host.assemblies.home import begin_shutdown
+        home_close = begin_shutdown(self.host)
+        if home_close is not None and home_close.is_alive():
+            nonclean_owners.append('home')
+        if getattr(self.host, '_home_shutdown_error', None):
+            nonclean_owners.append('home_close_failed')
+        business_jobs = getattr(self.host, '_business_evidence_jobs', None)
+        if business_jobs is not None and business_jobs.pending:
+            nonclean_owners.append('home_evidence')
+        begin_stt_shutdown = getattr(self.host, "begin_stt_shutdown", None)
+        stt_cleanup = begin_stt_shutdown() if callable(begin_stt_shutdown) else None
         if self._voice_volume_save_timer.isActive():
             try:
                 self.persist_spica_voice_volume()
@@ -2110,6 +2267,26 @@ class OverlayWindow(QWidget):
                 )
             elif attribute == "screenshot_worker":
                 self.screenshot_worker = None
+        if not nonclean_owners and self.host is not None:
+            from spica.host.assemblies import memory as memory_assembly
+            if not memory_assembly.shutdown(self.host, timeout=0):
+                nonclean_owners.append("memory")
+                self.input_panel.setEnabled(False)
+        if not nonclean_owners and self.host is not None:
+            from spica.host.assemblies.audio import begin_tts_shutdown
+            tts_cleanup = begin_tts_shutdown(self.host)
+            if tts_cleanup.is_alive():
+                nonclean_owners.append("tts_cleanup")
+            if getattr(self.host, "_tts_cleanup_error", None):
+                nonclean_owners.append("tts_cleanup_failed")
+        if stt_cleanup is not None and stt_cleanup.is_alive():
+            nonclean_owners.append("stt_cleanup")
+        if getattr(self.host, "_stt_cleanup_error", None):
+            nonclean_owners.append("stt_cleanup_failed")
+        if set(nonclean_owners).issubset({"stt_cleanup", "tts_cleanup", "memory", "home", "home_speech", "home_camera", "home_evidence"}) and nonclean_owners:
+            self._restart_timer.start()
+            event.ignore()
+            return
         if nonclean_owners:
             if self._restart_requested:
                 if self.settings_panel is not None:
@@ -2139,7 +2316,61 @@ class OverlayWindow(QWidget):
             event.ignore()
             return
         self._restart_timer.stop()
+        if self._cubism_view is not None:
+            self._cubism_view.close_renderer()
+            self.audio_controller.enable_cubism_lipsync().close()
+        if getattr(self.host, 'plugin_host', None) is not None:
+            self.host.plugin_host.shutdown()
+        self.local_notifications.shutdown()
+        floating = getattr(self, 'floating_controller', None)
+        if floating is not None:
+            floating.shutdown()
         super().closeEvent(event)
+        QApplication.instance().quit()
+
+    def _configure_cubism_character(self) -> None:
+        config = getattr(self.visual_tool, "config", {})
+        if config.get("renderer") != "cubism" or self._cubism_view is not None:
+            return
+        # Native dependencies and timers are completely absent for sprite and
+        # eye-rig characters, including after a native pack has been installed.
+        from ui.widgets.cubism_character import CubismCharacterView
+
+        old = self.character_label
+        view = CubismCharacterView(old.parentWidget())
+        view.setObjectName(old.objectName())
+        view.setStyleSheet(old.styleSheet())
+        view.setAlignment(old.alignment())
+        view.setGeometry(old.geometry())
+        view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        view.installEventFilter(self)
+        view.setCursor(Qt.CursorShape.OpenHandCursor)
+        view.setToolTip("按住人物拖动窗口")
+        view.configure(config)
+        view.canvas.mouth_provider = self.audio_controller.enable_cubism_lipsync().level
+        self._cubism_view = self.character_label = view
+        if self.chat_stream_controller is not None:
+            self.chat_stream_controller.reset_visual = view.interrupt_performance
+        status = QLabel(self)
+        status.setWordWrap(False)
+        status.setStyleSheet("color: #ffeaf8; background: rgba(52,38,52,185); padding: 5px;")
+        status.hide()
+        self._cubism_status_label = status
+        view.status_changed.connect(self._show_cubism_status)
+        view.shape_changed.connect(self._update_click_through_mask)
+        old.hide()
+        old.deleteLater()
+        view.lower()
+        view.show()
+
+
+    def _show_cubism_status(self, message: str) -> None:
+        if self._cubism_status_label is not None:
+            self._cubism_status_label.setText(message)
+            self._cubism_status_label.setToolTip(message)
+            self._cubism_status_label.setVisible(bool(message))
+            self._layout_overlay()
+
 
 
 def main() -> int:
@@ -2171,7 +2402,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     window = OverlayWindow(loaded_secrets=startup_secrets)
-    window.show()
+    window.floating_controller.show_initial()
     exit_code = app.exec()
     if window._restart_requested and exit_code == 0:
         try:

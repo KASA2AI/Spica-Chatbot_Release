@@ -14,19 +14,21 @@ class PromptBuilderTest(unittest.TestCase):
             character_profile="角色设定",
             interlocutor_name="kasa",
         )
+        text = "\n".join(message["content"] for message in prompt)
+        self.assertIn({"role": "user", "content": "早上好"}, prompt)
+        self.assertIn({"role": "assistant", "content": "おはよう。"}, prompt)
         for section in (
             "[SYSTEM]",
             "[CHARACTER_PROFILE]",
             "[INTERLOCUTOR_PROFILE]",
             "[LONG_TERM_MEMORY]",
-            "[RECENT_CONTEXT]",
             "[CURRENT_USER_INPUT]",
         ):
-            self.assertIn(section, prompt)
-        self.assertIn("最多 500 个日文字符", prompt)
-        self.assertIn("适合朗读的日语", prompt)
-        self.assertIn("当前对话对象固定是kasa", prompt)
-        self.assertIn("kasa: 早上好", prompt)
+            self.assertIn(section, text)
+        self.assertIn("最多 500 个日文字符", text)
+        self.assertIn("适合朗读的日语", text)
+        self.assertIn("当前对话对象固定是kasa", text)
+        self.assertIn("[CURRENT_USER_INPUT]\n你好", text)
 
     def test_json_contract_puts_emotion_before_streamed_answer(self):
         prompt = build_system_prompt()
@@ -70,6 +72,7 @@ class PromptBuilderTest(unittest.TestCase):
             character_profile="带有身体动作描写的角色卡",
         )
 
+        prompt = "\n".join(message["content"] for message in prompt)
         self.assertIn("[RUNTIME_CAPABILITY_REMINDER]", prompt)
         self.assertLess(prompt.index("[CURRENT_USER_INPUT]"), prompt.index("[RUNTIME_CAPABILITY_REMINDER]"))
         self.assertIn("不代表当前应用拥有实体、现场感知或执行结果", prompt)

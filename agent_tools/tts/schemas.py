@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from threading import Event
 
 
 @dataclass
@@ -14,6 +15,10 @@ class TTSRequest:
     output_format: Literal["wav", "mp3", "pcm"] = "wav"
     output_mode: Literal["file", "bytes", "stream"] = "file"
     extra: dict[str, Any] = field(default_factory=dict)
+    # Trusted in-process artifact ownership; never exposed in a model tool schema.
+    artifact_directory: str | None = None
+    # Audio-only revocation; does not cancel the dialogue or tool execution.
+    cancelled: Event | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass

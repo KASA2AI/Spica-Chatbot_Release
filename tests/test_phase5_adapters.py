@@ -153,7 +153,7 @@ class LLMAdapterTest(unittest.TestCase):
 
 
 class MemoryAdapterTest(unittest.TestCase):
-    def test_commit_turn_extracts_and_retrieve_returns_items(self):
+    def test_commit_keeps_evidence_and_manual_memory_is_retrievable(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLiteMemoryStore(Path(tmp) / "m.sqlite3")
             adapter = SqliteMemoryAdapter(store, RecentMemory(max_turns=3))
@@ -161,7 +161,9 @@ class MemoryAdapterTest(unittest.TestCase):
 
             result = adapter.commit_turn(scope, "我喜欢简短回答", "うん。", meta={"interlocutor_name": "麦"})
             self.assertIsInstance(result, dict)
-
+            self.assertFalse(adapter.retrieve(scope, "简短", limit=5))
+            self.assertEqual({row["kind"] for row in adapter.evidence(scope)}, {"user", "assistant_generated"})
+            adapter.remember(scope, "我喜欢简短回答")
             items = adapter.retrieve(scope, "简短", limit=5)
             self.assertTrue(items)
             self.assertIsInstance(items[0], MemoryItem)

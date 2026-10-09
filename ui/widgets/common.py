@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from spica.config.overlay_owner import MAX_UI_SCALE, MIN_UI_SCALE
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-DIALOG_FILTER_PATH = BASE_DIR / "ui" / "assets" / "_mw_filter01.png"
 DEFAULT_DIALOGUE_OPACITY = 0.88
 MIN_DIALOGUE_OPACITY = 0.20
 MAX_DIALOGUE_OPACITY = 1.0

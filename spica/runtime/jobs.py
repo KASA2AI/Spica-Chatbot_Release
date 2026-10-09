@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable, Protocol
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ class ThreadJobRunner:
 
     def __init__(self) -> None:
         self._threads: list[threading.Thread] = []
+        self._lock = threading.Lock()
 
     def submit(self, fn: Callable[[], None]) -> None:
         def _run() -> None:
@@ -59,10 +61,26 @@ class ThreadJobRunner:
                 logger.exception("background job failed")
 
         thread = threading.Thread(target=_run, daemon=True)
-        self._threads.append(thread)
-        thread.start()
+        with self._lock:
+            self._threads = [t for t in self._threads if t.is_alive()]
+            self._threads.append(thread)
+            thread.start()
 
     def drain(self, timeout: float | None = None) -> None:
-        for thread in self._threads:
-            thread.join(timeout)
-        self._threads = [t for t in self._threads if t.is_alive()]
+        deadline = None if timeout is None else time.monotonic() + max(0, timeout)
+        with self._lock:
+            threads = tuple(self._threads)
+        for thread in threads:
+            remaining = None if deadline is None else max(0, deadline - time.monotonic())
+            thread.join(remaining)
+        with self._lock:
+            self._threads = [t for t in self._threads if t.is_alive()]
+
+    @property
+    def pending(self) -> bool:
+        with self._lock:
+            return any(thread.is_alive() for thread in self._threads)
+
+    @property
+    def is_idle(self) -> bool:
+        return not self.pending

@@ -85,3 +85,7 @@ class RecentMemory:
             temporary.replace(self._path)
         except OSError:
             logging.getLogger(__name__).warning("recent memory could not be saved")
+            # Callers decide whether a failed write can degrade gracefully.
+            # Delivery settlement must not confuse the in-memory append with
+            # durable success; save_stream_memory records this as memory_error.
+            raise

@@ -74,21 +74,21 @@ class MemoryIsolationTest(unittest.TestCase):
             scope_a = MemoryScope(character_id="char_a", user_id="麦", conversation_id="c1")
             scope_b = MemoryScope(character_id="char_b", user_id="麦", conversation_id="c1")
 
-            adapter.commit_turn(scope_a, "我喜欢简短回答", "うん。", meta={"interlocutor_name": "麦"})
+            adapter.remember(scope_a, "我喜欢简短回答")
 
             # Same character sees its memory; a different character does not.
             self.assertTrue(adapter.retrieve(scope_a, "简短", limit=5))
-            self.assertEqual(adapter.retrieve(scope_b, "简短", limit=5), [])
+            self.assertFalse(adapter.retrieve(scope_b, "简短", limit=5))
 
-    def test_same_character_different_conversation_still_keyed(self):
+    def test_same_character_personal_fact_survives_conversation_change(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLiteMemoryStore(Path(tmp) / "m.sqlite3")
             adapter = SqliteMemoryAdapter(store, RecentMemory(max_turns=3))
             a_c1 = MemoryScope(character_id="char_a", user_id="麦", conversation_id="c1")
             a_c2 = MemoryScope(character_id="char_a", user_id="麦", conversation_id="c2")
-            adapter.commit_turn(a_c1, "我喜欢简短回答", "うん。", meta={"interlocutor_name": "麦"})
+            adapter.remember(a_c1, "我喜欢简短回答")
             self.assertTrue(adapter.retrieve(a_c1, "简短", limit=5))
-            self.assertEqual(adapter.retrieve(a_c2, "简短", limit=5), [])
+            self.assertTrue(adapter.retrieve(a_c2, "简短", limit=5))
 
 
 if __name__ == "__main__":

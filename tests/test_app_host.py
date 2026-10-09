@@ -149,56 +149,140 @@ class CompanionSinkOrderingTest(unittest.TestCase):
 
 
 class HistoryBridgeTest(unittest.TestCase):
-    """B 方案 (FINDINGS #15): _record_play_history upserts into the character's
-    DEFAULT-scope memory; same game overwrites (explicit memory_key), different
-    games coexist -- the approved coverage policy, guarded against a REAL store."""
+    """Sourced history enters the effective store; processing keeps one active
+    card per game. Only the external organizer response is controlled."""
 
     def _host_with_store(self, tmp):
         from pathlib import Path
         from types import SimpleNamespace
 
         from memory.store import SQLiteMemoryStore
+        from spica.adapters.memory.sqlite import SqliteMemoryAdapter
+        from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
         from spica.config.schema import AppConfig
+        from spica.galgame.models import PlaySession, utc_now_iso
 
         host = AppHost()
         host.config = AppConfig()
         host.services = SimpleNamespace(memory_store=SQLiteMemoryStore(Path(tmp) / "memory.sqlite3"))
+        host.services.memory_adapter = SqliteMemoryAdapter(host.services.memory_store)
+        host.services.game_memory_adapter = GameMemorySqliteAdapter(Path(tmp) / 'game.sqlite3')
+        for session_id, game_id in [('S1', 'limelight'), ('S2', 'limelight'), ('S3', 'anemoi')]:
+            host.services.game_memory_adapter.add_play_session(PlaySession(
+                session_id=session_id, game_id=game_id, started_at=utc_now_iso(),
+                character_id='spica', principal_id='owner', user_name='麦'))
         return host
+
+    def _consolidate(self, host):
+        import json
+        from spica.ports.model import BoundModel
+        class Organizer:
+            supports_bounded_completion = True
+
+            def complete(self, prompt, *, model, options=None):
+                assert options is not None
+                options.check_input({'model': model, 'messages': prompt})
+                batch = json.loads(prompt[-1]['content'])
+                if 'candidate' in batch:
+                    return json.dumps(dict(schema_version='memory.support.v1', supported=True, reason='controlled history card'))
+                rows = {row['metadata']['memory_key']: row for row in batch['evidence']}
+                entries = []
+                for key, row in rows.items():
+                    previous = [entry['id'] for entry in batch['existing_entries']
+                                if entry['semantic_key'] == key and entry['status'] == 'active']
+                    entries.append(dict(kind='episode', key=key, text=row['content'], subject='relationship',
+                        origin='episode', sources=[dict(id=row['id'], quote=row['content'])], replaces=previous,
+                        revision_reason='change' if previous else None))
+                return json.dumps(dict(schema_version='memory.consolidation.v1', covered_ids=batch['covered_ids'],
+                                       entries=entries, working_summary=[]))
+        memory = host.services.memory_adapter
+        memory.config.consolidation_enabled = True
+        memory.config.consolidation_min_user_turns = memory.config.consolidation_min_tokens = 0
+        memory.start_maintenance(BoundModel(Organizer(), 'controlled'), idle_seconds=0)
+        try:
+            self.assertTrue(memory.wait_for_maintenance(timeout=3))
+        finally:
+            memory.shutdown(3)
+            memory._maintenance = None
 
     def test_record_lands_in_default_scope_with_game_key(self):
         from tempfile import TemporaryDirectory
 
         with TemporaryDirectory() as tmp:
             host = self._host_with_store(tmp)
-            host._record_play_history("limelight", "麦和我一起玩了游戏《LimeLight》。")
-            rows = host.services.memory_store.list_memories("spica::default")
+            from spica.ports.memory import MemoryScope
+            host._record_play_history("limelight", "麦和我一起玩了游戏《LimeLight》。", 'S1')
+            rows = host.services.memory_adapter.evidence(MemoryScope('spica', 'owner'))
             self.assertEqual(len(rows), 1)
             row = rows[0]
-            self.assertEqual(row["memory_key"], "galgame_history:limelight")
-            self.assertEqual(row["scope"], "relationship")
-            self.assertEqual(row["memory_type"], "experience")
+            self.assertEqual(row["metadata"]["memory_key"], "galgame_history:limelight")
+            self.assertEqual(row["metadata"]["play_session_id"], "S1")
+            self.assertEqual(row["turn_id"], row["event_id"])
+            self.assertEqual(row["conversation_id"], "default")
+            self.assertEqual(row["kind"], "system_event")
             self.assertEqual(row["source"], "galgame_companion")
-            self.assertAlmostEqual(row["importance"], 0.85)
-            self.assertFalse(row["pinned"])
+            self.assertEqual(host.services.memory_store.list_memories('spica::default'), [])
 
     def test_same_game_overwrites_different_game_coexists(self):
         from tempfile import TemporaryDirectory
 
         with TemporaryDirectory() as tmp:
             host = self._host_with_store(tmp)
-            host._record_play_history("limelight", "第一次游玩的履历卡。")
-            host._record_play_history("limelight", "第二次游玩的履历卡（更新）。")
-            rows = host.services.memory_store.list_memories("spica::default")
+            from spica.ports.memory import MemoryScope
+            scope = MemoryScope('spica', 'owner')
+            host._record_play_history("limelight", "第一次游玩的履历卡。", 'S1')
+            self._consolidate(host)
+            host._record_play_history("limelight", "第二次游玩的履历卡（更新）。", 'S2')
+            self._consolidate(host)
+            rows = host.services.memory_adapter.list_memory(scope)
             self.assertEqual(len(rows), 1)  # same game -> ONE card, overwritten
             self.assertEqual(rows[0]["content"], "第二次游玩的履历卡（更新）。")
-            host._record_play_history("anemoi", "anemoi 的履历卡。")
-            rows = host.services.memory_store.list_memories("spica::default")
+            host._record_play_history("anemoi", "anemoi 的履历卡。", 'S3')
+            self._consolidate(host)
+            rows = host.services.memory_adapter.list_memory(scope)
             self.assertEqual(len(rows), 2)  # different game -> coexists
+            self.assertEqual(len({row['turn_id'] for row in host.services.memory_adapter.evidence(scope)}), 3)
+
 
 
 class RecoverHistoryTest(unittest.TestCase):
     """B 方案: a recovered (dangling) session never ran stop() -> its history card
     is written by the recover wrapper. Fake LLM port; everything else real."""
+
+    def test_recovery_preserves_the_play_start_identity_and_does_not_guess_legacy_owner(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from memory.store import SQLiteMemoryStore
+        from spica.adapters.game_memory.sqlite import GameMemorySqliteAdapter
+        from spica.adapters.memory.sqlite import SqliteMemoryAdapter
+        from spica.config.schema import AppConfig, CharacterConfig
+        from spica.galgame.models import PlaySession, StorySummary, utc_now_iso
+        from spica.galgame.session import GalgameCompanionSession
+        from spica.ports.memory import MemoryScope
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory)
+            games = GameMemorySqliteAdapter(path / 'game.sqlite3')
+            session = GalgameCompanionSession(games, character_id='spica', user_id='显示名', principal_id='original-owner')
+            session.bind_game('remembered-game')
+            session_id = session.start()
+            games.add_play_session(PlaySession(session_id='legacy', game_id='unscoped-game',
+                                               started_at=utc_now_iso()))
+            for game_id, identity in [('remembered-game', session_id), ('unscoped-game', 'legacy')]:
+                games.add_summary(StorySummary(summary_id=identity, session_id=identity,
+                    game_id=game_id, summary_zh='游戏里一起走到了桥边。', created_at=utc_now_iso()))
+            host = AppHost()
+            host.config = AppConfig(character=CharacterConfig(character_id='sana', interlocutor_name='小林'))
+            memory = SqliteMemoryAdapter(SQLiteMemoryStore(path / 'memory.sqlite3'))
+            host.services = SimpleNamespace(game_memory_adapter=GameMemorySqliteAdapter(path / 'game.sqlite3'),
+                                             memory_adapter=memory, llm_adapter=object())
+            self.assertEqual(set(host.recover_dangling_companion_sessions()), {session_id, 'legacy'})
+            self.assertEqual(memory.evidence(MemoryScope('sana', 'current-owner')), [])
+            [history] = memory.evidence(MemoryScope('spica', 'original-owner'))
+            self.assertEqual(history['metadata']['play_session_id'], session_id)
+            self.assertNotIn('unscoped-game', history['content'])
+            self.assertEqual(host.recover_dangling_companion_sessions(), [])
 
     def test_recover_writes_history_card(self):
         import json
@@ -229,6 +313,7 @@ class RecoverHistoryTest(unittest.TestCase):
             # a dangling play session (crash residue) with one committed line
             game_memory.add_play_session(PlaySession(
                 session_id="S1", game_id="limelight", started_at=utc_now_iso(), state="active",
+                character_id='spica', principal_id='owner', user_name='麦',
             ))
             game_memory.add_story_line(StoryLine(
                 line_id="L1", session_id="S1", game_id="limelight",
@@ -242,16 +327,20 @@ class RecoverHistoryTest(unittest.TestCase):
                 game_memory_adapter=game_memory,
                 memory_store=SQLiteMemoryStore(Path(tmp) / "memory.sqlite3"),
             )
+            from spica.adapters.memory.sqlite import SqliteMemoryAdapter
+            from spica.ports.memory import MemoryScope
+            host.services.memory_adapter = SqliteMemoryAdapter(host.services.memory_store)
             recovered = host.recover_dangling_companion_sessions()
             self.assertEqual(recovered, ["S1"])
             self.assertEqual(game_memory.get_play_session("S1").state, "ended")  # 補總結 + ended
-            rows = host.services.memory_store.list_memories("spica::default")
+            rows = host.services.memory_adapter.evidence(MemoryScope('spica', 'owner'))
             self.assertEqual(len(rows), 1)  # the history card landed
-            self.assertEqual(rows[0]["memory_key"], "galgame_history:limelight")
+            self.assertEqual(rows[0]["metadata"]["memory_key"], "galgame_history:limelight")
             self.assertIn("一起玩了游戏《limelight》", rows[0]["content"])
             # NB: recover only 補總結 (it does NOT update GameProgressState), so the
             # card carries the summary text, not a route phrase.
             self.assertIn("最近剧情：雪鹰在天台向主人公告白", rows[0]["content"])
+
 
 
 class RecoverInterruptedHistoryTest(unittest.TestCase):
@@ -292,6 +381,7 @@ class RecoverInterruptedHistoryTest(unittest.TestCase):
             # crash residue: dangling session with one unsummarized committed line
             game_memory.add_play_session(PlaySession(
                 session_id="S1", game_id="limelight", started_at=utc_now_iso(), state="active",
+                character_id='spica', principal_id='owner', user_name='麦',
             ))
             game_memory.add_story_line(StoryLine(
                 line_id="L1", session_id="S1", game_id="limelight",
@@ -305,6 +395,9 @@ class RecoverInterruptedHistoryTest(unittest.TestCase):
                 game_memory_adapter=game_memory,
                 memory_store=SQLiteMemoryStore(Path(tmp) / "memory.sqlite3"),
             )
+            from spica.adapters.memory.sqlite import SqliteMemoryAdapter
+            from spica.ports.memory import MemoryScope
+            host.services.memory_adapter = SqliteMemoryAdapter(host.services.memory_store)
             recovered = host.recover_dangling_companion_sessions()
             self.assertEqual(recovered, ["S1"])  # interrupted still counted
             self.assertEqual(game_memory.get_play_session("S1").state, "interrupted")
@@ -314,9 +407,10 @@ class RecoverInterruptedHistoryTest(unittest.TestCase):
                 ["L1"],
             )
             # ...and the Host still wrote the card (best-effort, D2a=A2 current shape)
-            rows = host.services.memory_store.list_memories("spica::default")
+            rows = host.services.memory_adapter.evidence(MemoryScope('spica', 'owner'))
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["memory_key"], "galgame_history:limelight")
+            self.assertEqual(rows[0]["metadata"]["memory_key"], "galgame_history:limelight")
+
 
 
 if __name__ == "__main__":

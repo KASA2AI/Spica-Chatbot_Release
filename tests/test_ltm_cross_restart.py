@@ -17,6 +17,7 @@ from tempfile import TemporaryDirectory
 
 from memory.store import SQLiteMemoryStore
 from spica.adapters.memory.sqlite import SqliteMemoryAdapter, scoped_conversation_id
+from spica.ports.memory import MemoryScope
 from spica.config.schema import AppConfig, CharacterConfig
 from spica.runtime.context import TurnContext, TurnRequest
 from spica.runtime.deps import TurnDeps
@@ -50,15 +51,8 @@ class CrossRestartPersistenceTest(unittest.TestCase):
             db = Path(tmp) / "memory.sqlite3"
             # -- "launch 1": write one memory (the real card, the real write shape)
             launch1 = SQLiteMemoryStore(db)
-            launch1.upsert_memory(
-                conversation_id=scoped_conversation_id("spica", "default"),
-                scope="relationship",
-                content=CARD,
-                importance=0.85,
-                memory_key="galgame_history:limelight",
-                memory_type="experience",
-                source="galgame_companion",
-            )
+            SqliteMemoryAdapter(launch1).remember(
+                MemoryScope("spica", "owner"), CARD, category="relationship")
             del launch1
             # -- "launch 2": a FRESH store over the same file; a plain turn on the
             # STABLE conversation_id retrieves it through the real turn node.
@@ -70,7 +64,7 @@ class CrossRestartPersistenceTest(unittest.TestCase):
             self.assertTrue(any("雪鹰" in text for text in texts), texts)
             self.assertTrue(any("limelight" in text.lower() for text in texts))
 
-    def test_uuid_silo_was_the_bug_not_the_scoring(self):
+    def test_legacy_unverified_rows_are_not_promoted_by_restart(self):
         # Pin the failure MECHANISM the fix removed: the same card, queried from a
         # per-launch-uuid conversation (the old UI behaviour), is NEVER scanned --
         # retrieval is silo-scoped, not score-limited.

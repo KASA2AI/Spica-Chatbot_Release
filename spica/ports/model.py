@@ -27,18 +27,81 @@ Qt-free (铁律 #1); pure types, no I/O.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Protocol
+from dataclasses import dataclass, field
+import json
+from typing import Any, Callable, Iterator, Literal, Protocol, TypeAlias, TypedDict
+
+
+class ModelMessage(TypedDict, total=False):
+    """Messages at the model boundary; data sources are labelled in content.
+
+    Tool call IDs belong to the model exchange, never to business tasks.
+    reasoning_content, when returned by a provider, is forwarded only within
+    that exchange and is not conversation evidence.
+    """
+
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str
+    tool_calls: list[dict[str, Any]]
+    tool_call_id: str
+    reasoning_content: str
+    response_items: list[dict[str, Any]]
+
+
+ModelInput: TypeAlias = str | list[ModelMessage]
+
+
+class CompletionBudgetExceeded(ValueError):
+    """A complete serialized request exceeds its caller's input allowance."""
+
+
+class CompletionUnsupported(RuntimeError):
+    """The selected provider cannot enforce a required completion allowance."""
+
+
+class CompletionIncomplete(RuntimeError):
+    """A provider returned a non-successful terminal completion state."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__('completion did not finish normally: ' + reason)
+
+
+@dataclass(frozen=True)
+class CompletionUsage:
+    """Local accounting identity, never provider parameters or prompt text."""
+
+    stage: Literal['memory.extract', 'memory.verify', 'validation']
+    batch_id: str
+    attempt: int
+
+
+@dataclass(frozen=True)
+class CompletionOptions:
+    max_input_tokens: int
+    max_output_tokens: int
+    usage: CompletionUsage | None = None
+
+    def __post_init__(self):
+        if any(type(value) is not int or value <= 0
+               for value in (self.max_input_tokens, self.max_output_tokens)):
+            raise ValueError('completion limits must be positive integers')
+
+    def check_input(self, request: Any) -> None:
+        text = json.dumps(request, ensure_ascii=False)
+        estimated = (sum(4 if ord(char) > 127 else 1 for char in text) + 3) // 4
+        if estimated > self.max_input_tokens:
+            raise CompletionBudgetExceeded(f'complete request input {estimated} exceeds {self.max_input_tokens}')
 
 
 class TextModel(Protocol):
     """Adapter-side text capability (v2). Implemented by OpenAICompatibleAdapter."""
 
-    def complete(self, prompt: str, *, model: str) -> str:
+    def complete(self, prompt: ModelInput, *, model: str, options: CompletionOptions | None = None) -> str:
         """One-shot completion; returns the assistant text."""
         ...
 
-    def stream(self, prompt: str, *, model: str, state: Any) -> Iterator[str]:
+    def stream(self, prompt: ModelInput, *, model: str, state: Any) -> Iterator[str]:
         """Stream assistant text deltas; request assembly and endpoint
         fallbacks live inside the adapter."""
         ...
@@ -48,7 +111,8 @@ class TextModel(Protocol):
 class ToolProbeResult:
     """One non-streaming tool probe's outcome (ToolCallingModel v2, Phase 7-c2).
 
-    ``calls`` are normalized ``{"name", "arguments"}`` dicts (arguments = raw
+    ``calls`` retain name, arguments, provider call ID and optional provider
+    continuation fields (arguments = raw
     JSON string). ``usage`` carries the provider usage object ONLY on the
     Responses family (the runtime records it via its observer, today's
     semantics); the chat family records usage inside the adapter (``state``)
@@ -59,6 +123,7 @@ class ToolProbeResult:
     text: str
     response_id: str | None = None
     usage: Any = None
+    response_items: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _consume_probe_stream(
@@ -73,8 +138,9 @@ def _consume_probe_stream(
     generator. A bound-method generator would put ``self`` in the frame and
     create a handle<->generator reference CYCLE, deferring the underlying
     HTTP/SSE close to cyclic GC (the BUG-2 review finding)."""
-    for delta in open_stream(sink):
-        yield delta
+    # Delegation forwards explicit close even when the adapter retains its
+    # iterator; refcount alone is not an ownership/cleanup guarantee.
+    yield from open_stream(sink)
     # Reached ONLY on normal exhaustion -- an exception or an abandoned
     # generator never sets it, so .calls stays locked.
     exhausted_flag[0] = True
@@ -126,12 +192,12 @@ class ToolCallingModel(Protocol):
     ``None`` is the family signal (this provider does not stream probes) --
     the runtime never reads traits."""
 
-    def probe(self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any) -> ToolProbeResult:
+    def probe(self, prompt: ModelInput, tools: list[dict[str, Any]], *, model: str, state: Any) -> ToolProbeResult:
         """One-shot tool probe; returns normalized calls + text."""
         ...
 
     def probe_stream(
-        self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any
+        self, prompt: ModelInput, tools: list[dict[str, Any]], *, model: str, state: Any
     ) -> ToolProbeStream | None:
         """Streaming tool probe handle (LAZY, zero I/O at construction), or
         ``None`` when this provider's probes do not stream."""
@@ -151,16 +217,20 @@ class BoundModel:
     adapter: TextModel
     model: str
 
-    def complete(self, prompt: str) -> str:
-        return self.adapter.complete(prompt, model=self.model)
+    def complete(self, prompt: ModelInput, *, options: CompletionOptions | None = None) -> str:
+        if options is None:
+            return self.adapter.complete(prompt, model=self.model)
+        if getattr(self.adapter, 'supports_bounded_completion', False) is not True:
+            raise CompletionUnsupported('selected model adapter does not support bounded completion')
+        return self.adapter.complete(prompt, model=self.model, options=options)
 
-    def stream(self, prompt: str, state: Any) -> Iterator[str]:
+    def stream(self, prompt: ModelInput, state: Any) -> Iterator[str]:
         return self.adapter.stream(prompt, model=self.model, state=state)
 
-    def probe(self, prompt: str, tools: list[dict[str, Any]], state: Any) -> ToolProbeResult:
+    def probe(self, prompt: ModelInput, tools: list[dict[str, Any]], state: Any) -> ToolProbeResult:
         return self.adapter.probe(prompt, tools, model=self.model, state=state)
 
     def probe_stream(
-        self, prompt: str, tools: list[dict[str, Any]], state: Any
+        self, prompt: ModelInput, tools: list[dict[str, Any]], state: Any
     ) -> ToolProbeStream | None:
         return self.adapter.probe_stream(prompt, tools, model=self.model, state=state)

@@ -14,16 +14,28 @@ from typing import Any
 
 from common.timing import elapsed_ms, now_ms
 from agent_tools.tts.schemas import TTSRequest
+from spica.runtime.context import is_turn_cancelled
 
 
 def synthesize_unit_audio(
-    services: Any,
+    tts: Any,
     ctx: Any,
     unit: dict[str, Any],
     request_start_ms: float,
     observer: Any,
     put_unit_event: Any,
 ) -> dict[str, Any]:
+    cancellation = getattr(ctx.request, 'audio_cancelled', None)
+    def audio_revoked():
+        return is_turn_cancelled(ctx.request) or cancellation is not None and cancellation.is_set()
+    if not ctx.request.want_audio or audio_revoked():
+        return {
+            "audio_url": None,
+            "audio_path": None,
+            "audio_error": None,
+            "tts_result": None,
+            "duration_ms": None,
+        }
     unit_timing = unit["timing"]
     unit_index = int(unit["index"])
     tts_start_ms = now_ms()
@@ -50,13 +62,14 @@ def synthesize_unit_audio(
         "duration_ms": None,
     }
     try:
-        if services.tts_adapter is None:
+        if tts is None:
             raise RuntimeError("TTS adapter is not configured")
-        result = services.tts_adapter.synthesize(
+        result = tts.synthesize(
             TTSRequest(
                 text=unit["tts_text"],
                 emotion=unit["emotion"],
                 extra={"tts_param_overrides": ctx.request.tts_param_overrides or {}},
+                cancelled=cancellation,
             )
         )
         if not result.ok:
@@ -86,6 +99,9 @@ def synthesize_unit_audio(
             "duration_ms": duration_ms,
         }
     finally:
+        if audio_revoked():
+            audio_payload = dict(audio_url=None, audio_path=None, audio_error=None,
+                                 tts_result=None, duration_ms=None)
         tts_done_relative_ms = round(now_ms() - request_start_ms, 2)
         unit_timing["tts_done_ms"] = tts_done_relative_ms
         if unit_index == 0:
@@ -106,3 +122,19 @@ def synthesize_unit_audio(
             },
         )
     return audio_payload
+
+
+def local_alarm_events(cue, cancelled):
+    """One fixed packaged cue through the normal presentation/receipt owner."""
+    from pathlib import Path
+    from spica.core.events import UnitReadyEvent, DoneEvent
+    if cue != 'home_wake':
+        raise ValueError('unsupported local audio cue')
+    if cancelled.is_set():
+        return
+    path = Path(__file__).with_name('assets') / 'home_wake.wav'
+    if not path.is_file():
+        raise FileNotFoundError('本地闹钟铃声资源缺失')
+    yield UnitReadyEvent(index=0, display_text='叫醒时间到了。角色语音暂不可用，正在播放本地铃声。',
+        tts_text='', emotion='neutral', visual={}, audio_path=str(path), audio_url=None)
+    yield DoneEvent(answer='叫醒时间到了。', emotion='neutral', emotion_label='', emotion_reason='', units_count=1)

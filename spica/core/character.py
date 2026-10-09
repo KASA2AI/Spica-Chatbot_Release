@@ -27,6 +27,8 @@ def character_memory_prefix(character_id: str) -> str:
 
 class CharacterPackage(BaseModel):
     character_id: str
+    nicknames: tuple[str, ...] = ()
+    wake_words: tuple[str, ...] = ()
     name: str = ""                       # source/display name (e.g. 辻倉朱比華)
     char_name: str = DEFAULT_CHARACTER_NAME  # in-dialogue name ({{char}}, e.g. スピカ)
     skill_dir: str | None = None         # persona source dir (role card)
@@ -34,6 +36,7 @@ class CharacterPackage(BaseModel):
     # Asset references resolved by the engine in Phase 7b; relative to the package.
     visual_config_path: str | None = None
     tts_config_path: str | None = None
+    floating_config_path: str | None = None
     manifest: CharacterManifest | None = None
     package_root: str | None = None
     revision: str | None = None
@@ -52,6 +55,8 @@ def load_character_package(package_dir: str | Path) -> CharacterPackage:
     manifest = None
     if "pack_format" in meta:
         manifest = CharacterManifest.model_validate(meta)
+        from spica.core.character_manifest import read_runtime_prompt
+        read_runtime_prompt(root, meta)
         for value in manifest.files(root):
             package_file(root, value)
         if not any((root / filename).is_file() for filename in ROLE_FILES):
@@ -59,6 +64,10 @@ def load_character_package(package_dir: str | Path) -> CharacterPackage:
         for filename in ROLE_FILES:
             if (root / filename).exists():
                 package_file(root, filename)
+    floating = manifest.visuals.floating if manifest is not None else meta.get('floating_config_path')
+    if floating:
+        from spica.core.floating_character import floating_files
+        floating_files(root, floating)
     character_id = str(meta.get("slug") or root.name)
     return CharacterPackage(
         character_id=character_id,
@@ -66,9 +75,11 @@ def load_character_package(package_dir: str | Path) -> CharacterPackage:
         char_name=str(meta.get("char_name") or DEFAULT_CHARACTER_NAME),
         skill_dir=str(root),
         worldbook=str(meta.get("worldbook") or ""),
+        nicknames=meta.get("nicknames", ()), wake_words=meta.get("wake_words", ()),
         visual_config_path=_resolve_path(root, meta.get("visual_config_path")) if manifest is None else None,
         tts_config_path=_resolve_path(root, meta.get("tts_config_path")) if manifest is None else None,
         manifest=manifest,
+        floating_config_path=str(package_file(root, floating)) if floating else None,
         package_root=str(root.resolve()),
     )
 

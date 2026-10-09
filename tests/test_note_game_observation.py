@@ -192,8 +192,9 @@ class NoteWriteChainTest(unittest.TestCase):
             probe = calls[0][1]
             self.assertEqual(_nested_names(probe["tools"]), ["note_game_observation"])
             followup = calls[1][1]
-            self.assertIn("[TOOL_RESULTS]", followup["messages"][0]["content"])
-            self.assertIn("note_game_observation", followup["messages"][0]["content"])
+            followup_text = next(m["content"] for m in followup["messages"] if m["role"] == "tool")
+            self.assertTrue(any(m.get("tool_calls") for m in followup["messages"]))
+            self.assertEqual(next(m for m in followup["messages"] if m.get("tool_calls"))["tool_calls"][0]["function"]["name"], "note_game_observation")
             # Per-tool status fired (generic fallback text in the UI).
             self.assertIn("tool:note_game_observation",
                           [s.get("message") for s in statuses])
@@ -263,7 +264,7 @@ class NoteReadbackLoopTest(unittest.TestCase):
 
             # Turn 1: note turn. Its OWN prompt has no companion section yet.
             _stream(engine, NOTE_REQUEST)
-            turn1_probe_text = calls[0][1]["messages"][0]["content"]
+            turn1_probe_text = next(m["content"] for m in calls[0][1]["messages"] if m["role"] == "user")
             self.assertNotIn("[COMPANION_CONTEXT]", turn1_probe_text)
             self.assertEqual(len(adapter.companion_beats("limelight", "麦", "spica")), 1)
 
@@ -272,7 +273,7 @@ class NoteReadbackLoopTest(unittest.TestCase):
             self.assertEqual(answer, "记下啦。")
 
         turn2_first_call = calls[2][1]
-        prompt_text = turn2_first_call["messages"][0]["content"]
+        prompt_text = "\n".join(m["content"] for m in turn2_first_call["messages"] if m["role"] == "user")
         self.assertIn("[COMPANION_CONTEXT]", prompt_text)
         self.assertIn(OBSERVATION, prompt_text)
         self.assertIn("shared_observation", prompt_text)

@@ -55,7 +55,7 @@ TELEMETRY_LOGGERS = (
     # failures, and background/end summary failures (the 47becb69 orphan was
     # invisible because its failure never reached a file).
     "spica.adapters.tools.watch_game_screen",
-    "spica.adapters.stt.faster_whisper",
+    "spica.adapters.stt.qwen_asr",
     "spica.galgame.session",
     # auto-galgame stress: warns when the OCR cycle can't hold the interval (the
     # direct "lines may be getting missed" signal).

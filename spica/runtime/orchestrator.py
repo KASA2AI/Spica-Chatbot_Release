@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import functools
+import json
 import queue
 import threading
+from contextvars import copy_context
 from dataclasses import replace
 from typing import Any, Iterator
 
@@ -52,7 +54,7 @@ from spica.core.proactive import (
     is_no_comment_answer,
     may_become_no_comment,
 )
-from spica.runtime.memory_commit import save_stream_memory
+from spica.runtime.memory_commit import save_stream_memory, save_incomplete_stream_evidence
 from spica.runtime.play_unit_splitter import JsonAnswerExtractor, PlayUnitSplitter
 from spica.runtime.sequencer import Sequencer
 from spica.runtime.tool_round import STREAM_RESET, prepare_prompt_for_streaming
@@ -61,6 +63,29 @@ from spica.runtime.visual_job import build_unit_visual_and_emit
 
 _SENTINEL = object()
 _FIRST_UNIT_WARNING_MS = 3000.0
+
+
+def _is_structurally_empty_system_output(raw_output: str) -> bool:
+    """Return whether a system turn produced no speakable answer at all.
+
+    Empty raw output and any valid JSON value without a non-empty string
+    ``answer`` share the existing silent-system-turn convergence.  A non-empty
+    plain-text response (including invalid JSON) is deliberately *not* empty:
+    the legacy parser remains responsible for its playable compatibility
+    behaviour.
+    """
+
+    stripped = (raw_output or "").strip()
+    if not stripped:
+        return True
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return True
+    answer = parsed.get("answer")
+    return not isinstance(answer, str) or not answer.strip()
 
 
 def stream_voice_events(
@@ -74,8 +99,8 @@ def stream_voice_events(
 
     output_queue: queue.Queue[Any] = queue.Queue()
     producer = threading.Thread(
-        target=_produce_stream_events,
-        args=(ctx, services, request_start_ms, output_queue, exec_strategy, deps),
+        target=copy_context().run,
+        args=(_produce_stream_events, ctx, services, request_start_ms, output_queue, exec_strategy, deps),
         daemon=True,
     )
     producer.start()
@@ -104,6 +129,9 @@ def _produce_stream_events(
     owns_exec = exec_strategy is None
     jobs: Any = None
     observer: Any = None
+    emitted_units: dict[int, str] = {}
+    emitted_events: dict[int, set[str]] = {}
+    result_recorded = False
 
     def relative_ms() -> float:
         return round(now_ms() - request_start_ms, 2)
@@ -137,6 +165,9 @@ def _produce_stream_events(
         # original branch, so a plain answer that happens to contain a literal
         # ⟦abc⟧ stays byte-identical (display/tts/memory unchanged).
         bilingual_dialog = str(deps.config.character.dialog_display_language or "ja") == "zh"
+        # Megumin's accepted TTS profile needs the complete reply for prosody.
+        # Other adapters keep releasing play units as the model streams.
+        full_text_tts = ctx.request.want_audio and bool(getattr(deps.tts, "requires_full_text", False))
         ready_futures: list[concurrent.futures.Future[Any]] = []
         # C1 ordered release: finalize workers push (index, payload) onto this
         # INTERNAL queue; only the producer thread drains it through the Sequencer
@@ -167,20 +198,26 @@ def _produce_stream_events(
             output_queue.put({"event": "status", "data": {"state": state_name, "message": message}})
 
         def put_unit_event(event_name: str, event_data: dict[str, Any]) -> None:
-            output_queue.put({"event": event_name, "data": event_data})
+            if not is_turn_cancelled(ctx.request):
+                output_queue.put({"event": event_name, "data": event_data})
 
         def drain_ready() -> None:
             # Single-consumer: only the producer thread feeds the Sequencer and emits
             # unit_ready, so ordering needs no lock. Finalize workers only enqueue.
-            while True:
+            while not is_turn_cancelled(ctx.request):
                 try:
                     index, event_data = completion_queue.get_nowait()
                 except queue.Empty:
                     break
                 for ready_event in sequencer.complete(index, event_data):
                     output_queue.put({"event": "unit_ready", "data": ready_event})
+                    emitted_units[ready_event['index']] = created_units[ready_event['index']]
+                    emitted_events.setdefault(ready_event['index'], set()).add('unit_ready')
 
         def submit_unit(display_text: str) -> None:
+            if is_turn_cancelled(ctx.request):
+                return
+            raw_display_text = display_text
             # Bilingual display (bilingual_dialog, i.e. dialog_display_language ==
             # "zh"): a unit arrives as 日语⟦中文⟧ pairs. The Japanese side keeps
             # EVERY internal role (normalize, TTS, emotion guess, visual
@@ -237,7 +274,17 @@ def _produce_stream_events(
                 "full_answer_so_far": full_answer_so_far,
                 "timing": unit_timing,
             }
-            put_unit_event(
+            emit = put_unit_event
+            if full_text_tts:
+                from spica.runtime.speech_presentation import prepare_speech_segments
+
+                unit["speech_segments"] = prepare_speech_segments(
+                    raw_display_text, unit, bilingual=bilingual_dialog, max_chars=splitter.max_chars,
+                )
+                # The final event supplies both the audio and its presentation
+                # timeline. Earlier lane events must not start an incomplete unit.
+                emit = lambda *_: None
+            emit(
                 "unit_text_ready",
                 {
                     "index": index,
@@ -249,23 +296,26 @@ def _produce_stream_events(
                     },
                 },
             )
+            if not full_text_tts:
+                emitted_units[index] = display_text
+                emitted_events.setdefault(index, set()).add('unit_text_ready')
             visual_future = exec_strategy.submit_visual(
                 functools.partial(
                     build_unit_visual_and_emit,
-                    services, ctx, unit, request_start_ms, observer, put_unit_event,
+                    services, ctx, unit, request_start_ms, observer, emit,
                 )
             )
             tts_future = exec_strategy.submit_tts(
                 functools.partial(
                     synthesize_unit_audio,
-                    services, ctx, unit, request_start_ms, observer, put_unit_event,
+                    deps.tts, ctx, unit, request_start_ms, observer, emit,
                 )
             )
             ready_futures.append(
                 exec_strategy.submit_finalize(
                     functools.partial(
                         _finalize_unit,
-                        unit, visual_future, tts_future, request_start_ms, observer, completion_queue,
+                        unit, visual_future, tts_future, request_start_ms, observer, completion_queue, ctx.request,
                     )
                 )
             )
@@ -297,9 +347,12 @@ def _produce_stream_events(
             output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求失败。"}})
             return
         # B3: gated galgame context injection, AFTER build_prompt, BEFORE the LLM.
-        # `none` (every plain chat turn) is a byte-level no-op; best-effort, never
-        # sets ctx.error, so no extra error gate is needed here.
+        # Inactive contributors are a no-op. Active context shares the personal
+        # budget; a required contract too large to fit must stop before the model.
         ctx = contribute_context_node(ctx, services, deps)
+        if ctx.error:
+            output_queue.put({"event": "error", "data": {"message": ctx.error.message or "请求失败。"}})
+            return
 
         visual_context = None
         if deps.visual is not None and hasattr(deps.visual, "prepare_stream_context"):
@@ -324,11 +377,10 @@ def _produce_stream_events(
         )
         extractor = JsonAnswerExtractor()
         raw_model_parts: list[str] = []
-        # P5 NO_COMMENT gate (D-P5-5), SYSTEM turns only: while the streamed
-        # answer is still sentinel-compatible, units are WITHHELD -- an explicit
-        # hold, so swallowing never depends on play_unit_min_chars tuning.
-        # Plain turns: hold is False from the start and every new branch below
-        # short-circuits (byte-identical behaviour).
+        # SYSTEM turns withhold only while the streamed answer may still become
+        # NO_COMMENT. Once it diverges, release the accumulated real answer into
+        # the existing splitter/TTS path without waiting for the complete JSON.
+        # Plain chat starts unheld and keeps its historical live-stream path.
         hold_for_sentinel = ctx.request.interaction_mode == "system"
         # The generate phase begins: ctx.answer exists from here on (None during
         # the prep stages above, so they cannot read a not-yet-streamed answer).
@@ -345,20 +397,20 @@ def _produce_stream_events(
             answer.raw_model_output = "".join(raw_model_parts)
             answer_delta = extractor.feed(answer.raw_model_output)
             if hold_for_sentinel:
-                # Sentinel-compat is judged on the SPOKEN (Japanese) side ONLY in
-                # zh mode: a model that appends ⟦…⟧ to NO_COMMENT must not release
-                # the hold early. In ja mode the raw extractor answer is checked
-                # verbatim (no split), byte-identical to pre-bilingual behaviour.
+                # In bilingual mode only the spoken/Japanese side determines
+                # whether the sentinel is still possible.
                 sentinel_probe = (
                     split_dialog_translation(extractor.answer)[0]
                     if bilingual_dialog
                     else extractor.answer
                 )
                 if may_become_no_comment(sentinel_probe):
-                    return  # withhold: the answer may still be the sentinel
+                    return
                 hold_for_sentinel = False
-                answer_delta = extractor.answer  # diverged: release everything withheld
+                answer_delta = extractor.answer
             if not answer_delta:
+                return
+            if full_text_tts:
                 return
             previous_segment_count = splitter.completed_segment_count
             units = splitter.feed(answer_delta)
@@ -382,101 +434,161 @@ def _produce_stream_events(
                 bilingual_brackets=bilingual_dialog,
             )
 
-        if isinstance(prefetched, str):
-            # Non-streamed prefetch (Responses no-tool / dormant chain final): one
-            # delta -> byte-identical to the pre-streaming behaviour.
-            handle_raw_delta(prefetched)
-            drain_ready()
-        elif prefetched is not None:
-            # Streaming chat-tool generator (DeepSeek): yields content deltas live and
-            # may yield STREAM_RESET before the followup answer (tool turns).
-            for item in prefetched:
-                # #1 checkpoint ③b: stop consuming the moment cancel lands. Breaking
-                # suspends the generator BEFORE it runs any (further) tool -> a turn
-                # cancelled during the preamble never executes the tool at all.
-                if is_turn_cancelled(ctx.request):
-                    break
-                if item is STREAM_RESET:
-                    reset_stream_state()
-                    continue
-                handle_raw_delta(item)
+        active_stream = None
+        try:
+            if isinstance(prefetched, str):
+                # Non-streamed prefetch (Responses no-tool / dormant chain final): one
+                # delta -> byte-identical to the pre-streaming behaviour.
+                handle_raw_delta(prefetched)
                 drain_ready()
-        elif not is_turn_cancelled(ctx.request):
-            # #1 checkpoint ③a: a turn cancelled during the tool round skips the LLM
-            # stream entirely -- don't even open it. Deadline: cancelled None ->
-            # `not False` -> identical to the original unconditional `else`.
-            # Phase 7-c1 (model port v2): the request dict is assembled INSIDE
-            # the adapter now -- byte-identical {"model", "input"} shape, pinned
-            # client-level by test_chat_tool_round + test_text_model_contract.
-            for delta in deps.model.stream(prompt_for_stream, ctx):
-                # #1 checkpoint ③b: stop consuming deltas the moment cancel lands
-                # mid-stream (saves tokens + halts further submit_unit -> TTS).
-                # Breaking the for-loop suspends the generator; its connection is
-                # closed on GC -- we stop CONSUMING, we do not force-abort the HTTP.
-                if is_turn_cancelled(ctx.request):
-                    break
-                handle_raw_delta(delta)
-                drain_ready()
+            elif prefetched is not None:
+                # Streaming chat-tool generator (DeepSeek): yields content deltas live and
+                # may yield STREAM_RESET before the followup answer (tool turns).
+                active_stream = prefetched
+                for item in active_stream:
+                    # #1 checkpoint ③b: stop consuming the moment cancel lands. Breaking
+                    # suspends the generator BEFORE it runs any (further) tool -> a turn
+                    # cancelled during the preamble never executes the tool at all.
+                    if is_turn_cancelled(ctx.request):
+                        break
+                    if item is STREAM_RESET:
+                        reset_stream_state()
+                        continue
+                    handle_raw_delta(item)
+                    drain_ready()
+            elif not is_turn_cancelled(ctx.request):
+                # #1 checkpoint ③a: a turn cancelled during the tool round skips the LLM
+                # stream entirely -- don't even open it. Deadline: cancelled None ->
+                # `not False` -> identical to the original unconditional `else`.
+                # Phase 7-c1 (model port v2): the request dict is assembled INSIDE
+                # the adapter now -- byte-identical {"model", "input"} shape, pinned
+                # client-level by test_chat_tool_round + test_text_model_contract.
+                active_stream = deps.model.stream(prompt_for_stream, ctx)
+                for delta in active_stream:
+                    # #1 checkpoint ③b: stop consuming deltas the moment cancel lands
+                    # mid-stream (saves tokens + halts further submit_unit -> TTS).
+                    if is_turn_cancelled(ctx.request):
+                        break
+                    handle_raw_delta(delta)
+                    drain_ready()
+        finally:
+            # The producer owns consumption and close: never close a generator
+            # concurrently from the cancel/UI thread, or wait for response EOF/GC.
+            close = getattr(active_stream, "close", None)
+            if callable(close):
+                close()
 
-        for unit_text in splitter.flush():
-            submit_unit(unit_text)
+        cancelled_turn = is_turn_cancelled(ctx.request)
+        if not cancelled_turn:
+            for unit_text in splitter.flush():
+                submit_unit(unit_text)
         drain_ready()
+        cancelled_turn = cancelled_turn or is_turn_cancelled(ctx.request)
 
         answer.raw_model_output = "".join(raw_model_parts)
-        answer.parsed_reply = parse_model_reply(answer.raw_model_output or "")
-        # ja mode: the terminal answer is the normalized text verbatim (no split),
-        # byte-identical to pre-bilingual behaviour even if it contains a literal
-        # ⟦abc⟧. zh mode: keep the SPOKEN (Japanese) side only, so recent/long-term
-        # memory and the done event stay pure Japanese.
-        normalized_answer = normalize_square_brackets_for_speech(answer.parsed_reply["answer"])
-        if bilingual_dialog:
-            spoken_answer, _ = split_dialog_translation(normalized_answer)
-            answer.answer = (
-                spoken_answer
-                if is_no_comment_answer(spoken_answer)
-                else spoken_channel_or_fallback(
-                    spoken_answer,
-                    paired_subtitle=spoken_channel_is_paired(normalized_answer),
-                )
-            )
+        system_structurally_empty = (
+            not cancelled_turn
+            and ctx.request.interaction_mode == "system"
+            and _is_structurally_empty_system_output(answer.raw_model_output)
+        )
+        if cancelled_turn:
+            # A cancelled producer still reaches the shared terminal/lifecycle
+            # path below, but it is not a completed silent system turn.  Keep its
+            # terminal answer empty (never NO_COMMENT) and bypass the user-turn
+            # parser fallback entirely.
+            normalized_answer = ""
+            answer.answer = ""
+            answer.parsed_reply = {
+                "answer": "",
+                "emotion": "happy",
+                "emotion_reason": "",
+            }
+        elif system_structurally_empty:
+            # Empty proactive/arrival output is a valid decision to stay quiet.
+            # Reuse the established NO_COMMENT terminal contract without
+            # invoking the user-turn retry fallback or issuing another model
+            # request.  Cancellation is handled above and never enters here.
+            normalized_answer = ""
+            answer.answer = NO_COMMENT_SENTINEL
+            answer.parsed_reply = {
+                "answer": NO_COMMENT_SENTINEL,
+                "emotion": "happy",
+                "emotion_reason": "",
+            }
         else:
-            answer.answer = normalized_answer
-        answer.parsed_reply["answer"] = answer.answer
+            answer.parsed_reply = parse_model_reply(answer.raw_model_output or "")
+            # ja mode: the terminal answer is the normalized text verbatim (no split),
+            # byte-identical to pre-bilingual behaviour even if it contains a literal
+            # ⟦abc⟧. zh mode: keep the SPOKEN (Japanese) side only, so recent/long-term
+            # memory and the done event stay pure Japanese.
+            normalized_answer = normalize_square_brackets_for_speech(answer.parsed_reply["answer"])
+            if bilingual_dialog:
+                spoken_answer, _ = split_dialog_translation(normalized_answer)
+                answer.answer = (
+                    spoken_answer
+                    if is_no_comment_answer(spoken_answer)
+                    else spoken_channel_or_fallback(
+                        spoken_answer,
+                        paired_subtitle=spoken_channel_is_paired(normalized_answer),
+                    )
+                )
+            else:
+                answer.answer = normalized_answer
+            answer.parsed_reply["answer"] = answer.answer
         answer.emotion = normalize_emotion(ctx.request.emotion_override or answer.parsed_reply["emotion"])
         # P5 (D-P5-5): a system turn that answered the NO_COMMENT sentinel is
         # swallowed. The hold above already kept units (and so TTS) at zero;
         # here the no-units fallback is skipped, recent memory is skipped, and
         # the done event carries the CANONICAL sentinel so the UI display
         # suppression and the reaction engine's refund hook recognize it.
-        system_silent = hold_for_sentinel and is_no_comment_answer(answer.answer)
+        system_silent = (
+            not cancelled_turn
+            and (
+                system_structurally_empty
+                or (hold_for_sentinel and is_no_comment_answer(answer.answer))
+            )
+        )
         if system_silent:
             answer.answer = NO_COMMENT_SENTINEL
             answer.parsed_reply["answer"] = NO_COMMENT_SENTINEL
             ctx.metadata["system_turn_silent"] = True
-        if not system_silent and not created_units and answer.answer:
+        if not cancelled_turn and not system_silent and not created_units and answer.answer:
             # The no-units fallback re-feeds the NORMALIZED answer: in zh mode it
             # still carries the ⟦⟧ pairs so the rebuilt units get subtitles
             # through submit_unit (v1 has no done-event subtitle channel --
             # DoneEvent contract untouched); in ja mode it equals answer.answer,
             # byte-identical to the original fallback feed.
-            fallback_splitter = PlayUnitSplitter(
-                min_chars=splitter.min_chars,
-                max_chars=splitter.max_chars,
-                bilingual_brackets=bilingual_dialog,
-            )
-            for unit_text in fallback_splitter.feed(normalized_answer) + fallback_splitter.flush():
-                submit_unit(unit_text)
+            if full_text_tts:
+                submit_unit(normalized_answer)
+            else:
+                fallback_splitter = PlayUnitSplitter(
+                    min_chars=splitter.min_chars,
+                    max_chars=splitter.max_chars,
+                    bilingual_brackets=bilingual_dialog,
+                )
+                for unit_text in fallback_splitter.feed(normalized_answer) + fallback_splitter.flush():
+                    submit_unit(unit_text)
 
-        if not system_silent and not is_turn_cancelled(ctx.request):
+        if not cancelled_turn and not system_silent and not is_turn_cancelled(ctx.request):
             # #1 checkpoint ②: a cancelled turn writes no ghost memory -- neither the
             # synchronous recent append nor the backgrounded long-term commit. Deadline:
             # cancelled None -> `not False` True -> equals the original `if not system_silent`.
             save_stream_memory(ctx, services, deps)
+            result_recorded = True
 
         for future in ready_futures:
+            while not future.done() and not is_turn_cancelled(ctx.request):
+                concurrent.futures.wait((future,), timeout=.05)
+            if is_turn_cancelled(ctx.request):
+                # Native TTS retains its service lock and drains in its existing
+                # executor. Revoked audio cannot retain the conversation lane
+                # or prevent an independently generated local alarm cue.
+                break
             future.result()
             drain_ready()
         drain_ready()
+        if is_turn_cancelled(ctx.request):
+            answer.answer = ''
 
         done_ms = relative_ms()
         observer.mark("done_ms", done_ms)
@@ -526,6 +638,10 @@ def _produce_stream_events(
             }
         )
     except Exception as exc:
+        if isinstance(exc, concurrent.futures.CancelledError) and is_turn_cancelled(ctx.request):
+            # The existing consumer/producer lifecycle releases a cancelled
+            # turn. Do not turn an interrupted preparation into a visible error.
+            return
         output_queue.put({"event": "error", "data": {"message": str(exc)}})
         if observer is not None:
             try:
@@ -541,6 +657,10 @@ def _produce_stream_events(
         # Always put _SENTINEL last, even if cleanup raises -- the consumer's
         # output_queue.get() has no timeout, so a missing sentinel hangs it forever.
         try:
+            if not result_recorded and emitted_units and is_turn_cancelled(ctx.request):
+                save_incomplete_stream_evidence(ctx, deps,
+                    [emitted_units[index] for index in sorted(emitted_units)],
+                    [{'index': index, 'events': sorted(emitted_events[index])} for index in sorted(emitted_units)])
             if first_unit_timer is not None:
                 first_unit_timer.cancel()
             if owns_exec:
@@ -561,9 +681,15 @@ def _finalize_unit(
     request_start_ms: float,
     observer: Any,
     completion_queue: "queue.Queue[tuple[int, dict[str, Any]]]",
+    request=None,
 ) -> None:
     visual = visual_future.result()
-    audio = tts_future.result()
+    def audio_revoked():
+        token = getattr(request, 'audio_cancelled', None)
+        return request is not None and (is_turn_cancelled(request) or token is not None and token.is_set())
+    while not tts_future.done() and not audio_revoked():
+        concurrent.futures.wait((tts_future,), timeout=.05)
+    audio = {} if audio_revoked() else tts_future.result()
     unit_timing = unit["timing"]
     unit_ready_ms = round(now_ms() - request_start_ms, 2)
     unit_timing["unit_ready_ms"] = unit_ready_ms
@@ -593,4 +719,12 @@ def _finalize_unit(
     }
     if audio.get("audio_error"):
         data["audio_error"] = audio["audio_error"]
+    if unit.get("speech_segments"):
+        from spica.runtime.speech_presentation import time_speech_segments
+
+        data["speech_segments"] = time_speech_segments(audio.get("audio_path"), [
+            {"display_text": part.get("subtitle_text") or part["display_text"],
+             "tts_text": part["tts_text"], "visual": part["visual"]}
+            for part in unit["speech_segments"]
+        ])
     completion_queue.put((int(unit["index"]), data))

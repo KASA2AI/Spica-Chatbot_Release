@@ -58,14 +58,15 @@ def import_character_folder(
 ) -> CharacterPackage:
     """Stage a closed file set, then publish a content-addressed installation.
 
-    Existing versions and personal data are never overwritten. The source may
-    be removed after success. No weight deserialization or Python imports occur.
+    Healthy installations and personal data are retained; damaged installations
+    can be repaired from the same source. The source may be removed after success.
+    No weight deserialization or renderer imports occur.
     """
     source = Path(source).resolve()
     package = load_character_package(source)
     manifest = package.manifest
     if manifest is None:
-        raise ValueError("请选择含 pack_format: 1 或 2 的 meta.json 角色文件夹。")
+        raise ValueError("请选择含 pack_format: 1、2 或 3 的 meta.json 角色文件夹。")
     _visual_rules(source, manifest)
     if characters_root.is_dir() and any(
         child.name.casefold() == manifest.slug.casefold() and child.name != manifest.slug
@@ -116,12 +117,27 @@ def import_character_folder(
         # Verify/derive images before either installation or selection changes.
         _build_presentation(staging, manifest, revision)
         _write_json(staging / ".installed.json", {"revision": revision})
+        load_character_package(staging)
         target = characters_root / manifest.slug / revision
+        if target.parent.is_symlink() or target.is_symlink():
+            raise ValueError("角色安装目录不能是符号链接。")
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             staging.rename(target)
+        elif not _installation_matches(staging, target):
+            # Keep the backup outside automatic staging cleanup so even a
+            # failed rollback leaves the previous installation recoverable.
+            previous = Path(temporary).with_name(Path(temporary).name + ".previous")
+            target.rename(previous)
+            try:
+                staging.rename(target)
+            except BaseException:
+                previous.rename(target)
+                raise
+            shutil.rmtree(previous, ignore_errors=True)
         result = load_character_package(target)
         return result.model_copy(update={"revision": revision})
+
 
 
 def _image(source: Path, destination: Path, *, sprite: bool) -> dict[str, Any]:
@@ -150,6 +166,9 @@ def _build_presentation(root: Path, manifest: CharacterManifest, revision: str) 
     # available as a static fallback in the local installation.
     from PIL import Image
 
+    if manifest.visuals.floating:
+        from spica.core.floating_character import validate_floating_images
+        validate_floating_images(root, manifest.visuals.floating)
     for sprite_id, relative in manifest.visuals.eye_rigs.items():
         rig_path = package_file(root, relative)
         rig = load_eye_rig(rig_path)
@@ -331,6 +350,9 @@ def prepare_character_package(
             "rules_path": str(rules_path),
             "sprite_map": sprite_map,
             "eye_rigs": eye_rigs,
+            "costume_labels": {c.id: c.label for c in manifest.visuals.costumes},
+            **({"renderer": "cubism", "cubism": str(package_file(root, manifest.visuals.cubism)),
+                "package_root": str(root)} if manifest.visuals.cubism else {}),
             "costume_mode": "fixed",
             "selected_costume": selected,
             "character": {
@@ -379,6 +401,7 @@ def _tts_config(root: Path, manifest: CharacterManifest) -> dict[str, Any]:
         }
     return {
         "provider": "gptsovits_current",
+        "inference_profile": voice.inference_profile,
         "gptsovits_root": str(engine.resolve()),
         "gpt_model_path": str(package_file(root, voice.gpt)),
         "sovits_model_path": str(package_file(root, voice.sovits)),
@@ -460,3 +483,21 @@ def export_character_folder(
             _write_json(staging / "memory" / "personal.json", memory)
         _write_json(staging / "meta.json", meta)
         staging.rename(destination)
+
+
+def _installation_matches(staging: Path, installed: Path) -> bool:
+    """Compare source and derived assets without trusting the revision marker."""
+    try:
+        for expected in staging.rglob("*"):
+            if not expected.is_file():
+                continue
+            actual = package_file(installed, expected.relative_to(staging).as_posix())
+            if actual.stat().st_size != expected.stat().st_size:
+                return False
+            with expected.open("rb") as reference, actual.open("rb") as existing:
+                while chunk := reference.read(1024 * 1024):
+                    if existing.read(len(chunk)) != chunk:
+                        return False
+        return True
+    except (OSError, ValueError):
+        return False

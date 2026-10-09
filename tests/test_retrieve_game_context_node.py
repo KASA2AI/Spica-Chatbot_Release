@@ -10,6 +10,7 @@ touching the LLM.
 
 import json
 import unittest
+from spica.ports.memory import MemoryScope
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -203,7 +204,7 @@ class ActiveModeTest(unittest.TestCase):
 
             retrieve_game_context_node(ctx, None, deps)
 
-            final_prompt = ctx.prompt.prompt_input
+            final_prompt = "\n".join(m["content"] for m in ctx.prompt.prompt_input)
             self.assertIn("[CURRENT_GAME_BUFFER]", final_prompt)
             self.assertLess(
                 final_prompt.index("[CURRENT_GAME_BUFFER]"),
@@ -457,11 +458,9 @@ class MemoryConversationIdConsumptionTest(unittest.TestCase):
     def test_a_b_c(self):
         with TemporaryDirectory() as tmp:
             store = SQLiteMemoryStore(Path(tmp) / "m.sqlite3")
-            # Spica's long-term character memory lives under "<char_id>::default".
-            store.add_memory(
-                scoped_conversation_id("spica", "default"),
-                scope="user", content="麦 喜欢慢慢看剧情", importance=0.9,
-            )
+            # Explicit personal memory is owned by the authenticated identity and role.
+            SqliteMemoryAdapter(store).remember(
+                MemoryScope("spica", "owner", "default"), "麦 喜欢慢慢看剧情")
             galgame_cid = game_conversation_id("ABC")
 
             # (c) plain chat turn: no memory_conversation_id -> effective == "default" -> HIT
@@ -469,9 +468,10 @@ class MemoryConversationIdConsumptionTest(unittest.TestCase):
                 "麦 喜欢慢慢看剧情",
                 self._run_long_term(store, TurnRequest(user_input="剧情", conversation_id="default")),
             )
-            # (b) galgame turn WITHOUT decoupling: effective == galgame cid -> MISS
-            #     (this is exactly the §27① bug if we had used the raw conversation_id)
-            self.assertNotIn(
+            # Stable personal facts now follow authenticated owner + role,
+            # including while asking a game question. Game evidence has its
+            # separate owner and never enters this personal writer.
+            self.assertIn(
                 "麦 喜欢慢慢看剧情",
                 self._run_long_term(store, TurnRequest(user_input="剧情", conversation_id=galgame_cid)),
             )

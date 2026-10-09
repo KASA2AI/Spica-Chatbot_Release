@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -42,15 +43,19 @@ class Costume(_Data):
 
 
 class Visuals(_Data):
-    renderer: Literal["sprite", "eye-rig"] = "sprite"
+    renderer: Literal["sprite", "eye-rig", "cubism"] = "sprite"
     sprites: dict[str, str] = Field(min_length=1, max_length=2048)
     eye_rigs: dict[str, str] = Field(default_factory=dict, max_length=128)
     costumes: list[Costume] = Field(min_length=1, max_length=128)
     default_costume: str
     rules_file: str | None = None
+    floating: str | None = None
+    cubism: str | None = None
 
     @model_validator(mode="after")
     def references(self) -> Visuals:
+        if (self.renderer == "cubism") != bool(self.cubism):
+            raise ValueError("cubism renderer requires cubism bindings")
         if (self.renderer == "eye-rig") != bool(self.eye_rigs):
             raise ValueError("eye-rig renderer requires eye_rigs")
         if not set(self.eye_rigs).issubset(self.sprites):
@@ -103,6 +108,7 @@ class VoiceReference(_Data):
 class TtsVoice(_Data):
     engine: Literal["gptsovits"] = "gptsovits"
     model_version: Literal["v2Pro", "v2ProPlus"] = "v2ProPlus"
+    inference_profile: Literal["legacy", "megumin_d"] = "legacy"
     gpt: str
     sovits: str
     target_language: Literal["日文", "中文", "英文"] = "日文"
@@ -138,7 +144,7 @@ class CharacterManifest(BaseModel):
     # Only the declared fields below can change executable runtime settings.
     model_config = ConfigDict(extra="allow")
 
-    pack_format: Literal[1, 2]
+    pack_format: Literal[1, 2, 3]
     slug: str = Field(pattern=IDENTIFIER)
     version: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=120)
@@ -152,10 +158,13 @@ class CharacterManifest(BaseModel):
     avatar: str | None = None
     settings_background: str | None = None
     worldbook_file: str | None = None
+    runtime_prompt_file: str | None = None
     memory_file: str | None = None
 
     @model_validator(mode="after")
     def references(self) -> CharacterManifest:
+        if (self.pack_format == 3) != (self.visuals.renderer == "cubism"):
+            raise ValueError("Cubism character packages require pack_format: 3")
         if self.pack_format == 1 and self.visuals.renderer != "sprite":
             raise ValueError("animated character packages require pack_format: 2")
         if not portable_name(self.slug):
@@ -180,6 +189,17 @@ class CharacterManifest(BaseModel):
     def files(self, root: Path | None = None) -> set[str]:
         """Declared resources, including each eye rig's texture references."""
         paths = set(self.visuals.sprites.values()) | set(self.backgrounds.values())
+        if self.visuals.floating:
+            from spica.core.floating_character import floating_files
+            if root is None:
+                raise ValueError('floating resource resolution requires a package root')
+            paths.update(floating_files(root, self.visuals.floating))
+        if self.visuals.cubism:
+            from spica.core.cubism import cubism_files
+            if root is None:
+                raise ValueError("Cubism resource resolution requires a package root")
+            paths.update(cubism_files(root, self.visuals.cubism,
+                                     {costume.id for costume in self.visuals.costumes}))
         if self.visuals.eye_rigs:
             from spica.core.eye_rig import load_eye_rig
 
@@ -196,7 +216,7 @@ class CharacterManifest(BaseModel):
         paths.update(
             path
             for path in (self.avatar, self.settings_background, self.worldbook_file,
-                         self.memory_file, self.visuals.rules_file)
+                         self.memory_file, self.runtime_prompt_file, self.visuals.rules_file)
             if path
         )
         if self.tts:
@@ -209,6 +229,56 @@ class CharacterManifest(BaseModel):
             if self.rvc.index:
                 paths.add(self.rvc.index)
         return paths
+
+
+class RuntimeExpression(_Data):
+    scenes: list[str] = Field(default_factory=list, max_length=16)
+    triggers: list[str] = Field(default_factory=list, max_length=32)
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class BackgroundReference(_Data):
+    file: str
+    heading: str = Field(pattern=r'^#{1,6} [^\n]+$')
+    triggers: list[str] = Field(default_factory=list, max_length=32)
+
+
+class RuntimePrompt(_Data):
+    schema_version: Literal[1]
+    core: str = Field(min_length=1, max_length=16000)
+    expressions: list[RuntimeExpression] = Field(default_factory=list, max_length=48)
+    background: list[BackgroundReference] = Field(default_factory=list, max_length=128)
+
+
+def read_runtime_prompt(root: Path, meta: dict) -> dict | None:
+    """Validate and resolve only author-declared, package-local material."""
+    declared = meta.get('runtime_prompt_file')
+    if not declared:
+        return None
+    if declared == meta.get('memory_file'):
+        raise ValueError('runtime material cannot be a personal memory file')
+    raw = json.loads(package_file(root, declared).read_text(encoding='utf-8'))
+    if not isinstance(raw, dict) or type(raw.get('schema_version')) is not int:
+        raise ValueError('runtime material requires an integer schema version')
+    document = RuntimePrompt.model_validate(raw)
+    allowed = set(ROLE_FILES) | ({meta['worldbook_file']} if meta.get('worldbook_file') else set())
+    allowed.discard(meta.get('memory_file'))
+    result = document.model_dump()
+    for reference in result['background']:
+        if reference['file'] not in allowed:
+            raise ValueError('runtime background must reference declared author material')
+        text = package_file(root, reference['file']).read_text(encoding='utf-8')
+        headings = list(re.finditer(r'(?m)^#{1,6} [^\n]+$', text))
+        found = [i for i, heading in enumerate(headings) if heading[0].rstrip('\r') == reference['heading']]
+        if len(found) != 1:
+            raise ValueError(f"runtime background heading must identify one author section: {reference['file']} {reference['heading']}")
+        index = found[0]
+        start = headings[index].start()
+        level = len(reference['heading'].split(' ', 1)[0])
+        end = next((heading.start() for heading in headings[index+1:]
+                    if len(heading[0].split(' ', 1)[0]) <= level), len(text))
+        reference['text'] = text[start:end].strip()
+    return result
 
 
 def package_file(root: Path, value: str) -> Path:

@@ -30,11 +30,11 @@ class ReasoningKwargsTest(unittest.TestCase):
             {"extra_body": {"thinking": {"type": "disabled"}}},
         )
 
-    def test_deepseek_levels_leave_thinking_on(self):
-        # deepseek is binary -- low/medium/high are NOT a gradient, just "on" (=send
-        # nothing, the provider default is thinking-on).
-        for level in ("low", "medium", "high"):
-            self.assertEqual(_reasoning_chat_kwargs("deepseek-v4-flash", level), {})
+    def test_deepseek_v4_levels_are_explicit_and_older_models_keep_the_default(self):
+        for requested, effective in (("low", "low"), ("medium", "high"), ("high", "high")):
+            self.assertEqual(_reasoning_chat_kwargs("deepseek-v4-flash", requested),
+                {"extra_body": {"thinking": {"type": "enabled"}}, "reasoning_effort": effective})
+            self.assertEqual(_reasoning_chat_kwargs("deepseek-chat", requested), {})
 
     def test_gpt_effort_chat_and_responses(self):
         self.assertEqual(_reasoning_chat_kwargs("gpt-5.4-mini", "medium"), {"reasoning_effort": "medium"})

@@ -27,7 +27,7 @@ class CharacterTemplateTest(unittest.TestCase):
         self.assertEqual(DEFAULT_CHARACTER_NAME, "スピカ")
         self.assertEqual(DEFAULT_INTERLOCUTOR_NAME, "麦")
         system = build_system_prompt()  # defaults: char=スピカ, user=麦
-        self.assertIn("你是 スピカ 的日语语音聊天 agent。", system)
+        self.assertIn("你是 スピカ 的日语对话角色。", system)
         self.assertIn("当前对话对象固定是麦", system)
         # JSON braces survive as single braces (no .format double-brace artefact).
         self.assertIn('{\n  "emotion"', system)
@@ -42,10 +42,13 @@ class CharacterTemplateTest(unittest.TestCase):
             interlocutor_name="レン",
             character_name="ミナ",
         )
-        self.assertIn("你是 ミナ 的日语语音聊天 agent。", prompt)
+        messages = prompt
+        prompt = "\n".join(message["content"] for message in messages)
+        self.assertIn("你是 ミナ 的日语对话角色。", prompt)
         self.assertIn("当前对话对象固定是レン", prompt)
         self.assertIn("ミナ对レン", prompt)  # interlocutor profile line
-        self.assertIn("レン: おはよう\nミナ: うん。", prompt)  # recent-context speaker
+        self.assertIn({"role": "user", "content": "おはよう"}, messages)
+        self.assertIn({"role": "assistant", "content": "うん。"}, messages)
         self.assertIn("(ミナ/", prompt)  # _scope_label for "character" scope
         # No Spica defaults leaked when a different character is supplied.
         self.assertNotIn("スピカ", prompt)
@@ -58,8 +61,18 @@ class CharacterTemplateTest(unittest.TestCase):
             character_profile="",
             interlocutor_name="kasa",
         )
-        self.assertIn("kasa: a\nスピカ: b", prompt)  # default char = スピカ
+        self.assertIn({"role": "user", "content": "a"}, prompt)
+        self.assertIn({"role": "assistant", "content": "b"}, prompt)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_default_public_role_uses_shipped_runtime_material():
+    from spica.conversation.character_loader import DEFAULT_SPICA_SKILL_DIR, load_spica_character_profile
+    from spica.core.character import load_character_package
+    assert DEFAULT_SPICA_SKILL_DIR.is_dir()
+    assert load_character_package(DEFAULT_SPICA_SKILL_DIR).character_id == 'spica'
+    profile = load_spica_character_profile()
+    assert profile.startswith('# SPICA_RUNTIME_MATERIAL v1\n')

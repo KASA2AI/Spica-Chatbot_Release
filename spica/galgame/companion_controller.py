@@ -113,9 +113,10 @@ class GalgameCompanionController:
         *,
         summarizer: Any = None,
         emit: CompanionEventSink | None = None,
-        record_history: Callable[[str, str], None] | None = None,
+        record_history: Callable[[str, str, str], None] | None = None,
         character_id: str = "spica",
         user_id: str = "麦",
+        user_name: str | None = None,
         summary_trigger_chars: int = 2000,
         interval_seconds: float = 0.3,
         play_history_card_max_chars: int = 220,
@@ -140,6 +141,7 @@ class GalgameCompanionController:
         self._binding_sink = binding_sink
         self._character_id = character_id
         self._user_id = user_id
+        self._user_name = user_name
         self._summary_trigger_chars = summary_trigger_chars
         self._interval_seconds = interval_seconds
         self._play_history_card_max_chars = play_history_card_max_chars
@@ -242,6 +244,7 @@ class GalgameCompanionController:
                 emit=self._emit,
                 character_id=self._character_id,
                 user_id=self._user_id,
+                user_name=self._user_name,
                 jobs=ThreadJobRunner(),
                 summarizer=self._summarizer,
                 summary_trigger_chars=self._summary_trigger_chars,
@@ -316,6 +319,7 @@ class GalgameCompanionController:
                 except Exception as exc:  # noqa: BLE001 -- stop must not crash mid-play
                     logger.warning("companion runner stop failed: %s", exc, exc_info=True)
             if session is not None and session.state in _ENDABLE:
+                session_id = session.session_id
                 try:
                     session.end()  # drain summary jobs + commit pending + final summary + ended
                 except Exception as exc:  # noqa: BLE001
@@ -324,18 +328,18 @@ class GalgameCompanionController:
                     # B 方案 (FINDINGS #15): after a NORMAL end (summary + finalize
                     # landed), hand the play-history card to the injected recorder.
                     # Best-effort: a failure logs and never blocks stop.
-                    self._record_play_history_safe(self.game_id)
+                    self._record_play_history_safe(self.game_id, session_id)
 
-    def _record_play_history_safe(self, game_id: str | None) -> None:
+    def _record_play_history_safe(self, game_id: str | None, session_id: str) -> None:
         if self._record_history is None or not game_id:
             return
         try:
             card = compose_play_history(
-                self._game_memory, game_id, user_name=self._user_id,
+                self._game_memory, game_id, user_name=self._user_name or "本人",
                 max_chars=self._play_history_card_max_chars,
             )
             if card:
-                self._record_history(game_id, card)
+                self._record_history(game_id, card, session_id)
         except Exception as exc:  # noqa: BLE001 -- best-effort: never block stop
             logger.warning("play history record failed for %s: %s", game_id, exc, exc_info=True)
 

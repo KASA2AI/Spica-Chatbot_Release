@@ -22,11 +22,14 @@ to select the configured System Turn reasoning lane.
 
 from __future__ import annotations
 
+from copy import deepcopy
+from concurrent.futures import CancelledError
 from types import SimpleNamespace
 from typing import Any, Iterator
 
 from common.timing import elapsed_ms, log_timing, now_ms
-from spica.ports.model import ToolProbeResult, ToolProbeStream
+from spica.adapters.llm.usage import record_usage as _record_usage, request as _measured_request
+from spica.ports.model import ModelInput, ToolProbeResult, ToolProbeStream
 
 
 def check_model_connection(*, base_url: str | None, model: str, api_key: str) -> dict[str, Any]:
@@ -94,12 +97,19 @@ def _model_is_gpt(model: str | None) -> bool:
 def _reasoning_chat_kwargs(model: str | None, effort: str) -> dict[str, Any]:
     """Reasoning/thinking kwargs for a chat.completions request. {} for
     'default'/unknown (send NOTHING -> the provider's own default, zero-diff).
-    deepseek: 'none' disables thinking (binary -- levels leave it ON). gpt:
-    reasoning_effort = none/low/medium/high (a real gradient)."""
+    DeepSeek V4 supports low/high/max effort (medium maps to high); 'none'
+    disables thinking. Older DeepSeek models retain their provider default.
+    GPT uses reasoning_effort = none/low/medium/high."""
     if not effort or effort == "default":
         return {}
     if _model_is_deepseek(model):
-        return {"extra_body": {"thinking": {"type": "disabled"}}} if effort == "none" else {}
+        if effort == "none":
+            return {"extra_body": {"thinking": {"type": "disabled"}}}
+        if "deepseek-v4" in (model or "").lower() and effort in {"low", "medium", "high", "max"}:
+            # https://api-docs.deepseek.com/guides/thinking_mode/
+            return {"extra_body": {"thinking": {"type": "enabled"}},
+                    "reasoning_effort": "high" if effort == "medium" else effort}
+        return {}
     if _model_is_gpt(model) and effort in _GPT_EFFORTS:
         return {"reasoning_effort": effort}
     return {}
@@ -118,6 +128,7 @@ class OpenAICompatibleAdapter:
     """LLM adapter over an OpenAI-compatible client (OpenAI, DeepSeek, ...)."""
 
     name = "openai_compatible"
+    supports_bounded_completion = True
 
     def __init__(
         self,
@@ -138,19 +149,54 @@ class OpenAICompatibleAdapter:
     def has_chat_completions(self) -> bool:
         return _has_chat_completions(self.client)
 
-    def create_responses(self, **request: Any) -> Any:
+    def create_responses(self, *, state: Any = None, **request: Any) -> Any:
         """One-shot Responses API call (synchronous tool loop / probe)."""
         reasoning = _reasoning_responses_kwargs(request.get("model"), self._reasoning_effort)
-        return self.client.responses.create(**{**reasoning, **request})
+        request = dict(request)
+        if "input" in request:
+            request["input"] = _responses_input(request["input"])
+        client = _client_for_turn(self.client, state)
+        request = self._bounded_request({**reasoning, **request}, state, 'responses')
+        return _request(client.responses.create, state=state, api='responses', **request)
 
-    def complete_chat(self, model: str, prompt: str, state: Any) -> str:
+    @staticmethod
+    def _bounded_request(request, state, api):
+        options = getattr(state, 'completion_options', None)
+        if options is not None:
+            key = 'max_output_tokens' if api == 'responses' else (
+                'max_completion_tokens' if _model_is_gpt(request.get('model')) else 'max_tokens')
+            request[key] = options.max_output_tokens
+            options.check_input(request)
+        return request
+
+    @staticmethod
+    def _check_completion(response, state, api):
+        if getattr(state, 'completion_options', None) is None:
+            return
+        from spica.ports.model import CompletionIncomplete
+        if api == 'responses':
+            reason = _get_attr(response, 'status')
+            if reason != 'completed':
+                raise CompletionIncomplete(reason if reason in {'incomplete', 'failed', 'in_progress'} else 'missing_status')
+        else:
+            choices = list(_get_attr(response, 'choices', []) or [])
+            reason = _get_attr(choices[0], 'finish_reason') if len(choices) == 1 else None
+            if reason != 'stop':
+                raise CompletionIncomplete(reason if reason in {
+                    'length', 'content_filter', 'tool_calls', 'insufficient_system_resource', 'aborted'} else 'missing_finish_reason')
+
+    @staticmethod
+    def response_items(response: Any) -> list[dict[str, Any]]:
+        return [_provider_value(item) for item in (_get_attr(response, "output", []) or [])]
+
+    def complete_chat(self, model: str, prompt: ModelInput, state: Any) -> str:
         """One-shot Chat Completions call, returning the assistant text."""
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            **_reasoning_chat_kwargs(model, self._reasoning_effort),
-        )
+        client = _client_for_turn(self.client, state)
+        request = self._bounded_request(dict(model=model, messages=_chat_messages(prompt, state),
+            **_reasoning_chat_kwargs(model, self._reasoning_effort)), state, 'chat')
+        response = _request(client.chat.completions.create, state=state, api='chat', **request)
         _record_usage(state, response)
+        self._check_completion(response, state, 'chat')
         choices = list(_get_attr(response, "choices", []) or [])
         if choices:
             message = _get_attr(choices[0], "message")
@@ -161,7 +207,7 @@ class OpenAICompatibleAdapter:
         self,
         *,
         model: str,
-        prompt: str,
+        prompt: ModelInput,
         tools: list[dict[str, Any]],
         state: Any,
     ) -> tuple[list[dict[str, str]], str]:
@@ -169,10 +215,11 @@ class OpenAICompatibleAdapter:
         Responses probe). Sends ``tools`` in the nested chat format and returns
         ``(tool_calls, text)`` where each tool_call is ``{"name", "arguments"}``
         (arguments = raw JSON string) and ``text`` is the assistant content."""
+        client = _client_for_turn(self.client, state)
         probe_start_ms = now_ms()
-        response = self.client.chat.completions.create(
+        response = _request(client.chat.completions.create, state=state, api='chat',
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=_chat_messages(prompt, state),
             tools=to_chat_completions_tools(tools),
             **_reasoning_chat_kwargs(model, self._reasoning_effort),
         )
@@ -189,6 +236,7 @@ class OpenAICompatibleAdapter:
                 calls.append(
                     {
                         "name": name,
+                        **_call_continuation(item, message),
                         "arguments": str(_get_attr(function, "arguments", "") or "{}"),
                     }
                 )
@@ -198,7 +246,7 @@ class OpenAICompatibleAdapter:
         self,
         *,
         model: str,
-        prompt: str,
+        prompt: ModelInput,
         tools: list[dict[str, Any]],
         state: Any,
         tool_calls_sink: list[dict[str, str]],
@@ -215,55 +263,72 @@ class OpenAICompatibleAdapter:
           completed ``{"name","arguments"}`` calls to ``tool_calls_sink`` (a return
           channel -- a generator cannot return a value cleanly).
 
-        Single-worker / serial use only (one turn streams at a time). No usage
-        recording in the loop (mirrors ``_iter_chat_completion_text``)."""
+        Single-worker / serial use only (one turn streams at a time). Provider
+        usage trailers are recorded at the shared request boundary."""
         probe_start_ms = now_ms()
-        stream = self.client.chat.completions.create(
+        client = _client_for_turn(self.client, state)
+        stream = _request(client.chat.completions.create, state=state, api='chat',
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=_chat_messages(prompt, state),
             tools=to_chat_completions_tools(tools),
             stream=True,
             **_reasoning_chat_kwargs(model, self._reasoning_effort),
         )
         acc: dict[int, dict[str, str]] = {}
-        for chunk in stream:
-            choices = list(_get_attr(chunk, "choices", []) or [])
-            if not choices:
-                continue
-            delta = _get_attr(choices[0], "delta")
-            content = str(_get_attr(delta, "content", "") or "")
-            if content:
-                yield content
-            for item in list(_get_attr(delta, "tool_calls", []) or []):
-                index = int(_get_attr(item, "index", 0) or 0)
-                slot = acc.setdefault(index, {"name": "", "arguments": ""})
-                function = _get_attr(item, "function")
-                name = str(_get_attr(function, "name", "") or "")
-                if name:
-                    slot["name"] = name
-                arguments = str(_get_attr(function, "arguments", "") or "")
-                if arguments:
-                    slot["arguments"] += arguments
+        reasoning_content = ""
+        assistant_text = ""
+        try:
+            for chunk in stream:
+                choices = list(_get_attr(chunk, "choices", []) or [])
+                if not choices:
+                    continue
+                delta = _get_attr(choices[0], "delta")
+                content = str(_get_attr(delta, "content", "") or "")
+                reasoning_content += str(_get_attr(delta, "reasoning_content", "") or "")
+                assistant_text += content
+                if content:
+                    yield content
+                for item in list(_get_attr(delta, "tool_calls", []) or []):
+                    index = int(_get_attr(item, "index", 0) or 0)
+                    slot = acc.setdefault(index, {"name": "", "arguments": ""})
+                    call_id = str(_get_attr(item, "id", "") or "")
+                    if call_id:
+                        slot["id"] = call_id
+                    function = _get_attr(item, "function")
+                    name = str(_get_attr(function, "name", "") or "")
+                    if name:
+                        slot["name"] = name
+                    arguments = str(_get_attr(function, "arguments", "") or "")
+                    if arguments:
+                        slot["arguments"] += arguments
+        finally:
+            _close_stream(stream)
         log_timing("llm_chat_tool_probe", elapsed_ms(probe_start_ms), model=model, streamed=True)
         for index in sorted(acc):
             if acc[index]["name"]:
                 tool_calls_sink.append(
-                    {"name": acc[index]["name"], "arguments": acc[index]["arguments"] or "{}"}
+                    {**acc[index], "arguments": acc[index]["arguments"] or "{}",
+                     **({"reasoning_content": reasoning_content} if reasoning_content else {}),
+                     **({"assistant_text": assistant_text} if assistant_text else {})}
                 )
 
     def iter_response_text(self, request: dict[str, Any], state: Any) -> Iterator[str]:
         """Stream assistant text deltas, with all fallbacks handled internally."""
         return _iter_response_text(self.client, request, state, self._reasoning_effort)
 
-    def complete_text(self, prompt: str, *, model: str) -> str:
+    def complete_text(self, prompt: ModelInput, *, model: str) -> str:
         """One-shot, turn-independent completion (Phase 8 summarization). Reuses the
         same endpoint/branch logic as the dialogue path but non-streaming and without
         a TurnContext -- a throwaway state stub only carries usage. NOT run_turn."""
-        state = SimpleNamespace(timing={}, response_id=None)
+        return self._complete(prompt, model=model)
+
+    def _complete(self, prompt: ModelInput, *, model: str, options=None) -> str:
+        state = SimpleNamespace(timing={}, response_id=None, completion_options=options)
         if self.prefers_chat_completions():
             return self.complete_chat(model, prompt, state)
-        response = self.create_responses(model=model, input=prompt)
+        response = self.create_responses(model=model, input=prompt, state=state)
         _record_usage(state, response)
+        self._check_completion(response, state, 'responses')
         return str(_get_attr(response, "output_text", "") or "")
 
     # ------------------------------------------------------------------ #
@@ -274,10 +339,10 @@ class OpenAICompatibleAdapter:
     # reuses iter_response_text's fallback tree. No new I/O branches.
     # ------------------------------------------------------------------ #
 
-    def complete(self, prompt: str, *, model: str) -> str:
-        return self.complete_text(prompt, model=model)
+    def complete(self, prompt: ModelInput, *, model: str, options=None) -> str:
+        return self._complete(prompt, model=model, options=options)
 
-    def stream(self, prompt: str, *, model: str, state: Any) -> Iterator[str]:
+    def stream(self, prompt: ModelInput, *, model: str, state: Any) -> Iterator[str]:
         request = getattr(state, "request", None)
         effective_reasoning_effort = self._reasoning_effort
         if (
@@ -303,14 +368,16 @@ class OpenAICompatibleAdapter:
     # ------------------------------------------------------------------ #
 
     def probe(
-        self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any
+        self, prompt: ModelInput, tools: list[dict[str, Any]], *, model: str, state: Any
     ) -> ToolProbeResult:
         if self.prefers_chat_completions():
             calls, text = self.create_chat_with_tools(
                 model=model, prompt=prompt, tools=tools, state=state
             )
             return ToolProbeResult(calls=calls, text=text)
-        response = self.create_responses(model=model, input=prompt, tools=tools)
+        response = self.create_responses(
+            model=model, input=prompt, tools=tools, state=state, **_instructions_kwargs(state)
+        )
         function_calls = [
             item for item in list(_get_attr(response, "output", []) or [])
             if _get_attr(item, "type") == "function_call"
@@ -318,6 +385,7 @@ class OpenAICompatibleAdapter:
         calls = [
             {
                 "name": str(_get_attr(item, "name", "")),
+                **({"id": str(_get_attr(item, "call_id"))} if _get_attr(item, "call_id") else {}),
                 "arguments": str(_get_attr(item, "arguments", "") or "{}"),
             }
             for item in function_calls
@@ -327,10 +395,11 @@ class OpenAICompatibleAdapter:
             text=str(_get_attr(response, "output_text", "") or ""),
             response_id=str(_get_attr(response, "id", "") or "") or None,
             usage=_get_attr(response, "usage"),
+            response_items=self.response_items(response),
         )
 
     def probe_stream(
-        self, prompt: str, tools: list[dict[str, Any]], *, model: str, state: Any
+        self, prompt: ModelInput, tools: list[dict[str, Any]], *, model: str, state: Any
     ) -> ToolProbeStream | None:
         if not self.prefers_chat_completions():
             return None  # Responses family: probes do not stream (family signal)
@@ -348,12 +417,96 @@ class OpenAICompatibleAdapter:
 # Moved verbatim from agent/streaming_pipeline.py (Phase 5). Behaviour-identical.
 # --------------------------------------------------------------------------- #
 
+def _request(create, *, state, api, **kwargs):
+    timeout = getattr(getattr(state, 'request', None), 'model_request_timeout_seconds', None)
+    if timeout is not None:
+        kwargs['timeout'] = timeout
+    return _measured_request(create, state=state, api=api, **kwargs)
+
+
+def _check_turn_context(state: Any) -> None:
+    cancelled = getattr(getattr(state, 'request', None), 'cancelled', None)
+    if cancelled is not None and cancelled.is_set():
+        raise CancelledError('turn cancelled before model request')
+    check = getattr(state, 'before_model_request', None)
+    if callable(check):
+        check(state)
+
+
+def _client_for_turn(client: Any, state: Any) -> Any:
+    _check_turn_context(state)
+    # SDK retries cannot recheck a turn's selected sources between HTTP calls.
+    # Independent summaries/organizers retain their configured retry policy.
+    if callable(getattr(state, 'before_model_request', None)):
+        return _client_with_retry_disabled(client, state)
+    return client
+
+
+def _instructions_kwargs(state: Any) -> dict[str, str]:
+    instructions = getattr(getattr(state, "prompt", None), "model_instructions", "")
+    return {"instructions": instructions} if instructions else {}
+
+
+def _call_continuation(item: Any, message: Any) -> dict[str, str]:
+    fields = {"id": _get_attr(item, "id"),
+              "reasoning_content": _get_attr(message, "reasoning_content"),
+              "assistant_text": _get_attr(message, "content")}
+    return {key: str(value) for key, value in fields.items() if value}
+
+
+def _provider_value(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_none=True)
+    if isinstance(value, list):
+        return [_provider_value(item) for item in value]
+    if not isinstance(value, dict) and hasattr(value, "__dict__"):
+        value = vars(value)
+    if isinstance(value, dict):
+        return {key: _provider_value(item) for key, item in value.items()}
+    return value
+
+
+def _responses_input(prompt: ModelInput) -> str | list[dict[str, Any]]:
+    """Translate messages to Responses items without changing source roles."""
+    if isinstance(prompt, str):
+        return prompt
+    items: list[dict[str, Any]] = []
+    for message in prompt:
+        if message.get("response_items"):
+            items.extend(deepcopy(message["response_items"]))
+            continue
+        if message["role"] == "tool":
+            items.append({"type": "function_call_output", "call_id": message["tool_call_id"],
+                          "output": message["content"]})
+            continue
+        if message.get("content"):
+            items.append({"role": message["role"], "content": message["content"]})
+        for call in message.get("tool_calls", []):
+            items.append({"type": "function_call", "call_id": call["id"],
+                          "name": call["function"]["name"],
+                          "arguments": call["function"]["arguments"]})
+    return items
+
+
+def _chat_messages(prompt: ModelInput, state: Any) -> list[dict[str, Any]]:
+    instructions = _instructions_kwargs(state).get("instructions")
+    messages = deepcopy(prompt) if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
+    for message in messages:
+        # Responses-only continuation travels on the canonical message, but
+        # Chat uses that message's visible content and matched tool calls.
+        message.pop("response_items", None)
+    if instructions:
+        messages.insert(0, {"role": "system", "content": instructions})
+    return messages
+
+
 def _iter_response_text(
     client: Any,
     request: dict[str, Any],
     state: Any,
     reasoning_effort: str = "default",
 ) -> Iterator[str]:
+    request = {**request, **_instructions_kwargs(state)}
     llm_client = _client_with_retry_disabled(client, state)
     if _prefers_chat_completions(llm_client):
         state.timing["llm_stream_fallback_used"] = True
@@ -362,12 +515,14 @@ def _iter_response_text(
         return
 
     stream_request = dict(request)
+    stream_request["input"] = _responses_input(stream_request.get("input", ""))
     stream_request["stream"] = True
     stream_request.update(_reasoning_responses_kwargs(request.get("model"), reasoning_effort))
     stream_create_start_ms = now_ms()
     streamed_text = ""
+    _check_turn_context(state)
     try:
-        stream = llm_client.responses.create(**stream_request)
+        stream = _request(llm_client.responses.create, state=state, api='responses', **stream_request)
         state.timing["llm_stream_create_ms"] = elapsed_ms(stream_create_start_ms)
         log_timing(
             "llm_stream_create",
@@ -411,6 +566,7 @@ def _iter_response_text(
         return
 
     state.timing["llm_stream_fallback_used"] = False
+    stream_error = None
     try:
         for event in stream:
             event_type = str(_get_attr(event, "type", "") or "")
@@ -427,16 +583,22 @@ def _iter_response_text(
                 error = _get_attr(event, "error")
                 raise RuntimeError(str(error or "LLM streaming failed."))
     except Exception as exc:
+        stream_error = str(exc)
+    finally:
+        # Close before fallback. A close failure must escape this generator,
+        # never turn GeneratorExit/cancellation into a new model request.
+        _close_stream(stream)
+    if stream_error is not None:
         state.timing["llm_stream_fallback_used"] = True
         state.timing["llm_stream_fallback_reason"] = "stream_iteration_error"
-        state.timing["llm_stream_error"] = str(exc)
+        state.timing["llm_stream_error"] = stream_error
         log_timing(
             "llm_stream_fallback",
             elapsed_ms(stream_create_start_ms),
             phase="iteration",
             model=request.get("model"),
             streamed_chars=len(streamed_text),
-            error=str(exc),
+            error=stream_error,
         )
         yield _fallback_response_text(llm_client, request, state, streamed_text, reasoning_effort)
 
@@ -467,9 +629,11 @@ def _fallback_response_text(
             client, request, state, already_streamed, reasoning_effort=reasoning_effort))
 
     fallback_request = {key: value for key, value in request.items() if key != "stream"}
+    fallback_request["input"] = _responses_input(fallback_request.get("input", ""))
     fallback_request.update(_reasoning_responses_kwargs(fallback_request.get("model"), reasoning_effort))
     fallback_start_ms = now_ms()
-    response = client.responses.create(**fallback_request)
+    _check_turn_context(state)
+    response = _request(client.responses.create, state=state, api='responses', **fallback_request)
     fallback_ms = elapsed_ms(fallback_start_ms)
     state.timing["llm_fallback_response_ms"] = fallback_ms
     _record_usage(state, response)
@@ -513,14 +677,21 @@ def _iter_chat_completion_text(
 ) -> Iterator[str]:
     chat_request = {
         "model": request.get("model"),
-        "messages": [{"role": "user", "content": str(request.get("input") or "")}],
+        "messages": _chat_messages(request.get("input") or "", state),
         "stream": True,
         **_reasoning_chat_kwargs(request.get("model"), reasoning_effort),
     }
+    if (_model_is_deepseek(request.get("model"))
+            and getattr(getattr(state, "request", None), "interaction_mode", None) == "system"):
+        # Proactive dialogue already supplies the JSON contract and no tools.
+        # Ask the provider to enforce it instead of relying only on prompting.
+        chat_request["response_format"] = {"type": "json_object"}
     chat_start_ms = now_ms()
     full_text = ""
+    _check_turn_context(state)
+    stream = None
     try:
-        stream = client.chat.completions.create(**chat_request)
+        stream = _request(client.chat.completions.create, state=state, api='chat', **chat_request)
         state.timing["llm_chat_stream_create_ms"] = elapsed_ms(chat_start_ms)
         state.timing["llm_chat_completions_fallback_used"] = True
         log_timing(
@@ -552,6 +723,8 @@ def _iter_chat_completion_text(
             model=chat_request.get("model"),
             error=str(exc),
         )
+    finally:
+        _close_stream(stream)
 
     # Review #3 (AABC fix): the dedupe baseline must include what THIS stream
     # already yielded -- on the chat-first path ``already_streamed`` is "" and
@@ -560,7 +733,8 @@ def _iter_chat_completion_text(
     streamed = already_streamed + full_text
     fallback_request = dict(chat_request)
     fallback_request["stream"] = False
-    response = client.chat.completions.create(**fallback_request)
+    _check_turn_context(state)
+    response = _request(client.chat.completions.create, state=state, api='chat', **fallback_request)
     choices = list(_get_attr(response, "choices", []) or [])
     if choices:
         message = _get_attr(choices[0], "message")
@@ -577,14 +751,12 @@ def _iter_chat_completion_text(
         yield full_text
 
 
-def _record_usage(state: Any, response: Any) -> None:
-    usage = _get_attr(response, "usage")
-    if not usage:
-        return
-    for key in ("input_tokens", "output_tokens", "total_tokens"):
-        value = _get_attr(usage, key)
-        if value is not None:
-            state.timing[key] = value
+def _close_stream(stream: Any) -> None:
+    # The SDK Stream owns a generator cycle, so dropping its reference does not
+    # release HTTP/SSE promptly. Only the consuming generator closes it here.
+    close = getattr(stream, "close", None)
+    if callable(close):
+        close()
 
 
 def _get_attr(value: Any, key: str, default: Any = None) -> Any:

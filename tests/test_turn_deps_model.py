@@ -233,8 +233,9 @@ class OrchestratorStreamsThroughModelTest(unittest.TestCase):
         # the call site anymore (assembly moved inside the adapter, 7-c1).
         self.assertEqual(len(recorder.stream_calls), 1)
         prompt, state = recorder.stream_calls[0]
-        self.assertIsInstance(prompt, str)
-        self.assertIn("你好", prompt)  # the built prompt, not a request dict
+        self.assertIsInstance(prompt, list)
+        self.assertTrue(all(isinstance(message, dict) and "role" in message for message in prompt))
+        self.assertTrue(any(m["role"] == "user" and m["content"].endswith("你好") for m in prompt))
         self.assertTrue(hasattr(state, "timing"))  # the TurnContext rides through
 
 

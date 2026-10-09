@@ -14,7 +14,7 @@
 - **会話スタイル**：配色、背景、動く文末マーカーを独立したパックで変更。
 - **デスクトップでの活動**：ギャルゲー、画面理解、アニメ視聴、歌唱。
 
-Windows / Linux 向けのデスクトップ専用版です。音声・画面認識はローカルで動作します。リモート会話モデルを使う場合、会話に必要なテキスト、カード、記憶は設定したサービスへ送信されます。
+Windows / Linux 向けのデスクトップ専用版です。音声認識はローカル Qwen3-ASR-1.7B と百炼クラウドを選べます。画面認識はローカルで動作します。リモート会話モデルを使う場合、会話に必要なテキスト、カード、記憶は設定したサービスへ送信されます。
 
 ## 🚀 はじめる
 
@@ -58,4 +58,9 @@ ZIP は先に展開します。キャラクターは `Desktop-Packs/Characters/`
 
 コードは [Source-Available ライセンス](LICENSE)です。イラスト、声、その他の第三者素材には各自のライセンスが適用されます。パックを共有する際は作者と出典を記載してください。
 
-[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)、[Applio](https://github.com/IAHispano/Applio)、[faster-whisper](https://github.com/SYSTRAN/faster-whisper)、[RapidOCR](https://github.com/RapidAI/RapidOCR)、[Moondream](https://github.com/vikhyat/moondream)、[yt-dlp](https://github.com/yt-dlp/yt-dlp) に感謝します。
+[GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)、[Applio](https://github.com/IAHispano/Applio)、[Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)、[RapidOCR](https://github.com/RapidAI/RapidOCR)、[Moondream](https://github.com/vikhyat/moondream)、[yt-dlp](https://github.com/yt-dlp/yt-dlp) に感謝します。
+
+
+音声認識はローカル Qwen3-ASR-1.7B と百炼クラウドを切り替え可能です。任意の Home H1–H3、フローティングペット、ローカル文字通知を追加しました。スマートフォン・ロボット・QQ・Hub は不要です。
+
+[Current setup and behavior / 最新配置说明](docs/README.md) · [Home](docs/HOME.md) · [Cubism](docs/CUBISM_PACKS.md)

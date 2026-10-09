@@ -11,14 +11,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_DIR.parents[2]
 DEFAULT_CONFIG_PATH = PACKAGE_DIR / "song_config.json"
 
-# Qt-free owner metadata consumed by read-only configuration surfaces.  Keep
-# these paths beside the production resolver so a UI cannot invent a second,
-# drifting list of path-like song settings.
-SONG_PATH_KINDS: dict[tuple[str, ...], str] = {
-    ("generated_root",): "directory",
-    ("applio_root",): "directory",
-    ("rvc", "worker_python"): "file",
-}
+# Voice path fields normalized by the production song configuration resolver.
 _VOICE_PATH_KINDS: dict[str, str] = {
     "model_path": "file",
     "index_path": "file",
@@ -162,16 +155,6 @@ def song_enabled(config: dict[str, Any] | None) -> bool:
             return False
     logger.warning("song.enabled 配置值非法(%r)——按关闭处理(只接受布尔或 'true'/'false' 字符串)", raw)
     return False
-
-
-def song_path_kind(path: tuple[str, ...]) -> str | None:
-    """Return the production owner's declared filesystem kind for a leaf."""
-    direct = SONG_PATH_KINDS.get(path)
-    if direct is not None:
-        return direct
-    if len(path) == 4 and path[:2] == ("rvc", "voices"):
-        return _VOICE_PATH_KINDS.get(path[3])
-    return None
 
 
 def ensure_song_dirs(config: dict[str, Any]) -> dict[str, Path]:

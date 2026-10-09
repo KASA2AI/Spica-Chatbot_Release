@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from spica.local_runtime.tts.driver import GptSovitsV2ProDriver
 
@@ -77,6 +78,30 @@ class TtsDriverContractTest(unittest.TestCase):
         drv.load(**kw)
         drv.load(force=True, **kw)
         self.assertEqual(rec.gpt_calls, ["g.ckpt", "g.ckpt"])
+
+    def test_unload_invalidates_weights_and_allows_loading_again(self):
+        drv, rec = _driver(self.root)
+        kw = dict(gpt_path="g.ckpt", sovits_path="s.pth", prompt_language="ja", text_language="ja")
+        drv.load(**kw)
+        assert drv.ready
+        generation = drv.generation
+        drv.unload()
+        assert not drv.ready
+        assert drv.generation != generation
+        drv.load(**kw)
+        assert drv.ready
+        self.assertEqual(rec.gpt_calls, ["g.ckpt", "g.ckpt"])
+
+    def test_another_role_invalidates_the_previous_global_weight_cache(self):
+        first, recorded = _driver(self.root)
+        second, _ = _driver(self.root)
+        kw = dict(gpt_path="one.ckpt", sovits_path="one.pth", prompt_language="ja", text_language="ja")
+        first.load(**kw)
+        second.load(**dict(kw, gpt_path="two.ckpt"))
+        assert not first.ready and second.ready
+        first.load(**kw)
+        assert first.ready and not second.ready
+        assert recorded.gpt_calls == ['one.ckpt', 'one.ckpt']
 
     def test_synthesize_does_not_change_cwd(self):
         # A3: synthesize_chunks must NOT pushd -- get_tts_wav runs at the ORIGINAL cwd
@@ -153,3 +178,147 @@ class TtsDriverContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_service_latest_residency_intent_releases_after_native_warmup(tmp_path, monkeypatch):
+    import json
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from agent_tools.tts.gptsovits.service import GPTSoVITSTool
+    from types import SimpleNamespace
+    entered, release = threading.Event(), threading.Event()
+    unloaded = []
+    driver = SimpleNamespace(ready=False, generation=0, i18n=lambda value: value)
+    def load(**_):
+        entered.set()
+        assert release.wait(3)
+        driver.ready = True
+        driver.generation += 1
+    def unload():
+        unloaded.append(True)
+        driver.ready = False
+        driver.generation += 1
+    driver.load, driver.unload = load, unload
+    monkeypatch.setattr('spica.local_runtime.tts.GptSovitsV2ProDriver', lambda root: driver)
+    reference = tmp_path / 'ref.wav'
+    reference.touch()
+    path = tmp_path / 'tts.json'
+    path.write_text(json.dumps(dict(gptsovits_root=str(tmp_path), output_dir=str(tmp_path/'audio'),
+        gpt_model_path='g.ckpt', sovits_model_path='s.pth',
+        emotions={'happy': {'ref_audio_path': str(reference), 'prompt_text': 'はい。'}})))
+    tool = GPTSoVITSTool(path)
+    tool.set_resident('daily', True)
+    tool.set_resident('alarm', True)
+    with ThreadPoolExecutor() as workers:
+        pending = workers.submit(tool.warmup)
+        assert entered.wait(1)
+        tool.set_resident('daily', False)  # Does not wait for the native load.
+        release.set()
+        assert pending.result(3)['ok']
+        tool.release_if_unused()
+        assert tool.resource_status['ready'] and not unloaded
+        entered.clear()
+        release.clear()
+        pending = workers.submit(tool.warmup)
+        assert entered.wait(1)
+        tool.set_resident('alarm', False)
+        draining = workers.submit(tool.release_if_unused)
+        assert not draining.done() and not unloaded
+        release.set()
+        assert pending.result(3)['ok']
+        draining.result(3)
+    assert not tool.resource_status['ready'] and unloaded
+
+
+def test_reenable_while_unload_waits_for_native_lock_keeps_ready_models(tmp_path, monkeypatch):
+    import json
+    import threading
+    from agent_tools.tts.gptsovits.service import GPTSoVITSTool
+    from spica.local_runtime.tts import model_imports
+    waiting = threading.Event()
+    native = threading.RLock()
+    class ObservedLock:
+        def __enter__(self):
+            if threading.current_thread().name == 'unload-test':
+                waiting.set()
+            native.acquire()
+        def __exit__(self, *_):
+            native.release()
+    lock = ObservedLock()
+    monkeypatch.setattr(model_imports, 'INFERENCE_LOCK', lock)
+    driver, _ = _driver(tmp_path)
+    driver._lock = lock
+    monkeypatch.setattr('spica.local_runtime.tts.GptSovitsV2ProDriver', lambda _: driver)
+    (tmp_path/'ref.wav').touch()
+    path = tmp_path/'tts.json'
+    path.write_text(json.dumps(dict(gptsovits_root=str(tmp_path), output_dir=str(tmp_path/'audio'),
+        gpt_model_path='g.ckpt', sovits_model_path='s.pth',
+        emotions={'happy': {'ref_audio_path': str(tmp_path/'ref.wav'), 'prompt_text': 'はい。'}})))
+    tool = GPTSoVITSTool(path)
+    tool.set_resident('daily', True)
+    assert tool.warmup()['ok'] and tool.resource_status['ready']
+    with lock:
+        tool.set_resident('daily', False)
+        worker = threading.Thread(target=tool.release_if_unused, name='unload-test')
+        worker.start()
+        assert waiting.wait(2)
+        tool.set_resident('daily', True)
+    worker.join(2)
+    assert not worker.is_alive() and tool.resource_status['ready']
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_loaded_weights_do_not_publish_ready_before_warmup_inference(tmp_path, monkeypatch, fail):
+    import json
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from agent_tools.tts.gptsovits.service import GPTSoVITSTool
+    entered, release = threading.Event(), threading.Event()
+    def infer(**_):
+        entered.set()
+        assert release.wait(3)
+        if fail:
+            raise RuntimeError('native warmup failed')
+        yield 32000, np.zeros(8, dtype=np.int16)
+    driver, _ = _driver(tmp_path, get_tts=infer)
+    monkeypatch.setattr('spica.local_runtime.tts.GptSovitsV2ProDriver', lambda _: driver)
+    (tmp_path/'ref.wav').touch()
+    path = tmp_path/'tts.json'
+    path.write_text(json.dumps(dict(gptsovits_root=str(tmp_path), output_dir=str(tmp_path/'audio'),
+        gpt_model_path='g.ckpt', sovits_model_path='s.pth',
+        emotions={'happy': {'ref_audio_path': str(tmp_path/'ref.wav'), 'prompt_text': 'はい。'}})))
+    tool = GPTSoVITSTool(path)
+    tool.set_resident('daily', True)
+    with ThreadPoolExecutor() as workers:
+        pending = workers.submit(tool.warmup, synthesize=True)
+        try:
+            assert entered.wait(1)
+            assert driver.ready and not tool.resource_status['ready']
+            assert tool.resource_status['state'] == 'loading' and not pending.done()
+        finally:
+            release.set()
+        assert pending.result(3)['ok'] is not fail
+    assert tool.resource_status['ready'] is not fail
+    if fail:
+        assert tool.resource_status['state'] == 'failed' and 'native warmup failed' in tool.resource_status['error']
+
+
+def test_host_tts_shutdown_keeps_one_owner_while_native_close_drains():
+    import threading
+    from types import SimpleNamespace
+    from spica.host.assemblies.audio import begin_tts_shutdown
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    def close():
+        calls.append(True)
+        entered.set()
+        release.wait(2)
+    host = SimpleNamespace(tts_adapter=SimpleNamespace(close=close))
+    worker = begin_tts_shutdown(host)
+    try:
+        assert entered.wait(1) and worker.is_alive()
+        assert begin_tts_shutdown(host) is worker
+    finally:
+        release.set()
+        worker.join(2)
+    assert not worker.is_alive() and calls == [True]

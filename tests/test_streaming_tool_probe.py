@@ -83,7 +83,7 @@ class IterChatWithToolsTest(unittest.TestCase):
         deltas = list(adapter.iter_chat_with_tools(
             model="m", prompt="p", tools=[], state=SimpleNamespace(timing={}), tool_calls_sink=sink))
         self.assertEqual(deltas, ["让我先看看屏幕"])
-        self.assertEqual(sink, [{"name": "watch_game_screen", "arguments": "{}"}])
+        self.assertEqual(sink, [{"name": "watch_game_screen", "arguments": "{}", "assistant_text": "让我先看看屏幕"}])
         # And that plain preamble carries no "answer" -> extractor yields nothing.
         self.assertEqual(JsonAnswerExtractor().feed("让我先看看屏幕"), "")
 

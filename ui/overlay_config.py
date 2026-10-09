@@ -203,3 +203,58 @@ def _save_overlay_document_value(
             logger.warning("event=overlay_config_save_failed reason=DOCUMENT_IO_ERROR")
             return False
     return False
+
+
+def load_voice_wake_preferences(
+    character_id: str, default_words: tuple[str, ...], path: Path | None = None,
+) -> tuple[bool, tuple[str, ...]]:
+    _, raw = _load_overlay_document(path)
+    enabled = raw.get("voice_wake_enabled") is True
+    words = raw.get(f"voice_wake_words:{character_id}")
+    if not isinstance(words, list) or not words or not all(isinstance(word, str) and word.strip() for word in words):
+        return enabled, default_words
+    return enabled, tuple(dict.fromkeys(word.strip() for word in words))
+
+
+def save_voice_wake_enabled(enabled: bool, path: Path | None = None) -> bool:
+    if type(enabled) is not bool:
+        return False
+    return _save_overlay_document_value("voice_wake_enabled", enabled, path, backup_root=None)
+
+
+def save_voice_wake_words(character_id: str, words: tuple[str, ...], path: Path | None = None) -> bool:
+    # Each role has its own document key, so a concurrent save never replaces
+    # another character's phrases. These are local microphone preferences.
+    if not character_id or not words or not all(isinstance(word, str) and word.strip() for word in words):
+        return False
+    return _save_overlay_document_value(
+        f"voice_wake_words:{character_id}", list(dict.fromkeys(word.strip() for word in words)),
+        path, backup_root=None,
+    )
+
+
+def save_voice_ui_preference(key, value, path: Path | None = None) -> bool:
+    valid = ((key in {'floating_mode', 'microphone_muted', 'floating_reduced_motion'} and type(value) is bool)
+             or (key == 'floating_size' and type(value) is int and 48 <= value <= 256)
+             or (key == 'floating_position' and isinstance(value, list) and len(value) == 2
+                 and all(type(item) is int and -(2**30) < item < 2**30 for item in value)))
+    if not valid:
+        return False
+    return _save_overlay_document_value(key, value, path, backup_root=None)
+
+
+
+def load_microphone_muted(path: Path | None = None) -> bool:
+    return _load_overlay_document(path)[1].get("microphone_muted") is True
+
+
+def load_floating_preferences(path: Path | None = None) -> dict:
+    _, raw = _load_overlay_document(path)
+    size = raw.get('floating_size', 96)
+    position = raw.get('floating_position')
+    return dict(enabled=raw.get('floating_mode') is True,
+                muted=raw.get('microphone_muted') is True,
+                reduced_motion=raw.get('floating_reduced_motion') is True,
+                size=max(48, min(256, size)) if type(size) is int else 96,
+                position=position if isinstance(position, list) and len(position) == 2
+                and all(type(value) is int and -(2**30) < value < 2**30 for value in position) else None)

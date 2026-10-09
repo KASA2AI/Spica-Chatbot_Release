@@ -76,3 +76,14 @@ class WarmupTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_daily_silent_does_not_warm_tts_or_change_stt_preference():
+    from spica.config.schema import AppConfig, TtsConfig
+    calls = []
+    host = _host(_TTS({"warmup_on_startup": True}, []))
+    host.config = AppConfig(tts=TtsConfig(daily_enabled=False))
+    host.stt_adapter = SimpleNamespace(warmup=lambda: calls.append("stt") or {"ok": True})
+    host.config.stt.warmup_on_startup = True
+    host.warmup(lambda *_: None)
+    assert host.tts_adapter.calls == [] and calls == ["stt"]

@@ -173,3 +173,21 @@ class TTSAdaptersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_daily_silent_keeps_text_and_explicit_alarm_audio_independent(tmp_path):
+    from test_streaming_pipeline import make_services
+    from spica.config.schema import AppConfig, TtsConfig
+    from spica.core.chat_engine import ChatEngine
+    services = make_services(tmp_path, "こんにちは。")
+    engine = ChatEngine(services, AppConfig(tts=TtsConfig(daily_enabled=False)))
+    assert engine.run_voice("こんにちは")["answer"] == "こんにちは。"
+    ordinary = list(engine.stream_voice("こんにちは"))
+    assert any(event["event"] == "unit_text_ready" for event in ordinary)
+    assert services.tts_adapter.calls == []
+    list(engine.stream_voice("起きて", interaction_mode="system", want_audio=True))
+    assert services.tts_adapter.calls  # Only explicit business audio bypasses daily silence.
+    services.tts_adapter.calls.clear()
+    engine.config.tts.enabled = False
+    list(engine.stream_voice("起きて", interaction_mode="system", want_audio=True))
+    assert services.tts_adapter.calls == []

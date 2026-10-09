@@ -61,6 +61,7 @@ class NoProviderTest(unittest.TestCase):
                 memory_conversation_id=None,
                 command_intent=None,
                 game_context_request=None,
+                evidence_turn_id="same-test-input",
             ),
         )
 
@@ -117,3 +118,13 @@ class BindingActiveTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# These tests compare request routing fields; pin only the otherwise-random
+# per-request evidence identity so two constructed values can be compared.
+import pytest
+from types import SimpleNamespace
+
+@pytest.fixture(autouse=True)
+def fixed_request_identity(monkeypatch):
+    monkeypatch.setattr("spica.runtime.context.uuid4", lambda: SimpleNamespace(hex="same-test-input"))

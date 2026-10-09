@@ -1,18 +1,4 @@
-"""End-to-end regression for the long-term-memory read/write key (Phase 5/7).
-
-Auto-extracted long-term memory is written under a character-namespaced
-conversation_id (``f"{character_id}::{conversation_id}"``) by ``commit_turn``,
-but the retrieve path used to read it back with a *bare* conversation_id -- so
-"remember X this turn, recall it next turn" silently returned nothing. These
-tests drive the full voice pipeline with self-contained fakes (no real LLM/TTS)
-and assert:
-
-1. a memory written one turn is retrievable the next turn (and reaches the prompt);
-2. two different characters never read each other's long-term memory;
-3. ChatEngine's manual remember/list/clear use the same character namespace.
-
-Short-term recent memory stays on the bare conversation_id throughout.
-"""
+"""Local evidence and personal memory retain owner/character scope across turns."""
 
 import json
 import tempfile
@@ -27,7 +13,8 @@ from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from agent_tools.tts.schemas import TTSRequest, TTSResult
 from memory.recent import RecentMemory
 from memory.store import SQLiteMemoryStore
-from spica.adapters.memory.sqlite import scoped_conversation_id
+from spica.adapters.memory.sqlite import SqliteMemoryAdapter
+from spica.ports.memory import MemoryScope
 from spica.config.schema import AppConfig, CharacterConfig
 from spica.core.chat_engine import ChatEngine
 
@@ -96,10 +83,10 @@ def _turn(services, user_input, conversation_id="c1"):
 
 
 class MemoryReadWriteKeyTest(unittest.TestCase):
-    def test_memory_written_this_turn_is_retrievable_next_turn(self):
+    def test_manually_confirmed_memory_is_retrievable_in_next_turn(self):
         with tempfile.TemporaryDirectory() as tmp:
             services = _services(SQLiteMemoryStore(Path(tmp) / "m.sqlite3"), character_id="spica")
-            _turn(services, "记住我喜欢简短回答")
+            SqliteMemoryAdapter(services.memory_store).remember(MemoryScope("spica", "owner"), "我喜欢简短回答")
             state = _turn(services, "简短回答可以吗")
         self.assertTrue(
             state.recent.long_term_memories,
@@ -113,7 +100,7 @@ class MemoryReadWriteKeyTest(unittest.TestCase):
             store = SQLiteMemoryStore(Path(tmp) / "m.sqlite3")  # shared backend
             alpha = _services(store, character_id="alpha")
             beta = _services(store, character_id="beta")
-            _turn(alpha, "记住我喜欢简短回答")
+            SqliteMemoryAdapter(store).remember(MemoryScope("alpha", "owner"), "我喜欢简短回答")
             beta_state = _turn(beta, "简短回答可以吗")
             alpha_state = _turn(alpha, "简短回答可以吗")
         self.assertEqual(beta_state.recent.long_term_memories, [], "characters must not read each other's memory")
@@ -126,9 +113,9 @@ class MemoryReadWriteKeyTest(unittest.TestCase):
             engine = ChatEngine(services, AppConfig(character=CharacterConfig(profile_override="p")))
 
             engine.remember("我喜欢简短回答", conversation_id="c1")
-            # written under the character namespace, never the bare conversation_id
+            # New manual evidence is not inserted into the legacy extraction table.
             self.assertEqual(store.list_memories("c1"), [])
-            self.assertTrue(store.list_memories(scoped_conversation_id("spica", "c1")))
+            self.assertTrue(engine.list_memory("c1"))
             # list_memory round-trips through the same namespace ...
             self.assertTrue(engine.list_memory("c1"))
             # ... and the auto pipeline retrieves the manually-remembered item
@@ -136,7 +123,7 @@ class MemoryReadWriteKeyTest(unittest.TestCase):
             self.assertTrue(any("简短" in str(m.get("content", "")) for m in state.recent.long_term_memories))
             # clearing long-term also targets the namespace
             engine.clear_memory("c1", clear_long_term=True)
-            self.assertEqual(store.list_memories(scoped_conversation_id("spica", "c1")), [])
+            self.assertEqual(engine.list_memory("c1"), [])
 
 
 if __name__ == "__main__":

@@ -39,7 +39,6 @@ REQUIRED = [
     # On the Linux dev machine the module is provided by onnxruntime-gpu;
     # the Windows base env installs the CPU "onnxruntime" distribution.
     ("onnxruntime", "onnxruntime", ("onnxruntime-gpu", "onnxruntime-directml")),
-    ("faster-whisper", "faster_whisper", ()),
     # W3: both promoted/added as hard deps of the Windows voice loop.
     ("PyAudio", "pyaudio", ()),
     ("webrtcvad-wheels", "webrtcvad", ()),

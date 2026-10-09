@@ -31,7 +31,7 @@ def test_python_entry_anchors_resources_before_starting_ui(tmp_path, monkeypatch
         setQuitOnLastWindowClosed=lambda _value: None, exec=lambda: 7,
     ))
     monkeypatch.setattr(qt_overlay, "OverlayWindow", lambda **kwargs: SimpleNamespace(
-        show=lambda: None, _restart_requested=False,
+        floating_controller=SimpleNamespace(show_initial=lambda: None), _restart_requested=False,
     ))
     assert webui_qt.main() == 7
     assert seen == [ROOT]

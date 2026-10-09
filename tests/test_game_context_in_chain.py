@@ -129,6 +129,10 @@ class GameContextInSyncChainTest(unittest.TestCase):
             services = _make_services(tmp)
             run_voice_pipeline(TurnContext(_galgame_request()), services)
             prompt = services.llm_client.responses.calls[0]["input"]
+            self.assertIsInstance(prompt, list)
+            context = next(m for m in prompt if "[GAME_PROGRESS]" in m.get("content", ""))
+            self.assertEqual(context["role"], "user")
+            prompt = context["content"]
             self.assertIn("[GAME_PROGRESS]", prompt)
             self.assertIn("在教室对话", prompt)
 
@@ -150,6 +154,10 @@ class GameContextInStreamingChainTest(unittest.TestCase):
             services = _make_services(tmp)
             self._stream(services, _galgame_request())
             prompt = services.llm_client.responses.calls[-1]["input"]
+            self.assertIsInstance(prompt, list)
+            context = next(m for m in prompt if "[GAME_PROGRESS]" in m.get("content", ""))
+            self.assertEqual(context["role"], "user")
+            prompt = context["content"]
             self.assertIn("[GAME_PROGRESS]", prompt)
             self.assertIn("在教室对话", prompt)
 

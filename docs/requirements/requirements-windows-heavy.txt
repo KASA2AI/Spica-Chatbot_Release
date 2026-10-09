@@ -23,7 +23,7 @@
 #        python -m pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 #
 # KNOWN pip-check inconsistency (accepted + recorded, W4-a §4.E / gate-1 §4):
-# faster-whisper and rapidocr-onnxruntime declare the "onnxruntime" DIST name;
+# rapidocr-onnxruntime declares the "onnxruntime" DIST name;
 # after the GPU swap `pip check` reports it missing while runtime imports stay
 # green (the module is provided by onnxruntime-gpu). Do NOT "fix" it by
 # reinstalling the CPU package -- that would shadow the GPU EPs.

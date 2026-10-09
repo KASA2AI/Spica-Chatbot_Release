@@ -214,5 +214,6 @@ def test_real_run_turn_binds_cancel_offer_to_a_and_never_redirects_to_b(
     ))
 
     assert any(event.kind == "done" for event in events), events
-    assert "ANIME_CANCEL_REQUEST_STALE" in model.followup_prompt
+    assert any(message['role']=='tool' and 'ANIME_CANCEL_REQUEST_STALE' in message['content']
+               for message in model.followup_prompt)
     assert emitted == []

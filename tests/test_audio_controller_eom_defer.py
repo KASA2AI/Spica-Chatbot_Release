@@ -72,6 +72,61 @@ class _FakePlayer:
         self.deleted = True
 
 
+def test_daily_and_home_bindings_remain_separate_and_only_explicit_fallback_is_used(qapp, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from ui.controllers import audio_controller as module
+    daily, home, backup = [SimpleNamespace(id=lambda value=value: value) for value in (b'desk', b'bed', b'backup')]
+    available = [daily, home, backup]
+    provider = SimpleNamespace(audioOutputs=lambda: available, defaultAudioOutput=lambda: backup)
+    monkeypatch.setattr(module, 'QMediaDevices', provider)
+    controller = AudioController(None, output_device_id=b'desk'.hex())
+    controller.set_home_output_device(b'bed'.hex())
+    output = Mock()
+    controller._configure_output(output, 'home')
+    output.setDevice.assert_called_with(home)
+    controller._configure_output(output, 'daily')
+    output.setDevice.assert_called_with(daily)
+    available.remove(home)
+    with pytest.raises(RuntimeError, match='未切换'):
+        controller._configure_output(output, 'home')
+    controller.set_home_output_device(b'bed'.hex(), fallback_device_id=b'backup'.hex())
+    controller._configure_output(output, 'home')
+    output.setDevice.assert_called_with(backup)
+    available.append(home)
+    controller._configure_output(output, 'home')
+    output.setDevice.assert_called_with(home)
+    controller.set_home_output_device(None)
+    controller._configure_output(output, 'home')
+    output.setDevice.assert_called_with(daily)
+    controller.set_home_output_device('')
+    controller._configure_output(output, 'home')
+    output.setDevice.assert_called_with(backup)
+    controller._configure_output(output, 'daily')
+    output.setDevice.assert_called_with(daily)
+
+
+def test_unplugged_fixed_output_reports_failure_instead_of_switching_mid_sentence(qapp, monkeypatch):
+    from types import SimpleNamespace
+    from ui.controllers import audio_controller as module
+    backup = SimpleNamespace(id=lambda: b'backup')
+    monkeypatch.setattr(module, 'QMediaDevices', SimpleNamespace(audioOutputs=lambda: [backup]))
+    controller = AudioController(None, output_device_id=b'desk'.hex())
+    controller.set_home_output_device(b'bed'.hex(), fallback_device_id=b'backup'.hex())
+    seq, receipts = [], []
+    player = _FakePlayer(seq)
+    controller._chat_media_player = player
+    controller._chat_token = AudioToken(1, AudioOwner.CHAT)
+    controller._chat_bound_device = b'bed'.hex()
+    controller._chat_on_finished = lambda: seq.append('finished')
+    controller._chat_on_playback = lambda outcome, at: receipts.append(outcome)
+    controller._outputs_changed()
+    assert not player.stopped
+    qapp.processEvents()
+    assert player.stopped and controller._chat_token is None
+    assert receipts == ['failed'] and seq[-1] == 'finished'
+
+
 def test_chat_endofmedia_teardown_is_deferred_out_of_signal_slot(qapp) -> None:
     controller = AudioController(None)
     seq: list[str] = []
@@ -140,3 +195,159 @@ def test_song_invalidmedia_teardown_is_deferred_and_calls_on_error(qapp) -> None
 
     assert player.disconnected is True
     assert seq == ["release", "on_error"]  # InvalidMedia -> on_error (NOT on_finished)
+
+
+@pytest.mark.parametrize('started, invalid, expected', [
+    (False, False, ['not_started']),
+    (True, False, ['started', 'completed']),
+    (True, True, ['started', 'failed']),
+])
+def test_chat_receipts_require_player_confirmation_and_preserve_failure(qapp, started, invalid, expected):
+    controller = AudioController(None)
+    controller._chat_media_player = _FakePlayer([])
+    controller._chat_token = AudioToken(id=10, owner=AudioOwner.CHAT)
+    receipts = []
+    controller._chat_on_playback = lambda outcome, at: receipts.append((outcome, at))
+    controller._sender_matches_token = lambda *a, **k: True
+    assert receipts == []  # Owning/preparing a player is not an audio start.
+    if started:
+        controller._handle_chat_playback_state(QMediaPlayer.PlaybackState.PlayingState)
+        controller._handle_chat_playback_state(QMediaPlayer.PlaybackState.PlayingState)
+        assert receipts == []  # No business callbacks on Qt's dispatch stack.
+    status = QMediaPlayer.MediaStatus.InvalidMedia if invalid else QMediaPlayer.MediaStatus.EndOfMedia
+    controller._handle_chat_media_status(status)
+    qapp.processEvents()
+    assert [outcome for outcome, _ in receipts] == expected
+    assert all(at > 0 for _, at in receipts)
+    controller.release_chat_audio()
+    qapp.processEvents()
+    assert len(receipts) == len(expected)
+
+
+def test_chat_late_player_state_cannot_start_a_replacement(qapp):
+    controller = AudioController(None)
+    receipts = []
+    controller._chat_on_playback = lambda *receipt: receipts.append(receipt)
+    controller._sender_matches_token = lambda *a, **k: False
+    controller._handle_chat_playback_state(QMediaPlayer.PlaybackState.PlayingState)
+    qapp.processEvents()
+    assert receipts == []
+    assert not controller._chat_started
+
+
+def test_persisted_speaker_survives_default_change_and_missing_device_fails(qapp, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from PySide6.QtCore import QObject, Signal
+    from ui.controllers import audio_controller as module
+    from spica.config.manager import ConfigManager
+
+    config = tmp_path/'app.yaml'
+    config.write_text('tts:\n  enabled: true\n')
+    manager = ConfigManager(config)
+    manager.update({'tts': {'output_device_id': b'speakers'.hex()}})
+    speaker = SimpleNamespace(id=lambda: b'speakers')
+    wrong = SimpleNamespace(id=lambda: b'respeaker')
+    available = [wrong, speaker]
+
+    class Output:
+        def __init__(self, parent): self.device = wrong
+        def setDevice(self, device): self.device = device
+        def setVolume(self, volume): pass
+        def deleteLater(self): pass
+
+    class Player(QObject):
+        mediaStatusChanged = Signal(object)
+        playbackStateChanged = Signal(object)
+        errorOccurred = Signal(object, str)
+        def setAudioOutput(self, output): pass
+        def setSource(self, source): pass
+        def play(self): pass
+        def stop(self): pass
+
+    monkeypatch.setattr(module, 'QAudioOutput', Output)
+    monkeypatch.setattr(module, 'QMediaPlayer', Player)
+    monkeypatch.setattr(module, 'QMediaDevices', SimpleNamespace(audioOutputs=lambda: available))
+    controller = AudioController(None, output_device_id=manager.load().tts.output_device_id)
+    path = tmp_path/'speech.wav'
+    path.touch()
+    assert controller.preload_chat_audio(0, path)
+    assert controller._preloaded_chat[0].audio_output.device is speaker
+    assert controller.play_chat_audio(path, AudioToken(1, AudioOwner.CHAT), lambda: None)
+    assert controller._chat_audio_output.device is speaker
+    controller.release_chat_audio()
+    assert controller.preload_chat_audio(0, path)
+    available[:] = [wrong]
+    receipts, finished = [], []
+    assert not controller.play_chat_audio(path, AudioToken(2, AudioOwner.CHAT), lambda: finished.append(True),
+        on_playback=lambda outcome, at: receipts.append(outcome))
+    assert receipts == ['failed'] and finished == [True]
+    assert controller._chat_audio_output is None
+    assert manager.load().tts.enabled is True
+
+
+@pytest.mark.parametrize('preloaded', [False, True])
+@pytest.mark.parametrize('failure', [None, 'exception', 'signal'])
+def test_audio_start_and_volume_override_preserve_normal_playback(qapp, monkeypatch, tmp_path, preloaded, failure):
+    from PySide6.QtCore import QObject, Signal
+    from ui.controllers import audio_controller as module
+
+    class Output:
+        def __init__(self, parent):
+            self.volume = None
+        def setVolume(self, volume):
+            self.volume = volume
+        def setDevice(self, device):
+            self.device = device
+        def deleteLater(self):
+            pass
+
+    class Player(QObject):
+        mediaStatusChanged = Signal(object)
+        playbackStateChanged = Signal(object)
+        errorOccurred = Signal(object, str)
+        MediaStatus = QMediaPlayer.MediaStatus
+        PlaybackState = QMediaPlayer.PlaybackState
+        Error = QMediaPlayer.Error
+        def setAudioOutput(self, output):
+            pass
+        def setSource(self, source):
+            pass
+        def play(self):
+            if failure == 'exception':
+                raise RuntimeError('synthetic player start failure')
+            if failure == 'signal':
+                self.errorOccurred.emit(self.Error.ResourceError, 'synthetic output failure')
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(module, 'QAudioOutput', Output)
+    monkeypatch.setattr(module, 'QMediaPlayer', Player)
+    controller = AudioController(None)
+    path = tmp_path / 'speech.wav'
+    path.touch()
+    if preloaded:
+        assert controller.preload_chat_audio(0, path)
+    receipts, finished = [], []
+    accepted = controller.play_chat_audio(path, AudioToken(1, AudioOwner.CHAT), lambda: finished.append(True),
+        volume=.45, on_playback=lambda outcome, at: receipts.append(outcome))
+    if failure:
+        assert not accepted
+        qapp.processEvents()
+        assert receipts == ['failed']
+        assert finished == [True]
+        assert controller._chat_media_player is None
+        assert controller._chat_audio_output is None
+        assert controller._chat_volume == .86
+        return
+    assert accepted
+    assert controller._chat_audio_output.volume == .45
+    assert receipts == [], 'calling play() must not report that audio started'
+    controller.set_chat_volume(.2)
+    assert controller._chat_audio_output.volume == .45
+    controller._chat_media_player.playbackStateChanged.emit(Player.PlaybackState.PlayingState)
+    qapp.processEvents()
+    assert receipts == ['started']
+    controller.release_chat_audio()
+    assert controller.play_chat_audio(path, AudioToken(2, AudioOwner.CHAT), lambda: None)
+    assert controller._chat_audio_output.volume == .2
+    controller.release_chat_audio()

@@ -1,0 +1,4 @@
+# Optional native Cubism renderer, Python 3.11 / Windows x64.
+# Install with --no-deps in the existing desktop environment.
+live2d-py==0.7.0.4; sys_platform == "win32"
+PyOpenGL==3.1.10

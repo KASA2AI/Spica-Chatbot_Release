@@ -12,6 +12,8 @@ class WindowControls(QFrame):
     minimize_requested = Signal()
     close_requested = Signal()  # The explicit exit action now lives in SettingsPanel.
     companion_requested = Signal()
+    floating_requested = Signal()
+    alarm_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -31,14 +33,24 @@ class WindowControls(QFrame):
         self.companion_button.setToolTip("陪玩 galgame")
         self.companion_button.clicked.connect(self._on_companion_clicked)
 
+        self.alarm_button = QPushButton(self)
+        self.alarm_button.setIcon(line_icon('alarm'))
+        self.alarm_button.setToolTip('闹钟')
+        self.alarm_button.clicked.connect(lambda _checked=False: self.alarm_requested.emit())
+        self.floating_button = QPushButton(self)
+        self.floating_button.setIcon(line_icon("collapse"))
+        self.floating_button.setToolTip("收起为桌宠")
+        self.floating_button.clicked.connect(lambda _checked=False: self.floating_requested.emit())
         self.minimize_button = QPushButton(self)
         self.minimize_button.setIcon(line_icon("minimize"))
         self.minimize_button.setToolTip("最小化（保留会话和草稿）")
         self.minimize_button.clicked.connect(lambda _checked=False: self.minimize_requested.emit())
         layout.addWidget(self.companion_button)
+        layout.addWidget(self.alarm_button)
         layout.addWidget(self.settings_button)
+        layout.addWidget(self.floating_button)
         layout.addWidget(self.minimize_button)
-        for button in (self.settings_button, self.companion_button, self.minimize_button):
+        for button in (self.settings_button, self.companion_button, self.alarm_button, self.floating_button, self.minimize_button):
             button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.apply_scale(1.0)
@@ -82,8 +94,10 @@ class WindowControls(QFrame):
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().setSpacing(scaled_px(6, scale))
         for button, icon in (
+            (self.alarm_button, "alarm"),
             (self.settings_button, "settings"),
             (self.companion_button, "gamepad"),
+            (self.floating_button, "collapse"),
             (self.minimize_button, "minimize"),
         ):
             button.setFixedSize(scaled_px(36, scale), scaled_px(36, scale))

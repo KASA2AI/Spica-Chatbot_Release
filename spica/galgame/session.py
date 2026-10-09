@@ -150,6 +150,8 @@ class GalgameCompanionSession:
         *,
         character_id: str = "spica",
         user_id: str = "麦",
+        principal_id: str = "owner",
+        user_name: str | None = None,
         jobs: Any = None,
         summarizer: Any = None,
         summary_trigger_chars: int = 2000,
@@ -158,6 +160,9 @@ class GalgameCompanionSession:
         self._emit: CompanionEventSink = emit or noop_companion_sink
         self._character_id = character_id
         self._user_id = user_id
+        # Preserve the existing game-store key; personal evidence has a stable owner.
+        self._principal_id = principal_id
+        self._user_name = user_name
         # Phase 8: background summarization. jobs runs the LLM off the OCR loop thread
         # (default Inline = synchronous, for tests); summarizer None -> no summaries
         # (keeps Phase 4-7 construction/tests unchanged).
@@ -295,6 +300,9 @@ class GalgameCompanionSession:
                 started_at=utc_now_iso(),
                 playthrough_id=self._playthrough_id,
                 state=_PLAYSESSION_STATE[target],
+                character_id=self._character_id,
+                principal_id=self._principal_id,
+                user_name=self._user_name,
             )
             try:
                 self._mem.add_play_session(self._play_session)

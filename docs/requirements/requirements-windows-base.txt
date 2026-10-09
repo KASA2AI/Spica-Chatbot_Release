@@ -29,7 +29,6 @@ rapidocr-onnxruntime>=1.4,<2
 # transitive pull; check_imports prints get_available_providers() from it).
 # GPU execution providers are W4 scope.
 onnxruntime>=1.17,<2
-faster-whisper>=1.1,<2
 # W3: microphone capture is now a hard dependency of the Windows voice loop
 # (promoted from PREFLIGHT; validated on the real machine in W2-a as 0.2.14).
 PyAudio>=0.2.11,<0.3
@@ -49,3 +48,6 @@ yt-dlp>=2026.7
 
 # --- PREFLIGHT ---
 # (empty since W3 promoted PyAudio to REQUIRED)
+
+# Named timezones for optional Home UI also on Windows without system tzdata.
+tzdata>=2025.1

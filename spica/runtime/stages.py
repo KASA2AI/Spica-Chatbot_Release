@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from functools import wraps
 from typing import Any, Callable
+from concurrent.futures import CancelledError
 
 from spica.conversation.character_loader import DEFAULT_CHARACTER_NAME, DEFAULT_INTERLOCUTOR_NAME
 from spica.conversation.prompt_builder import (
     DEFAULT_CHARACTER_PROFILE,
+    TOOL_EXECUTION_INSTRUCTIONS,
     append_prompt_context_sections,
     build_spica_prompt,
 )
@@ -51,6 +54,7 @@ from spica.runtime.context import (
     StreamedAnswer,
     TurnContext,
     TurnError,
+    is_turn_cancelled,
     turn_error_to_legacy_dict,
 )
 from spica.runtime.deps import TurnDeps
@@ -68,11 +72,13 @@ DEFAULT_SCREEN_ATTACHMENT_QUESTION = "请查看这张截图并概括内容。"
 # threads deps through and times the node via the injected observer (C5).
 def node_timer(func: Callable[..., TurnContext]):
     @wraps(func)
-    def wrapper(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
+    def wrapper(ctx: TurnContext, services: AgentServices, deps: Any = None, **kwargs: Any) -> TurnContext:
         observer = deps.observer if deps is not None else NoopTurnObserver()
         with observer.span(func.__name__, conversation_id=ctx.request.conversation_id):
             try:
-                return func(ctx, services, deps)
+                return func(ctx, services, deps, **kwargs)
+            except CancelledError:
+                raise
             except Exception as exc:
                 if ctx.error is None:
                     ctx.error = TurnError("NODE_FAILED", f"{func.__name__}: {exc}")
@@ -134,6 +140,20 @@ def validate_input_node(ctx: TurnContext, services: AgentServices, deps: Any = N
         # fallback (byte-identical strings), so no intermediate stage reads a
         # validate-written answer (C3c guardrail 3).
         ctx.error = TurnError("EMPTY_MESSAGE", "message 不能为空。")
+    else:
+        from spica.runtime.memory_commit import record_turn_input
+        deps = deps or TurnDeps.from_legacy_services(services)
+        record_turn_input(ctx, deps)
+        from spica.runtime.context import is_domain_conversation
+        note_reply = getattr(deps, "note_media_reply", None)
+        if (ctx.error is None and callable(note_reply)
+                and ctx.request.interaction_mode == "chat" and not is_domain_conversation(ctx.request.conversation_id)):
+            result = note_reply(ctx.user_input)
+            if result is not None:
+                from spica.runtime.memory_commit import record_turn_result
+                record_turn_result(ctx, deps, kind="tool", content=json.dumps(result, ensure_ascii=False),
+                                   event_suffix="media-reply", source="anime_playback_reply", metadata={"actor": "business"})
+                ctx.metadata["media_reply_result"] = result
     return ctx
 
 
@@ -150,6 +170,20 @@ def load_recent_context_node(ctx: TurnContext, services: AgentServices, deps: An
     # characters sharing a conversation_id can no longer read each other's recent
     # context. memory/recent.py stays a dumb store; ALL key derivation lives in the
     # strategy.
+    working_context = getattr(deps.memory, "working_context", None)
+    if callable(working_context):
+        scope = MemoryScopeStrategy(deps.config).evidence_scope(ctx.request, deps.personal_owner_id)
+        context = working_context(scope, ctx.request.material_query, exclude_turn_id=ctx.request.evidence_turn_id,
+            token_budget=900 if ctx.request.material_hint is not None and ctx.request.interaction_mode == 'system' else 2400,
+            **({'cancelled': ctx.request.cancelled} if ctx.request.cancelled is not None else {}),
+            **({'event_binding': ctx.request.event_binding} if ctx.request.event_binding is not None else {}))
+        ctx.recent = RetrievedContext(working_messages=context["messages"])
+        ctx.metadata["working_context_status"] = context["status"]
+        ctx.metadata["context_evidence_ids"] = sorted(set(context.get("evidence_ids", []))
+                                                      | set(context.get("summary_source_ids", [])))
+        ctx.metadata["context_evidence_revisions"] = context.get("evidence_revisions", {})
+        ctx.metadata["recent_context_count"] = len(context["messages"])
+        return ctx
     recent = deps.recent.get_recent(
         MemoryScopeStrategy(deps.config).recent_key(ctx.request),
         limit=deps.config.memory.recent_context_limit,
@@ -178,12 +212,13 @@ def retrieve_long_term_memory_node(ctx: TurnContext, services: AgentServices, de
     # Phase 2: the scope triple comes from MemoryScopeStrategy (same values as the
     # old hand-built MemoryScope; write-side symmetry with memory_commit is now
     # structural, not a comment).
-    scope = MemoryScopeStrategy(deps.config).ltm_scope(ctx.request)
+    scope = MemoryScopeStrategy(deps.config).ltm_scope(ctx.request, deps.personal_owner_id)
     items = deps.memory.retrieve(
         scope,
-        ctx.user_input,
+        ctx.request.material_query,
         limit=deps.config.memory.long_term_memory_limit,
     )
+    ctx.metadata["memory_retrieval_status"] = getattr(items, "status", "matched" if items else "no_match")
     # build_spica_prompt / _format_memories consume dicts (scope / content /
     # memory_type); map MemoryItem back so the prompt's scope label survives.
     memories = [
@@ -193,6 +228,15 @@ def retrieve_long_term_memory_node(ctx: TurnContext, services: AgentServices, de
             "memory_type": item.type,
             "importance": item.importance,
             "score": item.score,
+            "id": getattr(item, "id", None),
+            "source_ids": getattr(item, "source_ids", ()),
+            "source_quotes": getattr(item, "source_quotes", ()),
+            "source_times": getattr(item, "source_times", ()),
+            "revision": getattr(item, "revision", 1),
+            "revision_reason": getattr(item, "revision_reason", None),
+            "status": getattr(item, "status", "active"),
+            "valid_from": getattr(item, "valid_from", None),
+            "valid_until": getattr(item, "valid_until", None),
         }
         for item in items
     ]
@@ -220,6 +264,12 @@ def analyze_screen_attachment_node(ctx: TurnContext, services: AgentServices, de
             user_question=ctx.user_input,
         )
         ctx.screen_observation = observation
+        from agent_tools.function_tools.screen.schema import screen_observation_context_for_next_turn
+        from spica.runtime.memory_commit import record_turn_result
+        screen_context = screen_observation_context_for_next_turn(observation)
+        if screen_context:
+            record_turn_result(ctx, deps, kind="environment", content=screen_context,
+                               event_suffix="screen-observation", source="past_screen_observation")
         duration = elapsed_ms(started_ms)
         obs.mark("screen_analysis_ms", duration)
         ctx.metadata["screen_observation_used"] = True
@@ -274,35 +324,160 @@ def analyze_screen_attachment_node(ctx: TurnContext, services: AgentServices, de
     return ctx
 
 
+def estimated_context_tokens(value: Any) -> int:
+    text = json.dumps(value, ensure_ascii=False)
+    return (sum(4 if ord(char) > 127 else 1 for char in text) + 3) // 4
+
+
+def check_context_sources(ctx: TurnContext) -> bool:
+    from spica.ports.memory import EvidenceAdmissionError
+    try:
+        if ctx.before_model_request is not None:
+            ctx.before_model_request(ctx)
+        return True
+    except EvidenceAdmissionError:
+        return False  # the shared callback has already set the concrete TurnError
+
+
+def check_context_budget(ctx: TurnContext, deps: Any, prompt: Any, schemas=()) -> bool:
+    """Check each actual personal model request, including tool continuations."""
+    if not check_context_sources(ctx):
+        return False
+    if ctx.recent is None or ctx.recent.working_messages is None:
+        return True
+    instructions = ctx.prompt.model_instructions if ctx.prompt else ''
+    total = (estimated_context_tokens(prompt) + estimated_context_tokens(instructions)
+             + estimated_context_tokens(schemas))
+    ctx.metadata['prompt_estimated_tokens'] = total
+    if total <= deps.config.memory.context_token_budget:
+        return True
+    ctx.error = TurnError('CONTEXT_BUDGET_EXCEEDED',
+        '本轮内容超过上下文预算。已执行的工具结果已保留；请缩小查询范围或提高上下文预算，不要重复提交操作。')
+    return False
+
+
 @node_timer
-def build_prompt_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
+def build_prompt_node(ctx: TurnContext, services: AgentServices, deps: Any = None, *, context_sections=()) -> TurnContext:
     if _skip_if_error(ctx):
         return ctx
     deps = deps or TurnDeps.from_legacy_services(services)
     recent_context = ctx.recent.recent_context if ctx.recent else []
     long_term_memories = ctx.recent.long_term_memories if ctx.recent else []
-    prompt_input = build_spica_prompt(
+    selected_memory_ids = []
+    prompt_options = dict(
         user_input=ctx.user_input,
+        interaction_mode=ctx.request.interaction_mode,
+        input_source=ctx.request.input_source,
+        input_modality=ctx.request.input_modality,
         recent_context=recent_context,
         long_term_memories=long_term_memories,
         character_profile=str(deps.config.character.character_profile or DEFAULT_CHARACTER_PROFILE),
         memory_limit=deps.config.memory.long_term_memory_limit,
-        memory_budget_chars=deps.config.memory.long_term_memory_budget_chars,
+        memory_budget_chars=min(deps.config.memory.long_term_memory_budget_chars,
+            400 if ctx.request.material_hint is not None and ctx.request.interaction_mode == 'system' else 700),
         recent_turn_char_limit=deps.config.memory.recent_turn_char_limit,
         interlocutor_name=str(deps.config.character.interlocutor_name or DEFAULT_INTERLOCUTOR_NAME),
         character_name=str(deps.config.character.character_name or DEFAULT_CHARACTER_NAME),
         user_local_time=ctx.user_local_time if ctx.request.include_user_time_context else None,
         dialog_display_language=str(deps.config.character.dialog_display_language or "ja"),
+        personal_continuity=ctx.recent.personal_continuity if ctx.recent else (),
+        memory_retrieval_status='unavailable' if ctx.metadata.get('working_context_status') == 'unavailable'
+            else ctx.metadata.get("memory_retrieval_status", "no_match"),
+        working_messages=ctx.recent.working_messages if ctx.recent else None,
+        selected_memory_ids=selected_memory_ids,
+        material_hint=ctx.request.material_hint,
     )
-    if ctx.screen_observation:
-        prompt_input = _inject_screen_observation(
-            prompt_input,
-            ctx.screen_observation,
-            dialog_display_language=str(
-                deps.config.character.dialog_display_language or "ja"
-            ),
-        )
-    ctx.prompt = PromptBundle(prompt_input=prompt_input)
+    def compose():
+        prompt = build_spica_prompt(**prompt_options)
+        if ctx.metadata.get("media_reply_result") is not None:
+            # This is the current business owner's result. It must survive
+            # history compaction and be counted with the required current input.
+            prompt = append_prompt_context_sections(prompt, [
+                "[CURRENT_BUSINESS_RESULT source=anime_playback_reply]\n"
+                + json.dumps(ctx.metadata["media_reply_result"], ensure_ascii=False)
+            ], dialog_display_language=str(deps.config.character.dialog_display_language or "ja"))
+        if ctx.screen_observation:
+            prompt = _inject_screen_observation(prompt, ctx.screen_observation,
+                dialog_display_language=str(deps.config.character.dialog_display_language or "ja"))
+        if context_sections:
+            prompt = append_prompt_context_sections(prompt, context_sections,
+                dialog_display_language=str(deps.config.character.dialog_display_language or "ja"))
+        return prompt
+
+    prompt_input = compose()
+    instructions = ""
+    if ctx.request.interaction_mode != "system":
+        instructions = "\n\n".join(filter(None, (instructions, TOOL_EXECUTION_INSTRUCTIONS)))
+    if ctx.recent is not None and ctx.recent.working_messages is not None:
+        estimated_tokens = estimated_context_tokens
+        schemas = [] if ctx.request.interaction_mode == "system" or ctx.screen_observation else deps.tools.schemas_for_user_text(ctx.user_input)
+        overhead = estimated_tokens(instructions) + estimated_tokens(schemas)
+        total = estimated_tokens(prompt_input) + overhead
+        budget = deps.config.memory.context_token_budget
+        if total > budget:
+            # Optional author examples/background and expression hints yield
+            # before real dialogue or tool receipts. Recompose whole blocks.
+            prompt_options['character_material_budget'] = 0
+            prompt_input = compose()
+            total = estimated_tokens(prompt_input) + overhead
+        if total > budget:
+            # System/role/current input stay intact. Select whole historical
+            # exchanges with the budget left by the actual assembled contract.
+            prompt_options["working_messages"] = []
+            base = compose()
+            available = max(0, budget - overhead - estimated_tokens(base))
+            if not available and long_term_memories:
+                prompt_options["long_term_memories"] = []
+                ctx.recent.long_term_memories = []
+                base = compose()
+                available = max(0, budget - overhead - estimated_tokens(base))
+            scope = MemoryScopeStrategy(deps.config).evidence_scope(ctx.request, deps.personal_owner_id)
+            selected = deps.memory.working_context(scope, ctx.request.material_query,
+                exclude_turn_id=ctx.request.evidence_turn_id, token_budget=available,
+                **({'cancelled': ctx.request.cancelled} if ctx.request.cancelled is not None else {}),
+                **({'event_binding': ctx.request.event_binding} if ctx.request.event_binding is not None else {}))
+            ctx.metadata['working_context_status'] = selected['status']
+            if selected['status'] == 'unavailable':
+                prompt_options['memory_retrieval_status'] = 'unavailable'
+            ctx.recent.working_messages = selected["messages"]
+            ctx.metadata["context_evidence_ids"] = sorted(set(selected.get("evidence_ids", [])) | set(selected.get("summary_source_ids", [])))
+            ctx.metadata["context_evidence_revisions"] = selected.get("evidence_revisions", {})
+            prompt_options["working_messages"] = selected["messages"]
+            prompt_input = compose()
+            total = estimated_tokens(prompt_input) + overhead
+        ctx.metadata["prompt_estimated_tokens"] = total
+        if total > budget:
+            # The remaining role contract/current input cannot be cut into
+            # fragments or silently submitted beyond the configured budget.
+            ctx.error = TurnError("CONTEXT_BUDGET_EXCEEDED", "本轮必要内容超过上下文预算，精简背景和历史后仍无法容纳；请检查角色核心、工具说明或本次输入长度。")
+            return ctx
+    ctx.prompt = PromptBundle(prompt_input=prompt_input, model_instructions=instructions)
+    ctx.metadata['memory_entry_ids'] = list(selected_memory_ids)
+    validate_context = getattr(deps.memory, 'context_is_current', None)
+    if callable(validate_context):
+        from spica.ports.memory import EvidenceAdmissionError
+        scope = MemoryScopeStrategy(deps.config).evidence_scope(ctx.request, deps.personal_owner_id)
+
+        def before_model_request(ctx):
+            dependencies = {
+                'input_evidence_id': ctx.metadata.get('input_evidence_id'),
+                'context_evidence_ids': sorted(set(ctx.metadata.get('context_evidence_ids', []))
+                    | set(ctx.metadata.get('result_evidence_ids', []))),
+                'context_evidence_revisions': ctx.metadata.get('context_evidence_revisions', {}),
+                'memory_entry_ids': ctx.metadata.get('memory_entry_ids', []),
+            }
+            try:
+                current = validate_context(scope, dependencies)
+            except Exception as exc:
+                ctx.error = TurnError('MEMORY_CONTEXT_UNAVAILABLE',
+                    '暂时无法核实本轮记忆来源，已停止后续回复；已执行的操作不会重试。')
+                raise EvidenceAdmissionError(ctx.error.message) from exc
+            if not current:
+                ctx.error = TurnError('MEMORY_CONTEXT_WITHDRAWN',
+                    '本轮使用的资料已修正或删除，已停止后续回复；已执行的操作不会重试。')
+                raise EvidenceAdmissionError(ctx.error.message)
+
+        ctx.before_model_request = before_model_request
     ctx.metadata["prompt_input_chars"] = len(str(prompt_input))
     return ctx
 
@@ -313,22 +488,18 @@ def build_prompt_node(ctx: TurnContext, services: AgentServices, deps: Any = Non
 # (NEVER an LLM call -- CLAUDE.md #1.3). All-"none" turns are a byte-level no-op
 # (no span opened, ctx.timing untouched) -- that is what keeps a plain chat
 # turn's prompt + ctx identical. Injection mirrors _inject_screen_observation:
-# append sections to the already-built prompt string; build_prompt_node /
-# prompt_builder are untouched. The galgame gate/target logic lives in
+# append sections to the prompt; personal turns recompose with the same budget.
+# The galgame gate/target logic lives in
 # spica/galgame/context_contributor.py; the section builders in
 # spica/galgame/prompt_sections.py.
 
 
 def contribute_context_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
-    """Generic gated prompt-context injection (OO migration Phase 3).
+    """Read active contributors once and assemble within the personal budget.
 
-    NOT decorated with @node_timer on purpose: the all-"none" branch must be a
-    byte-level no-op, so gates run BEFORE any span. Single-contributor era keeps
-    the HISTORICAL span/timing name ``retrieve_game_context_node`` (three timing
-    assertions pin it; multi-contributor telemetry is a Phase 8 design question).
-    Best-effort throughout: a contributor whose ``mode()`` raises is treated as
-    "none" (WARNING); a failing ``sections()`` logs a WARNING and injects
-    nothing -- injection never fails the turn.
+    All-"none" is a byte-level no-op, with gates before the existing timing span.
+    Failed reads are logged and omitted; valid sections use the same prompt
+    builder to reserve their space before selecting complete historical turns.
     """
     if ctx.error is not None:
         # Prior-error turns return untouched WITHOUT resolving deps/services --
@@ -372,9 +543,11 @@ def contribute_context_node(ctx: TurnContext, services: AgentServices, deps: Any
                     exc,
                     exc_info=True,
                 )
+        if sections and ctx.recent is not None and ctx.recent.working_messages is not None:
+            return build_prompt_node(ctx, services, deps, context_sections=sections)
         if sections:
-            base = str(ctx.prompt.prompt_input or "")
-            ctx.prompt = PromptBundle(
+            base = ctx.prompt.prompt_input or ""
+            ctx.prompt = replace(ctx.prompt,
                 prompt_input=append_prompt_context_sections(
                     base,
                     sections,
@@ -394,6 +567,7 @@ retrieve_game_context_node = contribute_context_node
 
 @node_timer
 def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -> TurnContext:
+    from spica.runtime.context import is_domain_conversation
     if _skip_if_error(ctx):
         return ctx
     deps = deps or TurnDeps.from_legacy_services(services)
@@ -408,6 +582,8 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
     model = deps.config.llm.model
     max_rounds = max(1, int(deps.config.max_tool_rounds))
     prompt_input = ctx.prompt.prompt_input if ctx.prompt else None
+    cap_output = (is_domain_conversation(ctx.request.conversation_id)
+                  or ctx.recent is None or ctx.recent.working_messages is None)
     # C7: tools resolve through the registry-backed ToolSet (deps.tools); the intent
     # gate lives inside schemas_for_user_text. available_tool_schema_count stays the
     # injected legacy count (telemetry; equals the registry's built-in tool set).
@@ -442,7 +618,7 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
         [s.get("name") or (s.get("function") or {}).get("name") for s in active_tool_schemas] or "[]",
     )
 
-    prompt_for_round = str(prompt_input or "")
+    prompt_for_round = prompt_input or ""
     tool_history: list[dict[str, Any]] = []
     response = None
 
@@ -450,6 +626,8 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
     ctx.answer = answer
 
     adapter = deps.llm
+    if not check_context_budget(ctx, deps, prompt_for_round, active_tool_schemas):
+        return ctx
     if adapter.prefers_chat_completions():
         logger.debug("llm path: chat_completions (tools this turn: %s)", use_tools)
         if use_tools and active_tool_schemas:
@@ -458,6 +636,8 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
             # answer). Same fix vintage as the streaming branch (FINDINGS #18).
             probe_text = ""
             for round_index in range(max_rounds):
+                if not check_context_budget(ctx, deps, prompt_for_round, active_tool_schemas):
+                    return ctx
                 obs.mark("agent_rounds", round_index + 1)
                 response_start_ms = now_ms()
                 tool_calls, probe_text = adapter.create_chat_with_tools(
@@ -486,15 +666,27 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
                     obs.mark("raw_answer_chars", len(answer.raw_model_output or ""))
                     return ctx
                 for call in tool_calls:
+                    if ctx.request.interaction_mode == "system" or is_turn_cancelled(ctx.request):
+                        return ctx
+                    if not check_context_sources(ctx):
+                        return ctx
                     obs.bump("agent_function_calls", 1)
                     tool_start_ms = now_ms()
                     tool_result = deps.tools.run(call["name"], call["arguments"])
+                    from uuid import uuid4
+                    from spica.runtime.memory_commit import record_turn_result
+                    call_id = call.get("id") or "local_" + uuid4().hex
+                    record_turn_result(ctx, deps, kind="tool", content=tool_result, event_suffix="tool:" + call_id,
+                                       source=call["name"], metadata={"model_call_id": call_id,
+                                       "arguments": call["arguments"], "batch": round_index + 1})
                     record_screen_tool_result(ctx, obs, call["name"], tool_result)
                     tool_duration = elapsed_ms(tool_start_ms)
                     obs.bump("agent_tool_local_ms", tool_duration)
                     tool_history.append(
                         {
-                            "name": call["name"],
+                            **call,
+                            "id": call_id,
+                            "batch": round_index + 1,
                             "arguments": call["arguments"],
                             "output": tool_result,
                         }
@@ -506,7 +698,8 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
                         arguments_chars=len(call["arguments"]),
                         output_chars=len(tool_result),
                     )
-                prompt_for_round = _build_tool_followup_prompt(prompt_input, tool_history)
+                prompt_for_round = _build_tool_followup_prompt(prompt_input, tool_history,
+                    cap_output=cap_output, tool_schemas=active_tool_schemas)
             # FROZEN divergence (P1): the sync chain keeps the historical error on
             # overflow (golden-pinned); the streaming chain forces a graceful
             # final answer instead (tool_round._run_chain_rounds).
@@ -529,6 +722,8 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
         return ctx
 
     for round_index in range(max_rounds):
+        if not check_context_budget(ctx, deps, prompt_for_round, active_tool_schemas):
+            return ctx
         obs.mark("agent_rounds", round_index + 1)
         request = {
             "model": model,
@@ -538,7 +733,7 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
             request["tools"] = active_tool_schemas
 
         response_start_ms = now_ms()
-        response = adapter.create_responses(**request)
+        response = adapter.create_responses(state=ctx, **request)
         response_duration = elapsed_ms(response_start_ms)
         if round_index == 0:
             obs.mark("agent_response_initial_ms", response_duration)
@@ -568,17 +763,31 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
             return ctx
 
         for item in function_calls:
+            if ctx.request.interaction_mode == "system" or is_turn_cancelled(ctx.request):
+                return ctx
+            if not check_context_sources(ctx):
+                return ctx
             obs.bump("agent_function_calls", 1)
             tool_start_ms = now_ms()
             tool_name = str(_get_attr(item, "name", ""))
             arguments = str(_get_attr(item, "arguments", "") or "{}")
             tool_result = deps.tools.run(tool_name, arguments)
+            from uuid import uuid4
+            from spica.runtime.memory_commit import record_turn_result
+            call_id = str(_get_attr(item, "call_id", "") or "local_" + uuid4().hex)
+            record_turn_result(ctx, deps, kind="tool", content=tool_result, event_suffix="tool:" + call_id,
+                               source=tool_name, metadata={"model_call_id": call_id,
+                               "arguments": arguments, "batch": round_index + 1})
             record_screen_tool_result(ctx, obs, tool_name, tool_result)
             tool_duration = elapsed_ms(tool_start_ms)
             obs.bump("agent_tool_local_ms", tool_duration)
             tool_history.append(
                 {
                     "name": tool_name,
+                    "id": call_id,
+                    "batch": round_index + 1,
+                    "response_items": adapter.response_items(response),
+                    "assistant_text": str(_get_attr(response, "output_text", "") or ""),
                     "arguments": arguments,
                     "output": tool_result,
                 }
@@ -591,7 +800,8 @@ def call_llm_node(ctx: TurnContext, services: AgentServices, deps: Any = None) -
                 output_chars=len(tool_result),
             )
 
-        prompt_for_round = _build_tool_followup_prompt(prompt_input, tool_history)
+        prompt_for_round = _build_tool_followup_prompt(prompt_input, tool_history,
+                    cap_output=cap_output, tool_schemas=active_tool_schemas)
 
     # FROZEN divergence (P1): see the chat branch note above -- error here,
     # graceful forced final on the streaming chain.
@@ -775,7 +985,10 @@ def build_response_node(ctx: TurnContext, services: AgentServices, deps: Any = N
     return ctx
 
 
-def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, Any]]) -> str:
+def _build_tool_followup_prompt(prompt_input: Any, tool_history: list[dict[str, Any]], *, cap_output=True, tool_schemas=()) -> Any:
+    if isinstance(prompt_input, list) or tool_schemas:
+        from spica.runtime.tool_round import build_tool_followup_prompt
+        return build_tool_followup_prompt(prompt_input, tool_history, cap_output=cap_output, tool_schemas=tool_schemas)
     return "\n\n".join(
         [
             str(prompt_input),
@@ -847,6 +1060,7 @@ def _cap_tool_output(output: str) -> str:
 def _compact_tool_history_for_prompt(
     tool_history: list[dict[str, Any]],
     compact_lookup: Any = None,
+    *, cap_output: bool = True,
 ) -> list[dict[str, Any]]:
     """Two layers (P1, F4): a tool-declared compactor (``compact_lookup`` resolves
     the registry's ``compact_output``; the streaming chain passes it), then the
@@ -863,7 +1077,7 @@ def _compact_tool_history_for_prompt(
             output = compactor(output)
         elif name == "inspect_screen":
             output = _compact_screen_tool_output(output)
-        compact_item["output"] = _cap_tool_output(output)
+        compact_item["output"] = _cap_tool_output(output) if cap_output else output
         compact_history.append(compact_item)
     return compact_history
 
@@ -888,7 +1102,7 @@ def _inject_screen_observation(
 ) -> str:
     safe_observation = compact_screen_observation_for_prompt(observation)
     return append_prompt_context_sections(
-        str(prompt_input),
+        prompt_input,
         [
             "[SCREEN_OBSERVATION]",
             json.dumps(safe_observation, ensure_ascii=False),

@@ -276,7 +276,7 @@ class PipelineSmokeTest(unittest.TestCase):
 
             self.assertEqual(calls, [{"target": "full_screen", "question": "看一下我屏幕"}])
             self.assertEqual(len(llm.responses.calls), 2)
-            self.assertIn("[TOOL_RESULTS]", llm.responses.calls[1]["input"])
+            self.assertTrue(any(item.get("type") == "function_call_output" for item in llm.responses.calls[1]["input"]))
             self.assertEqual(state.answer.answer, "画面にはエラーは見えません。")
 
     def test_pipeline_returns_compatible_payload(self):
@@ -305,7 +305,10 @@ class PipelineSmokeTest(unittest.TestCase):
 
             self.assertEqual(state.answer.parsed_reply, None)
             self.assertIn("こんにちは", state.answer.raw_model_output)
-            self.assertEqual(llm.chat.completions.calls[0]["messages"][0]["role"], "user")
+            messages = llm.chat.completions.calls[0]["messages"]
+            self.assertEqual(messages[0]["role"], "system")
+            self.assertTrue(any(m["role"] == "user" and "[CURRENT_USER_INPUT]" in m["content"] for m in messages))
+            self.assertIn("[TOOL_EXECUTION]", messages[0]["content"])
             self.assertEqual(state.timing["agent_rounds"], 1)
 
 

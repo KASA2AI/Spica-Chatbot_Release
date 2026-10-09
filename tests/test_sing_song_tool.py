@@ -169,9 +169,9 @@ class SingSongChainTest(unittest.TestCase):
         # fire-and-acknowledge envelope reached the followup; final answer streams.
         followup = calls[1][1]
         self.assertTrue(followup.get("stream"))
-        followup_text = followup["messages"][0]["content"]
-        self.assertIn("[TOOL_RESULTS]", followup_text)
-        self.assertIn('\\"started\\": true', followup_text)
+        followup_text = next(m["content"] for m in followup["messages"] if m["role"] == "tool")
+        self.assertTrue(any(m.get("tool_calls") for m in followup["messages"]))
+        self.assertTrue(json.loads(followup_text)["data"]["started"])
         self.assertIn("稻香", followup_text)
         self.assertIn("tool:sing_song", [s.get("message") for s in statuses])
 
@@ -212,7 +212,7 @@ class SingSongChainTest(unittest.TestCase):
 
         self.assertEqual(answer, "找到了《稻香》，我去清嗓～")  # she still answers
         self.assertEqual([e for e in events if getattr(e, "kind", "") == "song_request"], [])
-        followup_text = calls[1][1]["messages"][0]["content"]
+        followup_text = next(m["content"] for m in calls[1][1]["messages"] if m["role"] == "tool")
         self.assertIn("SONG_NOT_FOUND", followup_text)
 
 

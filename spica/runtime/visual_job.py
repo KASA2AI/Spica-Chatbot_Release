@@ -23,7 +23,12 @@ def build_unit_visual_and_emit(
     observer: Any,
     put_unit_event: Any,
 ) -> dict[str, Any]:
-    visual = _build_unit_visual(services, ctx, unit, request_start_ms, observer)
+    if unit.get("speech_segments"):
+        for part in unit["speech_segments"]:
+            part["visual"] = _build_unit_visual(services, ctx, part, request_start_ms, observer)
+        visual = unit["speech_segments"][0]["visual"]
+    else:
+        visual = _build_unit_visual(services, ctx, unit, request_start_ms, observer)
     unit_timing = unit["timing"]
     unit_index = int(unit["index"])
     visual_ready_ms = round(now_ms() - request_start_ms, 2)

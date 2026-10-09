@@ -1004,74 +1004,17 @@ def check_tts_light(app: Any, tts_cfg: dict[str, Any]) -> dict[str, Any]:
 
 def check_stt_light(app: Any) -> dict[str, Any]:
     cfg = app.stt
-    if cfg.backend != "faster_whisper":
-        return {"name": "stt", "status": STATUS_SKIPPED,
-                "detail": {"backend": cfg.backend},
-                "reason": "本地 STT 关闭(backend=google 线上回退)"}
-    try:  # 缺包 = 本地 STT 任何形态都跑不了(第十轮 P2: 不只裸 size 分支)
-        import faster_whisper  # noqa: F401,PLC0415
-    except ImportError:
-        return {"name": "stt", "status": STATUS_DEGRADED,
-                "detail": {"model": cfg.model, "device": cfg.device,
-                           "compute_type": cfg.compute_type},
-                "reason": "faster-whisper 未安装, 本地 STT 无法运行"}
-    model_path = Path(cfg.model)
-    if not model_path.is_absolute():
-        model_path = REPO_ROOT / cfg.model
-    model_is_dir = model_path.is_dir()
-    detail = {"model": cfg.model, "device": cfg.device, "compute_type": cfg.compute_type,
-              "local_model_dir": model_is_dir}
-    if model_is_dir:
-        if not (model_path / "model.bin").is_file():
-            # 目录在但缺 CTranslate2 布局的 model.bin: 真加载立即失败(第九轮 P2)
-            return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
-                    "reason": f"本地模型目录缺 model.bin: {model_path}"}
-        return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
-                "reason": "轻量档不加载模型(--full 真跑)"}
-    # faster-whisper 的 model 可以是尺寸名或 org/name Hub ID -- 这类值目录不存
-    # 在是正常的(走 HF 缓存)。但: ①显式本地路径(./ ../ 绝对/反斜杠)不能误判成
-    # Hub ID; ②裸名必须在 faster-whisper 的官方 size 表里(未知裸名离线即
-    # ValueError, 第八轮 P2); ③HF 段不得以 . 或 - 开头(-bad/model、org/.bad
-    # 必然非法)。
-    looks_explicit_path = (
-        Path(cfg.model).is_absolute()
-        or cfg.model.startswith(("./", "../", ".\\", "..\\"))
-        or "\\" in cfg.model
-    )
-    if not looks_explicit_path:
-        if "/" not in cfg.model:
-            # 裸名必须在 faster-whisper 官方 size 表(未知裸名离线即 ValueError);
-            # faster-whisper 本身装不上 = 本地 STT 根本跑不了(第九轮 P2)。
-            try:
-                from faster_whisper.utils import _MODELS  # noqa: PLC0415
-            except ImportError:
-                return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
-                        "reason": "faster-whisper 未安装, 本地 STT 无法运行"}
-            if cfg.model not in _MODELS:
-                return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
-                        "reason": f"不是合法的 faster-whisper size 名: {cfg.model}"
-                                  "(加载时会直接 ValueError)"}
-            detail["local_model_dir"] = "n/a(size 名)"
-            return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
-                    "reason": "轻量档不加载模型(--full 真跑)"}
-        # org/name: 用官方 validator(第九轮 P2: 自造正则对 _org/name 假红、对
-        # org/name./org/na--me/.git 假绿), 官方不可用时如实标注无法判定。
-        try:
-            from huggingface_hub.utils import validate_repo_id  # noqa: PLC0415
-
-            validate_repo_id(cfg.model)
-        except ImportError:
-            detail["local_model_dir"] = "n/a(HF hub id, 未经官方校验)"
-            return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
-                    "reason": "huggingface_hub 不可用, ID 合法性未校验"}
-        except Exception as exc:  # noqa: BLE001 -- HFValidationError 家族
-            return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
-                    "reason": f"非法 HF repo id: {cfg.model} ({exc})"[:200]}
-        detail["local_model_dir"] = "n/a(HF hub id)"
-        return {"name": "stt", "status": STATUS_UNVERIFIED, "detail": detail,
-                "reason": "轻量档不加载模型(--full 真跑)"}
-    return {"name": "stt", "status": STATUS_DEGRADED, "detail": detail,
-            "reason": f"本地模型目录不存在或模型名非法: {model_path}"}
+    if cfg.backend == "qwen_cloud":
+        configured = bool(load_secrets().dashscope_api_key)
+        return {"name": "stt", "status": STATUS_UNVERIFIED if configured else STATUS_DEGRADED,
+                "detail": {"backend": cfg.backend, "model": cfg.cloud_model},
+                "reason": "云端已配置，需本人开麦验证；自检不上传录音、不加载本地模型" if configured else "缺少百炼语音识别 API Key"}
+    model = REPO_ROOT / cfg.model
+    python = Path(cfg.worker_python or sys.executable)
+    ready = python.is_file() and (model / "config.json").is_file() and bool(list(model.glob("*.safetensors")))
+    return {"name": "stt", "status": STATUS_UNVERIFIED if ready else STATUS_DEGRADED,
+            "detail": {"backend": cfg.backend, "model": str(model), "worker_python": str(python)},
+            "reason": "轻量档只检查路径；--full 在独立环境实际预热" if ready else "Qwen 本地模型或独立环境 Python 缺失"}
 
 
 def check_moondream_light(screen_cfg: Any) -> dict[str, Any]:
@@ -1341,35 +1284,23 @@ def _worker_tts() -> dict[str, Any]:
 
 def _worker_stt() -> dict[str, Any]:
     from spica.config.manager import ConfigManager
-    from spica.adapters.stt.faster_whisper import FasterWhisperAdapter
+    from spica.adapters.stt import build_stt_adapter
 
-    cfg = ConfigManager().load().stt
-    adapter = FasterWhisperAdapter(
-        model=cfg.model, device=cfg.device, compute_type=cfg.compute_type,
-        language=cfg.language, beam_size=cfg.beam_size, vad_filter=cfg.vad_filter,
-        download_root=cfg.download_root,
-    )
-    result = adapter.warmup()  # drains the segments generator = real decode
-    # ACTUAL device evidence from the loaded CTranslate2 model (configured
-    # device is just an echo; the review requires runtime proof or DEGRADED).
-    actual_device: Any = None
+    app = ConfigManager().load()
+    cfg = app.stt
+    if cfg.backend == "qwen_cloud":
+        return check_stt_light(app)
+    adapter = build_stt_adapter(cfg)
     try:
-        ct2_model = getattr(getattr(adapter, "_model", None), "model", None)
-        actual_device = getattr(ct2_model, "device", None)
-    except Exception:
-        pass
-    detail = {"model": cfg.model, "configured_device": cfg.device,
-              "actual_device": actual_device, "compute_type": cfg.compute_type,
-              "warmup_duration_ms": result.get("duration_ms")}
-    if not result.get("ok"):
-        return {"status": STATUS_FAIL, "reason": str(result.get("error")), "detail": detail}
-    if actual_device is None:
-        return {"status": STATUS_DEGRADED,
-                "reason": "取不到 CTranslate2 实际 device 证据(API 变动?)", "detail": detail}
-    if str(actual_device) != str(cfg.device):
-        return {"status": STATUS_DEGRADED,
-                "reason": f"配置 device={cfg.device} 实际={actual_device}", "detail": detail}
-    return {"status": STATUS_PASS, "detail": detail}
+        result = adapter.warmup()
+        actual = str(result.get("actual_device", ""))
+        device_ok = actual == cfg.device or (cfg.device == "auto" and bool(actual)) or (cfg.device == "cuda" and actual.startswith("cuda:"))
+        ok = result.get("ok") and device_ok
+        return {"status": STATUS_PASS if ok else STATUS_FAIL,
+                "detail": {"backend": cfg.backend, "model": cfg.model, **result},
+                "reason": "" if ok else result.get("error", "运行设备与配置不一致")}
+    finally:
+        adapter.close()
 
 
 def _worker_moondream() -> dict[str, Any]:
@@ -1861,7 +1792,7 @@ def _enabled_map(app: Any, screen_cfg: Any, song_cfg: dict[str, Any]) -> dict[st
     song_on = song_enabled(song_cfg)
     return {
         "tts": bool(app.tts.enabled),
-        "stt": app.stt.backend == "faster_whisper",
+        "stt": app.stt.backend == "qwen_asr",
         "moondream": bool(screen_cfg.enabled),
         "ocr": True,  # galgame OCR 独立于 screen.enabled, 无开关
         "song_uvr": song_on,

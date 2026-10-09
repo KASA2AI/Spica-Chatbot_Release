@@ -6,6 +6,16 @@ from memory.store import SQLiteMemoryStore
 
 
 class MemoryStoreTest(unittest.TestCase):
+    def test_unrelated_queries_do_not_inject_pinned_memory_or_reinforce_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = SQLiteMemoryStore(Path(tmpdir) / "memory.sqlite3")
+            store.add_memory("c1", "user", "喜欢雨天听夏影", 0.9, pinned=True)
+            for query in ("你呢", "谢谢", "", "主板供电接口"):
+                self.assertEqual(store.search_memories("c1", query), [])
+            for _ in range(3):
+                self.assertEqual(len(store.search_memories("c1", "雨天")), 1)
+            self.assertEqual(store.list_memories("c1")[0]["use_count"], 0)
+
     def test_add_search_and_clear(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = SQLiteMemoryStore(Path(tmpdir) / "memory.sqlite3")
@@ -17,7 +27,7 @@ class MemoryStoreTest(unittest.TestCase):
             self.assertEqual(results[0]["use_count"], 0)
 
             updated = store.list_memories("c1")
-            self.assertEqual(updated[0]["use_count"], 1)
+            self.assertEqual(updated[0]["use_count"], 0)  # retrieval is not user support
 
             store.clear_memories("c1")
             self.assertEqual(store.list_memories("c1"), [])

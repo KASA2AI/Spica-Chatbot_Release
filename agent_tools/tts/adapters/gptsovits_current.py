@@ -15,12 +15,19 @@ class CurrentGPTSoVITSAdapter:
             service = GPTSoVITSTool(config_path=config_path) if config_path else GPTSoVITSTool()
         self.service = service
 
+    @property
+    def requires_full_text(self) -> bool:
+        # An opt-in on the selected character's service, never an app default.
+        return bool(getattr(self.service, "requires_full_text", False))
+
     def synthesize(self, request: TTSRequest) -> TTSResult:
         try:
             raw = self.service.synthesize(
                 text=request.text,
                 emotion=request.emotion,
                 tts_param_overrides=self._tts_param_overrides(request),
+                **({'artifact_directory': request.artifact_directory} if request.artifact_directory is not None else {}),
+                **({'cancelled': request.cancelled} if request.cancelled is not None else {}),
             )
             if not isinstance(raw, dict):
                 raise TypeError(f"GPT-SoVITS returned unsupported result type: {type(raw).__name__}")
@@ -57,6 +64,22 @@ class CurrentGPTSoVITSAdapter:
         if warmup is None:
             raise AttributeError("Wrapped TTS service does not provide warmup")
         return warmup(*args, **kwargs)
+
+    @property
+    def resource_status(self) -> dict[str, Any]:
+        return self.service.resource_status
+
+    def set_resident(self, owner: str, enabled: bool) -> None:
+        self.service.set_resident(owner, enabled)
+
+    def release_if_unused(self) -> None:
+        self.service.release_if_unused()
+
+    def prepare_output(self) -> bool:
+        return bool(self.warmup(synthesize=True).get('ok') and self.resource_status['ready'])
+
+    def close(self) -> None:
+        self.service.close()
 
     def public_config(self) -> Any:
         public_config = getattr(self.service, "public_config", None)

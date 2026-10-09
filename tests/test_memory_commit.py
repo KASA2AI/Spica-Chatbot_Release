@@ -108,10 +108,16 @@ class SaveStreamMemoryTest(unittest.TestCase):
         scope, user_text, assistant_text, meta = memory.commits[0]
         self.assertEqual(
             (scope.character_id, scope.user_id, scope.conversation_id),
-            ("spica", "麦", "c1"),
+            ("spica", "owner", "c1"),
         )
         self.assertEqual((user_text, assistant_text), ("你好", "こんにちは。"))
-        self.assertEqual(meta, {"interlocutor_name": "麦", "max_active_memories": 200})
+        self.assertEqual(meta, {
+            "interlocutor_name": "麦", "max_active_memories": 200,
+            "evidence_turn_id": ctx.request.evidence_turn_id,
+            "conversation_id": "c1", "interaction_mode": ctx.request.interaction_mode,
+            "input_source": ctx.request.input_source,
+            "input_modality": ctx.request.input_modality,
+        })
         self.assertEqual(ctx.metadata.get("committed"), True)
 
     def test_commit_failure_only_lands_in_metadata(self):

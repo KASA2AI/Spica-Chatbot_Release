@@ -80,7 +80,7 @@ def test_voice_mode_shows_transcript_in_box(qapp):  # (a)
 def test_voice_mode_still_auto_submits(qapp):  # (c) semantics unchanged
     window = _voice_window(qapp)
     window._on_voice_recognized_text("她刚才为什么生气")
-    window.interaction_controller.handle_user_text.assert_called_once_with("她刚才为什么生气")
+    window.interaction_controller.handle_user_text.assert_called_once_with("她刚才为什么生气", input_modality="speech")
     window.close()
 
 
@@ -99,7 +99,7 @@ def test_non_voice_mode_does_not_write_box(qapp):  # (①) display strictly voic
     window._on_voice_recognized_text("不该出现")
     assert window.input_panel.input.text() == ""  # not written outside voice mode
     # ...but the auto-submit path is unconditional (semantics never gated)
-    window.interaction_controller.handle_user_text.assert_called_once_with("不该出现")
+    window.interaction_controller.handle_user_text.assert_called_once_with("不该出现", input_modality="speech")
     window.close()
 
 
@@ -109,7 +109,7 @@ def test_manual_draft_not_clobbered_but_still_submits(qapp):  # (d)
     window._on_voice_recognized_text("语音整句")
     # the draft is preserved (preview skipped), yet the voice sentence still submits
     assert window.input_panel.input.text() == "用户手输草稿"
-    window.interaction_controller.handle_user_text.assert_called_once_with("语音整句")
+    window.interaction_controller.handle_user_text.assert_called_once_with("语音整句", input_modality="speech")
     window.close()
 
 

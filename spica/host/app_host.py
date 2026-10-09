@@ -41,10 +41,8 @@ from spica.galgame.history import compose_play_history
 from spica.core.proactive import ProactiveTurnRequest
 from spica.galgame.models import CompanionBeat, utc_now_iso
 from spica.galgame.ocr_calibration import GalgameOcrCalibrator
-from spica.galgame.ocr_loop import OcrStreamRunner
 from spica.galgame.reaction import (
     ReactionEngine,
-    ReactionLexicon,
     ScoreResult,
     compose_reaction_directive,
 )
@@ -55,7 +53,6 @@ from spica.galgame.summarizer import GalgameSummarizer, recover_dangling_session
 from spica.host.domain_router import ActiveDomainRouter
 from spica.host.model_router import ModelRouter
 from spica.runtime.context import GameTurnBinding
-from spica.runtime.jobs import ThreadJobRunner
 from spica.runtime.window import WatchContext, WindowTarget
 from spica.runtime.scope import CharacterScope, character_scope_from_config
 from spica.host.agent_assembly import (
@@ -99,28 +96,12 @@ def _install_ocr_runtime_provider(config: AppConfig, services: Any) -> None:
 
 
 def resolve_mic_backend(mic_backend_cfg: str, effective_platform: str) -> str:
-    """Fold the typed ``stt.mic_backend`` value into the effective mic recorder
-    backend (W3 / A5). Pure function -- Layer B pins it with injected values,
-    same discipline as ``fold_platform``.
-
-    - explicit "respeaker"/"generic" -> returned verbatim (W3b: ReSpeaker on
-      Windows; debugging: force generic on Linux);
-    - "auto": platform "linux" -> "respeaker" (hardware-VAD path, unchanged),
-      "windows" -> "generic" (PyAudio + webrtcvad software VAD), anything else
-      RAISES -- fail loud, never a silent fold onto some mic path;
-    - an illegal cfg value already dies at the schema Literal; the raise here
-      only backstops non-config callers."""
+    """Use ordinary system input on both platforms unless hardware is selected."""
     if mic_backend_cfg in ("respeaker", "generic"):
         return mic_backend_cfg
-    if mic_backend_cfg == "auto":
-        if effective_platform == "linux":
-            return "respeaker"
-        if effective_platform == "windows":
-            return "generic"
-        raise ValueError(
-            f"stt.mic_backend=auto has no fold for effective platform {effective_platform!r}"
-        )
-    raise ValueError(f"unknown stt.mic_backend value {mic_backend_cfg!r}")
+    if mic_backend_cfg == "auto" and effective_platform in ("linux", "windows"):
+        return "generic"
+    raise ValueError(f"Unsupported microphone/platform: {mic_backend_cfg!r}/{effective_platform!r}")
 
 
 class AppHost:
@@ -133,15 +114,18 @@ class AppHost:
         self.visual_tool: Any | None = None
         self.tts_tool: Any | None = None
         self.tts_adapter: Any | None = None
-        self.stt_adapter: Any | None = None  # Plan B: local faster-whisper STT (resident singleton)
+        self._stt_cleanup = None
+        self._stt_cleanup_error = None
+        self.stt_adapter: Any | None = None  # Selected ASR adapter; model dependencies stay isolated.
         # W3: resolved mic recorder backend STRING (resolve_mic_backend, set in
         # initialize()); the UI wires it into the voice loop like stt_adapter.
         # Default matches the pre-W3 Linux path for anything reading it early.
-        self.effective_mic_backend: str = "respeaker"
+        self.effective_mic_backend: str = "generic"
         self.services: Any | None = None
         self.character_package: Any | None = None
         self.dialogue_style: Any | None = None
         self.dialogue_style_error: str | None = None
+        self.home_runtime = None
         self.chat_engine: Any | None = None
         # galgame companion event sink (Phase 4). The PUBLIC sink is a stable
         # dispatcher (P5 tee, D-P5-0): it forwards to the UI bridge and -- when
@@ -361,6 +345,7 @@ class AppHost:
                 self.config.memory.provider,
                 store=self.services.memory_store,
                 recent=self.services.recent_memory,
+                memory_config=self.config.memory,
             )
             # Anime-watch (Phase 3): domain assembly. MUST be here -- config /
             # secrets / services already exist (adapters read config.anime +
@@ -382,10 +367,7 @@ class AppHost:
             # engine; install() builds THROUGH the thin delegates below -- the
             # facade is the only build path, pinned by patch-validity tests).
             reaction_assembly.install(self)
-            # Plan B: build the STT adapter ONCE (resident singleton). Construction
-            # is cheap (the WhisperModel loads lazily at warmup/first transcribe);
-            # injected by reference into each SpeechWorker so worker churn never
-            # reloads the model.
+            # Build only the selected backend, without loading a model here.
             self.stt_adapter = self._new_stt_adapter()
             # W3: resolve the mic recorder backend once (pure fold; selection
             # logged like the platform lanes so smoke logs show the choice).
@@ -398,6 +380,8 @@ class AppHost:
                 self.services.effective_platform,
                 self.effective_mic_backend,
             )
+            from spica.host.assemblies import memory as memory_assembly
+            memory_assembly.install(self)
         except Exception:
             if self.visual_tool is None:
                 try:
@@ -478,12 +462,6 @@ class AppHost:
         )
         return bool(try_speak(request))
 
-    def _reaction_lexicon_for(self, game_id: str | None) -> ReactionLexicon:
-        """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
-        521f882 -- deletion is not scheduled): the mtime cache lives on the
-        scoring policy now."""
-        return self._reaction_scoring_policy.lexicon_for(game_id)
-
     def _reaction_scorer(self, beat: Any) -> ScoreResult:
         """Thin delegate (Phase 4 facade; LONG-LIVED per D4 stop-clock, amendment
         521f882): the engine's
@@ -556,37 +534,32 @@ class AppHost:
         fallback tree itself lives in model_router.judge_adapter (Phase 6b)."""
         return self.model_router.judge_adapter()
 
-    def _new_stt_adapter(self) -> Any | None:
-        """Plan B local STT. None unless backend == "faster_whisper" (the "google"
-        backend keeps the legacy in-worker recognize_google fallback -- never built
-        here). Resolve-once; the returned adapter holds the WhisperModel singleton
-        and is injected by reference into every SpeechWorker (worker churn != model
-        churn). Mirrors _new_summarizer/_new_reaction_judge (host stays thin)."""
-        cfg = self.config.stt
-        if str(cfg.backend) != "faster_whisper":
-            logger.info("STT backend=%s -> no local adapter (legacy fallback in worker)", cfg.backend)
-            return None
-        from spica.adapters.stt.faster_whisper import FasterWhisperAdapter
+    def _new_stt_adapter(self) -> Any:
+        from spica.adapters.stt import build_stt_adapter, UnavailableSpeechRecognition
+        try:
+            return build_stt_adapter(self.config.stt,
+                dashscope_api_key=getattr(self.secrets, "dashscope_api_key", None))
+        except Exception:
+            logger.error("语音识别配置不可用；文字聊天仍可使用，请检查所选后端与密钥。")
+            return UnavailableSpeechRecognition()
 
-        return FasterWhisperAdapter(
-            model=cfg.model, device=cfg.device, compute_type=cfg.compute_type,
-            language=cfg.language, beam_size=cfg.beam_size, vad_filter=cfg.vad_filter,
-            download_root=cfg.download_root,
-        )
-
-    def new_companion_session(self) -> GalgameCompanionSession:
-        """Build a galgame companion session wired to the game-memory adapter, the
-        companion sink, a background ``ThreadJobRunner`` + the summarizer (Phase 8).
-        Requires ``initialize()`` first (provides the adapters)."""
-        return GalgameCompanionSession(
-            self.services.game_memory_adapter,
-            emit=self.companion_sink,
-            character_id=self.character_scope.character_id,
-            user_id=self.character_scope.user_id,
-            jobs=ThreadJobRunner(),
-            summarizer=self._new_summarizer(),
-            summary_trigger_chars=self.config.galgame.summary_trigger_chars,
-        )
+    def begin_stt_shutdown(self):
+        """Reject/reap ASR in the background before Qt drains its consumers."""
+        import threading
+        worker = getattr(self, "_stt_cleanup", None)
+        if worker is None:
+            def close():
+                try:
+                    shutdown = getattr(self.stt_adapter, "close", None)
+                    if shutdown is not None:
+                        shutdown()
+                except Exception as exc:
+                    self._stt_cleanup_error = type(exc).__name__
+                    logger.exception("语音识别进程回收失败")
+            worker = threading.Thread(target=close, name="stt-shutdown", daemon=True)
+            self._stt_cleanup = worker
+            worker.start()
+        return worker
 
     def companion_controller(self) -> GalgameCompanionController:
         """The process-wide companion controller (Path B stage 2) -- the ONE the
@@ -660,6 +633,7 @@ class AppHost:
             record_history=self._record_play_history,  # B 方案: host 持写权限
             character_id=self.character_scope.character_id,
             user_id=self.character_scope.user_id,
+            user_name=self.character_scope.user_id,
             summary_trigger_chars=self.config.galgame.summary_trigger_chars,
             interval_seconds=self.config.galgame.ocr_interval_seconds,
             play_history_card_max_chars=self.config.galgame.play_history_card_max_chars,
@@ -734,22 +708,9 @@ class AppHost:
         )
         return self.services.game_memory_adapter.add_companion_beat(beat)
 
-    def _record_play_history(self, game_id: str, card: str) -> None:
-        """Play-history bridge (B 方案, FINDINGS #15): upsert the card into the
-        character's DEFAULT-scope long-term memory so plain-chat retrieval finds
-        it. memory_key is the game -> one play of the same game OVERWRITES the
-        previous card (store.upsert_memory's explicit-key UPDATE semantics);
-        scope="relationship" renders as "スピカと麦" in the prompt."""
-        character_id = self.character_scope.character_id
-        self.services.memory_store.upsert_memory(
-            conversation_id=scoped_conversation_id(character_id, "default"),
-            scope="relationship",
-            content=card,
-            importance=0.85,  # high (survives pruning) but not pinned (no +2.0 retrieval floor)
-            memory_key=f"galgame_history:{game_id}",
-            memory_type="experience",
-            source="galgame_companion",
-        )
+    def _record_play_history(self, game_id: str, card: str, session_id: str) -> None:
+        from spica.host.assemblies.memory import record_play_history
+        record_play_history(self, game_id, card, session_id)
 
     def recover_dangling_companion_sessions(self) -> list[str]:
         """Crash recovery (Phase 8 / §12): 補總結 sessions left active/paused with no
@@ -763,27 +724,31 @@ class AppHost:
         game_memory = self.services.game_memory_adapter
         dangling = {ps.session_id: ps for ps in game_memory.dangling_play_sessions()}
         recovered = recover_dangling_sessions(game_memory, summarizer)
-        user_name = self.character_scope.user_id
-        seen_games: set[str] = set()
+        seen_scopes: set[tuple[str, str, str, str]] = set()
         for session_id in recovered:
             play_session = dangling.get(session_id)
-            if play_session is None or play_session.game_id in seen_games:
+            if play_session is None or not play_session.character_id or not play_session.principal_id:
                 continue
-            seen_games.add(play_session.game_id)
+            identity = (play_session.character_id, play_session.principal_id,
+                        play_session.game_id, play_session.playthrough_id)
+            if identity in seen_scopes:
+                continue
+            seen_scopes.add(identity)
             try:
                 card = compose_play_history(
                     game_memory, play_session.game_id, play_session.playthrough_id,
-                    user_name=user_name,
+                    user_name=play_session.user_name or "本人",
                     max_chars=self.config.galgame.play_history_card_max_chars,
                 )
                 if card:
-                    self._record_play_history(play_session.game_id, card)
+                    self._record_play_history(play_session.game_id, card, play_session.session_id)
             except Exception as exc:  # noqa: BLE001 -- best-effort, never fail recovery
                 logger.warning(
                     "play history record failed for recovered game %s: %s",
                     play_session.game_id, exc, exc_info=True,
                 )
         return recovered
+
 
     def new_game_binder(self, session: GalgameCompanionSession | None = None) -> GameBinder:
         """Build a launch + window-binding coordinator (Phase 5) wired to the
@@ -797,17 +762,6 @@ class AppHost:
             self.services.game_memory_adapter,
             session,
             emit=self.companion_sink,
-        )
-
-    def new_ocr_stream_runner(self, session: GalgameCompanionSession) -> OcrStreamRunner:
-        """Build the background OCR text-stream runner (Phase 7) for an active play
-        session, wired to the capture / locator / OCR adapters. Caller starts it with
-        the resolved window id + calibrated region ratios."""
-        return OcrStreamRunner(
-            session,
-            self.services.screen_capture_adapter,
-            self.services.window_locator_adapter,
-            self.services.ocr_adapter,
         )
 
     def new_ocr_calibrator(self) -> GalgameOcrCalibrator:
@@ -849,6 +803,9 @@ class AppHost:
             if provider in CURRENT_GPTSOVITS_PROVIDERS else None
         )
         adapter = self.registry.resolve_tts(provider, config=tts_config, service=tool)
+        retain = getattr(adapter, "set_resident", None)
+        if callable(retain):
+            retain("desktop.daily", self.config.tts.daily_voice_enabled)
         return provider, tool, adapter
 
     def _install_moondream_seam(self) -> None:
@@ -904,9 +861,38 @@ class AppHost:
             stt_warmup_on_startup=(
                 bool(self.config.stt.warmup_on_startup) if self.config is not None else True
             ),
+            daily_voice_enabled=self.config.tts.daily_voice_enabled if self.config is not None else True,
         )
 
     @property
     def management_surface(self) -> Any:
         """Entry point for the settings centre (Phase 8)."""
         return self._management
+
+    def start_home(self, speech):
+        from spica.host.assemblies import home
+        self.home_runtime = self.plugin_host.activate('home', lambda: home.install(self, speech),
+            close=lambda runtime: runtime.close() if runtime is not None else None)
+        if self.home_runtime is not None:
+            home.wire_conversation(self, self.home_runtime)
+        return self.home_runtime
+
+    def home_control_text(self, text):
+        from spica.host.assemblies import home
+        return home.control_text(self, text)
+
+    def home_alarm_plan(self):
+        from spica.host.assemblies import home
+        return home.alarm_command(self)
+
+    def home_alarm_manage(self, action, arguments, *, expected_revision=None, request_id=None):
+        from spica.host.assemblies import home
+        return home.alarm_command(self, action, arguments,
+            expected_revision=expected_revision, request_id=request_id)
+
+    def home_status(self):
+        return self.home_runtime.snapshot(details=True) if self.home_runtime is not None else None
+
+    def home_camera_preview(self, action, session_id, **options):
+        from spica.host.assemblies import home
+        return home.camera_preview(self, 'desktop', action, session_id, **options)

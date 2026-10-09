@@ -326,6 +326,7 @@ def test_models_and_reference_parameters_reach_existing_tts_service(
     tool._driver = SimpleNamespace(
         i18n=lambda value: value, load=lambda **_kwargs: None,
         synthesize_chunks=synthesize_chunks,
+        generation=0,
     )
     for emotion in ("happy", "angry"):
         assert tool.synthesize("はい。", emotion)["ok"]
@@ -342,3 +343,171 @@ def test_models_and_reference_parameters_reach_existing_tts_service(
     assert song["rvc"]["runtime_python"] == "machine-python"
     assert song["rvc"]["voice_model"] == "sana"
     assert Path(song["rvc"]["voices"]["sana"]["model_path"]).is_file()
+
+
+def test_runtime_material_is_imported_versioned_and_uses_only_declared_author_sections(folder, tmp_path):
+    from spica.conversation.character_loader import select_character_material
+    meta = json.loads((folder/'meta.json').read_text())
+    meta['runtime_prompt_file'] = 'runtime_prompt.json'
+    (folder/'meta.json').write_text(json.dumps(meta))
+    (folder/'self.md').write_text('## 部活\n\n{{char}}和原作新吾一起照顾动物。\n\n## 家庭\n\n原作家人。', encoding='utf-8')
+    material = dict(schema_version=1, core='{{char}}与{{user}}熟悉地说话。',
+        expressions=[dict(scenes=['home.welcome'], triggers=[], text='笑着迎接，但不猜测下班。')],
+        background=[dict(file='self.md', heading='## 部活', triggers=['部活'])])
+    (folder/'runtime_prompt.json').write_text(json.dumps(material, ensure_ascii=False), encoding='utf-8')
+    first = import_character_folder(folder, tmp_path/'installed')
+    assert (Path(first.skill_dir)/'runtime_prompt.json').is_file()
+    profile = build_character_profile(None, first.skill_dir, '小明')
+    core, background = select_character_material(profile, '部活怎么样')
+    assert '紗凪与小明' in core and '照顾动物' in background and '原作家人' not in background
+    assert '原作新吾' in background and '小明' not in background
+    material['core'] += '也有自己的意见。'
+    (folder/'runtime_prompt.json').write_text(json.dumps(material, ensure_ascii=False), encoding='utf-8')
+    second = import_character_folder(folder, tmp_path/'installed')
+    assert first.revision != second.revision
+    assert build_character_profile('作者自己的整段原文', first.skill_dir) == '作者自己的整段原文'
+
+
+@pytest.mark.parametrize('invalid', ['version', 'memory', 'heading', 'symlink'])
+def test_invalid_runtime_material_does_not_replace_selected_role(folder, tmp_path, invalid):
+    surface = management(tmp_path)
+    surface.import_character(folder)
+    before = surface.read_config()
+    meta = json.loads((folder/'meta.json').read_text())
+    meta['runtime_prompt_file'] = 'runtime_prompt.json'
+    material = dict(schema_version=1, core='新的角色核心', background=[])
+    if invalid == 'version':
+        material['schema_version'] = 2
+    elif invalid == 'memory':
+        material['background'] = [dict(file='memory.json', heading='## 私密')]
+    elif invalid == 'heading':
+        material['background'] = [dict(file='persona.md', heading='## 不存在')]
+    (folder/'meta.json').write_text(json.dumps(meta))
+    if invalid == 'symlink':
+        outside = tmp_path/'outside.json'
+        outside.write_text(json.dumps(material))
+        try:
+            (folder/'runtime_prompt.json').symlink_to(outside)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                pytest.skip('Windows requires file symlink privileges for this case')
+            raise
+    else:
+        (folder/'runtime_prompt.json').write_text(json.dumps(material))
+    with pytest.raises((ValueError, OSError)):
+        surface.import_character(folder)
+    assert surface.read_config() == before
+
+
+def add_floating_animation(folder, *, interactions=False, idle_actions=False):
+    directory = folder / 'floating'
+    directory.mkdir()
+    frames = [Image.new('RGBA', (16, 16), color) for color in ('red', 'blue')]
+    frames[0].save(directory / 'idle.webp', save_all=True, append_images=frames[1:], duration=50, loop=0)
+    frames[0].save(directory / 'poster.png')
+    spec = dict(canvas=[16, 16], fps=20, poster='poster.png',
+                states={'idle': dict(file='idle.webp', duration_ms=100, frames=2)})
+    if interactions:
+        for state in ('click', 'dizzy'):
+            shutil.copyfile(directory / 'idle.webp', directory / f'{state}.webp')
+            spec['states'][state] = dict(file=f'{state}.webp', duration_ms=100, frames=2)
+        for state, color in (('flustered', 'yellow'), ('dizzy_held', 'purple')):
+            Image.new('RGBA', (16, 16), color).save(directory / f'{state}.png')
+            spec[state] = f'{state}.png'
+    if idle_actions:
+        spec['idle_actions'] = {}
+        for action, weight in (('grass_flute', 1), ('pizza', 1), ('breeze', 4)):
+            shutil.copyfile(directory / 'idle.webp', directory / f'{action}.webp')
+            spec['idle_actions'][action] = dict(file=f'{action}.webp', frames=2,
+                                              duration_ms=100, weight=weight)
+    (directory / 'animation.json').write_text(json.dumps(spec))
+    meta = json.loads((folder / 'meta.json').read_text())
+    meta['visuals']['floating'] = 'floating/animation.json'
+    (folder / 'meta.json').write_text(json.dumps(meta))
+    return directory, spec
+
+
+def test_floating_assets_survive_import_export_and_create_new_revision(folder, tmp_path):
+    directory, spec = add_floating_animation(folder, interactions=True, idle_actions=True)
+    spec['states']['dizzy']['start_frame'] = 1
+    (directory / 'animation.json').write_text(json.dumps(spec))
+    first = import_character_folder(folder, tmp_path / 'installed')
+    spec['suggested_display_px'] = 120
+    (directory / 'animation.json').write_text(json.dumps(spec))
+    second = import_character_folder(folder, tmp_path / 'installed')
+    assert first.revision != second.revision
+    shutil.rmtree(folder)
+    exported = tmp_path / 'export'
+    export_character_folder(second, exported)
+    loaded = load_character_package(exported)
+    assert loaded.character_id == 'sana'
+    assert loaded.manifest.visuals.floating == 'floating/animation.json'
+    assert (exported / 'floating/idle.webp').is_file()
+    for relative in ('click.webp', 'dizzy.webp', 'flustered.png', 'dizzy_held.png'):
+        assert (exported / 'floating' / relative).is_file()
+    assert json.loads((exported / 'floating/animation.json').read_text())['suggested_display_px'] == 120
+    assert json.loads((exported / 'floating/animation.json').read_text())['states']['dizzy']['start_frame'] == 1
+    for action in spec['idle_actions']:
+        assert (exported / 'floating' / f'{action}.webp').is_file()
+    assert json.loads((exported / 'floating/animation.json').read_text())['idle_actions']['breeze']['weight'] == 4
+
+
+@pytest.mark.parametrize('delays,declared_duration,valid', [
+    ([50, 150], 200, True),  # The encoder coalesces three identical timeline frames.
+    ([50, 150], 100, False),
+    ([0, 100], 100, False),
+])
+def test_floating_timing_uses_encoded_frame_delays(folder, delays, declared_duration, valid):
+    from spica.core.floating_character import validate_floating_images
+
+    directory, spec = add_floating_animation(folder, idle_actions=True)
+    frames = [Image.new('RGBA', (16, 16), color) for color in ('red', 'blue')]
+    frames[0].save(directory / 'breeze.webp', save_all=True, append_images=frames[1:],
+                   duration=delays, loop=0)
+    spec['idle_actions']['breeze']['duration_ms'] = declared_duration
+    (directory / 'animation.json').write_text(json.dumps(spec))
+    if valid:
+        validate_floating_images(folder, 'floating/animation.json')
+    else:
+        with pytest.raises(ValueError, match='timing'):
+            validate_floating_images(folder, 'floating/animation.json')
+
+
+@pytest.mark.parametrize('invalid', ['path', 'symlink', 'frames', 'held_path', 'held_size', 'start_frame',
+                                    'idle_path', 'idle_frames', 'idle_weight', 'idle_interval'])
+def test_invalid_floating_update_preserves_selected_character(folder, tmp_path, invalid):
+    directory, spec = add_floating_animation(folder)
+    surface = management(tmp_path)
+    surface.import_character(folder)
+    before = surface.read_config()
+    if invalid == 'path':
+        spec['poster'] = '../sana.png'
+    elif invalid == 'symlink':
+        (directory / 'poster.png').unlink()
+        try:
+            (directory / 'poster.png').symlink_to(folder / 'sana.png')
+        except OSError:
+            pytest.skip('platform does not allow test symlinks')
+    elif invalid == 'held_path':
+        spec['dizzy_held'] = '../sana.png'
+    elif invalid == 'held_size':
+        Image.new('RGBA', (32, 32), 'purple').save(directory / 'held.png')
+        spec['dizzy_held'] = 'held.png'
+    elif invalid == 'start_frame':
+        spec['states']['idle']['start_frame'] = 2
+    elif invalid.startswith('idle_'):
+        spec['idle_actions'] = {'breeze': dict(file='idle.webp', frames=2, duration_ms=100, weight=1)}
+        if invalid == 'idle_path':
+            spec['idle_actions']['breeze']['file'] = '../sana.png'
+        elif invalid == 'idle_frames':
+            spec['idle_actions']['breeze']['frames'] = 3
+        elif invalid == 'idle_weight':
+            spec['idle_actions']['breeze']['weight'] = 0
+        else:
+            spec['idle_interval_ms'] = [90000, 45000]
+    else:
+        spec['states']['idle']['frames'] = 3
+    (directory / 'animation.json').write_text(json.dumps(spec))
+    with pytest.raises(ValueError):
+        surface.import_character(folder)
+    assert surface.read_config() == before

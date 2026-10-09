@@ -111,7 +111,9 @@ class ModeAgnosticTest(unittest.TestCase):
         field_names = {f.name for f in dataclasses.fields(ProactiveTurnRequest)}
         self.assertEqual(
             field_names,
-            {"directive", "source", "conversation_id", "policy", "ttl_seconds"},
+            {"directive", "source", "conversation_id", "policy", "ttl_seconds",
+             "want_audio", "inherit_active_domain", "is_current", "first_sound_deadline",
+             "material_hint", "event_binding"},
         )
         for name in field_names:
             for domain in ("game", "song", "video", "galgame"):
@@ -138,7 +140,10 @@ class SystemTurnSinglePathTest(unittest.TestCase):
             events = list(engine.stream_system_turn(
                 "你刚唱完了《稻香》（周杰伦）。", source="song"))
             done = next(e for e in events if e.get("event") == "done")
-            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
+            from spica.ports.memory import MemoryScope
+            from spica.adapters.memory.sqlite import SqliteMemoryAdapter
+            evidence = SqliteMemoryAdapter(engine.services.memory_store).evidence(MemoryScope("spica", "owner", "default"))
+            recent = [row for row in evidence if row["kind"] == "system_event"]
 
         self.assertEqual(done["data"]["answer"], "唱完啦，怎么样？")
         # Exactly ONE streamed call -- NO probe, NO tools field, although the
@@ -146,14 +151,18 @@ class SystemTurnSinglePathTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         method, kwargs = calls[0]
         self.assertEqual(set(kwargs), {"model", "messages", "stream"})
-        prompt = kwargs["messages"][0]["content"]
-        self.assertIn("【系统事件，不是麦说的话】", prompt)
+        event = next(m for m in kwargs["messages"] if m["content"].startswith("[SYSTEM_EVENT"))
+        self.assertEqual(event["role"], "user")
+        prompt = event["content"]
+        self.assertIn("【系统事件，不是用户说的话】", prompt)
         self.assertIn("稻香", prompt)
-        # interaction_mode landed in recent memory; the stored user side is the
-        # framed directive (self-identifying, never impersonates the user).
+        self.assertNotIn("自然地主动说一句，简短", prompt)
+        # The raw event is retained with its own source kind; it never becomes a user message.
         self.assertEqual(len(recent), 1)
-        self.assertEqual(recent[0]["interaction_mode"], "system")
-        self.assertIn("【系统事件", recent[0]["user_text"])
+        self.assertEqual(recent[0]["modality"], "system")
+        self.assertIn("【系统事件", recent[0]["content"])
+        self.assertNotIn("说一句", recent[0]["content"])
+        self.assertNotIn("简短、口语化", recent[0]["content"])
 
 
 class ArbiterPolicyTest(unittest.TestCase):
@@ -197,8 +206,8 @@ class ArbiterPolicyTest(unittest.TestCase):
 class ComposeFramingTest(unittest.TestCase):
     def test_framing_marks_system_and_keeps_directive(self):
         message = compose_system_directive_message("你刚唱完了《稻香》。")
-        self.assertTrue(message.startswith("【系统事件，不是麦说的话】你刚唱完了《稻香》。"))
-        self.assertIn("Spica", message)
+        self.assertTrue(message.startswith("【系统事件，不是用户说的话】你刚唱完了《稻香》。"))
+        self.assertIn("当前角色", message)
 
 
 if __name__ == "__main__":

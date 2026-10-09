@@ -18,7 +18,7 @@ Pure: no ``agent`` import, Qt-free (CLAUDE.md #1).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from spica.adapters.llm import OpenAICompatibleAdapter
 from spica.adapters.memory import SqliteMemoryAdapter
@@ -94,6 +94,17 @@ class TurnDeps:
     # router / a future settings panel) must pass a new BoundModel explicitly
     # or rebuild deps -- adjudicate before 6b construction.
     model: BoundModel | None = None
+    # Set by the single-owner CoreRuntime, never inferred from display names.
+    personal_owner_id: str | None = None
+    # An unpublished proactive draft freezes a complete write and its context
+    # check. Neither input nor generated text is evidence until real delivery.
+    defer_prepared_turn: Callable[..., None] | None = None
+    # Embodied cancellation hands already emitted fragments to its core owner;
+    # SQLite retries must not delay producer teardown or presentation STOP.
+    defer_incomplete_evidence: Callable[[Callable[[], int]], None] | None = None
+    # The media business owner persists clear replies to its current offer;
+    # this closure runs only after personal input admission, never in system turns.
+    note_media_reply: Callable[[str], dict | None] | None = None
 
     def __post_init__(self) -> None:
         if self.context_contributors is None:
@@ -139,7 +150,7 @@ class TurnDeps:
             memory=(
                 services.memory_adapter
                 if services.memory_adapter is not None
-                else SqliteMemoryAdapter(services.memory_store, services.recent_memory)
+                else SqliteMemoryAdapter(services.memory_store, services.recent_memory, memory_config=app_config.memory)
             ),
             # C7: registry-backed ToolSet. Host sets services.tool_registry (ToolPort
             # tools incl. inspect_screen); tests leave it None -> adapt the legacy

@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 import ffmpeg
-import gradio as gr
 import numpy as np
 import pandas as pd
 
@@ -47,6 +46,8 @@ def clean_path(path_str: str):
 
 
 def check_for_existance(file_list: list = None, is_train=False, is_dataset_processing=False):
+    import gradio as gr
+
     files_status = []
     if is_train == True and file_list:
         file_list.append(os.path.join(file_list[0], "2-name2text.txt"))
@@ -88,6 +89,8 @@ def check_for_existance(file_list: list = None, is_train=False, is_dataset_proce
 
 
 def check_details(path_list=None, is_train=False, is_dataset_processing=False):
+    import gradio as gr
+
     if is_dataset_processing:
         list_path, audio_path = path_list
         if not list_path.endswith(".list"):

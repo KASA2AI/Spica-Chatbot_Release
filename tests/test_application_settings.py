@@ -162,7 +162,7 @@ def test_tabs_keep_appearance_controls_and_application_defaults_do_not_touch_dis
     panel = SettingsPanel()
     page = panel.application_page
     page.load_snapshot(settings.surface.read_application_settings())
-    assert [panel.tabs.tabText(i) for i in range(panel.tabs.count())] == ["角色与外观", "应用设置"]
+    assert [panel.tabs.tabText(i) for i in range(panel.tabs.count())] == ["角色与外观", "应用设置", "记忆", "Home 状态"]
     assert page.patch() == {}  # Localized language labels must still serialize to language codes.
     selected = []
     panel.voice_volume_changed.connect(selected.append)
@@ -238,6 +238,118 @@ def test_application_page_scrolls_without_changing_model(settings, qapp):
     panel.deleteLater()
 
 
+def test_cloud_selection_requires_a_separate_private_key_and_preserves_drafts(settings, qapp):
+    from PySide6.QtWidgets import QWidget
+    from ui.widgets.settings_panel import SettingsPanel
+    from ui.controllers.application_settings_controller import ApplicationSettingsController
+    before = settings.config.read_bytes()
+    with pytest.raises(ValueError, match="百炼"):
+        settings.surface.write_application_settings({"stt": {"backend": "qwen_cloud"}})
+    assert settings.config.read_bytes() == before
+    window = QWidget()
+    window.host = SimpleNamespace(management_surface=settings.surface)
+    panel = SettingsPanel(window)
+    controller = ApplicationSettingsController(window, panel)
+    page = panel.application_page
+    page.fields["stt.backend"].setCurrentIndex(page.fields["stt.backend"].findData("qwen_cloud"))
+    page.asr_key.setText("private-asr-key")
+    page.api_key.setText("unrelated-unsaved-chat-key")
+    controller.save_secret("dashscope_api_key", page.asr_key.text())
+    _wait_for_controller(qapp, controller)
+    assert not page.asr_key.text()
+    assert page.api_key.text() == "unrelated-unsaved-chat-key"
+    assert page.patch() == {"stt": {"backend": "qwen_cloud"}}
+    settings.surface.write_application_settings(page.patch())
+    state = settings.surface.read_application_settings()
+    assert state["asr_key_configured"] and state["values"]["stt"]["backend"] == "qwen_cloud"
+    assert "private-asr-key" not in json.dumps(state)
+    assert "private-asr-key" not in settings.config.read_text()
+    assert settings.owner.refresh().secrets.openai_api_key == "old-local-key"
+    restarted = settings.environment(settings.owner.restart_environment())
+    assert restarted.secrets.dashscope_api_key == "private-asr-key"
+    window.deleteLater()
+
+
+@pytest.mark.parametrize("backend", ["faster_whisper", "google"])
+def test_saving_new_qwen_path_migrates_legacy_base_before_applying_edit(settings, qapp, backend):
+    from ui.widgets.application_settings_page import ApplicationSettingsPage
+    raw = yaml.safe_load(settings.config.read_text())
+    raw["stt"] = {"backend": backend, "model": "old-whisper-weights", "compute_type": "int8"}
+    settings.config.write_text(yaml.safe_dump(raw))
+    page = ApplicationSettingsPage()
+    page.load_snapshot(settings.surface.read_application_settings())
+    page.fields["stt.model"].setText("/downloaded/Qwen3-ASR-1.7B")
+    precision = page.fields["stt.compute_type"]
+    precision.setCurrentIndex(precision.findData("float16"))
+    assert "backend" not in page.patch()["stt"]
+    saved = settings.surface.write_application_settings(page.patch())
+    actual = settings.surface.config_manager.load().stt
+    assert actual.backend == "qwen_asr"
+    assert actual.model == saved["values"]["stt"]["model"] == "/downloaded/Qwen3-ASR-1.7B"
+    assert actual.compute_type == "float16"
+    assert yaml.safe_load(settings.config.read_text())["stt"]["backend"] == "qwen_asr"
+    page.deleteLater()
+
+
+def test_device_refresh_preserves_unplugged_selection_and_works_without_microphone_stack(settings, qapp, monkeypatch):
+    from PySide6.QtWidgets import QWidget
+    from ui.widgets.settings_panel import SettingsPanel
+    from ui.controllers.application_settings_controller import ApplicationSettingsController
+    window = QWidget()
+    window.host = SimpleNamespace(management_surface=settings.surface)
+    panel = SettingsPanel(window)
+    controller = ApplicationSettingsController(window, panel)
+    page = panel.application_page
+    selected = "[\"ALSA\",\"Desk Mic\",1]"
+    page.update_device_choices("stt.input_device", [("默认", ""), ("Desk", selected)])
+    page.fields["stt.input_device"].setCurrentIndex(1)
+    monkeypatch.setattr("hardware.audio_input.devices.list_input_devices", Mock(side_effect=RuntimeError("no driver")))
+    monkeypatch.setattr("PySide6.QtMultimedia.QMediaDevices.audioOutputs", lambda: [
+        SimpleNamespace(id=lambda: b"speaker", description=lambda: "桌面音箱")])
+    controller.refresh_devices()
+    _wait_for_controller(qapp, controller)
+    assert page.values()["stt"]["input_device"] == selected
+    assert page.fields["tts.output_device_id"].findData(b"speaker".hex()) >= 0
+    assert "麦克风列表不可用" in page.status.text()
+    settings.surface.write_application_settings(page.patch())
+    assert settings.surface.config_manager.load().stt.input_device == selected
+    window.deleteLater()
+
+
+def test_settings_inventory_loads_off_gui_thread_without_losing_draft(settings, qapp):
+    import threading
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QWidget
+    from ui.widgets.settings_panel import SettingsPanel
+    from ui.controllers.application_settings_controller import ApplicationSettingsController
+    window = QWidget()
+    window.host = SimpleNamespace(management_surface=settings.surface)
+    panel = SettingsPanel(window)
+    controller = ApplicationSettingsController(window, panel, autoload=False)
+    page = panel.application_page
+    page.load_snapshot(settings.surface.read_application_settings())
+    page.fields["llm.model"].setText("keep-this-draft")
+    entered, release = threading.Event(), threading.Event()
+    def read():
+        entered.set()
+        assert release.wait(3)
+        return {"characters": []}
+    characters = SimpleNamespace(read_snapshot=read, apply_snapshot=Mock())
+    try:
+        controller.refresh_async(characters)
+        assert entered.wait(2)
+        responsive = []
+        QTimer.singleShot(0, lambda: responsive.append(True))
+        qapp.processEvents()
+        assert responsive and controller.worker is not None
+    finally:
+        release.set()
+        _wait_for_controller(qapp, controller)
+    assert page.patch() == {"llm": {"model": "keep-this-draft"}}
+    characters.apply_snapshot.assert_called_once()
+    window.deleteLater()
+
+
 def test_missing_api_key_opens_application_tab_on_startup(settings, qapp, monkeypatch):
     from ui.qt_overlay import OverlayWindow
     settings.env.write_text("", encoding="utf-8")
@@ -248,6 +360,7 @@ def test_missing_api_key_opens_application_tab_on_startup(settings, qapp, monkey
     window.show()
     qapp.processEvents()
     assert window.settings_panel.isVisible()
+    _wait_for_controller(qapp, window.application_settings_controller)
     assert window.settings_panel.tabs.currentWidget() is window.settings_panel.application_page
     assert "尚未配置" in window.settings_panel.application_page.api_key_status.text()
     window.hide()
@@ -262,16 +375,16 @@ def test_chatbot_has_no_ecosystem_configuration_entry(settings):
     assert "hub" not in settings.surface.read_application_settings()["values"]
 
 
-def test_online_recognition_does_not_offer_unsupported_language_controls(settings, qapp):
+def test_cloud_recognition_keeps_language_but_disables_local_model_controls(settings, qapp):
     from ui.widgets.settings_panel import SettingsPanel
     panel = SettingsPanel()
     page = panel.application_page
     page.load_snapshot(settings.surface.read_application_settings())
     backend = page.fields["stt.backend"]
-    backend.setCurrentIndex(backend.findData("google"))
-    assert not page.fields["stt.language"].isEnabled()
+    backend.setCurrentIndex(backend.findData("qwen_cloud"))
+    assert page.fields["stt.language"].isEnabled()
     assert not page.fields["stt.model"].isEnabled()
-    backend.setCurrentIndex(backend.findData("faster_whisper"))
+    backend.setCurrentIndex(backend.findData("qwen_asr"))
     assert page.fields["stt.language"].isEnabled()
     assert page.patch() == {}
     panel.deleteLater()
@@ -346,12 +459,13 @@ def test_secret_save_keeps_dependent_dotenv_references(settings, existing):
 
 
 @pytest.mark.parametrize("saved_backend,draft_backend", [
-    ("google", "faster_whisper"), ("faster_whisper", "google"),
+    ("qwen_cloud", "qwen_asr"), ("qwen_asr", "qwen_cloud"),
 ])
 def test_saving_secret_restores_stt_draft_controls(settings, qapp, saved_backend, draft_backend):
     from PySide6.QtWidgets import QWidget
     from ui.widgets.settings_panel import SettingsPanel
     from ui.controllers.application_settings_controller import ApplicationSettingsController
+    settings.surface.write_application_secret("dashscope_api_key", "test-cloud-key")
     settings.surface.write_application_settings({"stt": {"backend": saved_backend}})
     window = QWidget()
     window.host = SimpleNamespace(management_surface=settings.surface)
@@ -363,8 +477,8 @@ def test_saving_secret_restores_stt_draft_controls(settings, qapp, saved_backend
     controller.save_secret("openai_api_key", "replacement-key")
     _wait_for_controller(qapp, controller)
     assert backend.currentData() == draft_backend
-    for field in ("language", "model", "device", "compute_type", "warmup_on_startup"):
-        assert page.fields[f"stt.{field}"].isEnabled() is (draft_backend == "faster_whisper")
+    for field in ("model", "worker_python", "device", "compute_type", "warmup_on_startup"):
+        assert page.fields[f"stt.{field}"].isEnabled() is (draft_backend == "qwen_asr")
     assert page.patch() == {"stt": {"backend": draft_backend}}
     window.deleteLater()
 
@@ -412,3 +526,17 @@ def test_connection_probe_uses_the_same_network_route_as_chat(settings, monkeypa
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_memory_organizer_requires_explicit_opt_in_and_model(settings):
+    management = settings.surface
+    snapshot = management.read_application_settings()
+    assert not snapshot["values"]["memory"]["consolidation_enabled"]
+    assert snapshot["values"]["memory"]["consolidation_model"] == ""
+    with pytest.raises(ValueError, match="整理"):
+        management.write_application_settings({"memory": {"consolidation_enabled": True}})
+    management.write_application_settings({"memory": {"consolidation_enabled": True,
+        "consolidation_model": "budget-model", "consolidation_min_user_turns": 10,
+        "consolidation_min_tokens": 4000}})
+    result = management.read_application_settings()["values"]["memory"]
+    assert result["consolidation_enabled"] and result["consolidation_model"] == "budget-model"

@@ -241,6 +241,7 @@ class Secrets:
 
     __slots__ = (
         "_openai_api_key",
+        "_dashscope_api_key",
         "_judge_api_key",
         "_bilibili_cookie",
         "_qbittorrent_password",
@@ -252,8 +253,10 @@ class Secrets:
         judge_api_key: str | None = None,
         bilibili_cookie: str | None = None,
         qbittorrent_password: str | None = None,
+        dashscope_api_key: str | None = None,
     ) -> None:
         object.__setattr__(self, "_openai_api_key", openai_api_key)
+        object.__setattr__(self, "_dashscope_api_key", dashscope_api_key)
         object.__setattr__(self, "_judge_api_key", judge_api_key)
         object.__setattr__(self, "_bilibili_cookie", bilibili_cookie)
         object.__setattr__(self, "_qbittorrent_password", qbittorrent_password)
@@ -264,6 +267,10 @@ class Secrets:
     @property
     def openai_api_key(self) -> str | None:
         return self._openai_api_key
+
+    @property
+    def dashscope_api_key(self) -> str | None:
+        return self._dashscope_api_key
 
     @property
     def judge_api_key(self) -> str | None:
@@ -370,9 +377,6 @@ class RepoEnvironmentTransition:
     @property
     def after(self) -> ResolvedRepoEnvironment:
         return self._after
-
-    def repo_changed(self, environment_name: str) -> bool:
-        return environment_name in self._changed_names
 
     def repo_change(self, environment_name: str) -> str:
         before_present = self._before.repo_contains(environment_name)
@@ -486,6 +490,7 @@ class LoadedSecrets:
                         SECRETS_ENV_MAP["qbittorrent_password"],
                         secrets.qbittorrent_password,
                     ),
+                    (SECRETS_ENV_MAP["dashscope_api_key"], secrets.dashscope_api_key),
                     *legacy_secret_canaries,
                 )
                 if value is not None
@@ -690,10 +695,12 @@ class LoadedSecrets:
         import tempfile
         from spica.config.manager import ConfigManager
 
-        if slot not in {"openai_api_key"}:
+        if slot not in {"openai_api_key", "dashscope_api_key"}:
             raise ValueError("此设置不支持编辑该密钥。")
         if not value.strip() or any(char in value for char in "\r\n\0"):
             raise ValueError("密钥不能为空，也不能包含换行。")
+        if slot == "dashscope_api_key" and (not value.isascii() or any(c.isspace() for c in value)):
+            raise ValueError("百炼密钥不能包含空白或非 ASCII 字符。")
         path = self._refresh_repo_env_path
         if path is None:
             raise ValueError("密钥来源不可用，请从桌面入口重新启动程序。")
@@ -808,6 +815,7 @@ def load_secrets(
                 _warn_legacy(legacy_name)
         return Secrets(
             openai_api_key=os.getenv("OPENAI_API_KEY"),
+            dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
             judge_api_key=os.getenv("JUDGE_API_KEY"),
             bilibili_cookie=os.getenv("BILIBILI_COOKIE"),
             qbittorrent_password=os.getenv("QBITTORRENT_PASSWORD"),
@@ -880,6 +888,7 @@ def _reconstruct_inherited_environment(
             inherited[name] = value
     secret_values = {
         SECRETS_ENV_MAP["openai_api_key"]: secrets.openai_api_key,
+        SECRETS_ENV_MAP["dashscope_api_key"]: secrets.dashscope_api_key,
         SECRETS_ENV_MAP["judge_api_key"]: secrets.judge_api_key,
         SECRETS_ENV_MAP["bilibili_cookie"]: secrets.bilibili_cookie,
         SECRETS_ENV_MAP["qbittorrent_password"]: secrets.qbittorrent_password,
@@ -930,6 +939,7 @@ def _loaded_from_explicit_layers(
                 _warn_legacy(legacy_name)
     resolved_secrets = Secrets(
         openai_api_key=winning_value(SECRETS_ENV_MAP["openai_api_key"]),
+        dashscope_api_key=winning_value(SECRETS_ENV_MAP["dashscope_api_key"]),
         judge_api_key=winning_value(SECRETS_ENV_MAP["judge_api_key"]),
         bilibili_cookie=winning_value(SECRETS_ENV_MAP["bilibili_cookie"]),
         qbittorrent_password=winning_value(

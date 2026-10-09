@@ -10,6 +10,8 @@ INVARIANT (CLAUDE.md #1 + #4): Qt-free; secrets come from the secrets loader.
 
 from __future__ import annotations
 
+from spica.config.schema import fold_platform
+
 import logging
 import sys
 from pathlib import Path
@@ -29,7 +31,6 @@ from agent_tools.function_tools import TOOL_SCHEMAS, default_tool_functions
 from common.timing import log_timing
 from memory.recent import RecentMemory
 from spica.adapters.memory.sqlite import character_memory_prefix
-from spica.core.character_memory import restore_character_save
 from memory.store import SQLiteMemoryStore
 from spica.adapters.game_memory import GameMemorySqliteAdapter
 from spica.adapters.game_launcher import LinuxDesktopGameLauncher
@@ -137,32 +138,6 @@ def build_moondream_provider(
     return None
 
 
-def fold_platform(os_cfg: str, host_platform: str) -> str:
-    """Fold the typed ``platform.os`` value into the effective platform (W1,
-    WINDOWS_COMPAT_PLAN §3.2). Pure function -- no ``sys`` read here, so Layer B
-    pins it with injected values. The desktop runtime's single platform read is
-    in ``build_agent_services``; independent sidecars detect their own process
-    platform at their adapter composition boundary.
-
-    - explicit "linux"/"windows" -> returned verbatim (never looks at the host;
-      also the only escape hatch on unknown hosts);
-    - "auto": host "linux" -> "linux", host "win32" -> "windows", anything else
-      (darwin/cygwin/msys/...) RAISES -- fail loud, never a silent fold onto the
-      wmctrl lane on a non-Linux host (P2-2);
-    - an illegal os_cfg already fails loud at the schema Literal layer; the raise
-      here only backstops non-config callers."""
-    if os_cfg in ("linux", "windows"):
-        return os_cfg
-    if os_cfg == "auto":
-        if host_platform == "linux":
-            return "linux"
-        if host_platform == "win32":
-            return "windows"
-        raise ValueError(
-            f"platform.os=auto has no fold for host platform {host_platform!r}; "
-            "set platform.os explicitly (linux|windows) in data/config/app.yaml"
-        )
-    raise ValueError(f"unknown platform.os value {os_cfg!r}")
 
 
 def build_window_locator(effective_os: str):
@@ -322,6 +297,4 @@ def build_agent_services(
         # writes the real fold result, never relying on the dataclass default.
         effective_platform=effective_platform,
     )
-    if character_package is not None:
-        restore_character_save(character_package, services)
     return services

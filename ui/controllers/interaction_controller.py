@@ -38,13 +38,13 @@ class InteractionController(QObject):
     def set_chat_stream_controller(self, chat_stream_controller: ChatStreamController | None) -> None:
         self.chat_stream_controller = chat_stream_controller
 
-    def handle_user_text(self, text: str) -> None:
+    def handle_user_text(self, text: str, *, input_modality: str = "text") -> None:
         # A (double-turn窄缝 second line): a send while a mic segment is still
         # recording would otherwise produce two turns (this send + the segment's own
         # recognition). In voice mode, retire the in-flight segment first. Pairs with
         # the input lock (input_enabled=not recording): the lock prevents the keypress,
         # this catches a send already in flight. No-op when nothing is recording.
-        if self.voice_input_controller.voice_mode_active:
+        if self.voice_input_controller.listening_enabled:
             self.voice_input_controller.interrupt_current_recording()
         message = (text or "").strip()
         has_screen_attachment = self.screen_attachment_provider() is not None
@@ -56,7 +56,7 @@ class InteractionController(QObject):
             if self.song_controller.is_busy():
                 self.song_controller.cancel()
             screen_attachment = self.consume_screen_attachment()
-            self._start_chat(message, screen_attachment=screen_attachment)
+            self._start_chat(message, screen_attachment=screen_attachment, input_modality=input_modality)
             return
 
         # B2: the pre-chat hijack is gone -- singing is the main LLM's sing_song
@@ -69,7 +69,7 @@ class InteractionController(QObject):
         if self.song_controller.is_busy():
             self.song_controller.cancel()
 
-        self._start_chat(message)
+        self._start_chat(message, input_modality=input_modality)
 
     def stop_conversation_for_song(self) -> None:
         if self.chat_stream_controller is not None:
@@ -77,9 +77,10 @@ class InteractionController(QObject):
         self.audio_controller.stop_owner(AudioOwner.CHAT)
         self.voice_input_controller.interrupt_current_recording()
 
-    def _start_chat(self, message: str, screen_attachment: dict[str, Any] | None = None) -> None:
+    def _start_chat(self, message: str, screen_attachment: dict[str, Any] | None = None, *, input_modality: str = "text") -> None:
         if self.chat_stream_controller is None:
             self.set_busy(False)
             self.focus_input()
             return
-        self.chat_stream_controller.start_chat(message, screen_attachment=screen_attachment)
+        self.chat_stream_controller.start_chat(message, screen_attachment=screen_attachment,
+            **({"input_modality": input_modality} if input_modality != "text" else {}))

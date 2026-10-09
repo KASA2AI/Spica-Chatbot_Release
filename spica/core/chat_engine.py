@@ -12,6 +12,8 @@ INVARIANT (CLAUDE.md #1): Qt-free.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from contextlib import nullcontext
 import logging
 import threading
 from typing import Any, Callable
@@ -23,6 +25,7 @@ from spica.conversation.character_loader import (
 )
 from spica.conversation.reply_parser import guess_emotion, normalize_emotion, parse_model_reply
 from spica.core.proactive import compose_system_directive_message
+from spica.core.events import GenericEvent
 from spica.runtime.services import AgentServices
 from spica.config.schema import AppConfig
 from spica.runtime.context import (
@@ -43,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 class ChatEngine:
     def __init__(self, services: AgentServices, config: AppConfig) -> None:
+        self.turn_scope = nullcontext
+        self.reply_audio_route = lambda request: request.audio_route
         self.services = services
         self.config = config
         # Typed deps (C3a): the runtime uses deps.tools; ports/config are wired in
@@ -62,6 +67,10 @@ class ChatEngine:
         self._game_binding_provider: Callable[
             [], GameTurnBinding | DomainTurnBinding | None
         ] | None = None
+
+    @property
+    def daily_voice_enabled(self) -> bool:
+        return self.config.tts.daily_voice_enabled and getattr(self.deps.tts, "name", "") != "text_only"
 
     # -- driving --------------------------------------------------------------
     def set_game_binding_provider(
@@ -89,8 +98,9 @@ class ChatEngine:
         interaction_mode: str,
         screen_attachment: dict[str, Any] | None,
         cancelled: threading.Event | None = None,
+        inherit_active_domain: bool = True,
     ) -> TurnRequest:
-        binding = self._game_binding_provider() if self._game_binding_provider else None
+        binding = self._game_binding_provider() if inherit_active_domain and self._game_binding_provider else None
         # Double-wrap guard (Phase 8-c1: registry-based): a caller already
         # addressing ANY registered domain conversation (manual/debug path) is
         # taken as-is, never rewritten. The registry holds exactly galgame
@@ -171,10 +181,12 @@ class ChatEngine:
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
         )
+        req = replace(req, want_audio=self.daily_voice_enabled)
         # Sync path (C2) = drive run_turn with Inline (no thread pools), collect
         # the typed events, and fold them into the response payload.
-        events = list(run_turn(self._context_from_request(req), self.services,
-                               exec_strategy=Inline(), deps=self.deps))
+        with self.turn_scope(req) as admitted:
+            events = list(run_turn(self._context_from_request(admitted), self.services,
+                                   exec_strategy=Inline(), deps=self.deps))
         return fold_events(events, conversation_id=req.conversation_id)
 
     def run(self, user_input: str, conversation_id: str = "default") -> str:
@@ -191,14 +203,41 @@ class ChatEngine:
         interaction_mode: str = "chat",
         screen_attachment: dict[str, Any] | None = None,
         cancelled: threading.Event | None = None,
+        evidence_turn_id: str | None = None,
+        input_modality: str = "text",
+        want_audio: bool | None = None,
+        audio_cancelled: threading.Event | None = None,
+        source: str = "desktop",
+        material_hint=None,
+        event_binding=None,
+        inherit_active_domain: bool = True,
+        audio_route: str = "daily",
     ):
         """Drive a turn, yielding typed ``RuntimeEvent``s via the run_turn entry."""
         req = self._request(
             user_input, conversation_id, emotion_override, tts_param_overrides,
             visual_overrides, include_user_time_context, interaction_mode, screen_attachment,
-            cancelled=cancelled,
+            cancelled=cancelled, inherit_active_domain=inherit_active_domain,
         )
-        yield from run_turn(self._context_from_request(req), self.services, deps=self.deps)
+        req = replace(req, evidence_turn_id=evidence_turn_id or req.evidence_turn_id,
+                      want_audio=self.daily_voice_enabled if want_audio is None else (want_audio and self.config.tts.enabled),
+                      audio_cancelled=audio_cancelled, input_modality=input_modality, input_source=source,
+                      material_hint=material_hint, event_binding=event_binding, audio_route=audio_route)
+        yield from self.stream_request(req)
+
+    def stream_request(self, request: TurnRequest, *, deps_snapshot=None):
+        """Trusted local requests reuse run_turn; the host alone supplies operation scope."""
+        with self.turn_scope(request) as admitted:
+            if deps_snapshot is None and (admitted is not request or request.audio_route != "daily"):
+                yield GenericEvent('reply_audio_policy', {'enabled': admitted.want_audio, 'route': admitted.audio_route})
+            route = admitted.audio_route
+            for event in run_turn(self._context_from_request(admitted), self.services,
+                                  deps=deps_snapshot or self.deps):
+                current_route = self.reply_audio_route(admitted)
+                if deps_snapshot is None and current_route != route:
+                    route = current_route
+                    yield GenericEvent('reply_audio_policy', {'enabled': admitted.want_audio, 'route': route})
+                yield event
 
     def stream_system_turn(
         self,
@@ -207,6 +246,10 @@ class ChatEngine:
         conversation_id: str | None = None,
         source: str = "",
         cancelled: threading.Event | None = None,
+        evidence_turn_id: str | None = None,
+        input_modality: str = "text",
+        want_audio: bool | None = None,
+        audio_cancelled: threading.Event | None = None,
     ):
         """P3: a SYSTEM-initiated turn (proactive speech). Mode-agnostic: the
         caller (song report today, galgame tease / video commentary later) only
@@ -219,7 +262,8 @@ class ChatEngine:
             compose_system_directive_message(directive),
             conversation_id=conversation_id or "default",
             interaction_mode="system",
-            cancelled=cancelled,
+            cancelled=cancelled, evidence_turn_id=evidence_turn_id, input_modality=input_modality,
+            want_audio=want_audio, audio_cancelled=audio_cancelled,
         )
 
     def stream_voice(
@@ -233,6 +277,15 @@ class ChatEngine:
         interaction_mode: str = "chat",
         screen_attachment: dict[str, Any] | None = None,
         cancelled: threading.Event | None = None,
+        evidence_turn_id: str | None = None,
+        input_modality: str = "text",
+        want_audio: bool | None = None,
+        audio_cancelled: threading.Event | None = None,
+        source: str = "desktop",
+        material_hint=None,
+        event_binding=None,
+        inherit_active_domain: bool = True,
+        audio_route: str = "daily",
     ):
         """Drive a turn, yielding legacy dict events for the current UI."""
         for event in self.stream_voice_runtime(
@@ -244,9 +297,21 @@ class ChatEngine:
             include_user_time_context=include_user_time_context,
             interaction_mode=interaction_mode,
             screen_attachment=screen_attachment,
-            cancelled=cancelled,
+            cancelled=cancelled, evidence_turn_id=evidence_turn_id, input_modality=input_modality,
+            want_audio=want_audio, audio_cancelled=audio_cancelled,
+            source=source, material_hint=material_hint, event_binding=event_binding,
+            inherit_active_domain=inherit_active_domain, audio_route=audio_route,
         ):
             yield event.to_legacy_dict()
+
+    def record_presentation(self, turn_id: str, *, outcome: str) -> None:
+        """Retain a local terminal receipt, without asserting the person heard it."""
+        if outcome not in {"completed", "cancelled", "failed"}:
+            raise ValueError("invalid presentation outcome")
+        record = getattr(self.deps.memory, "record_presentation", None)
+        if callable(record):
+            scope = self._memory_scope.evidence_scope(TurnRequest(""), self.deps.personal_owner_id)
+            record(scope, turn_id, outcome=outcome, endpoint="desktop")
 
     # -- character / memory management (dissolved from SimpleAgent, Phase 6D) --
     def set_interlocutor_name(self, name: str) -> str:
@@ -284,14 +349,24 @@ class ChatEngine:
         # the scoped write key (previously it cleared the bare conversation_id
         # while the long-term side below was already scoped -- the asymmetry).
         self.services.recent_memory.clear(recent_key)
-        cleared = {"recent_memory": True, "long_term_memory": False}
-        if clear_long_term:
-            self.services.memory_store.clear_memories(ltm_conversation_id)
-            cleared["long_term_memory"] = True
+        scope = self._memory_scope.evidence_scope(TurnRequest("", conversation_id), self.deps.personal_owner_id)
+        self.deps.memory.clear_context(scope, clear_long_term=clear_long_term)
+        cleared = {"recent_memory": True, "long_term_memory": clear_long_term}
         return {"ok": True, "conversation_id": conversation_id, "cleared": cleared}
 
-    def list_memory(self, conversation_id: str = "default", limit: int = 50) -> list[dict[str, Any]]:
-        return self.services.memory_store.list_memories(self._ltm_conversation_id(conversation_id), limit=limit)
+    def list_memory(self, conversation_id: str = "default", limit: int = 50,
+                    include_history: bool = False, before_id: int | None = None) -> list[dict[str, Any]]:
+        scope = self._memory_scope.ltm_scope(TurnRequest("", conversation_id), self.deps.personal_owner_id)
+        return self.deps.memory.list_memory(scope, limit=limit, include_history=include_history, before_id=before_id)
+
+    def memory_maintenance_status(self) -> dict[str, Any]:
+        scope = self._memory_scope.evidence_scope(TurnRequest(''), self.deps.personal_owner_id)
+        return self.deps.memory.maintenance_status(scope)
+
+    def resume_memory_maintenance(self) -> dict[str, Any]:
+        scope = self._memory_scope.evidence_scope(TurnRequest(''), self.deps.personal_owner_id)
+        self.deps.memory.run_maintenance(scope, 'resume')
+        return self.deps.memory.maintenance_status(scope)
 
     def remember(
         self,
@@ -300,16 +375,16 @@ class ChatEngine:
         scope: str = "user",
         importance: float = 0.8,
     ) -> int:
-        return self.services.memory_store.upsert_memory(
-            conversation_id=self._ltm_conversation_id(conversation_id),
-            scope=scope,
-            content=content,
-            importance=importance,
-            source="manual",
-        )
+        owner = self._memory_scope.evidence_scope(TurnRequest("", conversation_id), self.deps.personal_owner_id)
+        return self.deps.memory.remember(owner, content, category=scope, importance=importance)
 
     def forget_memory(self, memory_id: int) -> None:
-        self.services.memory_store.delete_memory(memory_id)
+        scope = self._memory_scope.ltm_scope(TurnRequest(""), self.deps.personal_owner_id)
+        self.deps.memory.forget(scope, memory_id)
+
+    def revise_memory(self, memory_id: int, content: str, reason: str = "correction") -> int:
+        scope = self._memory_scope.ltm_scope(TurnRequest(""), self.deps.personal_owner_id)
+        return self.deps.memory.revise(scope, memory_id, content, reason=reason)
 
     def parse_model_reply(self, output_text: str) -> dict[str, str]:
         return parse_model_reply(output_text)

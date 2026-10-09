@@ -4,14 +4,14 @@ Behavior contract (W3-a): same shape as ``record_respeaker_channel0_hardware_vad
 -- ``(should_stop, on_speech_start, end_silence_seconds, ...) -> bytes`` of one
 VAD-segmented 16 kHz mono int16 utterance (pre-roll included) -- so the
 ``SpeechWorker`` call site consumes either backend unchanged. The endpointing
-state machine is a 1:1 port of the hardware-VAD loop (pre-roll deque / started /
-speech_elapsed / silence_elapsed / start_timeout / max_seconds); the only
+state machine mirrors the hardware-VAD loop (pre-roll / separate idle, utterance,
+voiced and silence durations / start_timeout / max_seconds); the only
 substitution is ``webrtcvad.Vad.is_speech(frame, 16000)`` for the ReSpeaker's
 ``control.is_voice()``, on 20 ms frames (320 samples -- the same chunk size the
 hardware loop derives from ``vad_poll_seconds=0.02``).
 
 IMPORT DISCIPLINE (W3 ruling): ``webrtcvad`` MAY be imported at module level
-(docs/requirements/requirements-stt.txt ships the -wheels fork on both platforms); **PyAudio must
+(requirements-stt.txt ships the -wheels fork on both platforms); **PyAudio must
 stay lazy** -- it is only touched inside the real open path, so importing this
 module never requires an audio stack.
 
@@ -45,8 +45,10 @@ import webrtcvad
 from hardware.respeaker.audio import (
     DEFAULT_END_SILENCE_SECONDS,
     ReSpeakerAudioError,
+    ReSpeakerCaptureReleaseError,
     ReSpeakerNoSpeechError,
     ReSpeakerRecordingCancelled,
+    release_audio_capture,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,51 +75,68 @@ def _load_pyaudio():
 class _DefaultMicStream:
     """Owns the PyAudio instance + stream so ``close()`` tears both down."""
 
-    def __init__(self, audio: Any, stream: Any) -> None:
+    def __init__(self, audio: Any, stream: Any, channels: int = 1) -> None:
         self._audio = audio
         self._stream = stream
+        self._channels = channels
 
     def read(self, frames_per_buffer: int, exception_on_overflow: bool = False) -> bytes:
-        return self._stream.read(frames_per_buffer, exception_on_overflow=exception_on_overflow)
+        pcm = self._stream.read(frames_per_buffer, exception_on_overflow=exception_on_overflow)
+        if self._channels == 1:
+            return pcm
+        # ReSpeaker's native WASAPI endpoint is six channels. Channel zero is
+        # its processed microphone signal, matching the Linux hardware route.
+        # Do not mix the raw array/echo-reference channels into VAD or KWS.
+        import numpy as np
+        if len(pcm) % (self._channels * SAMPLE_WIDTH):
+            raise ReSpeakerAudioError('多通道麦克风帧长度异常')
+        return np.frombuffer(pcm, dtype='<i2').reshape(-1, self._channels)[:, 0].tobytes()
 
     def close(self) -> None:
-        try:
-            self._stream.stop_stream()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            self._stream.close()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            self._audio.terminate()
-        except Exception:  # noqa: BLE001
-            pass
+        release_audio_capture(self._stream, self._audio)
 
 
-def _open_default_mic_stream(frames_per_buffer: int) -> _DefaultMicStream:
+def _open_default_mic_stream(frames_per_buffer: int, *, input_device: str = "") -> _DefaultMicStream:
     """Open the system default input device at 1ch/16k/int16. Any failure --
     no device, privacy/permission denial, unsupported rate -- raises the FATAL
     "无法打开麦克风" envelope with the backend's original message preserved."""
     pyaudio = _load_pyaudio()
     audio = pyaudio.PyAudio()
     try:
+        from hardware.audio_input.devices import resolve_input_device
+        selection = {"input_device_index": resolve_input_device(audio, input_device)} if input_device else {}
+        channels = 1
+        if selection:
+            index = selection['input_device_index']
+            info = audio.get_device_info_by_index(index)
+            host = audio.get_host_api_info_by_index(int(info['hostApi']))['name']
+            if host == 'Windows WASAPI':
+                try:
+                    audio.is_format_supported(SAMPLE_RATE, input_device=index, input_channels=1,
+                                              input_format=pyaudio.paInt16)
+                except ValueError as error:
+                    native_channels = int(info['maxInputChannels'])
+                    # Only the known ReSpeaker layout has a defined channel-0
+                    # meaning. Other unsupported devices remain explicit errors.
+                    if (error.args[-1] != -9998 or native_channels != 6 or 'ReSpeaker' not in info['name']):
+                        raise
+                    audio.is_format_supported(SAMPLE_RATE, input_device=index, input_channels=native_channels,
+                                              input_format=pyaudio.paInt16)
+                    channels = native_channels
         stream = audio.open(
             format=pyaudio.paInt16,
-            channels=1,
+            channels=channels,
             rate=SAMPLE_RATE,
             input=True,
             frames_per_buffer=frames_per_buffer,
+            **selection,
         )
     except Exception as exc:
-        try:
-            audio.terminate()
-        except Exception:  # noqa: BLE001
-            pass
+        release_audio_capture(None, audio)
         raise ReSpeakerAudioError(
-            f"无法打开麦克风（默认输入设备，1ch/16000Hz/s16le）：{exc}"
+            f"无法打开麦克风（所选输入设备，16000Hz/s16le）：{exc}"
         ) from exc
-    return _DefaultMicStream(audio, stream)
+    return _DefaultMicStream(audio, stream, channels)
 
 
 def record_generic_mic_software_vad(
@@ -128,12 +147,18 @@ def record_generic_mic_software_vad(
     pre_roll_seconds: float = 0.25,
     should_stop: Callable[[], bool] | None = None,
     on_speech_start: Callable[[], None] | None = None,
+    on_ready: Callable[[], None] | None = None,
     *,
     vad: Any | None = None,
     vad_aggressiveness: int = DEFAULT_VAD_AGGRESSIVENESS,
     stream_factory: Callable[[int], Any] | None = None,
+    input_device: str = "",
 ) -> bytes:
     """Record the default mic until the software VAD sees the utterance end.
+
+    Waiting is bounded by ``start_timeout``; ``max_seconds`` starts at the first
+    voice frame and includes pauses. Only voiced frames count toward the minimum
+    speech duration; shorter bursts raise ``ReSpeakerNoSpeechError``.
 
     ``vad`` / ``stream_factory`` are behavior seams (W3 TDD ruling): tests drive
     the full segmentation contract with fake VAD frames / a fake stream; in
@@ -150,6 +175,8 @@ def record_generic_mic_software_vad(
         vad = webrtcvad.Vad(vad_aggressiveness)
 
     factory = stream_factory or _open_default_mic_stream
+    if input_device and stream_factory is None:
+        factory = lambda size: _open_default_mic_stream(size, input_device=input_device)
     try:
         stream = factory(FRAME_SAMPLES)
     except ReSpeakerAudioError:
@@ -161,9 +188,11 @@ def record_generic_mic_software_vad(
     pre_roll: deque[bytes] = deque(maxlen=max(1, math.ceil(pre_roll_seconds / chunk_seconds)))
     recorded: list[bytes] = []
     started = False
-    session_seconds = 0.0
-    speech_elapsed = 0.0
-    silence_elapsed = 0.0
+    idle_chunks = 0
+    utterance_chunks = 0
+    speech_chunks = 0
+    silence_chunks = 0
+    ready_sent = False
 
     try:
         while True:
@@ -179,7 +208,11 @@ def record_generic_mic_software_vad(
                 raise ReSpeakerAudioError(
                     f"麦克风读取异常：期望 {FRAME_BYTES} bytes/帧，实际 {len(frame)}。"
                 )
-            session_seconds += chunk_seconds
+
+            if not ready_sent:
+                ready_sent = True
+                if on_ready is not None:
+                    on_ready()
 
             try:
                 voice = bool(vad.is_speech(frame, SAMPLE_RATE))
@@ -197,35 +230,41 @@ def record_generic_mic_software_vad(
                             on_speech_start()
                         except Exception:  # noqa: BLE001 -- a hint cb must never kill recording
                             logger.warning("on_speech_start hint failed", exc_info=True)
-                recorded.append(frame)
-                speech_elapsed += chunk_seconds
-                silence_elapsed = 0.0
+                speech_chunks += 1
+                silence_chunks = 0
             elif started:
-                recorded.append(frame)
-                speech_elapsed += chunk_seconds
-                silence_elapsed += chunk_seconds
-                if silence_elapsed >= end_silence_seconds and speech_elapsed >= min_speech_seconds:
-                    logger.info(
-                        "generic mic software VAD ended recording after %.2fs speech and %.2fs trailing silence",
-                        speech_elapsed,
-                        silence_elapsed,
-                    )
-                    return b"".join(recorded)
+                silence_chunks += 1
             else:
                 pre_roll.append(frame)
-                if session_seconds >= start_timeout:
+                idle_chunks += 1
+                if idle_chunks * chunk_seconds >= start_timeout:
                     raise ReSpeakerNoSpeechError("没有检测到语音输入。")
+                continue
 
-            if started and session_seconds >= max_seconds:
-                logger.info("generic mic software VAD reached max_seconds %.2fs", max_seconds)
+            recorded.append(frame)
+            utterance_chunks += 1
+            silence_finished = not voice and silence_chunks * chunk_seconds >= end_silence_seconds
+            if silence_finished or utterance_chunks * chunk_seconds >= max_seconds:
+                speech_seconds = speech_chunks * chunk_seconds
+                if speech_seconds < min_speech_seconds:
+                    logger.info("generic mic software VAD discarded %.2fs voice burst", speech_seconds)
+                    raise ReSpeakerNoSpeechError("没有检测到足够长的语音输入。")
+                logger.info(
+                    "generic mic software VAD ended recording (%s): %.2fs utterance, "
+                    "%.2fs voiced, %.2fs trailing silence",
+                    "silence" if silence_finished else "max_seconds",
+                    utterance_chunks * chunk_seconds,
+                    speech_seconds,
+                    silence_chunks * chunk_seconds,
+                )
                 return b"".join(recorded)
-            if not started and session_seconds >= max_seconds:
-                raise ReSpeakerNoSpeechError("没有检测到语音输入。")
     finally:
         try:
             stream.close()
-        except Exception:  # noqa: BLE001
-            pass
+        except ReSpeakerCaptureReleaseError:
+            raise
+        except Exception as exc:
+            raise ReSpeakerCaptureReleaseError(stream) from exc
 
 
 def _validate_args(**values: float) -> None:

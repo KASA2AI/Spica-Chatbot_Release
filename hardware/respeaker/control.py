@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import math
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -19,20 +21,44 @@ class ReSpeakerControlError(RuntimeError):
     pass
 
 
+class ReSpeakerDeviceMismatchError(ReSpeakerControlError):
+    """Never recover an uncertain hardware identity by choosing another device."""
+
+
+def usb_address_for_input(info):
+    """Resolve this PortAudio ALSA PCM's current USB bus/address, not its ordinal."""
+    match = re.search(r'\(hw:(\d+),\d+\)$', str(info.get('name', '')))
+    if match is None:
+        return None  # Other backends may use USB control only if it is unique.
+    try:
+        value = (Path('/proc/asound') / f'card{int(match[1])}' / 'usbbus').read_text().strip()
+        bus, address = value.split('/')
+        return int(bus), int(address)
+    except (OSError, ValueError) as exc:
+        raise ReSpeakerDeviceMismatchError('无法确认所选麦克风的 USB 身份，未使用其他设备。') from exc
+
+
 class ReSpeakerControl:
-    def __init__(self) -> None:
+    def __init__(self, *, usb_address: tuple[int, int] | None = None) -> None:
         usb_core, usb_util = self._load_pyusb()
         tuning_module = self._load_tuning_module()
 
         try:
-            dev = usb_core.find(idVendor=VID, idProduct=PID)
+            devices = list(usb_core.find(find_all=True, idVendor=VID, idProduct=PID))
         except Exception as exc:
             raise ReSpeakerControlError(self._format_usb_error(exc)) from exc
 
-        if dev is None:
+        if usb_address is not None:
+            devices = [dev for dev in devices if (dev.bus, dev.address) == usb_address]
+            if not devices:
+                raise ReSpeakerDeviceMismatchError('所选麦克风对应的 ReSpeaker USB 设备已不可用，未使用其他设备。')
+        if not devices:
             raise ReSpeakerControlError(
                 "未找到 ReSpeaker USB Mic Array (2886:0018)。请确认设备已连接并可被当前用户访问。"
             )
+        if len(devices) != 1:
+            raise ReSpeakerDeviceMismatchError('无法唯一匹配 ReSpeaker USB 与录音设备，请选择可匹配的输入或使用普通麦克风模式。')
+        dev = devices[0]
 
         tuning_cls = getattr(tuning_module, "Tuning", None)
         if tuning_cls is None:
@@ -49,6 +75,37 @@ class ReSpeakerControl:
     def is_voice(self) -> bool:
         try:
             return bool(self._tuning.is_voice())
+        except Exception as exc:
+            raise ReSpeakerControlError(self._format_usb_error(exc)) from exc
+
+    def limit_agc_gain(self, maximum: float) -> None:
+        """Apply a validated linear gain ceiling without boosting current gain."""
+        try:
+            if not math.isclose(float(self._tuning.read("AGCMAXGAIN")), maximum, rel_tol=1e-6):
+                self._tuning.write("AGCMAXGAIN", maximum)
+                if not math.isclose(float(self._tuning.read("AGCMAXGAIN")), maximum, rel_tol=1e-6):
+                    raise ReSpeakerControlError("ReSpeaker AGC 最大增益写入后读回不一致。")
+            if float(self._tuning.read("AGCGAIN")) > maximum:
+                self._tuning.write("AGCGAIN", maximum)
+        except ReSpeakerControlError:
+            raise
+        except Exception as exc:
+            raise ReSpeakerControlError(self._format_usb_error(exc)) from exc
+
+    def turn_leds_off(self) -> None:
+        """ReSpeaker USB pixel-ring commands; leave audio and gain untouched."""
+        try:
+            # See respeaker/pixel_ring usb_pixel_ring_v2: brightness, VAD LED, RGB.
+            for command, data in ((0x20, [0]), (0x22, [0]), (1, [0, 0, 0, 0])):
+                self._dev.ctrl_transfer(0x40, 0, command, 0x1C, data, 1000)
+        except Exception as exc:
+            raise ReSpeakerControlError(self._format_usb_error(exc)) from exc
+
+    def turn_leds_on(self) -> None:
+        """Restore a visible cyan ring and VAD indication without touching audio."""
+        try:
+            for command, data in ((0x20, [20]), (0x22, [1]), (1, [0, 128, 255, 0])):
+                self._dev.ctrl_transfer(0x40, 0, command, 0x1C, data, 1000)
         except Exception as exc:
             raise ReSpeakerControlError(self._format_usb_error(exc)) from exc
 

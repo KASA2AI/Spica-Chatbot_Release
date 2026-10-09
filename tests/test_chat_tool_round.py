@@ -96,7 +96,7 @@ class _ChatCompletionsAPI:
 
     def create(self, **kwargs):
         self._calls.append(("chat.completions.create", kwargs))
-        is_followup = "[TOOL_RESULTS]" in kwargs["messages"][0]["content"]
+        is_followup = any(m["role"] == "tool" for m in kwargs["messages"])
         want_tool = bool(kwargs.get("tools")) and not self._decline_tools and not is_followup
         if kwargs.get("stream"):
             if want_tool:
@@ -282,9 +282,13 @@ class StreamChatToolRoundTest(unittest.TestCase):
         followup = calls[1][1]
         self.assertTrue(followup.get("stream"))
         self.assertNotIn("tools", followup)
-        followup_text = followup["messages"][0]["content"]
-        self.assertIn("[TOOL_RESULTS]", followup_text)
-        self.assertIn("watch_game_screen", followup_text)
+
+        tool = next(m for m in followup["messages"] if m["role"] == "tool")
+        assistant = next(m for m in followup["messages"] if m.get("tool_calls"))
+        self.assertEqual(tool["tool_call_id"], "call_1")
+        self.assertEqual(assistant["tool_calls"][0]["id"], tool["tool_call_id"])
+        self.assertEqual(assistant["tool_calls"][0]["function"]["name"], "watch_game_screen")
+        self.assertTrue(json.loads(tool["content"])["ok"])
 
 
 class StreamPreambleDroppedTest(unittest.TestCase):
@@ -378,7 +382,11 @@ class SyncChainChatToolRoundTest(unittest.TestCase):
         # The sync loop re-offers tools every round (mirror of the Responses
         # loop); the followup prompt carries the tool results.
         self.assertIn("tools", chat_calls[1])
-        self.assertIn("[TOOL_RESULTS]", chat_calls[1]["messages"][0]["content"])
+        self.assertIn('[EXECUTED_TOOL_CONTRACT]', str(chat_calls[1]['messages']))
+        self.assertIn(json.dumps(chat_calls[0]['tools'][0]['function']['description'], ensure_ascii=False),
+                      '\n'.join(m['content'] for m in chat_calls[1]['messages']))
+        self.assertEqual(next(m["tool_call_id"] for m in chat_calls[1]["messages"]
+                              if m["role"] == "tool"), "call_1")
         self.assertEqual(analysis.calls, [("game_window", QUESTION)])
 
 
@@ -416,7 +424,8 @@ class StreamResponsesRegressionTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         method, kwargs = calls[0]
         self.assertEqual(method, "responses.create")
-        self.assertEqual(set(kwargs), {"model", "input", "stream"})
+        self.assertEqual(set(kwargs), {"model", "input", "stream", "instructions"})
+        self.assertIn("[TOOL_EXECUTION]", kwargs["instructions"])
 
 
 class ProbeStatusSilentTest(unittest.TestCase):

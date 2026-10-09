@@ -870,58 +870,21 @@ class TtsCheckRegistryTest(unittest.TestCase):
         self.assertIsInstance(adapter, TextOnlyTTSAdapter)
 
 
-class SttLightModelKindTest(unittest.TestCase):
-    """第六轮 review P2: 合法 Hub ID(org/name, 如 Systran/faster-whisper-large-v3)
-    因含 / 被当成缺失的本地路径 -> 轻量档误报 DEGRADED/exit 1。faster-whisper
-    明确支持这种 ID。"""
-
-    def _app(self, model: str):
-        from types import SimpleNamespace
-
-        return SimpleNamespace(stt=SimpleNamespace(
-            backend="faster_whisper", model=model, device="cuda",
-            compute_type="float16", warmup_on_startup=True))
-
-    def test_org_slash_name_hub_id_is_unverified_not_degraded(self):
-        result = self_check.check_stt_light(self._app("Systran/faster-whisper-large-v3"))
-        self.assertEqual(result["status"], "UNVERIFIED")
-
-    def test_bare_size_name_is_unverified(self):
-        result = self_check.check_stt_light(self._app("large-v3-turbo"))
-        self.assertEqual(result["status"], "UNVERIFIED")
-
-    def test_existing_local_dir_with_model_bin_is_unverified(self):
+class SttLocalPathsTest(unittest.TestCase):
+    def test_qwen_requires_local_weights_and_a_worker_interpreter(self):
         from tempfile import TemporaryDirectory
-
+        from types import SimpleNamespace
+        from spica.config.schema import SttConfig
         with TemporaryDirectory() as tmp:
-            (Path(tmp) / "model.bin").write_bytes(b"x")  # CTranslate2 布局
-            result = self_check.check_stt_light(self._app(tmp))
-        self.assertEqual(result["status"], "UNVERIFIED")
-        self.assertIs(result["detail"]["local_model_dir"], True)
-
-    def test_missing_multi_segment_path_is_degraded(self):
-        # 两段以上斜杠不可能是 Hub ID -- 只能是配置错误的本地路径
-        result = self_check.check_stt_light(self._app("spica_data/models/absent-dir"))
-        self.assertEqual(result["status"], "DEGRADED")
-
-    def test_invalid_bare_size_name_is_degraded(self):
-        # 第八轮 review P2: faster-whisper 对未知裸 size 名离线即抛 ValueError --
-        # 不能放行为 UNVERIFIED/exit 0。合法 size 表来自 faster_whisper.utils。
-        result = self_check.check_stt_light(self._app("definitely-not-a-faster-whisper-size"))
-        self.assertEqual(result["status"], "DEGRADED")
-
-    def test_invalid_hub_id_segments_are_degraded(self):
-        # HF 段不得以 . 或 - 开头: -bad/model 与 org/.bad 都是必然非法的 ID。
-        for model in ("-bad/model", "org/.bad"):
-            result = self_check.check_stt_light(self._app(model))
-            self.assertEqual(result["status"], "DEGRADED", model)
-
-    def test_explicit_relative_and_absolute_missing_paths_are_degraded(self):
-        # 第七轮 review P2: ./ ../ 和绝对路径是显式本地路径, 不能仅按斜杠数量
-        # 误判成 Hub ID(". "".." 能通过字符类正则)。
-        for model in ("./missing-dir", "../missing-dir", "/opt/models/absent"):
-            result = self_check.check_stt_light(self._app(model))
-            self.assertEqual(result["status"], "DEGRADED", model)
+            app = SimpleNamespace(stt=SttConfig(model=tmp, worker_python=sys.executable))
+            self.assertEqual(self_check.check_stt_light(app)["status"], "DEGRADED")
+            (Path(tmp) / "model.bin").write_bytes(b"old-ctranslate-weights")
+            self.assertEqual(self_check.check_stt_light(app)["status"], "DEGRADED")
+            (Path(tmp) / "config.json").write_text("{}")
+            (Path(tmp) / "model.safetensors").touch()
+            self.assertEqual(self_check.check_stt_light(app)["status"], "UNVERIFIED")
+            app.stt.worker_python = str(Path(tmp) / "absent-python")
+            self.assertEqual(self_check.check_stt_light(app)["status"], "DEGRADED")
 
 
 class UvrEffectiveModelDirTest(unittest.TestCase):
@@ -1406,34 +1369,6 @@ class NinthRoundFixesTest(unittest.TestCase):
                 self_check._raise_keyboard_interrupt(signal_mod.SIGTERM, None)
         finally:
             signal_mod.signal(signal_mod.SIGTERM, original)
-
-
-class SttOfficialValidatorTest(unittest.TestCase):
-    def _app(self, model):
-        from types import SimpleNamespace
-
-        return SimpleNamespace(stt=SimpleNamespace(
-            backend="faster_whisper", model=model, device="cuda",
-            compute_type="float16", warmup_on_startup=True))
-
-    def test_officially_invalid_ids_are_degraded(self):
-        for model in ("org/name.", "org/na--me", "org/name.git", "org/.bad"):
-            result = self_check.check_stt_light(self._app(model))
-            self.assertEqual(result["status"], "DEGRADED", model)
-
-    def test_officially_valid_underscore_ids_are_not_rejected(self):
-        for model in ("_org/name", "org/_name"):
-            result = self_check.check_stt_light(self._app(model))
-            self.assertEqual(result["status"], "UNVERIFIED", model)
-
-    def test_empty_local_dir_without_model_bin_is_degraded(self):
-        from tempfile import TemporaryDirectory
-
-        with TemporaryDirectory() as tmp:
-            result = self_check.check_stt_light(self._app(tmp))
-        self.assertEqual(result["status"], "DEGRADED")
-
-
 
 
 class TenthRoundFixesTest(unittest.TestCase):

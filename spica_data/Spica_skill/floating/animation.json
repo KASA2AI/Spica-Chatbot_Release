@@ -1,0 +1,108 @@
+{
+  "name": "Spica",
+  "canvas": [
+    256,
+    256
+  ],
+  "fps": 20,
+  "suggested_display_px": 96,
+  "poster": "poster.png",
+  "states": {
+    "idle": {
+      "file": "idle.webp",
+      "frames": 120,
+      "duration_ms": 6000
+    },
+    "listening": {
+      "file": "listening.webp",
+      "frames": 64,
+      "duration_ms": 3200
+    },
+    "speaking": {
+      "file": "speaking.webp",
+      "frames": 80,
+      "duration_ms": 4000
+    },
+    "dragged": {
+      "file": "dragged.webp",
+      "frames": 48,
+      "duration_ms": 2400,
+      "pivot_px": [
+        135.5,
+        25.0
+      ]
+    },
+    "click": {
+      "file": "click.webp",
+      "frames": 36,
+      "duration_ms": 1800
+    },
+    "dizzy": {
+      "file": "dizzy.webp",
+      "frames": 84,
+      "duration_ms": 4200,
+      "start_frame": 28
+    },
+    "petting": {
+      "file": "petting.webp",
+      "frames": 54,
+      "duration_ms": 3000
+    },
+    "thinking": {
+      "file": "thinking.webp",
+      "frames": 96,
+      "duration_ms": 4800
+    },
+    "peek": {
+      "file": "peek.webp",
+      "frames": 16,
+      "duration_ms": 4800
+    },
+    "notice": {
+      "file": "notice.webp",
+      "frames": 64,
+      "duration_ms": 3600
+    },
+    "sleep": {
+      "file": "sleep.webp",
+      "frames": 120,
+      "duration_ms": 6000
+    },
+    "welcome": {
+      "file": "welcome.webp",
+      "frames": 58,
+      "duration_ms": 3200
+    },
+    "easter_egg": {
+      "file": "easter_egg.webp",
+      "frames": 92,
+      "duration_ms": 5200
+    }
+  },
+  "idle_actions": {
+    "grass-whistle": {
+      "file": "grass-whistle.webp",
+      "frames": 81,
+      "duration_ms": 4600,
+      "weight": 1
+    },
+    "pizza": {
+      "file": "pizza.webp",
+      "frames": 80,
+      "duration_ms": 4600,
+      "weight": 1
+    },
+    "breeze": {
+      "file": "breeze.webp",
+      "frames": 91,
+      "duration_ms": 5200,
+      "weight": 4
+    }
+  },
+  "idle_interval_ms": [
+    30000,
+    45000
+  ],
+  "flustered": "flustered.png",
+  "dizzy_held": "dizzy_held.png"
+}

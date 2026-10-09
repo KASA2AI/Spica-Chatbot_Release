@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import threading
 import time
@@ -7,9 +8,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Signal
 
-from spica.core.events import event_from_legacy
+from spica.core.events import (event_from_legacy, DesktopAudioPlaybackEvent,
+    DesktopPresentationTerminalEvent, DesktopTurnLifecycleReleasedEvent)
+from spica.runtime.jobs import ThreadJobRunner
 from spica.core.proactive import NO_COMMENT_SENTINEL, compose_system_directive_message
 from spica.core.state_machine import ChatStateMachine
 from ui.controllers.audio_controller import AudioController
@@ -26,7 +29,22 @@ from ui.workers.chat_worker import ChatWorker
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ReplyPresentationResult:
+    completed: bool = False
+    text_presented: bool = False
+    audio_requested: bool = True
+    audio_completed: bool = False
+
+    @property
+    def allows_response(self):
+        return self.completed and (self.audio_completed if self.audio_requested else self.text_presented)
+
+
 class ChatStreamController(QObject):
+    reply_text_complete = Signal()
+    delivery_event = Signal(object)
+    turn_started = Signal(str)
     def __init__(
         self,
         parent: QObject,
@@ -40,8 +58,11 @@ class ChatStreamController(QObject):
         on_chat_done: Callable[[], None],
         on_error: Callable[[str], None],
         apply_visual: Callable[[dict[str, Any]], None],
+        text_surface_visible: Callable[[], bool] | None = None,
+        reset_visual: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        self.reset_visual = reset_visual or (lambda: None)
         self.agent = agent
         self.conversation_id_provider = conversation_id_provider
         self.visual_overrides_provider = visual_overrides_provider
@@ -52,7 +73,15 @@ class ChatStreamController(QObject):
         self.on_chat_done = on_chat_done
         self.on_error = on_error
         self.apply_visual = apply_visual
+        self._text_surface_visible = text_surface_visible or (lambda: True)
 
+        self._receipt_jobs = ThreadJobRunner()
+        self._presentation_turn_id: str | None = None
+        self._presentation_failed = False
+        self._on_current_reply_result = []
+        self._reply_audio_enabled = True
+        self._text_presented = False
+        self._audio_results = {}
         self.chat_worker: ChatWorker | None = None
         self.retired_chat_workers: list[ChatWorker] = []
         self.stream_session_id = 0
@@ -76,6 +105,15 @@ class ChatStreamController(QObject):
         self.stream_pending_units: dict[int, StreamUnitState] = {}
         self.next_stream_index = 0
         self.stream_done = False
+        self._delivery_watches = {}
+        self._release_timer = QTimer(self)
+        self._release_timer.setInterval(50)
+        self._release_timer.timeout.connect(self._poll_released)
+        self._audio_route = 'daily'
+        self._play_volume = None
+        self._generation_failed = False
+        self._reply_answer = ''
+        self._speech_timer: QTimer | None = None
         self.playback_items: list[StreamUnitState] = []
         self.playback_index = 0
         self.current_unit: StreamUnitState | None = None
@@ -92,15 +130,17 @@ class ChatStreamController(QObject):
         message: str,
         visual_overrides: dict[str, Any] | None = None,
         screen_attachment: dict[str, Any] | None = None,
+        input_modality: str = "text",
     ) -> StreamToken:
         return self._start_stream(
             kind=StreamKind.CHAT,
             message=message,
+            input_modality=input_modality,
             visual_overrides=visual_overrides,
             screen_attachment=screen_attachment,
         )
 
-    def start_system_turn(self, request: Any) -> StreamToken:
+    def start_system_turn(self, request: Any, *, request_id=None, replay=None) -> StreamToken:
         """P3: launch a SYSTEM-initiated turn (a ProactiveTurnRequest). The framed
         directive rides the normal stream machinery -- ChatWorker / playback /
         typewriter / TTS / busy all behave exactly like a user turn, and a user
@@ -111,6 +151,17 @@ class ChatStreamController(QObject):
             visual_overrides=None,
             screen_attachment=None,
             conversation_id=request.conversation_id,
+            request_id=request_id, replay=replay,
+            stream_options={
+                'source': request.source or 'desktop', 'want_audio': getattr(request, 'want_audio', True)
+                    and (getattr(self.agent, 'daily_voice_enabled', True) or hasattr(request, 'due_at')),
+                'material_hint': getattr(request, 'material_hint', None),
+                'event_binding': getattr(request, 'event_binding', None),
+                'inherit_active_domain': getattr(request, 'inherit_active_domain', False),
+                'audio_route': 'home' if (hasattr(request, 'due_at') or getattr(request, 'event_binding', None)
+                    and request.event_binding.kind.startswith('home.')) else 'daily',
+            },
+            volume=getattr(request, 'volume', None),
         )
 
     def notify_on_current_stream_done(self, callback: Callable[[], None]) -> None:
@@ -122,13 +173,54 @@ class ChatStreamController(QObject):
             return
         self._on_current_stream_done.append(callback)
 
-    def _fire_current_stream_done(self) -> None:
+    def _fire_current_stream_done(self, *, completed: bool = False) -> None:
+        result = ReplyPresentationResult(completed, self._text_presented and self._text_surface_visible(), self._reply_audio_enabled,
+            bool(self._audio_results) and all(value == "completed" for value in self._audio_results.values()))
+        reply_callbacks, self._on_current_reply_result = self._on_current_reply_result, []
+        if completed and self._text_presented:
+            self.reply_text_complete.emit()
         callbacks = self._on_current_stream_done
         self._on_current_stream_done = []
         for callback in callbacks:
             callback()
+        for callback in reply_callbacks:
+            callback(result)
+
+    def notify_on_current_reply_result(self, callback) -> None:
+        if not self.is_busy() and not self.playback_active:
+            callback(ReplyPresentationResult())
+        else:
+            self._on_current_reply_result.append(callback)
+
+    def _poll_released(self):
+        for identity, (producer, terminal) in tuple(self._delivery_watches.items()):
+            if terminal and producer.is_set():
+                self._delivery_watches.pop(identity)
+                self.delivery_event.emit(DesktopTurnLifecycleReleasedEvent(identity, identity, 'desktop'))
+        if not self._delivery_watches:
+            self._release_timer.stop()
+
+    def _record_presentation(self, outcome: str) -> None:
+        turn_id, self._presentation_turn_id = self._presentation_turn_id, None
+        if outcome == 'completed' and (self._presentation_failed or
+                not (self._text_presented and self._text_surface_visible())
+                and not (self._audio_results and all(v == 'completed' for v in self._audio_results.values()))):
+            outcome = 'failed'
+        if turn_id:
+            if turn_id in self._delivery_watches:
+                self._delivery_watches[turn_id][1] = True
+            self.delivery_event.emit(DesktopPresentationTerminalEvent(turn_id, turn_id, 'desktop',
+                'stopped' if outcome == 'cancelled' else outcome,
+                awaited_audio_playback=bool(self._audio_results) and all(v == 'completed' for v in self._audio_results.values())))
+        record = getattr(self.agent, "record_presentation", None)
+        if turn_id and callable(record):
+            if outcome == "completed" and self._presentation_failed:
+                outcome = "failed"
+            self._receipt_jobs.submit(lambda: record(turn_id, outcome=outcome))
 
     def stop_current(self) -> None:
+        self.reset_visual()
+        self._record_presentation("cancelled")
         self._retire_chat_worker(interrupt=True)
         self._invalidate_stream_token()
         self.current_stream_kind = None
@@ -167,7 +259,9 @@ class ChatStreamController(QObject):
                 worker.deleteLater()
             except Exception:
                 pass
-        return all_stopped
+        self._receipt_jobs.drain(timeout=max(0, deadline - time.monotonic()))
+        self._poll_released()
+        return all_stopped and not self._receipt_jobs.pending
 
     def _start_stream(
         self,
@@ -177,6 +271,8 @@ class ChatStreamController(QObject):
         visual_overrides: dict[str, Any] | None,
         screen_attachment: dict[str, Any] | None,
         conversation_id: str | None = None,
+        input_modality: str = "text",
+        request_id=None, stream_options=None, replay=None, volume=None,
     ) -> StreamToken:
         # Regression alarm for the system-turn GUI-thread marshal (2026-06-26
         # libQt6Gui GPF fix): every _start_stream -- user, song, AND reaction --
@@ -220,12 +316,28 @@ class ChatStreamController(QObject):
             interaction_mode,
             self,
             screen_attachment=screen_attachment if kind == StreamKind.CHAT else None,
+            input_modality=input_modality,
+            **({'request_id': request_id, 'stream_options': stream_options, 'replay': replay}
+               if request_id or stream_options or replay else {}),
         )
+        self._presentation_turn_id = getattr(worker, "evidence_turn_id", None)
+        self._presentation_failed = False
+        self._reply_audio_enabled = bool((stream_options or {}).get('want_audio', getattr(self.agent, 'daily_voice_enabled', True)))
+        self._audio_route = (stream_options or {}).get('audio_route', 'daily')
+        self._play_volume = volume
+        self._generation_failed = False
+        self._reply_answer = ''
+        if self._presentation_turn_id and hasattr(worker, 'released'):
+            self._delivery_watches[self._presentation_turn_id] = [worker.released, False]
+            self._release_timer.start()
+        self._text_presented = False
+        self._audio_results = {}
         worker.token = token
         worker.stream_event.connect(self._handle_stream_event)
         worker.failed.connect(self._handle_chat_worker_error)
         worker.finished.connect(self._handle_chat_worker_finished)
         self.chat_worker = worker
+        self.turn_started.emit(self._presentation_turn_id or "")
         worker.start()
         return token
 
@@ -312,6 +424,7 @@ class ChatStreamController(QObject):
                 pass
 
     def _reset_playback_state(self, *, streaming: bool) -> None:
+        self._stop_speech_timer()
         self.audio_controller.release_chat_audio()
         self.audio_controller.release_preloaded()
         self.streaming_mode = streaming
@@ -340,6 +453,14 @@ class ChatStreamController(QObject):
             self._log_stale_event_ignored("stream_event", name=event_name)
             return
         self.state_machine.on_runtime_event(event_from_legacy({"event": event_name, "data": data}))
+        if event_name == 'reply_audio_policy':
+            self._reply_audio_enabled = data.get('enabled') is True
+            route = data.get('route', 'daily')
+            if route not in {'daily', 'home'}:
+                self._handle_stream_error('未知的语音输出用途', token.kind)
+                return
+            self._audio_route = route
+            return
         if event_name == "status":
             self._handle_stream_status(data)
             return
@@ -515,6 +636,7 @@ class ChatStreamController(QObject):
         self._pump_stream_playback()
 
     def _handle_stream_done(self, data: dict[str, Any]) -> None:
+        self._reply_answer = str(data.get("answer") or "")
         self.stream_done = True
         answer = str(data.get("answer") or "").strip()
         units_count = int(data.get("units_count") or 0)
@@ -552,7 +674,9 @@ class ChatStreamController(QObject):
         self._handle_stream_error(message, token.kind)
 
     def _handle_stream_error(self, message: str, kind: StreamKind) -> None:
+        self._generation_failed = True
         del kind
+        self._record_presentation("failed")
         self._reset_playback_state(streaming=False)
         self.typewriter_controller.stop()
         self.set_busy(False)
@@ -788,6 +912,7 @@ class ChatStreamController(QObject):
         unit = StreamUnitState(
             index=index,
             display_text=display_text,
+            speech_segments=[dict(part) for part in (data.get("speech_segments") or []) if isinstance(part, dict)],
             tts_text=tts_text,
             audio_path=audio_path,
             visual=visual,
@@ -874,6 +999,8 @@ class ChatStreamController(QObject):
         self._log_pump_no_next_unit()
 
     def _end_stream_playback(self) -> None:
+        self._stop_speech_timer()
+        self._record_presentation("completed")
         completed_kind = self.current_stream_kind
         logger.debug(
             "event=stream_finished stream_id=%s kind=%s next_stream_index=%s playback_active=%s "
@@ -897,7 +1024,7 @@ class ChatStreamController(QObject):
         self.set_busy(False)
         self.state_machine.stop()
         del completed_kind
-        self._fire_current_stream_done()
+        self._fire_current_stream_done(completed=True)
         self.current_stream_kind = None
         self.on_chat_done()
 
@@ -913,6 +1040,17 @@ class ChatStreamController(QObject):
         self.current_unit = unit
         self.current_audio_finished = False
         self.current_text_finished = False
+        if unit.speech_segments:
+            self._show_speech_segment(unit, 0)
+            self._play_chunk_audio(unit)
+            if not self.current_audio_finished:
+                if self._speech_timer is None:
+                    self._speech_timer = QTimer(self)
+                    self._speech_timer.setInterval(40)
+                    self._speech_timer.timeout.connect(self._update_speech_presentation)
+                self._speech_timer.start()
+            self._preload_next_playback_item()
+            return
         if unit.visual_ready and unit.visual:
             if not unit.cue:
                 unit.cue = self._cue_from_visual_payload(unit.visual)
@@ -930,7 +1068,9 @@ class ChatStreamController(QObject):
 
         typewriter_started_at_ms = self._now_ms()
         self._log_play_item_event("typewriter_start_begin", unit, image_path)
-        self.typewriter_controller.start(str(unit.display_text or "……"), on_finished=self._mark_text_finished)
+        self._text_presented = bool(unit.display_text) or self._text_presented
+        self.typewriter_controller.start(str(unit.display_text or "……"), on_finished=self._mark_text_finished,
+            **({"reading": True} if not self._reply_audio_enabled else {}))
         typewriter_duration_ms = self._duration_ms(typewriter_started_at_ms)
         self._log_play_item_event(
             "typewriter_start_done",
@@ -1020,12 +1160,18 @@ class ChatStreamController(QObject):
         audio_path = unit.audio_path
         item_index = unit.index
         if not audio_path:
+            if self._reply_audio_enabled:
+                self._audio_results[unit.index] = "not_started"
+            if unit.timeline.audio_error:
+                self._presentation_failed = True
             logger.debug("Audio fallback item=%s reason=missing_path_or_qt", item_index)
             self._mark_audio_finished(unit, item_index)
             return
 
         path = Path(str(audio_path))
         if not path.exists():
+            self._audio_results[unit.index] = "not_started"
+            self._presentation_failed = True
             logger.debug("Audio fallback item=%s reason=missing_file path=%s", item_index, path)
             self._mark_audio_finished(unit, item_index)
             return
@@ -1041,8 +1187,21 @@ class ChatStreamController(QObject):
         self.audio_controller.play_chat_audio(
             audio_path,
             token,
+            on_playback=lambda outcome, at, target=unit: self._record_audio_outcome(target, outcome, at),
             on_finished=lambda index=item_index: self._handle_chat_audio_finished(index),
+            **({'volume': self._play_volume} if self._play_volume is not None else {}),
+            **({'audio_route': self._audio_route} if self._audio_route != 'daily' else {}),
         )
+
+    def _record_audio_outcome(self, unit: StreamUnitState, outcome: str, occurred_at=None) -> None:
+        if self.current_unit is not unit:
+            return
+        self._audio_results[unit.index] = outcome
+        if self._presentation_turn_id:
+            self.delivery_event.emit(DesktopAudioPlaybackEvent(self._presentation_turn_id, self._presentation_turn_id,
+                'desktop', unit.index, outcome, time.monotonic() if occurred_at is None else occurred_at))
+        if outcome in {"failed", "not_started"}:
+            self._presentation_failed = True
 
     def _current_unit_for_finished_callback(self, item_index: Any) -> StreamUnitState | None:
         if self.current_unit is not None:
@@ -1103,6 +1262,14 @@ class ChatStreamController(QObject):
         if not self.playback_active:
             return
         unit = self.current_unit
+        if (unit is not None and unit.speech_segments and self.current_audio_finished
+                and self.current_text_finished and unit.speech_segment_index + 1 < len(unit.speech_segments)):
+            # Missing/failed audio and any final unpresented text still use the
+            # existing typewriter completion and sentence pause, without replay.
+            self.current_text_finished = False
+            next_index = unit.speech_segment_index + 1
+            QTimer.singleShot(0, lambda: self._show_speech_segment(unit, next_index))
+            return
         if not self.current_audio_finished or not self.current_text_finished:
             wait_for_audio = not self.current_audio_finished
             wait_for_text = not self.current_text_finished
@@ -1167,6 +1334,7 @@ class ChatStreamController(QObject):
         self._finish_playback()
 
     def _finish_playback(self, *, pump_immediately: bool = False) -> None:
+        self._stop_speech_timer()
         self.playback_active = False
         self.playback_items = []
         self.playback_index = 0
@@ -1185,3 +1353,51 @@ class ChatStreamController(QObject):
         self._fire_current_stream_done()
         self.current_stream_kind = None
         self.on_chat_done()
+
+    def _stop_speech_timer(self) -> None:
+        if self._speech_timer is not None:
+            self._speech_timer.stop()
+
+
+    def _show_speech_segment(self, unit, index, position_ms=None) -> None:
+        if self.current_unit is not unit or not self.playback_active:
+            return
+        self._text_presented = True
+        part = unit.speech_segments[index]
+        unit.speech_segment_index = index
+        self.current_text_finished = False
+        visual = part.get("visual") or {}
+        if visual:
+            self.apply_visual(visual)
+            cue = self._cue_from_visual_payload(visual)
+            if cue.get("image_path"):
+                self.set_character_image(cue["image_path"])
+        budget = None
+        if isinstance(part.get("end_ms"), (int, float)) and isinstance(part.get("start_ms"), (int, float)):
+            budget = max(1, part["end_ms"] - (part["start_ms"] if position_ms is None else position_ms))
+
+        def finished():
+            if self.current_unit is unit and unit.speech_segment_index == index:
+                self._mark_text_finished()
+
+        self.typewriter_controller.start(
+            str(part.get("display_text") or "……"), on_finished=finished, max_duration_ms=budget,
+        )
+
+
+    def _update_speech_presentation(self) -> None:
+        unit = self.current_unit
+        if not self.playback_active or unit is None or not unit.speech_segments:
+            self._stop_speech_timer()
+            return
+        path, position_ms = self.audio_controller.voice_playback_position()
+        if path is None or not unit.audio_path or Path(path) != Path(unit.audio_path):
+            return  # Loading, paused, or another audio owner: do not run ahead.
+        index = unit.speech_segment_index
+        while index + 1 < len(unit.speech_segments):
+            start = unit.speech_segments[index + 1].get("start_ms")
+            if not isinstance(start, (int, float)) or position_ms < start:
+                break
+            index += 1
+        if index != unit.speech_segment_index:
+            self._show_speech_segment(unit, index, position_ms)

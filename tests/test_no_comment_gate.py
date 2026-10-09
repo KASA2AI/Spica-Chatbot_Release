@@ -15,6 +15,7 @@ the REAL galgame DB / budget refund, both branches (spoken / swallowed).
 import json
 import tempfile
 import unittest
+from spica.ports.memory import MemoryScope
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -153,7 +154,7 @@ class SwallowedSystemTurnTest(unittest.TestCase):
             _, done, units = _events_of(
                 engine, engine.stream_system_turn("陪玩剧情片段。", source="galgame")
             )
-            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
+            recent = _generated_memory(engine)
         self.assertEqual(units, [])                       # 不TTS的前提:零unit事件
         self.assertEqual(tts.calls, 0)                    # 不TTS(直接证据)
         self.assertEqual(done["data"]["answer"], NO_COMMENT_SENTINEL)  # done带canonical sentinel
@@ -178,7 +179,7 @@ class SwallowedSystemTurnTest(unittest.TestCase):
             _, done, _ = _events_of(
                 engine, engine.stream_system_turn("你刚唱完了歌。", source="song")
             )
-            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
+            recent = _generated_memory(engine)
         self.assertEqual(done["data"]["answer"], "唱完啦，怎么样？")
         self.assertGreater(done["data"]["units_count"], 0)
         self.assertGreater(tts.calls, 0)
@@ -190,7 +191,7 @@ class SwallowedSystemTurnTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             engine, _, tts = _build_engine(NO_COMMENT_SENTINEL, tmp)
             _, done, _ = _events_of(engine, engine.stream_voice("随便聊聊"))
-            recent = engine.services.recent_memory.get_recent(scoped_conversation_id("spica", "default"))
+            recent = _generated_memory(engine)
         self.assertEqual(done["data"]["answer"], NO_COMMENT_SENTINEL)
         self.assertGreater(done["data"]["units_count"], 0)  # fallback unit spoken
         self.assertGreater(tts.calls, 0)
@@ -253,8 +254,8 @@ class FullChainTest(unittest.TestCase):
                 ("月岛", "其实我一直骗着你。"), ("雪鹰", "诶。"), ("月岛", "对不起！")])
             self.assertEqual(engine.decisions[-1].kind, "spoke")
             # the directive reached the REAL prompt: excerpt + constraints + escape
-            prompt = calls[0][1]["messages"][0]["content"]
-            self.assertIn("【系统事件，不是麦说的话】", prompt)
+            prompt = "\n".join(m["content"] for m in calls[0][1]["messages"])
+            self.assertIn("【系统事件，不是用户说的话】", prompt)
             self.assertIn("月岛：其实我一直骗着你。", prompt)
             self.assertIn("不超过40个字", prompt)
             self.assertIn(NO_COMMENT_SENTINEL, prompt)
@@ -308,3 +309,10 @@ class FullChainTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _generated_memory(engine):
+    # Failed/cancelled generation may remain as evidence, but cannot become a
+    # completed assistant turn. Read the active journal, not the retired recent.
+    return [row for row in engine.deps.memory.evidence(MemoryScope("spica", "owner", "default"))
+            if row["kind"] == "assistant_generated" and row["metadata"].get("generation_complete")]

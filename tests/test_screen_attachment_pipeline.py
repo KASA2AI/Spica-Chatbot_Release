@@ -133,12 +133,16 @@ def test_empty_input_with_pending_screenshot_uses_default_question_and_injects_o
         assert calls[0]["question"] == "请查看这张截图并概括内容。"
         assert calls[0]["attachment"]["target"] == "selected_region"
         assert "tools" not in llm.responses.calls[0]
-        prompt_input = llm.responses.calls[0]["input"]
+        messages = llm.responses.calls[0]["input"]
+        observation = next(m for m in messages if "[SCREEN_OBSERVATION]\n" in m["content"])
+        assert observation["role"] == "user"
+        prompt_input = "\n".join(m["content"] for m in messages)
         assert "[SCREEN_OBSERVATION]" in prompt_input
         assert prompt_input.index("[SCREEN_OBSERVATION]") < prompt_input.index(
             "[RUNTIME_CAPABILITY_REMINDER]"
         )
-        assert prompt_input.rstrip().endswith("否则只提供步骤。")
+        assert RUNTIME_CAPABILITY_REMINDER in prompt_input
+        assert "否则只提供步骤。" in RUNTIME_CAPABILITY_REMINDER
         assert "png-bytes" not in prompt_input
         assert "FULL OCR SHOULD NOT ENTER PROMPT" not in prompt_input
         assert state.response_payload["answer"] == "スクリーンショットにはブラウザが見えます。"
@@ -175,9 +179,13 @@ def test_screen_followup_context_enters_next_turn_prompt_without_raw_image_or_oc
             )
 
         run_voice_pipeline(TurnContext(TurnRequest(conversation_id="c1", user_input="那怎么解决？")), services)
-        followup_prompt = llm.responses.calls[-1]["input"]
+        followup_prompt = "\n".join(m["content"] for m in llm.responses.calls[-1]["input"])
 
-        assert "[前回の画面観察]" in followup_prompt
+        observation = next(m['content'] for m in llm.responses.calls[-1]['input']
+                           if m['content'].startswith('[CONTEXT_DATA source=past_screen_observation '))
+        assert 'evidence=' in observation and 'recorded_at=' in observation and 'modality=' in observation
         assert "region shows a browser" in followup_prompt
         assert "png-bytes" not in followup_prompt
         assert "FULL OCR SHOULD NOT ENTER PROMPT" not in followup_prompt
+
+from spica.conversation.prompt_builder import RUNTIME_CAPABILITY_REMINDER

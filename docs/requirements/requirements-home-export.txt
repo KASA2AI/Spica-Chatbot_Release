@@ -1,0 +1,10 @@
+# Separate export environment only; never upgrade the speech environment with this list.
+# Install matching CUDA PyTorch first. setup_home_models.py writes verified ONNX/TRT artifacts.
+ultralytics==8.4.152
+onnx>=1.17,<2
+tensorrt-cu12==10.16.1.11
+pydantic>=2.7,<3
+PyYAML>=6,<7
+python-dotenv>=1,<2
+opencv-python>=4.10,<4.12
+numpy>=1.24,<2

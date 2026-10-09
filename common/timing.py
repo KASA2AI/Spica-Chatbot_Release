@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import time
-from contextlib import contextmanager
 from typing import Any
 
 _timing_logger = logging.getLogger("common.timing")
@@ -23,12 +22,3 @@ def log_timing(step: str, duration_ms: float, **fields: Any) -> None:
     details = " ".join(f"{key}={value}" for key, value in fields.items() if value is not None)
     suffix = f" {details}" if details else ""
     _timing_logger.debug("[TIMING] step=%s duration_ms=%.2f%s", step, duration_ms, suffix)
-
-
-@contextmanager
-def timed_step(step: str, **fields: Any):
-    start = now_ms()
-    try:
-        yield
-    finally:
-        log_timing(step, elapsed_ms(start), **fields)

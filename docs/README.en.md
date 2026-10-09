@@ -32,11 +32,11 @@ character:
 tts:
   enabled: false
 stt:
-  backend: faster_whisper
+  backend: qwen_asr
   mic_backend: generic
-  model: spica_data/models/faster-whisper-large-v3-turbo
+  model: models/stt/Qwen3-ASR-1.7B
   device: cpu
-  compute_type: int8
+  compute_type: float32
   language: zh
   warmup_on_startup: false
 screen:
@@ -123,11 +123,11 @@ python -m pip install -c docs/requirements/constraints-windows-app.txt -r docs/r
 python -m pip install -c docs/requirements/constraints-windows-app.txt --no-deps audio-separator==0.44.2
 ```
 
-Check that `ffmpeg -version` works. Shared speech weights and STT models stay outside character packs. Download missing files from [GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS) and the [faster-whisper model repository](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo); skip these downloads if the complete files already exist:
+Check that `ffmpeg -version` works. Shared speech weights and STT models stay outside character packs. Download missing files from [GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS) and the [Qwen3-ASR model repository](https://huggingface.co/Qwen/Qwen3-ASR-1.7B); skip these downloads if the complete files already exist:
 
 ```bash
 python -c "from huggingface_hub import snapshot_download; snapshot_download('lj1995/GPT-SoVITS', local_dir='artifacts/tts_slim/base/GPT_SoVITS/pretrained_models', allow_patterns=['chinese-hubert-base/*', 'chinese-roberta-wwm-ext-large/*', 'sv/*', 's1v3.ckpt', 'v2Pro/*'])"
-python -c "from huggingface_hub import snapshot_download; snapshot_download('dropbox-dash/faster-whisper-large-v3-turbo', local_dir='spica_data/models/faster-whisper-large-v3-turbo')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-ASR-1.7B', local_dir='models/stt/Qwen3-ASR-1.7B')"
 ```
 
 **Prepare each character's voice separately.** Put the author's matching model pair and a clean reference recording of roughly 3–10 seconds in `voice/`. Add `tts` at the top level of the existing `meta.json`; this fragment is not a replacement for the whole file:
@@ -156,7 +156,7 @@ Set local `tts.enabled` to `true`, reimport the character, restart, and test one
 <a id="animation"></a>
 ## 5. Create animated artwork
 
-Copy the [eye animation example](../Desktop-Packs/Characters/Examples/eye-rig/), then change its `slug` and card. Its `spica-eye-rig` format supports blinking and gaze tracking; it cannot directly load Cubism `.model3.json` / `.moc3` files.
+Copy the [eye animation example](../Desktop-Packs/Characters/Examples/eye-rig/), then change its `slug` and card. Its `spica-eye-rig` format supports blinking and gaze tracking; native Cubism uses a separate optional [pack format](CUBISM_PACKS.md), not eye-rig files.
 
 1. Replace `model/open.png` and `closed.png` with complete transparent images of identical size, pose, and placement. Change only the eyes.
 2. Edit `model/character.eyerig.json`: set `canvas` to the image size and `gaze.origin` between the eyes. Recalibrate each eye's bounds, iris, and open/closed curves for your artwork; do not reuse the sample coordinates.
@@ -212,3 +212,33 @@ Application preferences stay in local `data/config/app.yaml`, and keys stay in `
 - **No speech**: check matching models, reference transcript, shared weights, and `tts.enabled`. Import success does not prove synthesis success.
 - **Old name or model**: check environment overrides and restart after saving.
 - **Windows path errors**: use `C:/Spica/models/file` in local YAML, relative paths inside packs, and extract ZIPs before importing.
+
+## Qwen3-ASR: local / cloud
+
+Local ASR uses **Qwen3-ASR-1.7B** in a separate Python environment; do not
+install its Transformers dependencies into the screen/RVC environment.
+Create a Python 3.11 environment, install a matching PyTorch build, then run:
+
+```bash
+python -m pip install -r docs/requirements/requirements-qwen-asr.txt
+python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-ASR-1.7B', local_dir='models/stt/Qwen3-ASR-1.7B')"
+```
+
+In **设置 → 应用设置**, choose 本地 Qwen3-ASR-1.7B, set 本地模型目录 and
+本地识别 Python to the downloaded directory and that environment's Python
+executable (Windows: `Scripts/python.exe`; Linux: `bin/python`). CPU uses
+`float32`; a supported NVIDIA GPU can use `bfloat16` or `float16`.
+Save and restart. The application does not download models while chatting.
+
+For cloud ASR, no local Qwen environment or weights are needed. Save the
+**百炼语音识别 API Key**, select **百炼 Qwen 云端**, choose the matching account
+region, save and restart. Valid utterances are uploaded to that service and
+may incur charges; startup/self-check does not upload audio or verify billing.
+There is no automatic fallback from local to cloud.
+
+旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新配置模型目录与独立 Python，
+或明确选择云端。密钥保存在本机 xiaosan.env，不放在 app.yaml 或角色包内。
+普通 USB/系统麦克风在两个平台均可使用；只有使用 ReSpeaker 硬件 VAD 时才选择该选项。
+
+
+[Current optional Home and standalone desktop configuration (中文)](README.md#独立桌面整合后的入口) · [Home setup](HOME.md) · [Local/cloud ASR](README.md#语音识别本地-qwen3-asr--百炼云端)

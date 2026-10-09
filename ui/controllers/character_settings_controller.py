@@ -14,7 +14,7 @@ from ui.workers.character_package_worker import CharacterPackageWorker
 
 
 class CharacterSettingsController(QObject):
-    def __init__(self, window, panel):
+    def __init__(self, window, panel, *, autoload=True):
         super().__init__(window)
         self.window = window
         self.panel = panel
@@ -28,7 +28,8 @@ class CharacterSettingsController(QObject):
         panel.character_changed.connect(self.select)
         panel.character_export_requested.connect(self.export_folder)
         panel.interlocutor_name_changed.connect(self.save_interlocutor_name)
-        self.refresh()
+        if autoload:
+            self.refresh()
 
     def save_interlocutor_name(self, name) -> bool:
         if self.panel.settings_busy:
@@ -47,27 +48,29 @@ class CharacterSettingsController(QObject):
         self.refresh()
         return True
 
+    def read_snapshot(self):
+        surface = self.window.host.management_surface
+        return {"config": surface.read_config(), "characters": surface.list_characters(),
+                "styles": surface.list_dialogue_styles()}
+
     def refresh(self):
-        surface = getattr(self.window.host, "management_surface", None)
-        if surface is None:
-            self.panel.set_character_busy(True)
-            self.panel.character_status.setText("角色管理暂不可用。")
-            return
-        config = surface.read_config()
+        try:
+            self.apply_snapshot(self.read_snapshot())
+        except Exception:
+            self.panel.character_status.setText("角色管理暂不可用，请检查角色目录后重试。")
+
+    def apply_snapshot(self, snapshot):
+        config = snapshot["config"]
         character = config["character"]
-        selected_style = config.get("dialogue_style", {}).get("package_dir")
-        self.panel.set_dialogue_styles(surface.list_dialogue_styles(), selected_style)
+        self.panel.set_dialogue_styles(snapshot["styles"], config.get("dialogue_style", {}).get("package_dir"))
         if getattr(self.window.host, "dialogue_style_error", None):
             self.panel.dialogue_style_status.setText("启动时未能加载样式，暂用 Spica 对话框。请重新导入样式后重启。")
-        selected = character["package_dir"]
-        self.panel.set_characters(surface.list_characters(), selected)
+        self.panel.set_characters(snapshot["characters"], character["package_dir"])
         name = normalize_interlocutor_name(character["interlocutor_name"])
         self.panel.set_interlocutor_name(name)
         self.panel.interlocutor_name_status.setText(
             f"已保存「{name}」，重启桌宠后生效。"
-            if name != self.window.interlocutor_name
-            else "修改称呼后需重启桌宠。"
-        )
+            if name != self.window.interlocutor_name else "修改称呼后需重启桌宠。")
 
     def import_folder(self):
         # Native Windows file dialogs can block Qt timers. Keep dialogue and

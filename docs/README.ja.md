@@ -32,11 +32,11 @@ character:
 tts:
   enabled: false
 stt:
-  backend: faster_whisper
+  backend: qwen_asr
   mic_backend: generic
-  model: spica_data/models/faster-whisper-large-v3-turbo
+  model: models/stt/Qwen3-ASR-1.7B
   device: cpu
-  compute_type: int8
+  compute_type: float32
   language: zh
   warmup_on_startup: false
 screen:
@@ -123,11 +123,11 @@ python -m pip install -c docs/requirements/constraints-windows-app.txt -r docs/r
 python -m pip install -c docs/requirements/constraints-windows-app.txt --no-deps audio-separator==0.44.2
 ```
 
-`ffmpeg -version` が動くことを確認します。共有音声モデルと STT はキャラクターパックの外に置きます。不足分は [GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS) と [faster-whisper モデル](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo)から取得します。すでに完全なファイルがある場合は省略できます。
+`ffmpeg -version` が動くことを確認します。共有音声モデルと STT はキャラクターパックの外に置きます。不足分は [GPT-SoVITS](https://huggingface.co/lj1995/GPT-SoVITS) と [Qwen3-ASR モデル](https://huggingface.co/Qwen/Qwen3-ASR-1.7B)から取得します。すでに完全なファイルがある場合は省略できます。
 
 ```bash
 python -c "from huggingface_hub import snapshot_download; snapshot_download('lj1995/GPT-SoVITS', local_dir='artifacts/tts_slim/base/GPT_SoVITS/pretrained_models', allow_patterns=['chinese-hubert-base/*', 'chinese-roberta-wwm-ext-large/*', 'sv/*', 's1v3.ckpt', 'v2Pro/*'])"
-python -c "from huggingface_hub import snapshot_download; snapshot_download('dropbox-dash/faster-whisper-large-v3-turbo', local_dir='spica_data/models/faster-whisper-large-v3-turbo')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-ASR-1.7B', local_dir='models/stt/Qwen3-ASR-1.7B')"
 ```
 
 **キャラクターごとの声を準備します。** 作者提供の対応モデルと、雑音のない約 3～10 秒の参照音声を `voice/` に置きます。既存の `meta.json` の最上位へ `tts` を追加してください。次の断片でファイル全体を置き換えないでください。
@@ -156,7 +156,7 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('dro
 <a id="animation"></a>
 ## 5. 動く立ち絵を作る
 
-[目のアニメーションサンプル](../Desktop-Packs/Characters/Examples/eye-rig/)をコピーし、`slug` とカードを変更します。`spica-eye-rig` はまばたきと視線追従に対応します。Cubism の `.model3.json` / `.moc3` は直接読み込めません。
+[目のアニメーションサンプル](../Desktop-Packs/Characters/Examples/eye-rig/)をコピーし、`slug` とカードを変更します。`spica-eye-rig` はまばたきと視線追従に対応します。ネイティブ Cubism は別の任意の[パック形式](CUBISM_PACKS.md)を使います。eye-rig とは別に設定してください。
 
 1. `model/open.png` と `closed.png` を差し替えます。同じ寸法・姿勢・位置の完全な透明原画を使い、目だけを変更します。
 2. `model/character.eyerig.json` の `canvas` を原画寸法に、`gaze.origin` を両目の間に設定します。`eyes` の範囲、虹彩、開眼・閉眼曲線を自分の絵に合わせて標定し直してください。
@@ -212,3 +212,33 @@ API キーを入力したら **保存密钥（キーを保存）**、その他�
 - **声が出ない**：対応モデル、参照原文、共有モデル、`tts.enabled` を確認します。インポート成功だけでは合成成功は保証されません。
 - **古い名前やモデルのまま**：環境変数の上書きを確認し、保存後に再起動します。
 - **Windows のパスエラー**：本機 YAML は `C:/Spica/models/file`、パック内は相対パスを使い、ZIP は展開してから読み込みます。
+
+## Qwen3-ASR: local / cloud
+
+Local ASR uses **Qwen3-ASR-1.7B** in a separate Python environment; do not
+install its Transformers dependencies into the screen/RVC environment.
+Create a Python 3.11 environment, install a matching PyTorch build, then run:
+
+```bash
+python -m pip install -r docs/requirements/requirements-qwen-asr.txt
+python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-ASR-1.7B', local_dir='models/stt/Qwen3-ASR-1.7B')"
+```
+
+In **设置 → 应用设置**, choose 本地 Qwen3-ASR-1.7B, set 本地模型目录 and
+本地识别 Python to the downloaded directory and that environment's Python
+executable (Windows: `Scripts/python.exe`; Linux: `bin/python`). CPU uses
+`float32`; a supported NVIDIA GPU can use `bfloat16` or `float16`.
+Save and restart. The application does not download models while chatting.
+
+For cloud ASR, no local Qwen environment or weights are needed. Save the
+**百炼语音识别 API Key**, select **百炼 Qwen 云端**, choose the matching account
+region, save and restart. Valid utterances are uploaded to that service and
+may incur charges; startup/self-check does not upload audio or verify billing.
+There is no automatic fallback from local to cloud.
+
+旧 Whisper/Google 配置会读取为本地 Qwen 默认配置；请重新配置模型目录与独立 Python，
+或明确选择云端。密钥保存在本机 xiaosan.env，不放在 app.yaml 或角色包内。
+普通 USB/系统麦克风在两个平台均可使用；只有使用 ReSpeaker 硬件 VAD 时才选择该选项。
+
+
+[Current optional Home and standalone desktop configuration (中文)](README.md#独立桌面整合后的入口) · [Home setup](HOME.md) · [Local/cloud ASR](README.md#语音识别本地-qwen3-asr--百炼云端)
